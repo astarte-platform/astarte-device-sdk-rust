@@ -18,17 +18,13 @@ pub enum InitError {
 }
 
 impl Device {
-    pub fn new(
-        realm: &String,
-        device_id: &String,
-        credential_secret: &String,
-    ) -> Result<Device, InitError> {
+    pub fn new(realm: &str, device_id: &str, credential_secret: &str) -> Result<Device, InitError> {
         let cn = format!("{}/{}", realm, device_id);
 
         let device = Device {
-            realm: realm.clone(),
-            device_id: device_id.clone(),
-            credentials_secret: credential_secret.clone(),
+            realm: String::from(realm),
+            device_id: String::from(device_id),
+            credentials_secret: String::from(credential_secret),
             crypto: Bundle::new(&cn)?,
         };
 
