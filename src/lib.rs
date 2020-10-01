@@ -7,6 +7,7 @@ use std::fmt;
 pub struct Device {
     realm: String,
     device_id: String,
+    credentials_secret: String,
     crypto: Bundle,
 }
 
@@ -17,12 +18,17 @@ pub enum InitError {
 }
 
 impl Device {
-    pub fn new(realm: &String, device_id: &String) -> Result<Device, InitError> {
+    pub fn new(
+        realm: &String,
+        device_id: &String,
+        credential_secret: &String,
+    ) -> Result<Device, InitError> {
         let cn = format!("{}/{}", realm, device_id);
 
         let device = Device {
             realm: realm.clone(),
             device_id: device_id.clone(),
+            credentials_secret: credential_secret.clone(),
             crypto: Bundle::new(&cn)?,
         };
 
@@ -43,6 +49,7 @@ impl fmt::Debug for Device {
         f.debug_struct("Device")
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
+            .field("credentials_secret", &self.credentials_secret)
             .field("private_key", &private_key_pem)
             .field("csr", &csr_pem)
             .finish()
