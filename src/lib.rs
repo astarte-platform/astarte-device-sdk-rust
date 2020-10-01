@@ -8,23 +8,64 @@ pub struct Device {
     realm: String,
     device_id: String,
     credentials_secret: String,
+    pairing_url: String,
     crypto: Bundle,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum InitError {
-    #[error("private key or CSR creation failed")]
-    CryptoGeneration(#[from] ErrorStack),
+pub struct DeviceBuilder {
+    realm: String,
+    device_id: String,
+    credentials_secret: Option<String>,
+    pairing_url: Option<String>,
 }
 
-impl Device {
-    pub fn new(realm: &str, device_id: &str, credential_secret: &str) -> Result<Device, InitError> {
-        let cn = format!("{}/{}", realm, device_id);
+#[derive(thiserror::Error, Debug)]
+pub enum DeviceBuilderError {
+    #[error("private key or CSR creation failed")]
+    CryptoGeneration(#[from] ErrorStack),
+    #[error("device must have a credentials secret")]
+    MissingCredentialsSecret,
+    #[error("device must have a pairing URL")]
+    MissingPairingUrl,
+}
 
-        let device = Device {
+impl DeviceBuilder {
+    pub fn new(realm: &str, device_id: &str) -> Self {
+        DeviceBuilder {
             realm: String::from(realm),
             device_id: String::from(device_id),
-            credentials_secret: String::from(credential_secret),
+            credentials_secret: None,
+            pairing_url: None,
+        }
+    }
+
+    pub fn credentials_secret(&mut self, credentials_secret: &str) -> &mut Self {
+        self.credentials_secret = Some(String::from(credentials_secret));
+        self
+    }
+
+    pub fn pairing_url(&mut self, pairing_url: &str) -> &mut Self {
+        self.pairing_url = Some(String::from(pairing_url));
+        self
+    }
+
+    pub fn build(&self) -> Result<Device, DeviceBuilderError> {
+        let cn = format!("{}/{}", self.realm, self.device_id);
+
+        let credentials_secret = self
+            .credentials_secret
+            .as_ref()
+            .ok_or(DeviceBuilderError::MissingCredentialsSecret)?;
+        let pairing_url = self
+            .pairing_url
+            .as_ref()
+            .ok_or(DeviceBuilderError::MissingPairingUrl)?;
+
+        let device = Device {
+            realm: String::from(&self.realm),
+            device_id: String::from(&self.device_id),
+            credentials_secret: String::from(credentials_secret),
+            pairing_url: String::from(pairing_url),
             crypto: Bundle::new(&cn)?,
         };
 
@@ -46,6 +87,7 @@ impl fmt::Debug for Device {
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
             .field("credentials_secret", &self.credentials_secret)
+            .field("pairing_url", &self.pairing_url)
             .field("private_key", &private_key_pem)
             .field("csr", &csr_pem)
             .finish()

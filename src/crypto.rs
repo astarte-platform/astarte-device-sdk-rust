@@ -1,17 +1,16 @@
 use openssl::{
     ec::{EcGroup, EcKey},
+    error::ErrorStack,
     hash::MessageDigest,
     nid::Nid,
     pkey::{PKey, Private},
     x509::{X509NameBuilder, X509Req, X509ReqBuilder},
 };
 
-use crate::InitError;
-
 pub struct Bundle(pub PKey<Private>, pub X509Req);
 
 impl Bundle {
-    pub fn new(cn: &String) -> Result<Bundle, InitError> {
+    pub fn new(cn: &String) -> Result<Bundle, ErrorStack> {
         let group = EcGroup::from_curve_name(Nid::SECP521R1)?;
         let ec_key = EcKey::generate(&group)?;
 
