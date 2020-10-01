@@ -1,7 +1,9 @@
 mod crypto;
+mod pairing;
 
 use crypto::Bundle;
 use openssl::error::ErrorStack;
+use pairing::PairingError;
 use std::fmt;
 
 pub struct Device {
@@ -10,6 +12,7 @@ pub struct Device {
     credentials_secret: String,
     pairing_url: String,
     crypto: Bundle,
+    certificate_pem: Option<String>,
 }
 
 pub struct DeviceBuilder {
@@ -67,9 +70,18 @@ impl DeviceBuilder {
             credentials_secret: String::from(credentials_secret),
             pairing_url: String::from(pairing_url),
             crypto: Bundle::new(&cn)?,
+            certificate_pem: None,
         };
 
         Ok(device)
+    }
+}
+
+impl Device {
+    pub fn obtain_credentials(&mut self) -> Result<&mut Self, PairingError> {
+        let cert_pem = pairing::fetch_credentials(&self)?;
+        self.certificate_pem = Some(cert_pem);
+        Ok(self)
     }
 }
 
@@ -90,6 +102,7 @@ impl fmt::Debug for Device {
             .field("pairing_url", &self.pairing_url)
             .field("private_key", &private_key_pem)
             .field("csr", &csr_pem)
+            .field("certificate_pem", &self.certificate_pem)
             .finish()
     }
 }
