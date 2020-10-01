@@ -6,8 +6,5 @@ fn main() {
 
     let d = Device::new(&realm, &device_id).unwrap();
 
-    println!("realm: {}", d.realm);
-    println!("device_id: {}", d.device_id);
-    println!("private key:\n{}", d.private_key_pem);
-    println!("csr:\n{}", d.csr_pem);
+    println!("{:?}", d);
 }

@@ -8,11 +8,12 @@ use openssl::{
     x509::X509ReqBuilder,
 };
 
+#[derive(Debug)]
 pub struct Device {
-    pub realm: String,
-    pub device_id: String,
-    pub private_key_pem: String,
-    pub csr_pem: String,
+    realm: String,
+    device_id: String,
+    private_key_pem: String,
+    csr_pem: String,
 }
 
 #[derive(thiserror::Error, Debug)]
