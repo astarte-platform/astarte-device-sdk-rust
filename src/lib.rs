@@ -22,7 +22,7 @@ pub enum InitError {
 }
 
 impl Device {
-    pub fn new(realm: String, device_id: String) -> Result<Device, InitError> {
+    pub fn new(realm: &String, device_id: &String) -> Result<Device, InitError> {
         let group = EcGroup::from_curve_name(Nid::SECP521R1)?;
         let ec_key = EcKey::generate(&group)?;
         let ec_key_pem = ec_key.private_key_to_pem()?;
@@ -42,8 +42,8 @@ impl Device {
         let req_pem = req_builder.build().to_pem()?;
 
         let device = Device {
-            realm,
-            device_id,
+            realm: realm.clone(),
+            device_id: device_id.clone(),
             private_key_pem: String::from_utf8(ec_key_pem).unwrap(),
             csr_pem: String::from_utf8(req_pem).unwrap(),
         };
