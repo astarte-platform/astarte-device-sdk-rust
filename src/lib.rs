@@ -29,7 +29,7 @@ impl Device {
 
         let cn = format!("{}/{}", realm, device_id);
         let mut subject_builder = X509NameBuilder::new()?;
-        subject_builder.append_entry_by_nid(Nid::COMMONNAME, &cn[..])?;
+        subject_builder.append_entry_by_nid(Nid::COMMONNAME, &cn)?;
 
         let subject_name = subject_builder.build();
 
