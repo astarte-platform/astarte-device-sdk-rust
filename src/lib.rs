@@ -32,6 +32,12 @@ pub enum DeviceBuilderError {
     MissingPairingUrl,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ConnectionError {
+    #[error("error while obtaining credentials")]
+    Credentials(#[from] PairingError),
+}
+
 impl DeviceBuilder {
     pub fn new(realm: &str, device_id: &str) -> Self {
         DeviceBuilder {
@@ -78,10 +84,10 @@ impl DeviceBuilder {
 }
 
 impl Device {
-    pub fn obtain_credentials(&mut self) -> Result<&mut Self, PairingError> {
-        let cert_pem = pairing::fetch_credentials(&self)?;
+    pub async fn obtain_credentials(&mut self) -> Result<(), PairingError> {
+        let cert_pem = pairing::fetch_credentials(&self).await?;
         self.certificate_pem = Some(cert_pem);
-        Ok(self)
+        Ok(())
     }
 }
 

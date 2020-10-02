@@ -17,7 +17,8 @@ struct Cli {
     pairing_url: String,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let Cli {
         realm,
         device_id,
@@ -31,7 +32,7 @@ fn main() {
         .build()
         .unwrap();
 
-    if let Err(e) = d.obtain_credentials() {
+    if let Err(e) = d.obtain_credentials().await {
         println!("Error: {:?}", e);
         return;
     }

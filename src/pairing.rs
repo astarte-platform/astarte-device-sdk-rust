@@ -1,4 +1,5 @@
 use crate::{crypto::Bundle, Device};
+use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -21,13 +22,15 @@ pub enum PairingError {
     InvalidCredentials,
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
-    #[error("error during API request")]
+    #[error("error while sending or receiving request")]
     RequestError(#[from] reqwest::Error),
+    #[error("API returned an error code")]
+    ApiError(StatusCode, String),
     #[error("crypto error")]
     Crypto(#[from] ErrorStack),
 }
 
-pub fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
+pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
     let Device {
         realm,
         device_id,
@@ -41,6 +44,8 @@ pub fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
     let csr_pem = String::from_utf8(csr_bytes).unwrap();
 
     let mut url = Url::parse(&pairing_url)?;
+    // We have to do this this way to avoid unconsistent behaviour depending
+    // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
@@ -57,13 +62,27 @@ pub fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
         }
     });
 
-    let client = reqwest::blocking::Client::new();
-    let response: CredentialsResponse = client
+    let client = reqwest::Client::new();
+    let response = client
         .post(url)
         .bearer_auth(&credentials_secret)
         .json(&payload)
-        .send()?
-        .json()?;
+        .send()
+        .await?;
 
-    Ok(String::from(response.data.client_crt))
+    match response.status() {
+        StatusCode::CREATED => {
+            let certificate = response
+                .json::<CredentialsResponse>()
+                .await?
+                .data
+                .client_crt;
+            Ok(String::from(certificate))
+        }
+
+        status_code => {
+            let raw_response = response.text().await?;
+            Err(PairingError::ApiError(status_code, raw_response))
+        }
+    }
 }
