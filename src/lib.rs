@@ -13,6 +13,7 @@ pub struct Device {
     pairing_url: String,
     crypto: Bundle,
     certificate_pem: Option<String>,
+    broker_url: Option<String>,
 }
 
 pub struct DeviceBuilder {
@@ -77,6 +78,7 @@ impl DeviceBuilder {
             pairing_url: String::from(pairing_url),
             crypto: Bundle::new(&cn)?,
             certificate_pem: None,
+            broker_url: None,
         };
 
         Ok(device)
@@ -87,6 +89,12 @@ impl Device {
     pub async fn obtain_credentials(&mut self) -> Result<(), PairingError> {
         let cert_pem = pairing::fetch_credentials(&self).await?;
         self.certificate_pem = Some(cert_pem);
+        Ok(())
+    }
+
+    async fn populate_broker_url(&mut self) -> Result<(), PairingError> {
+        let broker_url = pairing::fetch_broker_url(&self).await?;
+        self.broker_url = Some(broker_url);
         Ok(())
     }
 }
@@ -109,6 +117,7 @@ impl fmt::Debug for Device {
             .field("private_key", &private_key_pem)
             .field("csr", &csr_pem)
             .field("certificate_pem", &self.certificate_pem)
+            .field("broker_url", &self.broker_url)
             .finish()
     }
 }
