@@ -4,6 +4,7 @@ mod pairing;
 use crypto::Bundle;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
+use rustls::{internal::pemfile, Certificate};
 use std::fmt;
 use url::Url;
 
@@ -13,7 +14,7 @@ pub struct Device {
     credentials_secret: String,
     pairing_url: String,
     crypto: Bundle,
-    certificate_pem: Option<String>,
+    certificate_pem: Option<Vec<Certificate>>,
     broker_url: Option<Url>,
 }
 
@@ -87,9 +88,11 @@ impl DeviceBuilder {
 }
 
 impl Device {
-    pub async fn obtain_credentials(&mut self) -> Result<(), PairingError> {
+    async fn populate_credentials(&mut self) -> Result<(), PairingError> {
         let cert_pem = pairing::fetch_credentials(&self).await?;
-        self.certificate_pem = Some(cert_pem);
+        let mut cert_pem_bytes = cert_pem.as_bytes();
+        let certs = pemfile::certs(&mut cert_pem_bytes).unwrap();
+        self.certificate_pem = Some(certs);
         Ok(())
     }
 
