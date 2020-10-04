@@ -1,4 +1,4 @@
-use crate::{crypto::Bundle, Device};
+use crate::Device;
 use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
@@ -56,12 +56,9 @@ pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> 
         device_id,
         credentials_secret,
         pairing_url,
-        crypto: Bundle(_, csr),
+        csr,
         ..
     } = device;
-
-    let csr_bytes = csr.to_pem()?;
-    let csr_pem = String::from_utf8(csr_bytes).unwrap();
 
     let mut url = Url::parse(&pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
@@ -78,7 +75,7 @@ pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> 
 
     let payload = json!({
         "data": {
-            "csr": csr_pem,
+            "csr": csr,
         }
     });
 

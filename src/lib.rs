@@ -4,7 +4,7 @@ mod pairing;
 use crypto::Bundle;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
-use rustls::{internal::pemfile, Certificate};
+use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::fmt;
 use url::Url;
 
@@ -13,7 +13,8 @@ pub struct Device {
     device_id: String,
     credentials_secret: String,
     pairing_url: String,
-    crypto: Bundle,
+    private_key: PrivateKey,
+    csr: String,
     certificate_pem: Option<Vec<Certificate>>,
     broker_url: Option<Url>,
 }
@@ -73,12 +74,20 @@ impl DeviceBuilder {
             .as_ref()
             .ok_or(DeviceBuilderError::MissingPairingUrl)?;
 
+        let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
+
+        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+            .unwrap()
+            .remove(0);
+        let csr = String::from_utf8(csr_bytes).unwrap();
+
         let device = Device {
             realm: String::from(&self.realm),
             device_id: String::from(&self.device_id),
             credentials_secret: String::from(credentials_secret),
             pairing_url: String::from(pairing_url),
-            crypto: Bundle::new(&cn)?,
+            private_key,
+            csr,
             certificate_pem: None,
             broker_url: None,
         };
@@ -106,21 +115,13 @@ impl Device {
 
 impl fmt::Debug for Device {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Bundle(priv_key, csr) = &self.crypto;
-
-        let private_key_bytes = priv_key.private_key_to_pem_pkcs8()?;
-        let private_key_pem = String::from_utf8(private_key_bytes).unwrap();
-
-        let csr_bytes = csr.to_pem()?;
-        let csr_pem = String::from_utf8(csr_bytes).unwrap();
-
         f.debug_struct("Device")
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
             .field("credentials_secret", &self.credentials_secret)
             .field("pairing_url", &self.pairing_url)
-            .field("private_key", &private_key_pem)
-            .field("csr", &csr_pem)
+            .field("private_key", &self.private_key)
+            .field("csr", &self.csr)
             .field("certificate_pem", &self.certificate_pem)
             .field("broker_url", &self.broker_url)
             .finish()
