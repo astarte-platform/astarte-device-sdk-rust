@@ -32,10 +32,10 @@ async fn main() {
         .build()
         .unwrap();
 
-    if let Err(e) = d.obtain_credentials().await {
+    if let Err(e) = d.connect().await {
         println!("Error: {:?}", e);
         return;
     }
 
-    println!("Device: {:?}", d);
+    loop {}
 }
