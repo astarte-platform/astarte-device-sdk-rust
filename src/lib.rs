@@ -5,6 +5,7 @@ use crypto::Bundle;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
 use std::fmt;
+use url::Url;
 
 pub struct Device {
     realm: String,
@@ -13,7 +14,7 @@ pub struct Device {
     pairing_url: String,
     crypto: Bundle,
     certificate_pem: Option<String>,
-    broker_url: Option<String>,
+    broker_url: Option<Url>,
 }
 
 pub struct DeviceBuilder {
@@ -94,7 +95,8 @@ impl Device {
 
     async fn populate_broker_url(&mut self) -> Result<(), PairingError> {
         let broker_url = pairing::fetch_broker_url(&self).await?;
-        self.broker_url = Some(broker_url);
+        let parsed_broker_url = Url::parse(&broker_url)?;
+        self.broker_url = Some(parsed_broker_url);
         Ok(())
     }
 }
