@@ -50,20 +50,20 @@ pub enum ConnectionError {
 impl DeviceBuilder {
     pub fn new(realm: &str, device_id: &str) -> Self {
         DeviceBuilder {
-            realm: String::from(realm),
-            device_id: String::from(device_id),
+            realm: realm.to_owned(),
+            device_id: device_id.to_owned(),
             credentials_secret: None,
             pairing_url: None,
         }
     }
 
     pub fn credentials_secret(&mut self, credentials_secret: &str) -> &mut Self {
-        self.credentials_secret = Some(String::from(credentials_secret));
+        self.credentials_secret = Some(credentials_secret.to_owned());
         self
     }
 
     pub fn pairing_url(&mut self, pairing_url: &str) -> &mut Self {
-        self.pairing_url = Some(String::from(pairing_url));
+        self.pairing_url = Some(pairing_url.to_owned());
         self
     }
 
@@ -87,10 +87,10 @@ impl DeviceBuilder {
         let csr = String::from_utf8(csr_bytes).unwrap();
 
         let device = Device {
-            realm: String::from(&self.realm),
-            device_id: String::from(&self.device_id),
-            credentials_secret: String::from(credentials_secret),
-            pairing_url: String::from(pairing_url),
+            realm: self.realm.to_owned(),
+            device_id: self.device_id.to_owned(),
+            credentials_secret: credentials_secret.to_owned(),
+            pairing_url: pairing_url.to_owned(),
             private_key,
             csr,
             certificate_pem: None,
@@ -158,7 +158,7 @@ impl Device {
         tls_client_config.root_store =
             rustls_native_certs::load_native_certs().expect("could not load platform certs");
         tls_client_config
-            .set_single_client_cert(certificate_pem.clone(), private_key.clone())
+            .set_single_client_cert(certificate_pem.to_owned(), private_key.to_owned())
             .expect("cannot setup client auth");
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);

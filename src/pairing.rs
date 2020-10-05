@@ -92,7 +92,7 @@ pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> 
             if let ResponseContents::AstarteMqttV1Credentials { client_crt } =
                 response.json::<ApiResponse>().await?.data
             {
-                Ok(String::from(client_crt))
+                Ok(client_crt)
             } else {
                 Err(PairingError::UnexpectedResponse)
             }
@@ -141,7 +141,7 @@ pub async fn fetch_broker_url(device: &Device) -> Result<String, PairingError> {
                 ..
             } = response.json::<ApiResponse>().await?.data
             {
-                Ok(String::from(broker_url))
+                Ok(broker_url)
             } else {
                 Err(PairingError::UnexpectedResponse)
             }
