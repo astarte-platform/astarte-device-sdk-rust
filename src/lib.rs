@@ -1,4 +1,5 @@
 mod crypto;
+mod interface;
 mod pairing;
 
 use crypto::Bundle;
