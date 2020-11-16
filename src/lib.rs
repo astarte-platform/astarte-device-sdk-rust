@@ -7,10 +7,15 @@ use openssl::error::ErrorStack;
 use pairing::PairingError;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
+use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use url::Url;
+
+use interface::traits::Interface as InterfaceTrait;
+pub use interface::Interface;
 
 pub struct Device {
     realm: String,
@@ -23,6 +28,7 @@ pub struct Device {
     broker_url: Option<Url>,
     client: Option<AsyncClient>,
     eventloop_task: Option<JoinHandle<()>>,
+    interfaces: HashMap<String, Interface>,
 }
 
 pub struct DeviceBuilder {
@@ -30,6 +36,7 @@ pub struct DeviceBuilder {
     device_id: String,
     credentials_secret: Option<String>,
     pairing_url: Option<String>,
+    interfaces: HashMap<String, Interface>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -40,6 +47,8 @@ pub enum DeviceBuilderError {
     MissingCredentialsSecret,
     #[error("device must have a pairing URL")]
     MissingPairingUrl,
+    #[error("device must have at least an interface")]
+    MissingInterfaces,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -55,6 +64,7 @@ impl DeviceBuilder {
             device_id: device_id.to_owned(),
             credentials_secret: None,
             pairing_url: None,
+            interfaces: HashMap::new(),
         }
     }
 
@@ -65,6 +75,14 @@ impl DeviceBuilder {
 
     pub fn pairing_url(&mut self, pairing_url: &str) -> &mut Self {
         self.pairing_url = Some(pairing_url.to_owned());
+        self
+    }
+
+    pub fn add_interface_file(&mut self, file_path: &Path) -> &mut Self {
+        // TODO: don't unwrap here. Builder returning Result?
+        let interface = Interface::from_file(file_path).unwrap();
+        let name = interface.name();
+        self.interfaces.insert(name.to_owned(), interface);
         self
     }
 
@@ -79,6 +97,10 @@ impl DeviceBuilder {
             .pairing_url
             .as_ref()
             .ok_or(DeviceBuilderError::MissingPairingUrl)?;
+
+        if self.interfaces.is_empty() {
+            return Err(DeviceBuilderError::MissingInterfaces);
+        }
 
         let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
 
@@ -98,6 +120,7 @@ impl DeviceBuilder {
             broker_url: None,
             client: None,
             eventloop_task: None,
+            interfaces: self.interfaces.to_owned(),
         };
 
         Ok(device)

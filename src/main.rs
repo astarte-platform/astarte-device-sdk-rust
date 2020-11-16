@@ -1,4 +1,5 @@
 use astarte_sdk::DeviceBuilder;
+use std::{fs, path::Path};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -26,11 +27,24 @@ async fn main() {
         pairing_url,
     } = Cli::from_args();
 
-    let mut d = DeviceBuilder::new(&realm, &device_id)
-        .credentials_secret(&credentials_secret)
-        .pairing_url(&pairing_url)
-        .build()
-        .unwrap();
+    let mut device_builder = DeviceBuilder::new(&realm, &device_id);
+    device_builder.credentials_secret(&credentials_secret);
+    device_builder.pairing_url(&pairing_url);
+    let interface_files = fs::read_dir(Path::new("/tmp/interfaces/")).unwrap();
+    interface_files
+        .filter_map(Result::ok)
+        .filter(|f| {
+            if let Some(ext) = f.path().extension() {
+                ext == "json"
+            } else {
+                false
+            }
+        })
+        .for_each(|f| {
+            device_builder.add_interface_file(&f.path());
+        });
+
+    let mut d = device_builder.build().unwrap();
 
     if let Err(e) = d.connect().await {
         println!("Error: {:?}", e);
