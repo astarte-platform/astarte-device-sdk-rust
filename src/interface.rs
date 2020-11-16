@@ -1,46 +1,85 @@
-use serde::{Deserialize, Serialize};
+pub(crate) mod traits;
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Interface {
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::path::Path;
+
+use traits::Interface as InterfaceTrait;
+use traits::Mapping as MappingTrait;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("cannot parse interface JSON")]
+    ParseError(#[from] serde_json::Error),
+    #[error("cannot read interface file")]
+    IoError(#[from] io::Error),
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum Interface {
+    Datastream(DatastreamInterface),
+    Properties(PropertiesInterface),
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct BaseInterface {
     interface_name: String,
     version_major: i32,
     version_minor: i32,
-    #[serde(rename = "type")]
-    interface_type: InterfaceType,
     ownership: Ownership,
-    #[serde(default, skip_serializing_if = "is_default")]
-    aggregation: Aggregation,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
-    mappings: Vec<Mapping>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct DatastreamInterface {
+    #[serde(flatten)]
+    base: BaseInterface,
+    #[serde(default, skip_serializing_if = "is_default")]
+    aggregation: Aggregation,
+    mappings: Vec<DatastreamMapping>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct PropertiesInterface {
+    #[serde(flatten)]
+    base: BaseInterface,
+    mappings: Vec<PropertiesMapping>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "snake_case")]
-enum InterfaceType {
+pub enum InterfaceType {
     Datastream,
     Properties,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-enum Ownership {
+pub enum Ownership {
     Device,
     Server,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-enum Aggregation {
+pub enum Aggregation {
     Individual,
     Object,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct Mapping {
-    // Common fields
+pub enum Mapping<'a> {
+    Datastream(&'a DatastreamMapping),
+    Properties(&'a PropertiesMapping),
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub(crate) struct BaseMapping {
     endpoint: String,
     #[serde(rename = "type")]
     mapping_type: MappingType,
@@ -48,7 +87,12 @@ struct Mapping {
     description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
-    // Datastream only
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct DatastreamMapping {
+    #[serde(flatten)]
+    base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
     reliability: Reliability,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -57,18 +101,28 @@ struct Mapping {
     explicit_timestamp: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     expiry: Option<u32>,
+    // TODO: merge database_retention_policy and database_retention_ttl in a
+    // single type (adjacently tagged enum works ok except when there's no
+    // database_retention_policy key in JSON)
     #[serde(default, skip_serializing_if = "is_default")]
     database_retention_policy: DatabaseRetentionPolicy,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     database_retention_ttl: Option<u32>,
-    // Properties only
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct PropertiesMapping {
+    #[serde(flatten)]
+    base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
     allow_unset: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+// TODO: investigate pro/cons of tagged enum like
+// Scalar(InnerType)/Array(InnerType)
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
-enum MappingType {
+pub enum MappingType {
     Double,
     Integer,
     Boolean,
@@ -85,50 +139,50 @@ enum MappingType {
     DateTimeArray,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-enum Reliability {
+pub enum Reliability {
     Unreliable,
     Guaranteed,
     Unique,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-enum Retention {
+pub enum Retention {
     Discard,
     Volatile,
     Stored,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-enum DatabaseRetentionPolicy {
-    UseTtl,
+pub enum DatabaseRetentionPolicy {
     NoTtl,
+    UseTtl,
 }
 
 impl Default for Aggregation {
     fn default() -> Self {
-        Aggregation::Individual
+        Self::Individual
     }
 }
 
 impl Default for Reliability {
     fn default() -> Self {
-        Reliability::Unreliable
+        Self::Unreliable
     }
 }
 
 impl Default for Retention {
     fn default() -> Self {
-        Retention::Discard
+        Self::Discard
     }
 }
 
 impl Default for DatabaseRetentionPolicy {
     fn default() -> Self {
-        DatabaseRetentionPolicy::NoTtl
+        Self::NoTtl
     }
 }
 
@@ -136,11 +190,87 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
 
+impl Interface {
+    pub fn from_file(path: &Path) -> Result<Self, Error> {
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let interface = serde_json::from_reader(reader)?;
+        Ok(interface)
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, Error> {
+        let interface = serde_json::from_str(s)?;
+        Ok(interface)
+    }
+
+    pub fn aggregation(&self) -> Aggregation {
+        match &self {
+            Self::Datastream(d) => d.aggregation,
+            // Properties are always individual
+            Self::Properties(_) => Aggregation::Individual,
+        }
+    }
+
+    pub fn mapping(&self, path: &str) -> Option<Mapping> {
+        match &self {
+            Self::Datastream(d) => {
+                for mapping in d.mappings.iter() {
+                    if mapping.is_compatible(path) {
+                        return Some(Mapping::Datastream(mapping));
+                    }
+                }
+            }
+            // Properties are always individual
+            Self::Properties(p) => {
+                for mapping in p.mappings.iter() {
+                    if mapping.is_compatible(path) {
+                        return Some(Mapping::Properties(mapping));
+                    }
+                }
+            }
+        }
+
+        return None;
+    }
+}
+
+impl InterfaceTrait for Interface {
+    fn base_interface(&self) -> &BaseInterface {
+        match &self {
+            Self::Datastream(d) => &d.base,
+            Self::Properties(p) => &p.base,
+        }
+    }
+}
+
+impl MappingTrait for Mapping<'_> {
+    fn base_mapping(&self) -> &BaseMapping {
+        match &self {
+            Self::Datastream(d) => &d.base,
+            Self::Properties(d) => &d.base,
+        }
+    }
+}
+
+impl MappingTrait for DatastreamMapping {
+    fn base_mapping(&self) -> &BaseMapping {
+        &self.base
+    }
+}
+
+impl MappingTrait for PropertiesMapping {
+    fn base_mapping(&self) -> &BaseMapping {
+        &self.base
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::traits::Interface as InterfaceTrait;
+    use super::traits::Mapping as MappingTrait;
     use super::{
-        Aggregation, DatabaseRetentionPolicy, Interface, InterfaceType, Mapping, MappingType,
-        Ownership, Reliability, Retention,
+        Aggregation, BaseInterface, BaseMapping, DatabaseRetentionPolicy, DatastreamInterface,
+        DatastreamMapping, Interface, MappingType, Ownership, Reliability, Retention,
     };
 
     #[test]
@@ -152,15 +282,15 @@ mod tests {
             \"version_minor\": 0,
             \"type\": \"datastream\",
             \"ownership\": \"device\",
-            \"description\": \"Generic sensors sampled data.\",
-            \"doc\": \"Values allows generic sensors to stream samples. It is usually used in combination with AvailableSensors, which makes API client aware of what sensors and what unit of measure they are reporting. sensor_id represents an unique identifier for an individual sensor, and should match sensor_id in AvailableSensors when used in combination.\",
+            \"description\": \"Interface description\",
+            \"doc\": \"Interface doc\",
             \"mappings\": [
                 {
                     \"endpoint\": \"/%{sensor_id}/value\",
                     \"type\": \"double\",
                     \"explicit_timestamp\": true,
-                    \"description\": \"Sampled real value.\",
-                    \"doc\": \"Datastream of sampled real values.\"
+                    \"description\": \"Mapping description\",
+                    \"doc\": \"Mapping doc\"
                 }
             ]
         }";
@@ -168,45 +298,70 @@ mod tests {
         let endpoint = "/%{sensor_id}/value".to_owned();
         let mapping_type = MappingType::Double;
         let explicit_timestamp = true;
-        let description = Some("Sampled real value.".to_owned());
-        let doc = Some("Datastream of sampled real values.".to_owned());
+        let description = Some("Mapping description".to_owned());
+        let doc = Some("Mapping doc".to_owned());
 
-        let mapping = Mapping {
+        let base_mapping = BaseMapping {
             endpoint,
             mapping_type,
-            explicit_timestamp,
             description,
             doc,
+        };
+
+        let mapping = DatastreamMapping {
+            base: base_mapping,
+            explicit_timestamp,
             database_retention_policy: DatabaseRetentionPolicy::NoTtl,
             database_retention_ttl: None,
             expiry: None,
             retention: Retention::Discard,
             reliability: Reliability::Unreliable,
-            allow_unset: false,
         };
+
+        assert_eq!(mapping.is_compatible("/foo/value"), true);
+        assert_eq!(mapping.is_compatible("/bar/value"), true);
+        assert_eq!(mapping.is_compatible("/value"), false);
+        assert_eq!(mapping.is_compatible("/foo/bar/value"), false);
+        assert_eq!(mapping.endpoint(), "/%{sensor_id}/value");
+        assert_eq!(mapping.mapping_type(), MappingType::Double);
+        assert_eq!(mapping.description(), Some("Mapping description"));
+        assert_eq!(mapping.doc(), Some("Mapping doc"));
 
         let interface_name = "org.astarte-platform.genericsensors.Values".to_owned();
         let version_major = 1;
         let version_minor = 0;
-        let interface_type = InterfaceType::Datastream;
         let ownership = Ownership::Device;
-        let description = Some("Generic sensors sampled data.".to_owned());
-        let doc = Some("Values allows generic sensors to stream samples. It is usually used in combination with AvailableSensors, which makes API client aware of what sensors and what unit of measure they are reporting. sensor_id represents an unique identifier for an individual sensor, and should match sensor_id in AvailableSensors when used in combination.".to_owned());
+        let description = Some("Interface description".to_owned());
+        let doc = Some("Interface doc".to_owned());
 
-        let interface = Interface {
+        let base_interface = BaseInterface {
             interface_name,
             version_major,
             version_minor,
-            interface_type,
             ownership,
             description,
             doc,
+        };
+
+        let datastream_interface = DatastreamInterface {
+            base: base_interface,
             aggregation: Aggregation::Individual,
             mappings: vec![mapping],
         };
 
-        let deser_interface = serde_json::from_str(interface_json).unwrap();
+        let interface = Interface::Datastream(datastream_interface);
 
-        assert_eq!(interface, deser_interface)
+        let deser_interface = Interface::from_str(interface_json).unwrap();
+
+        assert_eq!(interface, deser_interface);
+
+        assert_eq!(
+            interface.name(),
+            "org.astarte-platform.genericsensors.Values"
+        );
+        assert_eq!(interface.version(), (1, 0));
+        assert_eq!(interface.ownership(), Ownership::Device);
+        assert_eq!(interface.description(), Some("Interface description"));
+        assert_eq!(interface.doc(), Some("Interface doc"));
     }
 }
