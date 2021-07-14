@@ -16,6 +16,9 @@ struct Cli {
     // Pairing URL
     #[structopt(short, long)]
     pairing_url: String,
+    // Interfaces directory
+    #[structopt(short, long)]
+    interfaces_directory: String,
 }
 
 #[tokio::main]
@@ -25,12 +28,13 @@ async fn main() {
         device_id,
         credentials_secret,
         pairing_url,
+        interfaces_directory,
     } = Cli::from_args();
 
     let mut device_builder = DeviceBuilder::new(&realm, &device_id);
     device_builder.credentials_secret(&credentials_secret);
     device_builder.pairing_url(&pairing_url);
-    let interface_files = fs::read_dir(Path::new("/tmp/interfaces/")).unwrap();
+    let interface_files = fs::read_dir(Path::new(&interfaces_directory)).unwrap();
     interface_files
         .filter_map(Result::ok)
         .filter(|f| {
