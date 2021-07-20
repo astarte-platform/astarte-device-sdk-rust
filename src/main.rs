@@ -55,5 +55,7 @@ async fn main() {
         return;
     }
 
-    loop {}
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
 }
