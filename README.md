@@ -17,7 +17,7 @@ cargo build
 After building, you can run the example with
 
 ```
-./target/debug/astarte_sdk \
+cargo run --example simple -- \
     --credentials-secret <credentials-secret>
     --device-id <device-id>
     --pairing-url <pairing-url>
