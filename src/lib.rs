@@ -5,12 +5,11 @@ mod pairing;
 use crypto::Bundle;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
-use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions};
+use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -28,7 +27,7 @@ pub struct Device {
     broker_url: Option<Url>,
     client: Option<AsyncClient>,
     eventloop_task: Option<JoinHandle<()>>,
-    interfaces: HashMap<String, Interface>,
+    _interfaces: HashMap<String, Interface>,
 }
 
 pub struct DeviceBuilder {
@@ -120,7 +119,7 @@ impl DeviceBuilder {
             broker_url: None,
             client: None,
             eventloop_task: None,
-            interfaces: self.interfaces.to_owned(),
+            _interfaces: self.interfaces.to_owned(),
         };
 
         Ok(device)
@@ -187,8 +186,9 @@ impl Device {
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
         mqtt_opts
-            .set_keep_alive(30)
-            .set_tls_client_config(Arc::new(tls_client_config));
+            .set_keep_alive(30);
+
+        mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
 
         mqtt_opts
     }
