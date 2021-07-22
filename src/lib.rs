@@ -3,6 +3,7 @@ mod interface;
 mod pairing;
 
 use crypto::Bundle;
+use log::debug;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
@@ -10,12 +11,14 @@ use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use url::Url;
 
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
+#[derive(Clone)]
 pub struct Device {
     realm: String,
     device_id: String,
@@ -26,7 +29,7 @@ pub struct Device {
     certificate_pem: Option<Vec<Certificate>>,
     broker_url: Option<Url>,
     client: Option<AsyncClient>,
-    eventloop_task: Option<JoinHandle<()>>,
+    eventloop_task: Arc<Option<JoinHandle<()>>>,
     interfaces: HashMap<String, Interface>,
 }
 
@@ -81,9 +84,29 @@ impl DeviceBuilder {
         // TODO: don't unwrap here. Builder returning Result?
         let interface = Interface::from_file(file_path).unwrap();
         let name = interface.name();
+        debug!("Added interface {}", name);
         self.interfaces.insert(name.to_owned(), interface);
         self
     }
+
+    pub fn add_interface_files(&mut self, interfaces_directory: &str) -> &mut Self {
+        let interface_files = std::fs::read_dir(Path::new(interfaces_directory)).unwrap();
+        interface_files
+            .filter_map(Result::ok)
+            .filter(|f| {
+                if let Some(ext) = f.path().extension() {
+                    ext == "json"
+                } else {
+                    false
+                }
+            })
+            .for_each(|f| {
+                self.add_interface_file(&f.path());
+            });
+
+        self
+    }
+
 
     pub fn build(&self) -> Result<Device, DeviceBuilderError> {
         let cn = format!("{}/{}", self.realm, self.device_id);
@@ -118,7 +141,7 @@ impl DeviceBuilder {
             certificate_pem: None,
             broker_url: None,
             client: None,
-            eventloop_task: None,
+            eventloop_task: Arc::new(None),
             interfaces: self.interfaces.to_owned(),
         };
 
@@ -135,19 +158,85 @@ impl Device {
         // TODO: make cap configurable
         let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
 
+        self.client = Some(client);
+
+        let device2 = self.clone();
+
         let eventloop_task = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await.unwrap() {
-                    Event::Incoming(i) => println!("Incoming = {:?}", i),
-                    Event::Outgoing(o) => println!("Outgoing = {:?}", o),
+                    Event::Incoming(i) => {
+                        debug!("Incoming = {:?}", i);
+
+                        match i {
+                            rumqttc::Packet::ConnAck(p) => {
+                                if p.session_present == false {
+                                    device2.send_introspection().await;
+                                    //device2.send_emptycache().await;
+                                }
+                            },
+                            _ => {
+
+                            }
+                        }
+                },
+                    Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
                 }
             }
         });
 
-        self.eventloop_task = Some(eventloop_task);
-        self.client = Some(client);
+        self.eventloop_task = Arc::new(Some(eventloop_task));
 
         Ok(())
+    }
+
+    fn client_id(&self) -> String {
+        format!("{}/{}", self.realm, self.device_id)
+    }
+
+    async fn send_emptycache(&self){
+        if let Some(client) = self.client.clone() {
+            let url =  self.client_id() + "/control/emptyCache";
+            debug!("sending emptyCache to {}", url);
+
+            let err = client.publish(url, rumqttc::QoS::ExactlyOnce, false, "1").await;
+            debug!("emptyCache = {:?}", err);
+        }
+    }
+
+    async fn send_introspection(& self){
+        let mut introspection: String = self.interfaces.iter().map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1)).collect();
+        introspection.pop(); // remove last ;
+        let introspection = introspection; // drop mutability
+
+        debug!("introspection string = {}", introspection);
+
+        if let Some(client) = self.client.clone() {
+            let err = client.publish(self.client_id(), rumqttc::QoS::ExactlyOnce, false, introspection.clone()).await;
+            debug!("introspection = {:?}", err);
+
+
+
+        } else {
+            panic!("Ma sono senza client!")
+        }
+
+
+    }
+
+    pub async fn publish <V> (&self, interface: &str, payload: V ) -> Result<(), rumqttc::ClientError>
+    where
+        V: Into<Vec<u8>>,
+    {
+        let pay: Vec<u8> = payload.into();
+        debug!("publishing {} {:?}", interface, pay  );
+
+        if let Some(client) = self.client.clone() {
+
+            return client.publish(self.client_id() + interface, rumqttc::QoS::ExactlyOnce, false, pay).await;
+        }else {
+            panic!("Cosa ci faccio qua");
+        }
     }
 
     async fn ensure_ready_for_connection(&mut self) -> Result<(), ConnectionError> {
