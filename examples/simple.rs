@@ -1,4 +1,4 @@
-use astarte_sdk::DeviceBuilder;
+use astarte_sdk::AstarteOptions;
 use std::{fs, path::Path};
 use structopt::StructOpt;
 
@@ -33,19 +33,26 @@ async fn main() {
         interfaces_directory,
     } = Cli::from_args();
 
-    let mut device_builder = DeviceBuilder::new(&realm, &device_id);
-    device_builder.credentials_secret(&credentials_secret);
-    device_builder.pairing_url(&pairing_url);
-    device_builder.add_interface_files(&interfaces_directory);
+    let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+    sdk_options.add_interface_files(&interfaces_directory);
 
-    let mut device = device_builder.build().unwrap();
+    let mut device = sdk_options.build().await.unwrap();
 
-    device.connect().await.unwrap();
+    //device.connect().await.unwrap();
+
+
+
+    let w = device.clone();
+    tokio::task::spawn(async move {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            w.publish("/com.test/data",[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x01, 0x00]).await.unwrap();
+        }
+    });
 
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        //d.publish("/test2/bottone",[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x01, 0x00]).await.unwrap();
-        device.publish("/com.test/data",[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x01, 0x00]).await.unwrap();
-
+        let data = device.poll().await;
     }
+
+
 }

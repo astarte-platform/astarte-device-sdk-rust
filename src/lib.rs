@@ -6,12 +6,13 @@ use crypto::Bundle;
 use log::debug;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
+use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc};
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -19,25 +20,25 @@ use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
 #[derive(Clone)]
-pub struct Device {
+pub struct AstarteSdk {
     realm: String,
     device_id: String,
     credentials_secret: String,
     pairing_url: String,
     private_key: PrivateKey,
     csr: String,
-    certificate_pem: Option<Vec<Certificate>>,
-    broker_url: Option<Url>,
-    client: Option<AsyncClient>,
-    eventloop_task: Arc<Option<JoinHandle<()>>>,
+    certificate_pem: Vec<Certificate>,
+    broker_url: Url,
+    client: AsyncClient,
+    eventloop: Arc<tokio::sync::Mutex<Option<EventLoop>>>,
     interfaces: HashMap<String, Interface>,
 }
 
-pub struct DeviceBuilder {
+pub struct AstarteOptions {
     realm: String,
     device_id: String,
-    credentials_secret: Option<String>,
-    pairing_url: Option<String>,
+    credentials_secret: String,
+    pairing_url: String,
     interfaces: HashMap<String, Interface>,
 }
 
@@ -59,25 +60,16 @@ pub enum ConnectionError {
     Credentials(#[from] PairingError),
 }
 
-impl DeviceBuilder {
-    pub fn new(realm: &str, device_id: &str) -> Self {
-        DeviceBuilder {
+impl AstarteOptions {
+    pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
+
+        AstarteOptions {
             realm: realm.to_owned(),
             device_id: device_id.to_owned(),
-            credentials_secret: None,
-            pairing_url: None,
+            credentials_secret: credentials_secret.to_owned(),
+            pairing_url: pairing_url.to_owned(),
             interfaces: HashMap::new(),
         }
-    }
-
-    pub fn credentials_secret(&mut self, credentials_secret: &str) -> &mut Self {
-        self.credentials_secret = Some(credentials_secret.to_owned());
-        self
-    }
-
-    pub fn pairing_url(&mut self, pairing_url: &str) -> &mut Self {
-        self.pairing_url = Some(pairing_url.to_owned());
-        self
     }
 
     pub fn add_interface_file(&mut self, file_path: &Path) -> &mut Self {
@@ -108,158 +100,26 @@ impl DeviceBuilder {
     }
 
 
-    pub fn build(&self) -> Result<Device, DeviceBuilderError> {
-        let cn = format!("{}/{}", self.realm, self.device_id);
-
-        let credentials_secret = self
-            .credentials_secret
-            .as_ref()
-            .ok_or(DeviceBuilderError::MissingCredentialsSecret)?;
-        let pairing_url = self
-            .pairing_url
-            .as_ref()
-            .ok_or(DeviceBuilderError::MissingPairingUrl)?;
-
-        if self.interfaces.is_empty() {
-            return Err(DeviceBuilderError::MissingInterfaces);
-        }
-
-        let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
-
-        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
-            .unwrap()
-            .remove(0);
-        let csr = String::from_utf8(csr_bytes).unwrap();
-
-        let device = Device {
-            realm: self.realm.to_owned(),
-            device_id: self.device_id.to_owned(),
-            credentials_secret: credentials_secret.to_owned(),
-            pairing_url: pairing_url.to_owned(),
-            private_key,
-            csr,
-            certificate_pem: None,
-            broker_url: None,
-            client: None,
-            eventloop_task: Arc::new(None),
-            interfaces: self.interfaces.to_owned(),
-        };
-
-        Ok(device)
-    }
-}
-
-impl Device {
-    pub async fn connect(&mut self) -> Result<(), ConnectionError> {
-        self.ensure_ready_for_connection().await?;
-
-        let mqtt_opts = self.build_mqtt_opts();
-
-        // TODO: make cap configurable
-        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
-
-        self.client = Some(client);
-
-        let device2 = self.clone();
-
-        let eventloop_task = tokio::spawn(async move {
-            loop {
-                match eventloop.poll().await.unwrap() {
-                    Event::Incoming(i) => {
-                        debug!("Incoming = {:?}", i);
-
-                        match i {
-                            rumqttc::Packet::ConnAck(p) => {
-                                if p.session_present == false {
-                                    device2.send_introspection().await;
-                                    //device2.send_emptycache().await;
-                                }
-                            },
-                            _ => {
-
-                            }
-                        }
-                },
-                    Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
-                }
-            }
-        });
-
-        self.eventloop_task = Arc::new(Some(eventloop_task));
-
-        Ok(())
+    async fn populate_credentials(&mut self, csr: &str) -> Result<Vec<Certificate>, PairingError> {
+        let cert_pem = pairing::fetch_credentials(&self, csr).await?;
+        let mut cert_pem_bytes = cert_pem.as_bytes();
+        let certs = pemfile::certs(&mut cert_pem_bytes).unwrap();
+        Ok(certs)
     }
 
-    fn client_id(&self) -> String {
-        format!("{}/{}", self.realm, self.device_id)
+    async fn populate_broker_url(&mut self) -> Result<Url, PairingError> {
+        let broker_url = pairing::fetch_broker_url(&self).await?;
+        let parsed_broker_url = Url::parse(&broker_url)?;
+        Ok(parsed_broker_url)
     }
 
-    async fn send_emptycache(&self){
-        if let Some(client) = self.client.clone() {
-            let url =  self.client_id() + "/control/emptyCache";
-            debug!("sending emptyCache to {}", url);
-
-            let err = client.publish(url, rumqttc::QoS::ExactlyOnce, false, "1").await;
-            debug!("emptyCache = {:?}", err);
-        }
-    }
-
-    async fn send_introspection(& self){
-        let mut introspection: String = self.interfaces.iter().map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1)).collect();
-        introspection.pop(); // remove last ;
-        let introspection = introspection; // drop mutability
-
-        debug!("introspection string = {}", introspection);
-
-        if let Some(client) = self.client.clone() {
-            let err = client.publish(self.client_id(), rumqttc::QoS::ExactlyOnce, false, introspection.clone()).await;
-            debug!("introspection = {:?}", err);
-
-
-
-        } else {
-            panic!("Ma sono senza client!")
-        }
-
-
-    }
-
-    pub async fn publish <V> (&self, interface: &str, payload: V ) -> Result<(), rumqttc::ClientError>
-    where
-        V: Into<Vec<u8>>,
-    {
-        let pay: Vec<u8> = payload.into();
-        debug!("publishing {} {:?}", interface, pay  );
-
-        if let Some(client) = self.client.clone() {
-
-            return client.publish(self.client_id() + interface, rumqttc::QoS::ExactlyOnce, false, pay).await;
-        }else {
-            panic!("Cosa ci faccio qua");
-        }
-    }
-
-    async fn ensure_ready_for_connection(&mut self) -> Result<(), ConnectionError> {
-        if let None = self.certificate_pem {
-            self.populate_credentials().await?;
-        }
-
-        if let None = self.broker_url {
-            self.populate_broker_url().await?;
-        }
-
-        Ok(())
-    }
-
-    fn build_mqtt_opts(&self) -> MqttOptions {
+    fn build_mqtt_opts(&self, certificate_pem: &Vec<Certificate>, broker_url: &Url, private_key: &PrivateKey) -> MqttOptions {
         // Now we're sure to have these since we populated them above,
         // so we can unwrap
-        let certificate_pem = self.certificate_pem.as_ref().unwrap();
-        let broker_url = self.broker_url.as_ref().unwrap();
-        let Device {
+
+        let AstarteOptions {
             realm,
             device_id,
-            private_key,
             ..
         } = self;
 
@@ -282,23 +142,160 @@ impl Device {
         mqtt_opts
     }
 
-    async fn populate_credentials(&mut self) -> Result<(), PairingError> {
-        let cert_pem = pairing::fetch_credentials(&self).await?;
-        let mut cert_pem_bytes = cert_pem.as_bytes();
-        let certs = pemfile::certs(&mut cert_pem_bytes).unwrap();
-        self.certificate_pem = Some(certs);
-        Ok(())
-    }
+    pub async fn build(&mut self) -> Result<AstarteSdk, DeviceBuilderError> {
+        let cn = format!("{}/{}", self.realm, self.device_id);
 
-    async fn populate_broker_url(&mut self) -> Result<(), PairingError> {
-        let broker_url = pairing::fetch_broker_url(&self).await?;
-        let parsed_broker_url = Url::parse(&broker_url)?;
-        self.broker_url = Some(parsed_broker_url);
-        Ok(())
+
+        if self.interfaces.is_empty() {
+            return Err(DeviceBuilderError::MissingInterfaces);
+        }
+
+        let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
+
+        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+            .unwrap()
+            .remove(0);
+        let csr = String::from_utf8(csr_bytes).unwrap();
+
+
+        let certificate_pem = self.populate_credentials(&csr).await.unwrap();
+        let broker_url =  self.populate_broker_url().await.unwrap();
+
+        let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key);
+
+        // TODO: make cap configurable
+        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
+
+
+
+        let device = AstarteSdk {
+            realm: self.realm.to_owned(),
+            device_id: self.device_id.to_owned(),
+            credentials_secret: self.credentials_secret.to_owned(),
+            pairing_url: self.pairing_url.to_owned(),
+            private_key,
+            csr: csr.clone(),
+            certificate_pem,
+            broker_url,
+            client: client,
+            eventloop: Arc::new(tokio::sync::Mutex::new(Some(eventloop))),
+            interfaces: self.interfaces.to_owned(),
+        };
+
+        Ok(device)
     }
 }
 
-impl fmt::Debug for Device {
+/* 
+pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Device {
+    let cn = format!("{}/{}", realm, device_id);
+
+    let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn).unwrap();
+
+    let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+        .unwrap()
+        .remove(0);
+    let csr = String::from_utf8(csr_bytes).unwrap();
+
+    Device {
+        realm: realm.to_owned(),
+        device_id: device_id.to_owned(),
+        credentials_secret: credentials_secret.to_owned(),
+        pairing_url: pairing_url.to_owned(),
+        private_key,
+        csr,
+        certificate_pem: None,
+        broker_url: None,
+        client: None,
+        eventloop_task: Arc::new(None),
+        interfaces: HashMap::new(),
+    }
+}*/
+
+impl AstarteSdk {
+    pub async fn connect(&mut self) -> Result<(), ConnectionError> {
+        //self.ensure_ready_for_connection().await?;
+/* 
+        let mqtt_opts = self.build_mqtt_opts();
+
+        // TODO: make cap configurable
+        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
+
+        self.client = Some(client);
+
+
+
+        self.eventloop = Arc::new(tokio::sync::Mutex::new(Some(eventloop)));
+*/
+        Ok(())
+    }
+
+    pub async fn poll(&mut self ) {
+        if let Some(eventloop) = &mut *self.eventloop.lock().await {
+            match eventloop.poll().await.unwrap() {
+                Event::Incoming(i) => {
+                    debug!("Incoming = {:?}", i);
+
+                    match i {
+                        rumqttc::Packet::ConnAck(p) => {
+                            if p.session_present == false {
+                                self.send_introspection().await;
+                                //device2.send_emptycache().await;
+                            }
+                        },
+                        _ => {
+
+                        }
+                    }
+            },
+                Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
+            }
+        }
+    }
+
+    fn client_id(&self) -> String {
+        format!("{}/{}", self.realm, self.device_id)
+    }
+
+    async fn send_emptycache(&self){
+        let url =  self.client_id() + "/control/emptyCache";
+        debug!("sending emptyCache to {}", url);
+
+        let err = self.client.publish(url, rumqttc::QoS::ExactlyOnce, false, "1").await;
+        debug!("emptyCache = {:?}", err);
+    }
+
+    async fn send_introspection(& self){
+        let mut introspection: String = self.interfaces.iter().map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1)).collect();
+        introspection.pop(); // remove last ;
+        let introspection = introspection; // drop mutability
+
+        debug!("introspection string = {}", introspection);
+
+        let err = self.client.publish(self.client_id(), rumqttc::QoS::ExactlyOnce, false, introspection.clone()).await;
+        debug!("introspection = {:?}", err);
+
+
+    }
+
+    pub async fn publish <V> (&self, interface: &str, payload: V ) -> Result<(), rumqttc::ClientError>
+    where
+        V: Into<Vec<u8>>,
+    {
+        let pay: Vec<u8> = payload.into();
+        debug!("publishing {} {:?}", interface, pay  );
+
+
+        return self.client.publish(self.client_id() + interface, rumqttc::QoS::ExactlyOnce, false, pay).await;
+
+    }
+
+
+
+
+}
+
+impl fmt::Debug for AstarteSdk {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Device")
             .field("realm", &self.realm)

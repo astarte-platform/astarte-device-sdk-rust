@@ -1,4 +1,4 @@
-use crate::Device;
+use crate::{AstarteOptions, AstarteSdk};
 use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
@@ -50,13 +50,12 @@ pub enum PairingError {
     Crypto(#[from] ErrorStack),
 }
 
-pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
-    let Device {
+pub async fn fetch_credentials(device: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
+    let AstarteOptions {
         realm,
         device_id,
         credentials_secret,
         pairing_url,
-        csr,
         ..
     } = device;
 
@@ -105,8 +104,8 @@ pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> 
     }
 }
 
-pub async fn fetch_broker_url(device: &Device) -> Result<String, PairingError> {
-    let Device {
+pub async fn fetch_broker_url(device: &AstarteOptions) -> Result<String, PairingError> {
+    let AstarteOptions {
         realm,
         device_id,
         credentials_secret,
