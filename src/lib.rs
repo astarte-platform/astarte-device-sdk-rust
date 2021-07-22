@@ -33,6 +33,13 @@ pub struct Device {
     interfaces: HashMap<String, Interface>,
 }
 
+pub struct DeviceBuilder {
+    realm: String,
+    device_id: String,
+    credentials_secret: Option<String>,
+    pairing_url: Option<String>,
+    interfaces: HashMap<String, Interface>,
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum DeviceBuilderError {
@@ -52,32 +59,25 @@ pub enum ConnectionError {
     Credentials(#[from] PairingError),
 }
 
-
-impl Device {
-
-    pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Device {
-        let cn = format!("{}/{}", realm, device_id);
-
-        let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn).unwrap();
-
-        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
-            .unwrap()
-            .remove(0);
-        let csr = String::from_utf8(csr_bytes).unwrap();
-
-        Device {
+impl DeviceBuilder {
+    pub fn new(realm: &str, device_id: &str) -> Self {
+        DeviceBuilder {
             realm: realm.to_owned(),
             device_id: device_id.to_owned(),
-            credentials_secret: credentials_secret.to_owned(),
-            pairing_url: pairing_url.to_owned(),
-            private_key,
-            csr,
-            certificate_pem: None,
-            broker_url: None,
-            client: None,
-            eventloop_task: Arc::new(None),
+            credentials_secret: None,
+            pairing_url: None,
             interfaces: HashMap::new(),
         }
+    }
+
+    pub fn credentials_secret(&mut self, credentials_secret: &str) -> &mut Self {
+        self.credentials_secret = Some(credentials_secret.to_owned());
+        self
+    }
+
+    pub fn pairing_url(&mut self, pairing_url: &str) -> &mut Self {
+        self.pairing_url = Some(pairing_url.to_owned());
+        self
     }
 
     pub fn add_interface_file(&mut self, file_path: &Path) -> &mut Self {
@@ -107,6 +107,49 @@ impl Device {
         self
     }
 
+
+    pub fn build(&self) -> Result<Device, DeviceBuilderError> {
+        let cn = format!("{}/{}", self.realm, self.device_id);
+
+        let credentials_secret = self
+            .credentials_secret
+            .as_ref()
+            .ok_or(DeviceBuilderError::MissingCredentialsSecret)?;
+        let pairing_url = self
+            .pairing_url
+            .as_ref()
+            .ok_or(DeviceBuilderError::MissingPairingUrl)?;
+
+        if self.interfaces.is_empty() {
+            return Err(DeviceBuilderError::MissingInterfaces);
+        }
+
+        let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
+
+        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+            .unwrap()
+            .remove(0);
+        let csr = String::from_utf8(csr_bytes).unwrap();
+
+        let device = Device {
+            realm: self.realm.to_owned(),
+            device_id: self.device_id.to_owned(),
+            credentials_secret: credentials_secret.to_owned(),
+            pairing_url: pairing_url.to_owned(),
+            private_key,
+            csr,
+            certificate_pem: None,
+            broker_url: None,
+            client: None,
+            eventloop_task: Arc::new(None),
+            interfaces: self.interfaces.to_owned(),
+        };
+
+        Ok(device)
+    }
+}
+
+impl Device {
     pub async fn connect(&mut self) -> Result<(), ConnectionError> {
         self.ensure_ready_for_connection().await?;
 
