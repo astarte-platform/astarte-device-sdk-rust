@@ -29,7 +29,7 @@ pub struct AstarteSdk {
     certificate_pem: Vec<Certificate>,
     broker_url: Url,
     client: AsyncClient,
-    eventloop: Arc<tokio::sync::Mutex<Option<EventLoop>>>,
+    eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: HashMap<String, Interface>,
 }
 
@@ -172,7 +172,7 @@ impl AstarteOptions {
             certificate_pem,
             broker_url,
             client: client,
-            eventloop: Arc::new(tokio::sync::Mutex::new(Some(eventloop))),
+            eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: self.interfaces.to_owned(),
         };
 
@@ -184,25 +184,23 @@ impl AstarteOptions {
 impl AstarteSdk {
 
     pub async fn poll(&mut self ) {
-        if let Some(eventloop) = &mut *self.eventloop.lock().await {
-            match eventloop.poll().await.unwrap() {
-                Event::Incoming(i) => {
-                    debug!("Incoming = {:?}", i);
+        match self.eventloop.lock().await.poll().await.unwrap() {
+            Event::Incoming(i) => {
+                debug!("Incoming = {:?}", i);
 
-                    match i {
-                        rumqttc::Packet::ConnAck(p) => {
-                            if p.session_present == false {
-                                self.send_introspection().await;
+                match i {
+                    rumqttc::Packet::ConnAck(p) => {
+                        if p.session_present == false {
+                            self.send_introspection().await;
                                 //device2.send_emptycache().await;
-                            }
-                        },
-                        _ => {
-
                         }
+                    },
+                    _ => {
+
                     }
-            },
-                Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
-            }
+                }
+        },
+            Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
         }
     }
 
@@ -220,15 +218,13 @@ impl AstarteSdk {
 
     async fn send_introspection(& self){
         let mut introspection: String = self.interfaces.iter().map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1)).collect();
-        introspection.pop(); // remove last ;
+        introspection.pop(); // remove last ";"
         let introspection = introspection; // drop mutability
 
         debug!("introspection string = {}", introspection);
 
         let err = self.client.publish(self.client_id(), rumqttc::QoS::ExactlyOnce, false, introspection.clone()).await;
         debug!("introspection = {:?}", err);
-
-
     }
 
     pub async fn publish <V> (&self, interface: &str, payload: V ) -> Result<(), rumqttc::ClientError>
@@ -239,8 +235,7 @@ impl AstarteSdk {
         debug!("publishing {} {:?}", interface, pay  );
 
 
-        return self.client.publish(self.client_id() + interface, rumqttc::QoS::ExactlyOnce, false, pay).await;
-
+        self.client.publish(self.client_id() + interface, rumqttc::QoS::ExactlyOnce, false, pay).await
     }
 
 
