@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc};
-use tokio::task::JoinHandle;
 use url::Url;
 
 use interface::traits::Interface as InterfaceTrait;
@@ -99,7 +98,6 @@ impl AstarteOptions {
         self
     }
 
-
     async fn populate_credentials(&mut self, csr: &str) -> Result<Vec<Certificate>, PairingError> {
         let cert_pem = pairing::fetch_credentials(&self, csr).await?;
         let mut cert_pem_bytes = cert_pem.as_bytes();
@@ -114,9 +112,6 @@ impl AstarteOptions {
     }
 
     fn build_mqtt_opts(&self, certificate_pem: &Vec<Certificate>, broker_url: &Url, private_key: &PrivateKey) -> MqttOptions {
-        // Now we're sure to have these since we populated them above,
-        // so we can unwrap
-
         let AstarteOptions {
             realm,
             device_id,
@@ -164,8 +159,7 @@ impl AstarteOptions {
         let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key);
 
         // TODO: make cap configurable
-        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
-
+        let (client, eventloop) = AsyncClient::new(mqtt_opts, 50);
 
 
         let device = AstarteSdk {
@@ -186,49 +180,8 @@ impl AstarteOptions {
     }
 }
 
-/* 
-pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Device {
-    let cn = format!("{}/{}", realm, device_id);
-
-    let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn).unwrap();
-
-    let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
-        .unwrap()
-        .remove(0);
-    let csr = String::from_utf8(csr_bytes).unwrap();
-
-    Device {
-        realm: realm.to_owned(),
-        device_id: device_id.to_owned(),
-        credentials_secret: credentials_secret.to_owned(),
-        pairing_url: pairing_url.to_owned(),
-        private_key,
-        csr,
-        certificate_pem: None,
-        broker_url: None,
-        client: None,
-        eventloop_task: Arc::new(None),
-        interfaces: HashMap::new(),
-    }
-}*/
 
 impl AstarteSdk {
-    pub async fn connect(&mut self) -> Result<(), ConnectionError> {
-        //self.ensure_ready_for_connection().await?;
-/* 
-        let mqtt_opts = self.build_mqtt_opts();
-
-        // TODO: make cap configurable
-        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 50);
-
-        self.client = Some(client);
-
-
-
-        self.eventloop = Arc::new(tokio::sync::Mutex::new(Some(eventloop)));
-*/
-        Ok(())
-    }
 
     pub async fn poll(&mut self ) {
         if let Some(eventloop) = &mut *self.eventloop.lock().await {

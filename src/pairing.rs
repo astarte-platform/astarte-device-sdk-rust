@@ -1,4 +1,4 @@
-use crate::{AstarteOptions, AstarteSdk};
+use crate::{AstarteOptions};
 use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;

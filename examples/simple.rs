@@ -1,5 +1,4 @@
 use astarte_sdk::AstarteOptions;
-use std::{fs, path::Path};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -38,10 +37,6 @@ async fn main() {
 
     let mut device = sdk_options.build().await.unwrap();
 
-    //device.connect().await.unwrap();
-
-
-
     let w = device.clone();
     tokio::task::spawn(async move {
         loop {
@@ -51,7 +46,7 @@ async fn main() {
     });
 
     loop {
-        let data = device.poll().await;
+        let _data = device.poll().await;
     }
 
 
