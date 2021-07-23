@@ -232,6 +232,13 @@ impl Interface {
 
         return None;
     }
+
+    pub fn get_ownership(&self) -> Ownership{
+        match &self {
+            Interface::Datastream(iface) => iface.base.ownership,
+            Interface::Properties(iface) => iface.base.ownership
+        }
+    }
 }
 
 impl InterfaceTrait for Interface {

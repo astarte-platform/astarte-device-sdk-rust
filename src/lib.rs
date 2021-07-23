@@ -18,6 +18,8 @@ use url::Url;
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
+use crate::interface::Ownership;
+
 #[derive(Clone)]
 pub struct AstarteSdk {
     realm: String,
@@ -161,6 +163,14 @@ impl AstarteOptions {
         // TODO: make cap configurable
         let (client, eventloop) = AsyncClient::new(mqtt_opts, 50);
 
+        let ifaces = self.interfaces.clone().into_iter()
+            .filter(|i| i.1.get_ownership() == Ownership::Server );
+
+        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await.unwrap();
+
+        for i in ifaces {
+            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await.unwrap();
+        }
 
         let device = AstarteSdk {
             realm: self.realm.to_owned(),
