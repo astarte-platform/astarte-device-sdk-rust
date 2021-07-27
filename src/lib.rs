@@ -1,6 +1,7 @@
 mod crypto;
 mod interface;
 mod pairing;
+mod types;
 
 use crypto::Bundle;
 use log::debug;
@@ -10,10 +11,12 @@ use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
-use std::fmt;
+use std::{fmt, time};
+use std::mem::uninitialized;
 use std::path::Path;
 use std::sync::{Arc};
 use url::Url;
+use types::AstarteType;
 
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
@@ -139,6 +142,18 @@ impl AstarteOptions {
         mqtt_opts
     }
 
+
+    pub async fn subscribe(&mut self, client: &AsyncClient, cn: &String) {
+        let ifaces = self.interfaces.clone().into_iter()
+            .filter(|i| i.1.get_ownership() == Ownership::Server );
+
+        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await.unwrap();
+
+        for i in ifaces {
+            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await.unwrap();
+        }
+    }
+
     pub async fn build(&mut self) -> Result<AstarteSdk, DeviceBuilderError> {
         let cn = format!("{}/{}", self.realm, self.device_id);
 
@@ -163,14 +178,7 @@ impl AstarteOptions {
         // TODO: make cap configurable
         let (client, eventloop) = AsyncClient::new(mqtt_opts, 50);
 
-        let ifaces = self.interfaces.clone().into_iter()
-            .filter(|i| i.1.get_ownership() == Ownership::Server );
-
-        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await.unwrap();
-
-        for i in ifaces {
-            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await.unwrap();
-        }
+        self.subscribe(&client, &cn).await;
 
         let device = AstarteSdk {
             realm: self.realm.to_owned(),
@@ -189,6 +197,7 @@ impl AstarteOptions {
         Ok(device)
     }
 }
+
 
 
 impl AstarteSdk {
@@ -249,6 +258,37 @@ impl AstarteSdk {
     }
 
 
+    pub async fn send<D> (&self, interface_name: &str, interface_path: &str, data: D) -> Vec<u8>
+    where
+    D: Into<AstarteType>,{
+        self.send_timestamp(interface_name, interface_path, data, None).await
+    }
+
+    pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<u64>) -> Vec<u8>
+    where
+    D: Into<AstarteType>,{
+
+        if let Some(timestamp) = timestamp {
+
+        } else {
+            let doc = bson::doc! {
+                "v": data.into(),
+             };
+
+            let mut buf = Vec::new();
+            doc.to_writer(&mut buf).unwrap();
+
+            self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
+
+        }
+
+        vec![]
+    }
+
+
+    pub fn send_array(&mut self, data: AstarteType){
+        unimplemented!();
+    }
 
 
 }
@@ -267,3 +307,4 @@ impl fmt::Debug for AstarteSdk {
             .finish()
     }
 }
+
