@@ -40,15 +40,16 @@ async fn main() {
     let w = device.clone();
     tokio::task::spawn(async move {
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            std::thread::sleep(std::time::Duration::from_millis(5000));
             w.send("com.test", "/data", true).await;
             w.send("com.test", "/data_double", 5.5).await;
-
         }
     });
 
     loop {
-        let _data = device.poll().await;
+        if let Some(data) = device.poll().await {
+            println!("incoming data: {:?}", data);
+        }
     }
 
 

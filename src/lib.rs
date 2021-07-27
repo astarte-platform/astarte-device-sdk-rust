@@ -4,13 +4,14 @@ mod pairing;
 mod types;
 
 use crypto::Bundle;
-use log::debug;
+use log::{debug, trace};
 use openssl::error::ErrorStack;
 use pairing::PairingError;
 use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
+use std::iter::FromIterator;
 use std::{fmt};
 use std::path::Path;
 use std::sync::{Arc};
@@ -201,7 +202,7 @@ impl AstarteOptions {
 
 impl AstarteSdk {
 
-    pub async fn poll(&mut self ) {
+    pub async fn poll(&mut self ) -> Option<(String, AstarteType)> {
         match self.eventloop.lock().await.poll().await.unwrap() {
             Event::Incoming(i) => {
                 debug!("Incoming = {:?}", i);
@@ -210,9 +211,25 @@ impl AstarteSdk {
                     rumqttc::Packet::ConnAck(p) => {
                         if p.session_present == false {
                             self.send_introspection().await;
-                                //device2.send_emptycache().await;
+                            //self.send_emptycache().await;
                         }
                     },
+                    rumqttc::Packet::Publish(p) => {
+                        let topic = p.topic;
+                        let data = p.payload.to_vec();
+                        debug!("Incoming publish = {} {:?}", topic, data);
+
+                        if let Ok(deserialized) = bson::Document::from_reader(&mut  std::io::Cursor::new(data)) {
+                            trace!("{:?}", deserialized);
+                            if let Some(v) = deserialized.get("v") {
+                                if let Some(v) = AstarteType::from_bson(v.clone()){
+                                    return Some((topic, v));
+                                }
+                            }
+
+                        }
+
+                    }
                     _ => {
 
                     }
@@ -220,6 +237,8 @@ impl AstarteSdk {
         },
             Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
         }
+
+        None
     }
 
     fn client_id(&self) -> String {
