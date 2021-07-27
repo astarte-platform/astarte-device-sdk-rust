@@ -11,8 +11,7 @@ use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
-use std::{fmt, time};
-use std::mem::uninitialized;
+use std::{fmt};
 use std::path::Path;
 use std::sync::{Arc};
 use url::Url;
@@ -258,31 +257,31 @@ impl AstarteSdk {
     }
 
 
-    pub async fn send<D> (&self, interface_name: &str, interface_path: &str, data: D) -> Vec<u8>
+    pub async fn send<D> (&self, interface_name: &str, interface_path: &str, data: D)
     where
     D: Into<AstarteType>,{
         self.send_timestamp(interface_name, interface_path, data, None).await
     }
 
-    pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<u64>) -> Vec<u8>
+    pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>)
     where
     D: Into<AstarteType>,{
 
-        if let Some(timestamp) = timestamp {
-
-        } else {
-            let doc = bson::doc! {
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
                 "v": data.into(),
-             };
+                "t": timestamp
+             }
+        } else {
+            bson::doc! {
+                "v": data.into(),
+             }
+        };
 
-            let mut buf = Vec::new();
-            doc.to_writer(&mut buf).unwrap();
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf).unwrap();
 
-            self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
-
-        }
-
-        vec![]
+        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
     }
 
 

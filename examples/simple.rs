@@ -41,8 +41,9 @@ async fn main() {
     tokio::task::spawn(async move {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1000));
-            //w.publish("/com.test/data",[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x01, 0x00]).await.unwrap();
             w.send("com.test", "/data", true).await;
+            w.send("com.test", "/data_double", 5.5).await;
+
         }
     });
 

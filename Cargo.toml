@@ -21,7 +21,7 @@ tokio = { version = "1", features = ["full"] }
 url = "2.1"
 bson = "1.2.2"
 log = "0.4"
-
+chrono = "0.4.19"
 
 [dev-dependencies]
 structopt = "0.3"
