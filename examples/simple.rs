@@ -43,6 +43,13 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(5000));
             w.send("com.test", "/data", true).await;
             w.send("com.test", "/data_double", 5.5).await;
+
+
+            let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> = std::collections::HashMap::new();
+            lol.insert("bottone", true.into());
+            lol.insert("uptimeSeconds", 67.into());
+
+            w.send_object_timestamp("com.test4.object", "/", lol, None).await;
         }
     });
 

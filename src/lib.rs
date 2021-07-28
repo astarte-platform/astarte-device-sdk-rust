@@ -1,8 +1,9 @@
 mod crypto;
 mod interface;
 mod pairing;
-mod types;
+pub mod types;
 
+use bson::{Bson, to_document};
 use crypto::Bundle;
 use log::{debug, trace};
 use openssl::error::ErrorStack;
@@ -282,14 +283,39 @@ impl AstarteSdk {
         self.send_timestamp(interface_name, interface_path, data, None).await
     }
 
-    pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>)
-    where
-    D: Into<AstarteType>,{
+    pub fn serialize_object(data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Vec<u8> {
+
+        let data: HashMap<&str,Bson> = data.into_iter().map(|f| (f.0, f.1.into())).collect();
+
+        let doc = to_document(&data).unwrap();
 
         let doc = if let Some(timestamp) = timestamp {
             bson::doc! {
-                "v": data.into(),
-                "t": timestamp
+                "t": timestamp,
+                "v": doc
+             }
+        } else {
+            bson::doc! {
+                "v": doc,
+             }
+        };
+
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf).unwrap();
+        println!("{:#?}", doc);
+        println!("{:X?}", buf);
+
+        buf
+    }
+
+
+    pub fn serialize_individual<D>(data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Vec<u8>
+    where
+    D: Into<AstarteType> {
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
+                "t": timestamp,
+                "v": data.into()
              }
         } else {
             bson::doc! {
@@ -299,6 +325,24 @@ impl AstarteSdk {
 
         let mut buf = Vec::new();
         doc.to_writer(&mut buf).unwrap();
+        println!("{:X?}", buf);
+
+        buf
+    }
+
+    pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>)
+    where
+    D: Into<AstarteType> {
+
+        let buf = AstarteSdk::serialize_individual(data, timestamp);
+
+        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
+    }
+
+
+    pub async fn send_object_timestamp(&self, interface_name: &str, interface_path: &str, data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>){
+
+        let buf = AstarteSdk::serialize_object(data, timestamp);
 
         self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
     }
@@ -326,3 +370,46 @@ impl fmt::Debug for AstarteSdk {
     }
 }
 
+
+
+#[cfg(test)]
+mod test {
+    use std::{collections::HashMap, hash::Hash};
+
+    use chrono::{TimeZone, Utc};
+
+    use crate::{AstarteSdk, types::AstarteType};
+
+    // https://stackoverflow.com/questions/29504514/whats-the-best-way-to-compare-2-vectors-or-strings-element-by-element
+    fn do_vecs_match<T: PartialEq>(a: &Vec<T>, b: &Vec<T>) -> bool {
+        let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
+        matching == a.len() && matching == b.len()
+    }
+
+
+    #[test]
+    fn serialize_object() {
+
+        let mut lol: HashMap<&str, AstarteType> = HashMap::new();
+        lol.insert("temp", 25.3123.into());
+        lol.insert("hum", 67.112.into());
+
+        let buf = AstarteSdk::serialize_object(lol, None/*Some(Utc.timestamp(1537449422890,0))*/);
+
+        assert!(do_vecs_match(&buf, &vec![  0x28, 0x00, 0x00, 0x00, 0x03, 0x76, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01,
+            0x68, 0x75, 0x6d, 0x00, 0xba, 0x49, 0x0c, 0x02, 0x2b, 0xc7, 0x50, 0x40,
+            0x01, 0x74, 0x65, 0x6d, 0x70, 0x00, 0x72, 0x8a, 0x8e, 0xe4, 0xf2, 0x4f,
+            0x39, 0x40, 0x00, 0x00
+          ]));
+    }
+
+    #[test]
+    fn serialize_individual() {
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(false, None), &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]));
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, None), &vec![0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00]));
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, Some(Utc.timestamp(1537449422890,0))), 
+            &vec![0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00, 0x00, 0x01,
+                0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00]));
+
+    }
+}
