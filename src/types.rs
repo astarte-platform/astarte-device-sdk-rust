@@ -1,4 +1,4 @@
-use bson::{Bson};
+use bson::{Binary, Bson};
 
 #[derive(Debug, Clone)]
 pub enum AstarteType {
@@ -62,7 +62,7 @@ impl From<AstarteType> for Bson {
             AstarteType::Boolean(d) => Bson::Boolean(d),
             AstarteType::Int64(d) => Bson::Int64(d),
             AstarteType::String(d) => Bson::String(d),
-            AstarteType::Blob(d) => todo!(),
+            AstarteType::Blob(d) => Bson::Binary(Binary { bytes: d, subtype: bson::spec::BinarySubtype::Generic}),
             AstarteType::Datetime(d) => Bson::DateTime(d),
         }
     }
@@ -83,7 +83,7 @@ impl  AstarteType {
             Bson::Int32(d) => Some(AstarteType::Int32(d)),
             Bson::Int64(d) => Some(AstarteType::Int64(d)),
             Bson::Timestamp(_) => None,
-            Bson::Binary(d) => todo!(),
+            Bson::Binary(d) => Some(AstarteType::Blob(d.bytes)),
             Bson::ObjectId(_) => None,
             Bson::DateTime(d) => Some(AstarteType::Datetime(d)),
             Bson::Symbol(_) => None,

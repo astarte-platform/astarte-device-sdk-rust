@@ -12,7 +12,6 @@ use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
-use std::iter::FromIterator;
 use std::{fmt};
 use std::path::Path;
 use std::sync::{Arc};

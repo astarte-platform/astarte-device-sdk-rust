@@ -49,7 +49,7 @@ async fn main() {
             lol.insert("bottone", true.into());
             lol.insert("uptimeSeconds", 67.into());
 
-            w.send_object_timestamp("com.test4.object", "/", lol, None).await;
+            w.send_object_timestamp("com.test4.object", "/pop", lol, None).await;
         }
     });
 
