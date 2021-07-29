@@ -347,11 +347,6 @@ impl AstarteSdk {
     }
 
 
-    pub fn send_array(&mut self, data: AstarteType){
-        unimplemented!();
-    }
-
-
 }
 
 impl fmt::Debug for AstarteSdk {
@@ -373,7 +368,7 @@ impl fmt::Debug for AstarteSdk {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, hash::Hash};
+    use std::{collections::HashMap};
 
     use chrono::{TimeZone, Utc};
 

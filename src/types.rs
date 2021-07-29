@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 use bson::{Binary, Bson};
 
 #[derive(Debug, Clone)]
@@ -9,6 +11,13 @@ pub enum AstarteType {
     String(String),
     Blob(Vec<u8>),
     Datetime(chrono::DateTime<chrono::Utc>),
+
+    DoubleArray(Vec<f64>),
+    Int32Array(Vec<i32>),
+    BooleanArray(Vec<bool>),
+    Int64Array(Vec<i64>),
+    StringArray(Vec<String>),
+    BlobArray(Vec<Vec<u8>>)
 }
 
 
@@ -64,6 +73,12 @@ impl From<AstarteType> for Bson {
             AstarteType::String(d) => Bson::String(d),
             AstarteType::Blob(d) => Bson::Binary(Binary { bytes: d, subtype: bson::spec::BinarySubtype::Generic}),
             AstarteType::Datetime(d) => Bson::DateTime(d),
+            AstarteType::DoubleArray(d) => Bson::from_iter(d.iter()),
+            AstarteType::Int32Array(d) => Bson::from_iter(d.iter()),
+            AstarteType::BooleanArray(d) => Bson::from_iter(d.iter()),
+            AstarteType::Int64Array(d) => Bson::from_iter(d.iter()),
+            AstarteType::StringArray(d) => Bson::from_iter(d.iter()),
+            AstarteType::BlobArray(d) => Bson::from_iter(d.iter().map(|d| Binary { bytes: d.clone(), subtype: bson::spec::BinarySubtype::Generic})),
         }
     }
 }
