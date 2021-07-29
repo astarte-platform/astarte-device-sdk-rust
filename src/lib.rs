@@ -335,7 +335,7 @@ impl AstarteSdk {
 
         let buf = AstarteSdk::serialize_individual(data, timestamp);
 
-        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
+        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::AtLeastOnce, false, buf).await.unwrap();
     }
 
 

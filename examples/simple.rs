@@ -1,4 +1,5 @@
 use astarte_sdk::AstarteOptions;
+use chrono::TimeZone;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -41,8 +42,36 @@ async fn main() {
     tokio::task::spawn(async move {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(5000));
-            w.send("com.test", "/data", true).await;
-            w.send("com.test", "/data_double", 5.5).await;
+
+
+            w.send("com.test.everything", "/double", 4.5).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/integer", -4).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/boolean", true).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/longinteger", 45543543534_i64).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/string", "hello").await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/binaryblob", b"hello".to_vec()).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/datetime", chrono::Utc.timestamp(1627580808, 0)).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/doublearray", vec![1.2,3.4,5.6,7.8]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/integerarray", vec![1,3,5,7]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/booleanarray", vec![true,false,true,true]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/longintegerarray", vec![45543543534_i64,45543543535_i64,45543543536_i64]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/stringarray", vec!["hello".to_owned(),"world".to_owned()]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/binaryblobarray", vec![b"hello".to_vec(),b"world".to_vec()]).await;
+            std::thread::sleep(std::time::Duration::from_millis(5));
+
+
 
 
             let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> = std::collections::HashMap::new();

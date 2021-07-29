@@ -63,6 +63,55 @@ impl From<bool> for AstarteType {
     }
 }
 
+impl From<Vec<u8>> for AstarteType {
+    fn from(d: Vec<u8>) -> Self {
+        AstarteType::Blob(d)
+    }
+}
+
+impl From<chrono::DateTime<chrono::Utc>> for AstarteType {
+    fn from(d: chrono::DateTime<chrono::Utc>) -> Self {
+        AstarteType::Datetime(d)
+    }
+}
+
+impl From<Vec<f64>> for AstarteType {
+    fn from(d: Vec<f64>) -> Self {
+        AstarteType::DoubleArray(d)
+    }
+}
+
+impl From<Vec<i32>> for AstarteType {
+    fn from(d: Vec<i32>) -> Self {
+        AstarteType::Int32Array(d)
+    }
+}
+
+impl From<Vec<i64>> for AstarteType {
+    fn from(d: Vec<i64>) -> Self {
+        AstarteType::Int64Array(d)
+    }
+}
+
+impl From<Vec<bool>> for AstarteType {
+    fn from(d: Vec<bool>) -> Self {
+        AstarteType::BooleanArray(d)
+    }
+}
+
+impl From<Vec<String>> for AstarteType {
+    fn from(d: Vec<String>) -> Self {
+        AstarteType::StringArray(d)
+    }
+}
+
+impl From<Vec<Vec<u8>>> for AstarteType {
+    fn from(d: Vec<Vec<u8>>) -> Self {
+        AstarteType::BlobArray(d)
+    }
+}
+
+
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
         match d {
