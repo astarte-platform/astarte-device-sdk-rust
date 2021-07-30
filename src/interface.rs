@@ -358,7 +358,7 @@ mod tests {
 
         let interface = Interface::Datastream(datastream_interface);
 
-        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let deser_interface = Interface::from_str(interface_json).unwrap(); //allow_panic
 
         assert_eq!(interface, deser_interface);
 

@@ -64,13 +64,23 @@ pub enum AstarteBuilderError {
     ConfigError(String),
 
     #[error("mqtt error")]
-    MqttError(#[from] rumqttc::ClientError)
+    MqttError(#[from] rumqttc::ClientError),
+
+    #[error("pairing error")]
+    PairingError(#[from] PairingError)
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ConnectionError {
-    #[error("error while obtaining credentials")]
-    Credentials(#[from] PairingError),
+pub enum AstarteError {
+
+    #[error("bson serialize error")]
+    BsonSerError(#[from] bson::ser::Error),
+
+    #[error("bson client error")]
+    BsonClientError(#[from] rumqttc::ClientError),
+
+    #[error("mqtt connection error")]
+    ConnectionError(#[from] rumqttc::ConnectionError),
 }
 
 impl AstarteOptions {
@@ -174,12 +184,17 @@ impl AstarteOptions {
 
         let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
 
-        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice()).unwrap().remove(0);
-        let csr = String::from_utf8(csr_bytes).unwrap();
+        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+            .map_err(|_| AstarteBuilderError::ConfigError("failed pkcs8 key extraction".into()))?
+            .remove(0);
+
+        let csr = String::from_utf8(csr_bytes)
+            .map_err(|_| AstarteBuilderError::ConfigError("bad csr bytes format".into()))?;
 
 
-        let certificate_pem = self.populate_credentials(&csr).await.unwrap();
-        let broker_url =  self.populate_broker_url().await.unwrap();
+        let certificate_pem = self.populate_credentials(&csr).await?;
+
+        let broker_url =  self.populate_broker_url().await?;
 
         let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key);
 
@@ -210,8 +225,8 @@ impl AstarteOptions {
 
 impl AstarteSdk {
 
-    pub async fn poll(&mut self ) -> Option<(String, AstarteType)> {
-        match self.eventloop.lock().await.poll().await.unwrap() {
+    pub async fn poll(&mut self ) -> Result<Option<(String, AstarteType)>, AstarteError> {
+        match self.eventloop.lock().await.poll().await? {
             Event::Incoming(i) => {
                 debug!("Incoming = {:?}", i);
 
@@ -231,7 +246,7 @@ impl AstarteSdk {
                             trace!("{:?}", deserialized);
                             if let Some(v) = deserialized.get("v") {
                                 if let Some(v) = AstarteType::from_bson(v.clone()){
-                                    return Some((topic, v));
+                                    return Ok(Some((topic, v)));
                                 }
                             }
 
@@ -246,7 +261,7 @@ impl AstarteSdk {
             Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
         }
 
-        None
+        Ok(None)
     }
 
     fn client_id(&self) -> String {
@@ -285,16 +300,17 @@ impl AstarteSdk {
 
 
     pub async fn send<D> (&self, interface_name: &str, interface_path: &str, data: D)
+    -> Result<(), AstarteError>
     where
     D: Into<AstarteType>,{
         self.send_timestamp(interface_name, interface_path, data, None).await
     }
 
-    pub fn serialize_object(data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Vec<u8> {
+    pub fn serialize_object(data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<u8>, AstarteError> {
 
         let data: HashMap<&str,Bson> = data.into_iter().map(|f| (f.0, f.1.into())).collect();
 
-        let doc = to_document(&data).unwrap();
+        let doc = to_document(&data)?;
 
         let doc = if let Some(timestamp) = timestamp {
             bson::doc! {
@@ -308,15 +324,15 @@ impl AstarteSdk {
         };
 
         let mut buf = Vec::new();
-        doc.to_writer(&mut buf).unwrap();
+        doc.to_writer(&mut buf)?;
         println!("{:#?}", doc);
         println!("{:X?}", buf);
 
-        buf
+        Ok(buf)
     }
 
 
-    pub fn serialize_individual<D>(data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Vec<u8>
+    pub fn serialize_individual<D>(data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>) -> Result<Vec<u8>, AstarteError>
     where
     D: Into<AstarteType> {
         let doc = if let Some(timestamp) = timestamp {
@@ -331,27 +347,34 @@ impl AstarteSdk {
         };
 
         let mut buf = Vec::new();
-        doc.to_writer(&mut buf).unwrap();
+        doc.to_writer(&mut buf)?;
         println!("{:X?}", buf);
 
-        buf
+        Ok(buf)
     }
 
     pub async fn send_timestamp<D>(&self, interface_name: &str, interface_path: &str, data: D, timestamp: Option<chrono::DateTime<chrono::Utc>>)
+    -> Result<(), AstarteError>
     where
     D: Into<AstarteType> {
 
-        let buf = AstarteSdk::serialize_individual(data, timestamp);
+        let buf = AstarteSdk::serialize_individual(data, timestamp)?;
 
-        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::AtLeastOnce, false, buf).await.unwrap();
+        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::AtLeastOnce, false, buf).await?;
+
+        Ok(())
     }
 
 
-    pub async fn send_object_timestamp(&self, interface_name: &str, interface_path: &str, data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>){
+    pub async fn send_object_timestamp(&self, interface_name: &str, interface_path: &str, data: HashMap<&str,AstarteType>, timestamp: Option<chrono::DateTime<chrono::Utc>>)
+        -> Result<(), AstarteError>
+    {
 
-        let buf = AstarteSdk::serialize_object(data, timestamp);
+        let buf = AstarteSdk::serialize_object(data, timestamp)?;
 
-        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await.unwrap();
+        self.client.publish(self.client_id() + "/" + interface_name.trim_matches('/') + interface_path, rumqttc::QoS::ExactlyOnce, false, buf).await?;
+
+        Ok(())
     }
 
 
@@ -396,7 +419,7 @@ mod test {
         lol.insert("temp", 25.3123.into());
         lol.insert("hum", 67.112.into());
 
-        let buf = AstarteSdk::serialize_object(lol, None/*Some(Utc.timestamp(1537449422890,0))*/);
+        let buf = AstarteSdk::serialize_object(lol, None/*Some(Utc.timestamp(1537449422890,0))*/).unwrap(); // allow_panic
 
         assert!(do_vecs_match(&buf, &vec![  0x28, 0x00, 0x00, 0x00, 0x03, 0x76, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01,
             0x68, 0x75, 0x6d, 0x00, 0xba, 0x49, 0x0c, 0x02, 0x2b, 0xc7, 0x50, 0x40,
@@ -407,9 +430,9 @@ mod test {
 
     #[test]
     fn serialize_individual() {
-        assert!(do_vecs_match(&AstarteSdk::serialize_individual(false, None), &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]));
-        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, None), &vec![0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00]));
-        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, Some(Utc.timestamp(1537449422890,0))), 
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(false, None).unwrap(), &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00])); // allow_panic
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, None).unwrap(), &vec![0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00])); // allow_panic
+        assert!(do_vecs_match(&AstarteSdk::serialize_individual(16.73, Some(Utc.timestamp(1537449422890,0))).unwrap(), // allow_panic
             &vec![0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00, 0x00, 0x01,
                 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00]));
 
