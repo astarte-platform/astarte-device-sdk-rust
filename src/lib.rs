@@ -105,7 +105,7 @@ impl AstarteOptions {
 
     pub fn add_interface_files(&mut self, interfaces_directory: &str) -> Result<&mut Self, AstarteBuilderError> {
         let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
-        interface_files
+        let it = interface_files
             .filter_map(Result::ok)
             .filter(|f| {
                 if let Some(ext) = f.path().extension() {
@@ -113,28 +113,29 @@ impl AstarteOptions {
                 } else {
                     false
                 }
-            })
-            .for_each(|f| {
-                self.add_interface_file(&f.path());
             });
+
+            for f in it {
+                self.add_interface_file(&f.path())?;
+            }
 
         Ok(self)
     }
 
     async fn populate_credentials(&mut self, csr: &str) -> Result<Vec<Certificate>, PairingError> {
-        let cert_pem = pairing::fetch_credentials(&self, csr).await?;
+        let cert_pem = pairing::fetch_credentials(self, csr).await?;
         let mut cert_pem_bytes = cert_pem.as_bytes();
         let certs = pemfile::certs(&mut cert_pem_bytes).map_err(|_| PairingError::InvalidCredentials)?;
         Ok(certs)
     }
 
     async fn populate_broker_url(&mut self) -> Result<Url, PairingError> {
-        let broker_url = pairing::fetch_broker_url(&self).await?;
+        let broker_url = pairing::fetch_broker_url(self).await?;
         let parsed_broker_url = Url::parse(&broker_url)?;
         Ok(parsed_broker_url)
     }
 
-    fn build_mqtt_opts(&self, certificate_pem: &Vec<Certificate>, broker_url: &Url, private_key: &PrivateKey) -> Result<MqttOptions,AstarteBuilderError> {
+    fn build_mqtt_opts(&self, certificate_pem: &[Certificate], broker_url: &Url, private_key: &PrivateKey) -> Result<MqttOptions,AstarteBuilderError> {
         let AstarteOptions {
             realm,
             device_id,
@@ -142,8 +143,8 @@ impl AstarteOptions {
         } = self;
 
         let client_id = format!("{}/{}", realm, device_id);
-        let host = broker_url.host_str().ok_or(AstarteBuilderError::ConfigError("bad broker url".into()))?;
-        let port = broker_url.port().ok_or(AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        let host = broker_url.host_str().ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        let port = broker_url.port().ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
         let mut tls_client_config = ClientConfig::new();
         tls_client_config.root_store =
             rustls_native_certs::load_native_certs().map_err(|_| AstarteBuilderError::ConfigError("could not load platform certs".into()))?;
@@ -161,14 +162,14 @@ impl AstarteOptions {
     }
 
 
-    pub async fn subscribe(&mut self, client: &AsyncClient, cn: &String) -> Result<(), AstarteBuilderError>{
+    pub async fn subscribe(&mut self, client: &AsyncClient, cn: &str) -> Result<(), AstarteBuilderError>{
         let ifaces = self.interfaces.clone().into_iter()
             .filter(|i| i.1.get_ownership() == Ownership::Server );
 
-        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await?;
+        client.subscribe(cn.to_owned() + "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await?;
 
         for i in ifaces {
-            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await?;
+            client.subscribe(cn.to_owned() + "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await?;
         }
 
         Ok(())
@@ -212,7 +213,7 @@ impl AstarteOptions {
             csr: csr.clone(),
             certificate_pem,
             broker_url,
-            client: client,
+            client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: self.interfaces.to_owned(),
         };
@@ -232,7 +233,7 @@ impl AstarteSdk {
 
                 match i {
                     rumqttc::Packet::ConnAck(p) => {
-                        if p.session_present == false {
+                        if ! p.session_present{
                             self.send_introspection().await;
                             //self.send_emptycache().await;
                         }
@@ -268,7 +269,7 @@ impl AstarteSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn send_emptycache(&self){
+    async fn _send_emptycache(&self){
         let url =  self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 

@@ -1,5 +1,3 @@
-use std::iter::FromIterator;
-
 use bson::{Binary, Bson};
 
 #[derive(Debug, Clone)]
@@ -122,12 +120,12 @@ impl From<AstarteType> for Bson {
             AstarteType::String(d) => Bson::String(d),
             AstarteType::Blob(d) => Bson::Binary(Binary { bytes: d, subtype: bson::spec::BinarySubtype::Generic}),
             AstarteType::Datetime(d) => Bson::DateTime(d),
-            AstarteType::DoubleArray(d) => Bson::from_iter(d.iter()),
-            AstarteType::Int32Array(d) => Bson::from_iter(d.iter()),
-            AstarteType::BooleanArray(d) => Bson::from_iter(d.iter()),
-            AstarteType::Int64Array(d) => Bson::from_iter(d.iter()),
-            AstarteType::StringArray(d) => Bson::from_iter(d.iter()),
-            AstarteType::BlobArray(d) => Bson::from_iter(d.iter().map(|d| Binary { bytes: d.clone(), subtype: bson::spec::BinarySubtype::Generic})),
+            AstarteType::DoubleArray(d) => d.iter().collect(),
+            AstarteType::Int32Array(d) => d.iter().collect(),
+            AstarteType::BooleanArray(d) => d.iter().collect(),
+            AstarteType::Int64Array(d) => d.iter().collect(),
+            AstarteType::StringArray(d) => d.iter().collect(),
+            AstarteType::BlobArray(d) => d.iter().map(|d| Binary { bytes: d.clone(), subtype: bson::spec::BinarySubtype::Generic}).collect(),
         }
     }
 }

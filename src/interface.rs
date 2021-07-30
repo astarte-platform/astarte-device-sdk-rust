@@ -198,11 +198,6 @@ impl Interface {
         Ok(interface)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, Error> {
-        let interface = serde_json::from_str(s)?;
-        Ok(interface)
-    }
-
     pub fn aggregation(&self) -> Aggregation {
         match &self {
             Self::Datastream(d) => d.aggregation,
@@ -230,7 +225,7 @@ impl Interface {
             }
         }
 
-        return None;
+        None
     }
 
     pub fn get_ownership(&self) -> Ownership{
@@ -239,6 +234,16 @@ impl Interface {
             Interface::Properties(iface) => iface.base.ownership
         }
     }
+}
+
+impl std::str::FromStr for Interface {
+    fn from_str(s: &str) -> Result<Self, Error> {
+        let interface = serde_json::from_str(s)?;
+        Ok(interface)
+    }
+
+    type Err = Error;
+
 }
 
 impl InterfaceTrait for Interface {
@@ -273,6 +278,8 @@ impl MappingTrait for PropertiesMapping {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::traits::Interface as InterfaceTrait;
     use super::traits::Mapping as MappingTrait;
     use super::{

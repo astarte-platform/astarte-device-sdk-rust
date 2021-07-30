@@ -59,15 +59,15 @@ pub async fn fetch_credentials(device: &AstarteOptions, csr: &str) -> Result<Str
         ..
     } = device;
 
-    let mut url = Url::parse(&pairing_url)?;
+    let mut url = Url::parse(pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
-        .push(&realm)
+        .push(realm)
         .push("devices")
-        .push(&device_id)
+        .push(device_id)
         .push("protocols")
         .push("astarte_mqtt_v1")
         .push("credentials");
@@ -113,15 +113,15 @@ pub async fn fetch_broker_url(device: &AstarteOptions) -> Result<String, Pairing
         ..
     } = device;
 
-    let mut url = Url::parse(&pairing_url)?;
+    let mut url = Url::parse(pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
-        .push(&realm)
+        .push(realm)
         .push("devices")
-        .push(&device_id);
+        .push(device_id);
 
     let client = reqwest::Client::new();
     let response = client
