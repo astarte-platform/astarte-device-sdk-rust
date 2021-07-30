@@ -1,5 +1,4 @@
 use astarte_sdk::AstarteOptions;
-use chrono::TimeZone;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -41,7 +40,6 @@ async fn main() {
     let w = device.clone();
     tokio::task::spawn(async move {
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(5000));
 
 
             w.send("com.test.everything", "/double", 4.5).await;
@@ -56,7 +54,7 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/binaryblob", b"hello".to_vec()).await;
             std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/datetime", chrono::Utc.timestamp(1627580808, 0)).await;
+            //w.send("com.test.everything", "/datetime", chrono::Utc.timestamp(1627580808, 0)).await;
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/doublearray", vec![1.2,3.4,5.6,7.8]).await;
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -68,7 +66,7 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/stringarray", vec!["hello".to_owned(),"world".to_owned()]).await;
             std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/binaryblobarray", vec![b"hello".to_vec(),b"world".to_vec()]).await;
+            //w.send("com.test.everything", "/binaryblobarray", vec![b"hello".to_vec(),b"world".to_vec()]).await;
             std::thread::sleep(std::time::Duration::from_millis(5));
 
 
@@ -78,7 +76,9 @@ async fn main() {
             lol.insert("bottone", true.into());
             lol.insert("uptimeSeconds", 67.into());
 
-            w.send_object_timestamp("com.test4.object", "/pop", lol, None).await;
+            w.send_object_timestamp("com.test4.object", "/", lol, None).await;
+
+            std::thread::sleep(std::time::Duration::from_millis(5000));
         }
     });
 

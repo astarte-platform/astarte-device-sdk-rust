@@ -47,15 +47,24 @@ pub struct AstarteOptions {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum DeviceBuilderError {
+pub enum AstarteBuilderError {
     #[error("private key or CSR creation failed")]
     CryptoGeneration(#[from] ErrorStack),
-    #[error("device must have a credentials secret")]
-    MissingCredentialsSecret,
-    #[error("device must have a pairing URL")]
-    MissingPairingUrl,
+
     #[error("device must have at least an interface")]
     MissingInterfaces,
+
+    #[error("error creating interface")]
+    InterfaceError(#[from] interface::Error),
+
+    #[error("io error")]
+    IoError(#[from] std::io::Error),
+
+    #[error("configuration error")]
+    ConfigError(String),
+
+    #[error("mqtt error")]
+    MqttError(#[from] rumqttc::ClientError)
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -76,17 +85,16 @@ impl AstarteOptions {
         }
     }
 
-    pub fn add_interface_file(&mut self, file_path: &Path) -> &mut Self {
-        // TODO: don't unwrap here. Builder returning Result?
-        let interface = Interface::from_file(file_path).unwrap();
+    pub fn add_interface_file(&mut self, file_path: &Path) -> Result<&mut Self, AstarteBuilderError> {
+        let interface = Interface::from_file(file_path)?;
         let name = interface.name();
         debug!("Added interface {}", name);
         self.interfaces.insert(name.to_owned(), interface);
-        self
+        Ok(self)
     }
 
-    pub fn add_interface_files(&mut self, interfaces_directory: &str) -> &mut Self {
-        let interface_files = std::fs::read_dir(Path::new(interfaces_directory)).unwrap();
+    pub fn add_interface_files(&mut self, interfaces_directory: &str) -> Result<&mut Self, AstarteBuilderError> {
+        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
         interface_files
             .filter_map(Result::ok)
             .filter(|f| {
@@ -100,13 +108,13 @@ impl AstarteOptions {
                 self.add_interface_file(&f.path());
             });
 
-        self
+        Ok(self)
     }
 
     async fn populate_credentials(&mut self, csr: &str) -> Result<Vec<Certificate>, PairingError> {
         let cert_pem = pairing::fetch_credentials(&self, csr).await?;
         let mut cert_pem_bytes = cert_pem.as_bytes();
-        let certs = pemfile::certs(&mut cert_pem_bytes).unwrap();
+        let certs = pemfile::certs(&mut cert_pem_bytes).map_err(|_| PairingError::InvalidCredentials)?;
         Ok(certs)
     }
 
@@ -116,7 +124,7 @@ impl AstarteOptions {
         Ok(parsed_broker_url)
     }
 
-    fn build_mqtt_opts(&self, certificate_pem: &Vec<Certificate>, broker_url: &Url, private_key: &PrivateKey) -> MqttOptions {
+    fn build_mqtt_opts(&self, certificate_pem: &Vec<Certificate>, broker_url: &Url, private_key: &PrivateKey) -> Result<MqttOptions,AstarteBuilderError> {
         let AstarteOptions {
             realm,
             device_id,
@@ -124,14 +132,14 @@ impl AstarteOptions {
         } = self;
 
         let client_id = format!("{}/{}", realm, device_id);
-        let host = broker_url.host_str().unwrap();
-        let port = broker_url.port().unwrap();
+        let host = broker_url.host_str().ok_or(AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        let port = broker_url.port().ok_or(AstarteBuilderError::ConfigError("bad broker url".into()))?;
         let mut tls_client_config = ClientConfig::new();
         tls_client_config.root_store =
-            rustls_native_certs::load_native_certs().expect("could not load platform certs");
+            rustls_native_certs::load_native_certs().map_err(|_| AstarteBuilderError::ConfigError("could not load platform certs".into()))?;
         tls_client_config
             .set_single_client_cert(certificate_pem.to_owned(), private_key.to_owned())
-            .expect("cannot setup client auth");
+            .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
         mqtt_opts
@@ -139,34 +147,34 @@ impl AstarteOptions {
 
         mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
 
-        mqtt_opts
+        Ok(mqtt_opts)
     }
 
 
-    pub async fn subscribe(&mut self, client: &AsyncClient, cn: &String) {
+    pub async fn subscribe(&mut self, client: &AsyncClient, cn: &String) -> Result<(), AstarteBuilderError>{
         let ifaces = self.interfaces.clone().into_iter()
             .filter(|i| i.1.get_ownership() == Ownership::Server );
 
-        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await.unwrap();
+        client.subscribe(cn.clone()+ "/control/consumer/properties", rumqttc::QoS::AtLeastOnce).await?;
 
         for i in ifaces {
-            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await.unwrap();
+            client.subscribe(cn.clone()+ "/" + i.1.name() + "/#", rumqttc::QoS::AtLeastOnce).await?;
         }
+
+        Ok(())
     }
 
-    pub async fn build(&mut self) -> Result<AstarteSdk, DeviceBuilderError> {
+    pub async fn build(&mut self) -> Result<AstarteSdk, AstarteBuilderError> {
         let cn = format!("{}/{}", self.realm, self.device_id);
 
 
         if self.interfaces.is_empty() {
-            return Err(DeviceBuilderError::MissingInterfaces);
+            return Err(AstarteBuilderError::MissingInterfaces);
         }
 
         let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
 
-        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
-            .unwrap()
-            .remove(0);
+        let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice()).unwrap().remove(0);
         let csr = String::from_utf8(csr_bytes).unwrap();
 
 
@@ -176,9 +184,9 @@ impl AstarteOptions {
         let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key);
 
         // TODO: make cap configurable
-        let (client, eventloop) = AsyncClient::new(mqtt_opts, 50);
+        let (client, eventloop) = AsyncClient::new(mqtt_opts?, 50);
 
-        self.subscribe(&client, &cn).await;
+        self.subscribe(&client, &cn).await?;
 
         let device = AstarteSdk {
             realm: self.realm.to_owned(),
