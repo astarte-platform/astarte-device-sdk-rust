@@ -47,16 +47,16 @@ pub struct AstarteSdk {
 
 /// Builder for Astarte client
 ///
-/// ```
+/// ```ignore
 /// let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
 /// ```
 ///
 /// Interfaces should be added before usage
-/// ```
+/// ```ignore
 /// sdk_options.add_interface_files("path/to/interfaces")
 /// ```
 /// or
-/// ```
+/// ```ignore
 /// sdk_options.add_interface_file("path/to/interfaces/interface.json")
 /// ```
 
@@ -348,7 +348,7 @@ impl AstarteSdk {
     }
 
     /// Send data to an astarte interface
-    /// ```
+    /// ```ignore
     /// d.send("com.test.interface", "/data", 4.5).await?;
     /// ```
 
@@ -366,7 +366,7 @@ impl AstarteSdk {
     }
 
     /// Send data to an astarte interface, with timestamp
-    /// ```
+    /// ```ignore
     /// d.send("com.test.interface", "/data", 4.5, Some(Utc.timestamp(1537449422, 0)) ).await?;
     /// ```
     pub async fn send_timestamp<D>(
