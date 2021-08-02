@@ -15,9 +15,8 @@ pub enum AstarteType {
     BooleanArray(Vec<bool>),
     Int64Array(Vec<i64>),
     StringArray(Vec<String>),
-    BlobArray(Vec<Vec<u8>>)
+    BlobArray(Vec<Vec<u8>>),
 }
-
 
 impl From<f64> for AstarteType {
     fn from(d: f64) -> Self {
@@ -109,7 +108,6 @@ impl From<Vec<Vec<u8>>> for AstarteType {
     }
 }
 
-
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
         match d {
@@ -118,19 +116,28 @@ impl From<AstarteType> for Bson {
             AstarteType::Boolean(d) => Bson::Boolean(d),
             AstarteType::Int64(d) => Bson::Int64(d),
             AstarteType::String(d) => Bson::String(d),
-            AstarteType::Blob(d) => Bson::Binary(Binary { bytes: d, subtype: bson::spec::BinarySubtype::Generic}),
+            AstarteType::Blob(d) => Bson::Binary(Binary {
+                bytes: d,
+                subtype: bson::spec::BinarySubtype::Generic,
+            }),
             AstarteType::Datetime(d) => Bson::DateTime(d),
             AstarteType::DoubleArray(d) => d.iter().collect(),
             AstarteType::Int32Array(d) => d.iter().collect(),
             AstarteType::BooleanArray(d) => d.iter().collect(),
             AstarteType::Int64Array(d) => d.iter().collect(),
             AstarteType::StringArray(d) => d.iter().collect(),
-            AstarteType::BlobArray(d) => d.iter().map(|d| Binary { bytes: d.clone(), subtype: bson::spec::BinarySubtype::Generic}).collect(),
+            AstarteType::BlobArray(d) => d
+                .iter()
+                .map(|d| Binary {
+                    bytes: d.clone(),
+                    subtype: bson::spec::BinarySubtype::Generic,
+                })
+                .collect(),
         }
     }
 }
 
-impl  AstarteType {
+impl AstarteType {
     pub fn from_bson(d: Bson) -> Option<Self> {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),

@@ -228,10 +228,10 @@ impl Interface {
         None
     }
 
-    pub fn get_ownership(&self) -> Ownership{
+    pub fn get_ownership(&self) -> Ownership {
         match &self {
             Interface::Datastream(iface) => iface.base.ownership,
-            Interface::Properties(iface) => iface.base.ownership
+            Interface::Properties(iface) => iface.base.ownership,
         }
     }
 }
@@ -243,7 +243,6 @@ impl std::str::FromStr for Interface {
     }
 
     type Err = Error;
-
 }
 
 impl InterfaceTrait for Interface {
