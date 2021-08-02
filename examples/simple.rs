@@ -34,6 +34,7 @@ async fn main() {
 
     let mut sdk_options =
         AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+
     sdk_options
         .add_interface_files(&interfaces_directory)
         .unwrap();
@@ -42,90 +43,19 @@ async fn main() {
 
     let w = device.clone();
     tokio::task::spawn(async move {
+        let mut i: f64 = 0.0;
         loop {
-            w.send("com.test.everything", "/double", 4.5).await.unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/integer", -4).await.unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/boolean", true)
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/longinteger", 45543543534_i64)
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/string", "hello")
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/binaryblob", b"hello".to_vec())
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            //w.send("com.test.everything", "/datetime", chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0)).await.unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send(
-                "com.test.everything",
-                "/doublearray",
-                vec![1.2, 3.4, 5.6, 7.8],
-            )
-            .await
-            .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send("com.test.everything", "/integerarray", vec![1, 3, 5, 7])
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send(
-                "com.test.everything",
-                "/booleanarray",
-                vec![true, false, true, true],
-            )
-            .await
-            .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send(
-                "com.test.everything",
-                "/longintegerarray",
-                vec![45543543534_i64, 45543543535_i64, 45543543536_i64],
-            )
-            .await
-            .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send(
-                "com.test.everything",
-                "/stringarray",
-                vec!["hello".to_owned(), "world".to_owned()],
-            )
-            .await
-            .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            w.send(
-                "com.test.everything",
-                "/binaryblobarray",
-                vec![b"hello".to_vec(), b"world".to_vec()],
-            )
-            .await
-            .unwrap();
-            //std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send("com.test.everything", "/double", i).await.unwrap();
 
-            let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
-                std::collections::HashMap::new();
-            lol.insert("bottone", true.into());
-            lol.insert("uptimeSeconds", 67.into());
+            i += 1.1;
 
-            w.send_object_timestamp("com.test4.object", "/", lol, None)
-                .await
-                .unwrap();
-
-            std::thread::sleep(std::time::Duration::from_millis(5000));
+            std::thread::sleep(std::time::Duration::from_millis(1000));
         }
     });
 
     loop {
         if let Ok(Some(data)) = device.poll().await {
-            println!("incoming data: {:?}", data);
+            println!("incoming path: {}, data: {:?}", data.0, data.1);
         }
     }
 }
