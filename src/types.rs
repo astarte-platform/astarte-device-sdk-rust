@@ -1,5 +1,8 @@
 use bson::{Binary, Bson};
 
+/// Types supported by astarte
+///
+/// <https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types>
 #[derive(Debug, Clone)]
 pub enum AstarteType {
     Double(f64),

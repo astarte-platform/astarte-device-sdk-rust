@@ -1,3 +1,9 @@
+//! Astarte is an Open Source IoT platform focused on Data management.
+//! It takes care of everything from collecting data from devices to delivering data to end-user applications.
+//! To achieve such a thing, it uses a mixture of mechanisms and paradigm to store organized data, perform live queries.
+//!
+//! <https://docs.astarte-platform.org/>
+
 mod crypto;
 mod interface;
 mod pairing;
@@ -23,6 +29,7 @@ pub use interface::Interface;
 
 use crate::interface::Ownership;
 
+/// Astarte client
 #[derive(Clone)]
 pub struct AstarteSdk {
     realm: String,
@@ -37,6 +44,21 @@ pub struct AstarteSdk {
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: HashMap<String, Interface>,
 }
+
+/// Builder for Astarte client
+///
+/// ```
+/// let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+/// ```
+///
+/// Interfaces should be added before usage
+/// ```
+/// sdk_options.add_interface_files("path/to/interfaces")
+/// ```
+/// or
+/// ```
+/// sdk_options.add_interface_file("path/to/interfaces/interface.json")
+/// ```
 
 pub struct AstarteOptions {
     realm: String,
@@ -93,6 +115,7 @@ impl AstarteOptions {
         }
     }
 
+    /// Add an interface from a json file
     pub fn add_interface_file(
         &mut self,
         file_path: &Path,
@@ -104,6 +127,7 @@ impl AstarteOptions {
         Ok(self)
     }
 
+    /// Add all json interface description inside a specified directory
     pub fn add_interface_files(
         &mut self,
         interfaces_directory: &str,
@@ -171,7 +195,7 @@ impl AstarteOptions {
         Ok(mqtt_opts)
     }
 
-    pub async fn subscribe(
+    async fn subscribe(
         &mut self,
         client: &AsyncClient,
         cn: &str,
@@ -247,6 +271,7 @@ impl AstarteOptions {
 }
 
 impl AstarteSdk {
+    /// Poll updates from mqtt, this is where you receive data
     pub async fn poll(&mut self) -> Result<Option<(String, AstarteType)>, AstarteError> {
         match self.eventloop.lock().await.poll().await? {
             Event::Incoming(i) => {
@@ -322,22 +347,10 @@ impl AstarteSdk {
         debug!("introspection = {:?}", err);
     }
 
-    pub async fn publish<V>(&self, interface: &str, payload: V) -> Result<(), rumqttc::ClientError>
-    where
-        V: Into<Vec<u8>>,
-    {
-        let pay: Vec<u8> = payload.into();
-        debug!("publishing {} {:?}", interface, pay);
-
-        self.client
-            .publish(
-                self.client_id() + interface,
-                rumqttc::QoS::ExactlyOnce,
-                false,
-                pay,
-            )
-            .await
-    }
+    /// Send data to an astarte interface
+    /// ```
+    /// d.send("com.test.interface", "/data", 4.5).await?;
+    /// ```
 
     pub async fn send<D>(
         &self,
@@ -352,54 +365,10 @@ impl AstarteSdk {
             .await
     }
 
-    pub fn serialize_object(
-        data: HashMap<&str, AstarteType>,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError> {
-        let data: HashMap<&str, Bson> = data.into_iter().map(|f| (f.0, f.1.into())).collect();
-
-        let doc = to_document(&data)?;
-
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
-               "t": timestamp,
-               "v": doc
-            }
-        } else {
-            bson::doc! {
-               "v": doc,
-            }
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        println!("{:#?}", doc);
-        Ok(buf)
-    }
-
-    pub fn serialize_individual<D>(
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
-    where
-        D: Into<AstarteType>,
-    {
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
-               "t": timestamp,
-               "v": data.into()
-            }
-        } else {
-            bson::doc! {
-               "v": data.into(),
-            }
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        Ok(buf)
-    }
-
+    /// Send data to an astarte interface, with timestamp
+    /// ```
+    /// d.send("com.test.interface", "/data", 4.5, Some(Utc.timestamp(1537449422, 0)) ).await?;
+    /// ```
     pub async fn send_timestamp<D>(
         &self,
         interface_name: &str,
@@ -424,6 +393,42 @@ impl AstarteSdk {
         Ok(())
     }
 
+    /// Serialize an astarte type into a vec of bytes
+    pub fn serialize_individual<D>(
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
+               "t": timestamp,
+               "v": data.into()
+            }
+        } else {
+            bson::doc! {
+               "v": data.into(),
+            }
+        };
+
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Send data to an object interface
+    pub async fn send_object(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: HashMap<&str, AstarteType>,
+    ) -> Result<(), AstarteError> {
+        self.send_object_timestamp(interface_name, interface_path, data, None)
+            .await
+    }
+
+    /// Send data to an object interface. with timestamp
     pub async fn send_object_timestamp(
         &self,
         interface_name: &str,
@@ -443,6 +448,32 @@ impl AstarteSdk {
             .await?;
 
         Ok(())
+    }
+
+    /// Serialize a group of astarte types to a vec of bytes, representing an object
+    pub fn serialize_object(
+        data: HashMap<&str, AstarteType>,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError> {
+        let data: HashMap<&str, Bson> = data.into_iter().map(|f| (f.0, f.1.into())).collect();
+
+        let doc = to_document(&data)?;
+
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
+               "t": timestamp,
+               "v": doc
+            }
+        } else {
+            bson::doc! {
+               "v": doc,
+            }
+        };
+
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf)?;
+        println!("{:#?}", doc);
+        Ok(buf)
     }
 }
 
