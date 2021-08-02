@@ -1,4 +1,4 @@
-use astarte_sdk::{AstarteError, AstarteOptions};
+use astarte_sdk::{AstarteOptions};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -40,8 +40,6 @@ async fn main() {
     let w = device.clone();
     tokio::task::spawn(async move {
         loop {
-
-
             w.send("com.test.everything", "/double", 4.5).await.unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/integer", -4).await.unwrap();
@@ -54,7 +52,7 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/binaryblob", b"hello".to_vec()).await.unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
-            //w.send("com.test.everything", "/datetime", chrono::Utc.timestamp(1627580808, 0)).await;
+            //w.send("com.test.everything", "/datetime", chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0)).await.unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/doublearray", vec![1.2,3.4,5.6,7.8]).await.unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -66,11 +64,8 @@ async fn main() {
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send("com.test.everything", "/stringarray", vec!["hello".to_owned(),"world".to_owned()]).await.unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
-            //w.send("com.test.everything", "/binaryblobarray", vec![b"hello".to_vec(),b"world".to_vec()]).await;
-            std::thread::sleep(std::time::Duration::from_millis(5));
-
-
-
+            w.send("com.test.everything", "/binaryblobarray", vec![b"hello".to_vec(),b"world".to_vec()]).await.unwrap();
+            //std::thread::sleep(std::time::Duration::from_millis(5));
 
             let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> = std::collections::HashMap::new();
             lol.insert("bottone", true.into());
