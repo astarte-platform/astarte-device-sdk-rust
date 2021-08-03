@@ -3,7 +3,7 @@ use bson::{Binary, Bson};
 /// Types supported by astarte
 ///
 /// <https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types>
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AstarteType {
     Double(f64),
     Int32(i32),
@@ -172,6 +172,56 @@ impl AstarteType {
             Bson::MaxKey => None,
             Bson::MinKey => None,
             Bson::DbPointer(_) => None,
+        }
+    }
+
+
+    pub fn from_bson_vec(d: Vec<Bson>) -> Option<Vec<Self>>{
+        let vec = d.iter().map(|f| AstarteType::from_bson(f.clone()));
+        let vec: Option<Vec<AstarteType>> = vec.collect();
+
+        vec
+    }
+}
+
+
+#[cfg(test)]
+
+mod test {
+    use crate::{AstarteSdk, types::AstarteType};
+
+    #[test]
+    fn test_types() {
+        let alltypes: Vec<AstarteType> = vec![
+            (4.5).into(),
+            (-4).into(),
+            true.into(),
+            45543543534_i64.into(),
+            "hello".into(),
+            b"hello".to_vec().into(),
+            chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0).into(),
+            vec![1.2, 3.4, 5.6, 7.8].into(),
+            vec![1, 3, 5, 7].into(),
+            vec![true, false, true, true].into(),
+            vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
+            vec!["hello".to_owned(), "world".to_owned()].into(),
+            vec![b"hello".to_vec(), b"world".to_vec()].into(),
+            vec![
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
+            ]
+            .into(),
+        ];
+
+        for ty in alltypes {
+            println!("checking {:?}", ty);
+
+            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
+
+            let ty2 = AstarteSdk::deserialize_individual(buf).unwrap();
+
+            assert!(ty == ty2);
         }
     }
 }
