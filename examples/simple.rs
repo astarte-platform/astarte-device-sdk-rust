@@ -46,6 +46,7 @@ async fn main() {
         let mut i: f64 = 0.0;
         loop {
             w.send("com.test.everything", "/double", i).await.unwrap();
+            println!("Sent {}", i);
 
             i += 1.1;
 

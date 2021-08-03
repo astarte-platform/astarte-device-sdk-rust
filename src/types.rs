@@ -19,6 +19,7 @@ pub enum AstarteType {
     Int64Array(Vec<i64>),
     StringArray(Vec<String>),
     BlobArray(Vec<Vec<u8>>),
+    DatetimeArray(Vec<chrono::DateTime<chrono::Utc>>),
 }
 
 impl From<f64> for AstarteType {
@@ -111,6 +112,13 @@ impl From<Vec<Vec<u8>>> for AstarteType {
     }
 }
 
+
+impl From<Vec<chrono::DateTime<chrono::Utc>>> for AstarteType {
+    fn from(d: Vec<chrono::DateTime<chrono::Utc>>) -> Self {
+        AstarteType::DatetimeArray(d)
+    }
+}
+
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
         match d {
@@ -136,6 +144,7 @@ impl From<AstarteType> for Bson {
                     subtype: bson::spec::BinarySubtype::Generic,
                 })
                 .collect(),
+            AstarteType::DatetimeArray(d) => d.iter().collect(),
         }
     }
 }

@@ -1,4 +1,7 @@
-use astarte_sdk::AstarteOptions;
+use std::vec;
+
+use astarte_sdk::{AstarteOptions, types::AstarteType};
+use serde::de::IntoDeserializer;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -63,7 +66,13 @@ async fn main() {
                 .await
                 .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
-            //w.send("com.test.everything", "/datetime", chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0)).await.unwrap();
+            w.send(
+                "com.test.everything",
+                "/datetime",
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
+            )
+            .await
+            .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(5));
             w.send(
                 "com.test.everything",
@@ -108,7 +117,20 @@ async fn main() {
             )
             .await
             .unwrap();
-            //std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            w.send(
+                "com.test.everything",
+                "/datetimearray",
+                vec![
+                    chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
+                    chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
+                    chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0)],
+            )
+            .await
+            .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+
+
 
             let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
                 std::collections::HashMap::new();
