@@ -153,7 +153,32 @@ impl AstarteType {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),
             Bson::String(d) => Some(AstarteType::String(d)),
-            Bson::Array(_) => None,
+            Bson::Array(arr) => {
+                match arr[0] {
+                    Bson::Double(_) => Some(AstarteType::DoubleArray(arr.iter().map(|x| if let Bson::Double(val) = x {*val} else {panic!("palle")}).collect::<Vec<f64>>().clone())),
+                    Bson::String(_) => Some(AstarteType::StringArray(arr.iter().map(|x| if let Bson::String(val) = x {val.clone()} else {panic!("palle")}).collect::<Vec<String>>().clone())),
+                    Bson::Array(_) => todo!(),
+                    Bson::Document(_) => todo!(),
+                    Bson::Boolean(_) => Some(AstarteType::BooleanArray(arr.iter().map(|x| if let Bson::Boolean(val) = x {*val} else {panic!("palle")}).collect::<Vec<bool>>().clone())),
+                    Bson::Null => todo!(),
+                    Bson::RegularExpression(_) => todo!(),
+                    Bson::JavaScriptCode(_) => todo!(),
+                    Bson::JavaScriptCodeWithScope(_) => todo!(),
+                    Bson::Int32(_) => Some(AstarteType::Int32Array(arr.iter().map(|x| if let Bson::Int32(val) = x {*val} else {panic!("palle")}).collect::<Vec<i32>>().clone())),
+                    Bson::Int64(_) => Some(AstarteType::Int64Array(arr.iter().map(|x| if let Bson::Int64(val) = x {*val} else {panic!("palle")}).collect::<Vec<i64>>().clone())),
+                    Bson::Timestamp(_) => todo!(),
+                    Bson::Binary(_) => Some(AstarteType::BlobArray(arr.iter().map(|x| if let Bson::Binary(val) = x {val.bytes.clone()} else {panic!("palle")}).collect::<Vec<Vec<u8>>>().clone())),
+                    Bson::ObjectId(_) => todo!(),
+                    Bson::DateTime(_) => Some(AstarteType::DatetimeArray(arr.iter().map(|x| if let Bson::DateTime(val) = x {val.clone()} else {panic!("palle")}).collect::<Vec<chrono::DateTime<chrono::Utc>>>().clone())),
+                    Bson::Symbol(_) => todo!(),
+                    Bson::Decimal128(_) => todo!(),
+                    Bson::Undefined => todo!(),
+                    Bson::MaxKey => todo!(),
+                    Bson::MinKey => todo!(),
+                    Bson::DbPointer(_) => todo!(),
+                }
+
+            },
             Bson::Document(_) => None,
             Bson::Boolean(d) => Some(AstarteType::Boolean(d)),
             Bson::Null => None,
