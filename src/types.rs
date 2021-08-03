@@ -112,7 +112,6 @@ impl From<Vec<Vec<u8>>> for AstarteType {
     }
 }
 
-
 impl From<Vec<chrono::DateTime<chrono::Utc>>> for AstarteType {
     fn from(d: Vec<chrono::DateTime<chrono::Utc>>) -> Self {
         AstarteType::DatetimeArray(d)
