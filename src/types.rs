@@ -153,17 +153,92 @@ impl AstarteType {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),
             Bson::String(d) => Some(AstarteType::String(d)),
-            Bson::Array(arr) => {
-                match arr[0] {
-                    Bson::Double(_) => Some(AstarteType::DoubleArray(arr.iter().map(|x| if let Bson::Double(val) = x {*val} else {panic!("palle")}).collect::<Vec<f64>>().clone())),
-                    Bson::Boolean(_) => Some(AstarteType::BooleanArray(arr.iter().map(|x| if let Bson::Boolean(val) = x {*val} else {panic!("palle")}).collect::<Vec<bool>>().clone())),
-                    Bson::Int32(_) => Some(AstarteType::Int32Array(arr.iter().map(|x| if let Bson::Int32(val) = x {*val} else {panic!("palle")}).collect::<Vec<i32>>().clone())),
-                    Bson::Int64(_) => Some(AstarteType::Int64Array(arr.iter().map(|x| if let Bson::Int64(val) = x {*val} else {panic!("palle")}).collect::<Vec<i64>>().clone())),
-                    Bson::String(_) => Some(AstarteType::StringArray(arr.iter().map(|x| if let Bson::String(val) = x {val.clone()} else {panic!("palle")}).collect::<Vec<String>>().clone())),
-                    Bson::Binary(_) => Some(AstarteType::BlobArray(arr.iter().map(|x| if let Bson::Binary(val) = x {val.bytes.clone()} else {panic!("palle")}).collect::<Vec<Vec<u8>>>().clone())),
-                    Bson::DateTime(_) => Some(AstarteType::DatetimeArray(arr.iter().map(|x| if let Bson::DateTime(val) = x {val.clone()} else {panic!("palle")}).collect::<Vec<chrono::DateTime<chrono::Utc>>>().clone())),
-                    _ => None,
-                }
+            Bson::Array(arr) => match arr[0] {
+                Bson::Double(_) => Some(AstarteType::DoubleArray(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::Double(val) = x {
+                                *val
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<f64>>()
+                        .clone(),
+                )),
+                Bson::Boolean(_) => Some(AstarteType::BooleanArray(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::Boolean(val) = x {
+                                *val
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<bool>>()
+                        .clone(),
+                )),
+                Bson::Int32(_) => Some(AstarteType::Int32Array(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::Int32(val) = x {
+                                *val
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<i32>>()
+                        .clone(),
+                )),
+                Bson::Int64(_) => Some(AstarteType::Int64Array(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::Int64(val) = x {
+                                *val
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<i64>>()
+                        .clone(),
+                )),
+                Bson::String(_) => Some(AstarteType::StringArray(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::String(val) = x {
+                                val.clone()
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<String>>()
+                        .clone(),
+                )),
+                Bson::Binary(_) => Some(AstarteType::BlobArray(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::Binary(val) = x {
+                                val.bytes.clone()
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<Vec<u8>>>()
+                        .clone(),
+                )),
+                Bson::DateTime(_) => Some(AstarteType::DatetimeArray(
+                    arr.iter()
+                        .map(|x| {
+                            if let Bson::DateTime(val) = x {
+                                val.clone()
+                            } else {
+                                panic!("malformed input")
+                            }
+                        })
+                        .collect::<Vec<chrono::DateTime<chrono::Utc>>>()
+                        .clone(),
+                )),
+                _ => None,
             },
             Bson::Boolean(d) => Some(AstarteType::Boolean(d)),
             Bson::Int32(d) => Some(AstarteType::Int32(d)),
@@ -174,8 +249,7 @@ impl AstarteType {
         }
     }
 
-
-    pub fn from_bson_vec(d: Vec<Bson>) -> Option<Vec<Self>>{
+    pub fn from_bson_vec(d: Vec<Bson>) -> Option<Vec<Self>> {
         let vec = d.iter().map(|f| AstarteType::from_bson(f.clone()));
         let vec: Option<Vec<AstarteType>> = vec.collect();
 
@@ -183,11 +257,10 @@ impl AstarteType {
     }
 }
 
-
 #[cfg(test)]
 
 mod test {
-    use crate::{AstarteSdk, types::AstarteType};
+    use crate::{types::AstarteType, AstarteSdk};
 
     #[test]
     fn test_types() {
