@@ -418,8 +418,7 @@ impl AstarteSdk {
     }
 
     /// Deserialize an astarte type from a vec of bytes
-    pub fn deserialize_individual(data: Vec<u8>) -> Option<AstarteType>
-    {
+    pub fn deserialize_individual(data: Vec<u8>) -> Option<AstarteType> {
         if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(data)) {
             trace!("deserialized {:?}", deserialized);
 
