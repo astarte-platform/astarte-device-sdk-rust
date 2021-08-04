@@ -270,9 +270,15 @@ impl AstarteOptions {
     }
 }
 
+#[derive(Debug)]
+pub enum Aggregation {
+    Individual((String, AstarteType)),
+    Object(HashMap<String,AstarteType>)
+}
+
 impl AstarteSdk {
     /// Poll updates from mqtt, this is where you receive data
-    pub async fn poll(&mut self) -> Result<Option<(String, AstarteType)>, AstarteError> {
+    pub async fn poll(&mut self) -> Result<Option<Aggregation>, AstarteError> {
         match self.eventloop.lock().await.poll().await? {
             Event::Incoming(i) => {
                 debug!("Incoming = {:?}", i);
@@ -294,8 +300,13 @@ impl AstarteSdk {
                         {
                             trace!("{:?}", deserialized);
                             if let Some(v) = deserialized.get("v") {
-                                if let Some(v) = AstarteType::from_bson(v.clone()) {
-                                    return Ok(Some((topic, v)));
+                                if let Bson::Document(doc ) = v {
+
+                                } else if let Some(v) = AstarteType::from_bson(v.clone()) {
+                                    //TODO if the device id is not in the topic, it's probably an error
+                                    return Ok(Some(Aggregation::Individual((topic.strip_prefix(&self.client_id()).unwrap_or(&topic).into(), v))));
+                                } else {
+
                                 }
                             }
                         }

@@ -56,7 +56,7 @@ async fn main() {
 
     loop {
         if let Ok(Some(data)) = device.poll().await {
-            println!("incoming path: {}, data: {:?}", data.0, data.1);
+            println!("incoming: {:?}", data);
         }
     }
 }

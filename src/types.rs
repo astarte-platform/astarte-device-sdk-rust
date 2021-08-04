@@ -153,7 +153,7 @@ impl AstarteType {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),
             Bson::String(d) => Some(AstarteType::String(d)),
-            Bson::Array(arr) => match arr[0] {
+            Bson::Array(arr) => match arr[0] {  //TODO this is probably better served by a macro
                 Bson::Double(_) => Some(AstarteType::DoubleArray(
                     arr.iter()
                         .map(|x| {
