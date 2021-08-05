@@ -273,7 +273,7 @@ impl AstarteOptions {
 #[derive(Debug)]
 pub enum Aggregation {
     Individual((String, AstarteType)),
-    Object(HashMap<String,AstarteType>)
+    Object(HashMap<String, AstarteType>),
 }
 
 impl AstarteSdk {
@@ -300,13 +300,17 @@ impl AstarteSdk {
                         {
                             trace!("{:?}", deserialized);
                             if let Some(v) = deserialized.get("v") {
-                                if let Bson::Document(doc ) = v {
-
+                                if let Bson::Document(doc) = v {
                                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
                                     //TODO if the device id is not in the topic, it's probably an error
-                                    return Ok(Some(Aggregation::Individual((topic.strip_prefix(&self.client_id()).unwrap_or(&topic).into(), v))));
+                                    return Ok(Some(Aggregation::Individual((
+                                        topic
+                                            .strip_prefix(&self.client_id())
+                                            .unwrap_or(&topic)
+                                            .into(),
+                                        v,
+                                    ))));
                                 } else {
-
                                 }
                             }
                         }
@@ -498,6 +502,29 @@ impl AstarteSdk {
         doc.to_writer(&mut buf)?;
         println!("{:#?}", doc);
         Ok(buf)
+    }
+
+    /// deserialize an astarte object from a vec of bytes
+    pub fn deserialize_object(data: Vec<u8>) -> Result<HashMap<String, AstarteType>, AstarteError> {
+        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(data)) {
+            trace!("deserialized {:?}", deserialized);
+
+            if let Some(v) = deserialized.get("v") {
+                if let Bson::Document(doc) = v {
+                    println!("\n\nDeserialized {:?}", doc);
+
+                    let mut ret = HashMap::new();
+
+                    for i in doc {
+                        ret.insert(i.0.clone(), AstarteType::from_bson(i.1.clone()).unwrap());
+                    }
+
+                    return Ok(ret);
+                }
+            }
+        }
+
+        return Ok(HashMap::new());
     }
 }
 

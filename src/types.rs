@@ -153,7 +153,8 @@ impl AstarteType {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),
             Bson::String(d) => Some(AstarteType::String(d)),
-            Bson::Array(arr) => match arr[0] {  //TODO this is probably better served by a macro
+            Bson::Array(arr) => match arr[0] {
+                //TODO this is probably better served by a macro
                 Bson::Double(_) => Some(AstarteType::DoubleArray(
                     arr.iter()
                         .map(|x| {
@@ -260,10 +261,12 @@ impl AstarteType {
 #[cfg(test)]
 
 mod test {
+    use std::collections::HashMap;
+
     use crate::{types::AstarteType, AstarteSdk};
 
     #[test]
-    fn test_types() {
+    fn test_individual_serialization() {
         let alltypes: Vec<AstarteType> = vec![
             (4.5).into(),
             (-4).into(),
@@ -295,5 +298,73 @@ mod test {
 
             assert!(ty == ty2);
         }
+    }
+
+    #[test]
+    fn test_object_serialization() {
+        let alltypes: Vec<AstarteType> = vec![
+            (4.5).into(),
+            (-4).into(),
+            true.into(),
+            45543543534_i64.into(),
+            "hello".into(),
+            b"hello".to_vec().into(),
+            chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0).into(),
+            vec![1.2, 3.4, 5.6, 7.8].into(),
+            vec![1, 3, 5, 7].into(),
+            vec![true, false, true, true].into(),
+            vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
+            vec!["hello".to_owned(), "world".to_owned()].into(),
+            vec![b"hello".to_vec(), b"world".to_vec()].into(),
+            vec![
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
+                chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
+            ]
+            .into(),
+        ];
+
+        let allendpoints = vec![
+            "double",
+            "integer",
+            "boolean",
+            "longinteger",
+            "string",
+            "binaryblob",
+            "datetime",
+            "doublearray",
+            "integerarray",
+            "booleanarray",
+            "longintegerarray",
+            "stringarray",
+            "binaryblobarray",
+            "datetimearray",
+        ];
+
+        let mut data = std::collections::HashMap::new();
+
+        for i in allendpoints.iter().zip(alltypes.iter()) {
+            data.insert(*i.0, i.1.clone());
+        }
+
+        //let data: std::collections::HashMap<String,AstarteType> = allendpoints.iter().zip(alltypes.iter()).collect();
+
+        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap();
+
+        let data2 = AstarteSdk::deserialize_object(bytes).unwrap();
+
+        fn hashmap_match(
+            map1: &HashMap<&str, AstarteType>,
+            map2: &HashMap<String, AstarteType>,
+        ) -> bool {
+            map1.len() == map2.len()
+                && map1
+                    .keys()
+                    .all(|k| map2.contains_key(k.clone()) && map1[k] == map2[k.clone()])
+        }
+
+        println!("\nComparing {:?}\nto {:?}", data, data2);
+
+        assert!(hashmap_match(&data, &data2));
     }
 }
