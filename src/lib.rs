@@ -102,6 +102,9 @@ pub enum AstarteError {
 
     #[error("mqtt connection error")]
     ConnectionError(#[from] rumqttc::ConnectionError),
+
+    #[error("generic error")]
+    Unreported,
 }
 
 impl AstarteOptions {
@@ -272,13 +275,20 @@ impl AstarteOptions {
 
 #[derive(Debug)]
 pub enum Aggregation {
-    Individual((String, AstarteType)),
+    Individual(AstarteType),
     Object(HashMap<String, AstarteType>),
+}
+
+/// packet from astarte to device
+#[derive(Debug)]
+pub struct Clientbound {
+    pub path: String,
+    pub data: Aggregation,
 }
 
 impl AstarteSdk {
     /// Poll updates from mqtt, this is where you receive data
-    pub async fn poll(&mut self) -> Result<Option<Aggregation>, AstarteError> {
+    pub async fn poll(&mut self) -> Result<Option<Clientbound>, AstarteError> {
         match self.eventloop.lock().await.poll().await? {
             Event::Incoming(i) => {
                 debug!("Incoming = {:?}", i);
@@ -301,16 +311,32 @@ impl AstarteSdk {
                             trace!("{:?}", deserialized);
                             if let Some(v) = deserialized.get("v") {
                                 if let Bson::Document(doc) = v {
+                                    let strings = doc.iter()
+                                        .map(|f| f.0.clone());
+
+                                    let data = doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
+                                    let data: Option<Vec<AstarteType>> = data.collect();
+                                    let data = data.ok_or(AstarteError::Unreported)?; //TODO
+
+                                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+
+                                    let reply = Clientbound {
+                                        path: topic,
+                                        data: Aggregation::Object(hmap)
+                                    };
+
+                                    return Ok(Some(reply));
+
                                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
                                     //TODO if the device id is not in the topic, it's probably an error
-                                    return Ok(Some(Aggregation::Individual((
-                                        topic
-                                            .strip_prefix(&self.client_id())
-                                            .unwrap_or(&topic)
-                                            .into(),
-                                        v,
-                                    ))));
+                                    let reply = Clientbound {
+                                        path: topic,
+                                        data: Aggregation::Individual(v)
+                                    };
+
+                                    return Ok(Some(reply));
                                 } else {
+                                    return Err(AstarteError::Unreported); //TODO
                                 }
                             }
                         }
