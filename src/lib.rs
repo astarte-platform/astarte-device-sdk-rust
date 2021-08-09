@@ -301,7 +301,7 @@ impl AstarteSdk {
                         }
                     }
                     rumqttc::Packet::Publish(p) => {
-                        let topic = p.topic;
+                        let topic = p.topic.trim_start_matches(&self.client_id()).to_owned();
                         let data = p.payload.to_vec();
                         debug!("Incoming publish = {} {:?}", topic, data);
 
