@@ -47,17 +47,19 @@ pub struct AstarteSdk {
 
 /// Builder for Astarte client
 ///
-/// ```ignore
-/// let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
 /// ```
+/// use astarte_sdk::AstarteOptions;
 ///
-/// Interfaces should be added before usage
-/// ```ignore
-/// sdk_options.add_interface_files("path/to/interfaces")
-/// ```
-/// or
-/// ```ignore
-/// sdk_options.add_interface_file("path/to/interfaces/interface.json")
+/// let realm = "test";
+/// let device_id = "2TBn-jNESuuHamE2Zo1anA";
+/// let credentials_secret = "G6PjaFRwhjKLb07hk/lAUHqFoI+aIg39CEQ1MQ+mdZk=";
+/// let pairing_url = "https://api.eu1.astarte.cloud/pairing";
+///
+/// let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+///
+/// sdk_options.add_interface_files("path/to/interfaces");
+///
+///
 /// ```
 
 pub struct AstarteOptions {
@@ -228,6 +230,7 @@ impl AstarteOptions {
         Ok(())
     }
 
+    /// Creates and connects an astarte client
     pub async fn build(&mut self) -> Result<AstarteSdk, AstarteBuilderError> {
         let cn = format!("{}/{}", self.realm, self.device_id);
 
@@ -279,7 +282,7 @@ pub enum Aggregation {
     Object(HashMap<String, AstarteType>),
 }
 
-/// packet from astarte to device
+/// data from astarte to device
 #[derive(Debug)]
 pub struct Clientbound {
     pub path: String,
@@ -302,44 +305,11 @@ impl AstarteSdk {
                     }
                     rumqttc::Packet::Publish(p) => {
                         let topic = p.topic.trim_start_matches(&self.client_id()).to_owned();
-                        let data = p.payload.to_vec();
-                        debug!("Incoming publish = {} {:?}", topic, data);
+                        let bdata = p.payload.to_vec();
 
-                        if let Ok(deserialized) =
-                            bson::Document::from_reader(&mut std::io::Cursor::new(data))
-                        {
-                            trace!("{:?}", deserialized);
-                            if let Some(v) = deserialized.get("v") {
-                                if let Bson::Document(doc) = v {
-                                    let strings = doc.iter().map(|f| f.0.clone());
+                        debug!("Incoming publish = {} {:?}", topic, bdata);
 
-                                    let data =
-                                        doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
-                                    let data: Option<Vec<AstarteType>> = data.collect();
-                                    let data = data.ok_or(AstarteError::Unreported)?; //TODO
-
-                                    let hmap: HashMap<String, AstarteType> =
-                                        strings.zip(data).collect();
-
-                                    let reply = Clientbound {
-                                        path: topic,
-                                        data: Aggregation::Object(hmap),
-                                    };
-
-                                    return Ok(Some(reply));
-                                } else if let Some(v) = AstarteType::from_bson(v.clone()) {
-                                    //TODO if the device id is not in the topic, it's probably an error
-                                    let reply = Clientbound {
-                                        path: topic,
-                                        data: Aggregation::Individual(v),
-                                    };
-
-                                    return Ok(Some(reply));
-                                } else {
-                                    return Err(AstarteError::Unreported); //TODO
-                                }
-                            }
-                        }
+                        return AstarteSdk::deserialize(topic, bdata);
                     }
                     _ => {}
                 }
@@ -435,7 +405,7 @@ impl AstarteSdk {
     }
 
     /// Serialize an astarte type into a vec of bytes
-    pub fn serialize_individual<D>(
+    fn serialize_individual<D>(
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError>
@@ -456,19 +426,6 @@ impl AstarteSdk {
         let mut buf = Vec::new();
         doc.to_writer(&mut buf)?;
         Ok(buf)
-    }
-
-    /// Deserialize an astarte type from a vec of bytes
-    pub fn deserialize_individual(data: Vec<u8>) -> Option<AstarteType> {
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(data)) {
-            trace!("deserialized {:?}", deserialized);
-
-            if let Some(v) = deserialized.get("v") {
-                return AstarteType::from_bson(v.clone());
-            }
-        }
-
-        None
     }
 
     /// Send data to an object interface
@@ -505,7 +462,7 @@ impl AstarteSdk {
     }
 
     /// Serialize a group of astarte types to a vec of bytes, representing an object
-    pub fn serialize_object(
+    fn serialize_object(
         data: HashMap<&str, AstarteType>,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError> {
@@ -530,27 +487,49 @@ impl AstarteSdk {
         Ok(buf)
     }
 
-    /// deserialize an astarte object from a vec of bytes
-    pub fn deserialize_object(data: Vec<u8>) -> Result<HashMap<String, AstarteType>, AstarteError> {
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(data)) {
-            trace!("deserialized {:?}", deserialized);
+    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Option<Clientbound>, AstarteError>{
+        debug!("Incoming publish = {} {:?}", topic, bdata);
 
+        if let Ok(deserialized) =
+            bson::Document::from_reader(&mut std::io::Cursor::new(bdata.clone()))
+        {
+            trace!("{:?}", deserialized);
             if let Some(v) = deserialized.get("v") {
                 if let Bson::Document(doc) = v {
-                    println!("\n\nDeserialized {:?}", doc);
 
-                    let mut ret = HashMap::new();
+                    let strings = doc.iter().map(|f| f.0.clone());
 
-                    for i in doc {
-                        ret.insert(i.0.clone(), AstarteType::from_bson(i.1.clone()).unwrap());
-                    }
+                    let data =
+                        doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
+                    let data: Option<Vec<AstarteType>> = data.collect();
+                    let data = data.ok_or(AstarteError::Unreported)?; //TODO
 
-                    return Ok(ret);
+                    let hmap: HashMap<String, AstarteType> =
+                        strings.zip(data).collect();
+
+                    let reply = Clientbound {
+                        path: topic,
+                        data: Aggregation::Object(hmap),
+                    };
+
+                    return Ok(Some(reply));
+                } else if let Some(v) = AstarteType::from_bson(v.clone()) {
+                    //TODO if the device id is not in the topic, it's probably an error
+                    let reply = Clientbound {
+                        path: topic,
+                        data: Aggregation::Individual(v),
+                    };
+
+                    return Ok(Some(reply));
+                } else {
+                    return Err(AstarteError::Unreported); //TODO
                 }
+            } else {
+                return Ok(None);
             }
+        } else {
+            return Ok(None);
         }
-
-        return Ok(HashMap::new());
     }
 }
 

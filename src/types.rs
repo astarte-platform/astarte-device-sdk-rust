@@ -263,7 +263,7 @@ impl AstarteType {
 mod test {
     use std::collections::HashMap;
 
-    use crate::{types::AstarteType, AstarteSdk};
+    use crate::{Aggregation, AstarteSdk, types::AstarteType};
 
     #[test]
     fn test_individual_serialization() {
@@ -294,9 +294,14 @@ mod test {
 
             let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
 
-            let ty2 = AstarteSdk::deserialize_individual(buf).unwrap();
+            let ty2 = AstarteSdk::deserialize("".into(),buf).unwrap();
 
-            assert!(ty == ty2);
+            if let Aggregation::Individual(data) = ty2.unwrap().data {
+                assert!(ty == data);
+            } else {
+                panic!();
+            }
+
         }
     }
 
@@ -351,7 +356,7 @@ mod test {
 
         let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap();
 
-        let data2 = AstarteSdk::deserialize_object(bytes).unwrap();
+        let data2 = AstarteSdk::deserialize("".into(), bytes).unwrap();
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,
@@ -365,6 +370,10 @@ mod test {
 
         println!("\nComparing {:?}\nto {:?}", data, data2);
 
-        assert!(hashmap_match(&data, &data2));
+        if let Aggregation::Object(data2) = data2.unwrap().data {
+            assert!(hashmap_match(&data, &data2));
+        } else {
+            panic!();
+        }
     }
 }

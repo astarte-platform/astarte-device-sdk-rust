@@ -1,4 +1,4 @@
-use astarte_sdk::AstarteOptions;
+use astarte_sdk::{AstarteOptions, types::AstarteType};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -57,6 +57,16 @@ async fn main() {
     loop {
         if let Ok(Some(data)) = device.poll().await {
             println!("incoming: {:?}", data);
+
+            if data.path == "/com.test6.server/led" {
+                if let astarte_sdk::Aggregation::Individual(data) = data.data {
+                    if data == AstarteType::Boolean(true) {
+                        println!("led is ON");
+                    } else {
+                        println!("led is OFF");
+                    }
+                }
+            }
         }
     }
 }
