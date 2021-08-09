@@ -297,7 +297,7 @@ impl AstarteSdk {
                     rumqttc::Packet::ConnAck(p) => {
                         if !p.session_present {
                             self.send_introspection().await;
-                            //self.send_emptycache().await;
+                            self.send_emptycache().await;
                         }
                     }
                     rumqttc::Packet::Publish(p) => {
@@ -311,27 +311,27 @@ impl AstarteSdk {
                             trace!("{:?}", deserialized);
                             if let Some(v) = deserialized.get("v") {
                                 if let Bson::Document(doc) = v {
-                                    let strings = doc.iter()
-                                        .map(|f| f.0.clone());
+                                    let strings = doc.iter().map(|f| f.0.clone());
 
-                                    let data = doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
+                                    let data =
+                                        doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
                                     let data: Option<Vec<AstarteType>> = data.collect();
                                     let data = data.ok_or(AstarteError::Unreported)?; //TODO
 
-                                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+                                    let hmap: HashMap<String, AstarteType> =
+                                        strings.zip(data).collect();
 
                                     let reply = Clientbound {
                                         path: topic,
-                                        data: Aggregation::Object(hmap)
+                                        data: Aggregation::Object(hmap),
                                     };
 
                                     return Ok(Some(reply));
-
                                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
                                     //TODO if the device id is not in the topic, it's probably an error
                                     let reply = Clientbound {
                                         path: topic,
-                                        data: Aggregation::Individual(v)
+                                        data: Aggregation::Individual(v),
                                     };
 
                                     return Ok(Some(reply));
@@ -354,7 +354,7 @@ impl AstarteSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn _send_emptycache(&self) {
+    async fn send_emptycache(&self) {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
