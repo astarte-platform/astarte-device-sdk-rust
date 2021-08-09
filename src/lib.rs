@@ -487,7 +487,7 @@ impl AstarteSdk {
         Ok(buf)
     }
 
-    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Option<Clientbound>, AstarteError>{
+    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Option<Clientbound>, AstarteError> {
         debug!("Incoming publish = {} {:?}", topic, bdata);
 
         if let Ok(deserialized) =
@@ -496,16 +496,13 @@ impl AstarteSdk {
             trace!("{:?}", deserialized);
             if let Some(v) = deserialized.get("v") {
                 if let Bson::Document(doc) = v {
-
                     let strings = doc.iter().map(|f| f.0.clone());
 
-                    let data =
-                        doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
+                    let data = doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
                     let data: Option<Vec<AstarteType>> = data.collect();
                     let data = data.ok_or(AstarteError::Unreported)?; //TODO
 
-                    let hmap: HashMap<String, AstarteType> =
-                        strings.zip(data).collect();
+                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
 
                     let reply = Clientbound {
                         path: topic,
