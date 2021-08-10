@@ -105,6 +105,9 @@ pub enum AstarteError {
     #[error("mqtt connection error")]
     ConnectionError(#[from] rumqttc::ConnectionError),
 
+    #[error("malformed input from Astarte backend")]
+    DeserializationError,
+
     #[error("generic error")]
     Unreported,
 }
@@ -285,39 +288,42 @@ pub enum Aggregation {
 /// data from astarte to device
 #[derive(Debug)]
 pub struct Clientbound {
+    pub interface: String,
     pub path: String,
     pub data: Aggregation,
 }
 
 impl AstarteSdk {
     /// Poll updates from mqtt, this is where you receive data
-    pub async fn poll(&mut self) -> Result<Option<Clientbound>, AstarteError> {
-        match self.eventloop.lock().await.poll().await? {
-            Event::Incoming(i) => {
-                debug!("Incoming = {:?}", i);
+    pub async fn poll(&mut self) -> Result<Clientbound, AstarteError> {
+        loop {
+            // keep consuming and processing packets until we have data for the user
+            match self.eventloop.lock().await.poll().await? {
+                Event::Incoming(i) => {
+                    trace!("Incoming = {:?}", i);
 
-                match i {
-                    rumqttc::Packet::ConnAck(p) => {
-                        if !p.session_present {
-                            self.send_introspection().await;
-                            self.send_emptycache().await;
+                    match i {
+                        rumqttc::Packet::ConnAck(p) => {
+                            if !p.session_present {
+                                self.send_introspection().await;
+                                self.send_emptycache().await;
+                            }
                         }
-                    }
-                    rumqttc::Packet::Publish(p) => {
-                        let topic = p.topic.trim_start_matches(&self.client_id()).to_owned();
-                        let bdata = p.payload.to_vec();
+                        rumqttc::Packet::Publish(p) => {
+                            let topic = p.topic.trim_start_matches(&self.client_id()).to_owned();
+                            let bdata = p.payload.to_vec();
 
-                        debug!("Incoming publish = {} {:?}", topic, bdata);
+                            debug!("Incoming publish = {} {:?}", topic, bdata);
 
-                        return AstarteSdk::deserialize(topic, bdata);
+                            // if we have data for the user, return
+                            return AstarteSdk::deserialize(topic, bdata);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
+                Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
             }
-            Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
         }
-
-        Ok(None)
     }
 
     fn client_id(&self) -> String {
@@ -404,30 +410,6 @@ impl AstarteSdk {
         Ok(())
     }
 
-    /// Serialize an astarte type into a vec of bytes
-    fn serialize_individual<D>(
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
-    where
-        D: Into<AstarteType>,
-    {
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
-               "t": timestamp,
-               "v": data.into()
-            }
-        } else {
-            bson::doc! {
-               "v": data.into(),
-            }
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        Ok(buf)
-    }
-
     /// Send data to an object interface
     pub async fn send_object(
         &self,
@@ -461,6 +443,17 @@ impl AstarteSdk {
         Ok(())
     }
 
+    /// Serialize an astarte type into a vec of bytes
+    fn serialize_individual<D>(
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        AstarteSdk::serialize(data.into().into(), timestamp)
+    }
+
     /// Serialize a group of astarte types to a vec of bytes, representing an object
     fn serialize_object(
         data: HashMap<&str, AstarteType>,
@@ -470,26 +463,32 @@ impl AstarteSdk {
 
         let doc = to_document(&data)?;
 
+        AstarteSdk::serialize(Bson::Document(doc), timestamp)
+    }
+
+    /// Serialize data directly from Bson
+    fn serialize(
+        data: Bson,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError> {
         let doc = if let Some(timestamp) = timestamp {
             bson::doc! {
                "t": timestamp,
-               "v": doc
+               "v": data
             }
         } else {
             bson::doc! {
-               "v": doc,
+               "v": data,
             }
         };
 
         let mut buf = Vec::new();
         doc.to_writer(&mut buf)?;
-        println!("{:#?}", doc);
+        trace!("serialized {:#?}", doc);
         Ok(buf)
     }
 
-    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Option<Clientbound>, AstarteError> {
-        debug!("Incoming publish = {} {:?}", topic, bdata);
-
+    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Clientbound, AstarteError> {
         if let Ok(deserialized) =
             bson::Document::from_reader(&mut std::io::Cursor::new(bdata.clone()))
         {
@@ -505,27 +504,29 @@ impl AstarteSdk {
                     let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
 
                     let reply = Clientbound {
+                        interface: "".into(),
                         path: topic,
                         data: Aggregation::Object(hmap),
                     };
 
-                    return Ok(Some(reply));
+                    return Ok(reply);
                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
                     //TODO if the device id is not in the topic, it's probably an error
                     let reply = Clientbound {
+                        interface: "".into(),
                         path: topic,
                         data: Aggregation::Individual(v),
                     };
 
-                    return Ok(Some(reply));
+                    return Ok(reply);
                 } else {
-                    return Err(AstarteError::Unreported); //TODO
+                    return Err(AstarteError::DeserializationError);
                 }
             } else {
-                return Ok(None);
+                return Err(AstarteError::DeserializationError);
             }
         } else {
-            return Ok(None);
+            return Err(AstarteError::DeserializationError);
         }
     }
 }

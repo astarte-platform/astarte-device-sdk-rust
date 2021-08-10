@@ -1,7 +1,6 @@
 use std::vec;
 
 use astarte_sdk::{types::AstarteType, AstarteOptions};
-use serde::de::IntoDeserializer;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -110,7 +109,7 @@ async fn main() {
     });
 
     loop {
-        if let Ok(Some(data)) = device.poll().await {
+        if let Ok(data) = device.poll().await {
             println!("incoming data: {:?}", data);
         }
     }

@@ -55,7 +55,7 @@ async fn main() {
     });
 
     loop {
-        if let Ok(Some(data)) = device.poll().await {
+        if let Ok(data) = device.poll().await {
             println!("incoming: {:?}", data);
 
             if data.path == "/com.test6.server/led" {

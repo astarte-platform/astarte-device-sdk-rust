@@ -296,7 +296,7 @@ mod test {
 
             let ty2 = AstarteSdk::deserialize("".into(), buf).unwrap();
 
-            if let Aggregation::Individual(data) = ty2.unwrap().data {
+            if let Aggregation::Individual(data) = ty2.data {
                 assert!(ty == data);
             } else {
                 panic!();
@@ -369,7 +369,7 @@ mod test {
 
         println!("\nComparing {:?}\nto {:?}", data, data2);
 
-        if let Aggregation::Object(data2) = data2.unwrap().data {
+        if let Aggregation::Object(data2) = data2.data {
             assert!(hashmap_match(&data, &data2));
         } else {
             panic!();
