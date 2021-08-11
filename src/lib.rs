@@ -294,14 +294,14 @@ pub struct Clientbound {
     pub data: Aggregation,
 }
 
-fn parse_topic(topic: &String) -> Option<(String, String, String, String)> {
-    let mut parts = topic.split('/').into_iter();
+fn parse_topic(topic: &str) -> Option<(String, String, String, String)> {
+    let mut parts = topic.split('/');
 
     let realm = parts.next()?.to_owned();
     let device = parts.next()?.to_owned();
     let interface = parts.next()?.to_owned();
     let path = String::from("/") + &parts.join("/");
-    return Some((realm, device, interface, path));
+    Some((realm, device, interface, path))
 }
 
 impl AstarteSdk {
@@ -508,9 +508,7 @@ impl AstarteSdk {
     }
 
     fn deserialize(bdata: Vec<u8>) -> Result<Aggregation, AstarteError> {
-        if let Ok(deserialized) =
-            bson::Document::from_reader(&mut std::io::Cursor::new(bdata.clone()))
-        {
+        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
             trace!("{:?}", deserialized);
             if let Some(v) = deserialized.get("v") {
                 if let Bson::Document(doc) = v {
@@ -522,17 +520,17 @@ impl AstarteSdk {
 
                     let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
 
-                    return Ok(Aggregation::Object(hmap));
+                    Ok(Aggregation::Object(hmap))
                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
-                    return Ok(Aggregation::Individual(v));
+                    Ok(Aggregation::Individual(v))
                 } else {
-                    return Err(AstarteError::DeserializationError);
+                    Err(AstarteError::DeserializationError)
                 }
             } else {
-                return Err(AstarteError::DeserializationError);
+                Err(AstarteError::DeserializationError)
             }
         } else {
-            return Err(AstarteError::DeserializationError);
+            Err(AstarteError::DeserializationError)
         }
     }
 }

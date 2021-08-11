@@ -164,8 +164,7 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<f64>>()
-                        .clone(),
+                        .collect::<Vec<f64>>(),
                 )),
                 Bson::Boolean(_) => Some(AstarteType::BooleanArray(
                     arr.iter()
@@ -176,8 +175,7 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<bool>>()
-                        .clone(),
+                        .collect::<Vec<bool>>(),
                 )),
                 Bson::Int32(_) => Some(AstarteType::Int32Array(
                     arr.iter()
@@ -188,8 +186,7 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<i32>>()
-                        .clone(),
+                        .collect::<Vec<i32>>(),
                 )),
                 Bson::Int64(_) => Some(AstarteType::Int64Array(
                     arr.iter()
@@ -200,8 +197,7 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<i64>>()
-                        .clone(),
+                        .collect::<Vec<i64>>(),
                 )),
                 Bson::String(_) => Some(AstarteType::StringArray(
                     arr.iter()
@@ -212,8 +208,7 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<String>>()
-                        .clone(),
+                        .collect::<Vec<String>>(),
                 )),
                 Bson::Binary(_) => Some(AstarteType::BlobArray(
                     arr.iter()
@@ -224,20 +219,18 @@ impl AstarteType {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<Vec<u8>>>()
-                        .clone(),
+                        .collect::<Vec<Vec<u8>>>(),
                 )),
                 Bson::DateTime(_) => Some(AstarteType::DatetimeArray(
                     arr.iter()
                         .map(|x| {
                             if let Bson::DateTime(val) = x {
-                                val.clone()
+                                *val
                             } else {
                                 panic!("malformed input")
                             }
                         })
-                        .collect::<Vec<chrono::DateTime<chrono::Utc>>>()
-                        .clone(),
+                        .collect::<Vec<chrono::DateTime<chrono::Utc>>>(),
                 )),
                 _ => None,
             },
