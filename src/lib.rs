@@ -11,6 +11,7 @@ pub mod types;
 
 use bson::{to_document, Bson};
 use crypto::Bundle;
+use itertools::Itertools;
 use log::{debug, trace};
 use openssl::error::ErrorStack;
 use pairing::PairingError;
@@ -293,6 +294,16 @@ pub struct Clientbound {
     pub data: Aggregation,
 }
 
+fn parse_topic(topic: &String) -> Option<(String, String, String, String)> {
+    let mut parts = topic.split('/').into_iter();
+
+    let realm = parts.next()?.to_owned();
+    let device = parts.next()?.to_owned();
+    let interface = parts.next()?.to_owned();
+    let path = String::from("/") + &parts.join("/");
+    return Some((realm, device, interface, path));
+}
+
 impl AstarteSdk {
     /// Poll updates from mqtt, this is where you receive data
     pub async fn poll(&mut self) -> Result<Clientbound, AstarteError> {
@@ -310,13 +321,21 @@ impl AstarteSdk {
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
-                            let topic = p.topic.trim_start_matches(&self.client_id()).to_owned();
+                            // if we have data for the user, return
+                            let (_, _, interface, path) =
+                                parse_topic(&p.topic).ok_or(AstarteError::DeserializationError)?;
+
                             let bdata = p.payload.to_vec();
 
-                            debug!("Incoming publish = {} {:?}", topic, bdata);
+                            debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                            // if we have data for the user, return
-                            return AstarteSdk::deserialize(topic, bdata);
+                            let data = AstarteSdk::deserialize(bdata)?;
+
+                            return Ok(Clientbound {
+                                interface,
+                                path,
+                                data,
+                            });
                         }
                         _ => {}
                     }
@@ -488,7 +507,7 @@ impl AstarteSdk {
         Ok(buf)
     }
 
-    fn deserialize(topic: String, bdata: Vec<u8>) -> Result<Clientbound, AstarteError> {
+    fn deserialize(bdata: Vec<u8>) -> Result<Aggregation, AstarteError> {
         if let Ok(deserialized) =
             bson::Document::from_reader(&mut std::io::Cursor::new(bdata.clone()))
         {
@@ -503,22 +522,9 @@ impl AstarteSdk {
 
                     let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
 
-                    let reply = Clientbound {
-                        interface: "".into(),
-                        path: topic,
-                        data: Aggregation::Object(hmap),
-                    };
-
-                    return Ok(reply);
+                    return Ok(Aggregation::Object(hmap));
                 } else if let Some(v) = AstarteType::from_bson(v.clone()) {
-                    //TODO if the device id is not in the topic, it's probably an error
-                    let reply = Clientbound {
-                        interface: "".into(),
-                        path: topic,
-                        data: Aggregation::Individual(v),
-                    };
-
-                    return Ok(reply);
+                    return Ok(Aggregation::Individual(v));
                 } else {
                     return Err(AstarteError::DeserializationError);
                 }
@@ -617,5 +623,16 @@ mod test {
                 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00
             ]
         ));
+    }
+
+    #[test]
+    fn test_parse_topic() {
+        let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
+        let (realm, device, interface, path) = crate::parse_topic(&topic).unwrap();
+
+        assert!(realm == "test");
+        assert!(device == "u-WraCwtK_G_fjJf63TiAw");
+        assert!(interface == "com.interface.test");
+        assert!(path == "/led/red");
     }
 }
