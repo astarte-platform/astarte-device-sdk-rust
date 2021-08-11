@@ -87,6 +87,7 @@ async fn main() {
         loop {
             let data = alltypes.iter().zip(allendpoints.iter());
 
+            // individual aggregation
             for i in data {
                 w.send("com.test.everything", &format!("/{}", i.1), i.0.clone())
                     .await
@@ -95,12 +96,13 @@ async fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
 
-            let mut lol: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
+            // object aggregation
+            let mut obj: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
                 std::collections::HashMap::new();
-            lol.insert("bottone", true.into());
-            lol.insert("uptimeSeconds", 67.into());
+            obj.insert("bottone", true.into());
+            obj.insert("uptimeSeconds", 67.into());
 
-            w.send_object_timestamp("com.test4.object", "/", lol, None)
+            w.send_object_timestamp("com.test4.object", "/", obj, None)
                 .await
                 .unwrap();
 

@@ -285,14 +285,14 @@ mod test {
         for ty in alltypes {
             println!("checking {:?}", ty);
 
-            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
+            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap(); // allow_panic
 
-            let ty2 = AstarteSdk::deserialize(buf).unwrap();
+            let ty2 = AstarteSdk::deserialize(buf).unwrap(); // allow_panic
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
             } else {
-                panic!();
+                panic!(); // allow_panic
             }
         }
     }
@@ -346,9 +346,9 @@ mod test {
 
         //let data: std::collections::HashMap<String,AstarteType> = allendpoints.iter().zip(alltypes.iter()).collect();
 
-        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap();
+        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap(); // allow_panic
 
-        let data2 = AstarteSdk::deserialize(bytes).unwrap();
+        let data2 = AstarteSdk::deserialize(bytes).unwrap(); // allow_panic
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,
@@ -365,7 +365,7 @@ mod test {
         if let Aggregation::Object(data2) = data2 {
             assert!(hashmap_match(&data, &data2));
         } else {
-            panic!();
+            panic!(); // allow_panic
         }
     }
 }

@@ -58,9 +58,9 @@ async fn main() {
         if let Ok(data) = device.poll().await {
             println!("incoming: {:?}", data);
 
-            if data.path == "/com.test6.server/led" {
-                if let astarte_sdk::Aggregation::Individual(data) = data.data {
-                    if data == AstarteType::Boolean(true) {
+            if let astarte_sdk::Aggregation::Individual(var) = data.data {
+                if data.path == "/led" {
+                    if var == true.into() {
                         println!("led is ON");
                     } else {
                         println!("led is OFF");
