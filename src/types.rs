@@ -148,90 +148,52 @@ impl From<AstarteType> for Bson {
     }
 }
 
+macro_rules! from_bson_array {
+    // Bson::Binary is build different from the other types
+    // we have to make a special case for it
+    ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {
+        Some(AstarteType::$astartetype(
+            $arr.iter()
+                .map(|x| {
+                    if let Bson::Binary(val) = x {
+                        val.bytes.clone()
+                    } else {
+                        panic!("malformed input")
+                    }
+                })
+                .collect::<Vec<$typ>>(),
+        ))
+    };
+    ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {
+        Some(AstarteType::$astartetype(
+            $arr.iter()
+                .map(|x| {
+                    if let Bson::$bsontype(val) = x {
+                        val.clone()
+                    } else {
+                        panic!("malformed input")
+                    }
+                })
+                .collect::<Vec<$typ>>(),
+        ))
+    };
+}
+
 impl AstarteType {
     pub fn from_bson(d: Bson) -> Option<Self> {
         match d {
             Bson::Double(d) => Some(AstarteType::Double(d)),
             Bson::String(d) => Some(AstarteType::String(d)),
             Bson::Array(arr) => match arr[0] {
-                //TODO this is probably better served by a macro
-                Bson::Double(_) => Some(AstarteType::DoubleArray(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::Double(val) = x {
-                                *val
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<f64>>(),
-                )),
-                Bson::Boolean(_) => Some(AstarteType::BooleanArray(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::Boolean(val) = x {
-                                *val
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<bool>>(),
-                )),
-                Bson::Int32(_) => Some(AstarteType::Int32Array(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::Int32(val) = x {
-                                *val
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<i32>>(),
-                )),
-                Bson::Int64(_) => Some(AstarteType::Int64Array(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::Int64(val) = x {
-                                *val
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<i64>>(),
-                )),
-                Bson::String(_) => Some(AstarteType::StringArray(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::String(val) = x {
-                                val.clone()
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<String>>(),
-                )),
-                Bson::Binary(_) => Some(AstarteType::BlobArray(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::Binary(val) = x {
-                                val.bytes.clone()
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<Vec<u8>>>(),
-                )),
-                Bson::DateTime(_) => Some(AstarteType::DatetimeArray(
-                    arr.iter()
-                        .map(|x| {
-                            if let Bson::DateTime(val) = x {
-                                *val
-                            } else {
-                                panic!("malformed input")
-                            }
-                        })
-                        .collect::<Vec<chrono::DateTime<chrono::Utc>>>(),
-                )),
+                Bson::Double(_) => from_bson_array!(arr, DoubleArray, Double, f64),
+                Bson::Boolean(_) => from_bson_array!(arr, BooleanArray, Boolean, bool),
+                Bson::Int32(_) => from_bson_array!(arr, Int32Array, Int32, i32),
+                Bson::Int64(_) => from_bson_array!(arr, Int64Array, Int64, i64),
+                Bson::DateTime(_) => {
+                    from_bson_array!(arr, DatetimeArray, DateTime, chrono::DateTime<chrono::Utc>)
+                }
+                Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
+                Bson::Binary(_) => from_bson_array!(arr, BlobArray, Binary, Vec<u8>),
                 _ => None,
             },
             Bson::Boolean(d) => Some(AstarteType::Boolean(d)),
