@@ -52,9 +52,9 @@ pub struct AstarteSdk {
 /// use astarte_sdk::AstarteOptions;
 ///
 /// let realm = "test";
-/// let device_id = "2TBn-jNESuuHamE2Zo1anA";
-/// let credentials_secret = "G6PjaFRwhjKLb07hk/lAUHqFoI+aIg39CEQ1MQ+mdZk=";
-/// let pairing_url = "https://api.eu1.astarte.cloud/pairing";
+/// let device_id = "xxxxxxxxxxxxxxxxxxxxxxx";
+/// let credentials_secret = "xxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxx";
+/// let pairing_url = "https://api.example.com/pairing";
 ///
 /// let mut sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
 ///
