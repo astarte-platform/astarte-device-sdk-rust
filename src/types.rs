@@ -149,7 +149,7 @@ impl From<AstarteType> for Bson {
 }
 
 macro_rules! from_bson_array {
-    // Bson::Binary is build different from the other types
+    // Bson::Binary is built different from the other types
     // we have to make a special case for it
     ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {
         Some(AstarteType::$astartetype(
