@@ -1,4 +1,4 @@
-use astarte_sdk::{types::AstarteType, AstarteOptions};
+use astarte_sdk::AstarteOptions;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
