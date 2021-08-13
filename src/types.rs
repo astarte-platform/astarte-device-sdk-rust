@@ -155,32 +155,31 @@ impl From<AstarteType> for Bson {
 macro_rules! from_bson_array {
     // Bson::Binary is built different from the other types
     // we have to make a special case for it
-    ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {
-        Ok(AstarteType::$astartetype(
-            $arr.iter()
-                .map(|x| {
-                    if let Bson::Binary(val) = x {
-                        val.bytes.clone()
-                    } else {
-                        panic!("malformed input")
-                    }
-                })
-                .collect::<Vec<$typ>>(),
-        ))
-    };
-    ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {
-        Ok(AstarteType::$astartetype(
-            $arr.iter()
-                .map(|x| {
-                    if let Bson::$bsontype(val) = x {
-                        val.clone()
-                    } else {
-                        panic!("malformed input")
-                    }
-                })
-                .collect::<Vec<$typ>>(),
-        ))
-    };
+    ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {{
+        let ret = $arr.iter().map(|x| {
+            if let Bson::Binary(val) = x {
+                Ok(val.bytes.clone())
+            } else {
+                Err(AstarteError::FromBsonArrayError)
+            }
+        });
+
+        let ret: Result<Vec<$typ>, AstarteError> = ret.collect();
+        Ok(AstarteType::$astartetype(ret?))
+    }};
+
+    ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {{
+        let ret = $arr.iter().map(|x| {
+            if let Bson::$bsontype(val) = x {
+                Ok(val.clone())
+            } else {
+                Err(AstarteError::FromBsonArrayError)
+            }
+        });
+
+        let ret: Result<Vec<$typ>, AstarteError> = ret.collect();
+        Ok(AstarteType::$astartetype(ret?))
+    }};
 }
 
 impl std::convert::TryFrom<Bson> for AstarteType {

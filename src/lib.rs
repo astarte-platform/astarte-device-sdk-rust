@@ -113,6 +113,9 @@ pub enum AstarteError {
     #[error("error converting from Bson to AstarteType")]
     FromBsonError,
 
+    #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
+    FromBsonArrayError,
+
     #[error("generic error")]
     Unreported,
 }
