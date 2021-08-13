@@ -19,6 +19,7 @@ use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -108,6 +109,9 @@ pub enum AstarteError {
 
     #[error("malformed input from Astarte backend")]
     DeserializationError,
+
+    #[error("error converting from Bson to AstarteType")]
+    FromBsonError,
 
     #[error("generic error")]
     Unreported,
@@ -514,14 +518,14 @@ impl AstarteSdk {
                 if let Bson::Document(doc) = v {
                     let strings = doc.iter().map(|f| f.0.clone());
 
-                    let data = doc.iter().map(|f| AstarteType::from_bson(f.1.clone()));
-                    let data: Option<Vec<AstarteType>> = data.collect();
-                    let data = data.ok_or(AstarteError::Unreported)?; //TODO
+                    let data = doc.iter().map(|f| f.1.clone().try_into());
+                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
+                    let data = data?;
 
                     let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
 
                     Ok(Aggregation::Object(hmap))
-                } else if let Some(v) = AstarteType::from_bson(v.clone()) {
+                } else if let Ok(v) = v.clone().try_into() {
                     Ok(Aggregation::Individual(v))
                 } else {
                     Err(AstarteError::DeserializationError)

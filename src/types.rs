@@ -1,4 +1,8 @@
+use std::convert::TryInto;
+
 use bson::{Binary, Bson};
+
+use crate::AstarteError;
 
 /// Types supported by astarte
 ///
@@ -152,7 +156,7 @@ macro_rules! from_bson_array {
     // Bson::Binary is built different from the other types
     // we have to make a special case for it
     ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {
-        Some(AstarteType::$astartetype(
+        Ok(AstarteType::$astartetype(
             $arr.iter()
                 .map(|x| {
                     if let Bson::Binary(val) = x {
@@ -165,7 +169,7 @@ macro_rules! from_bson_array {
         ))
     };
     ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {
-        Some(AstarteType::$astartetype(
+        Ok(AstarteType::$astartetype(
             $arr.iter()
                 .map(|x| {
                     if let Bson::$bsontype(val) = x {
@@ -179,11 +183,13 @@ macro_rules! from_bson_array {
     };
 }
 
-impl AstarteType {
-    pub fn from_bson(d: Bson) -> Option<Self> {
+impl std::convert::TryFrom<Bson> for AstarteType {
+    type Error = AstarteError;
+
+    fn try_from(d: Bson) -> Result<Self, Self::Error> {
         match d {
-            Bson::Double(d) => Some(AstarteType::Double(d)),
-            Bson::String(d) => Some(AstarteType::String(d)),
+            Bson::Double(d) => Ok(AstarteType::Double(d)),
+            Bson::String(d) => Ok(AstarteType::String(d)),
             Bson::Array(arr) => match arr[0] {
                 Bson::Double(_) => from_bson_array!(arr, DoubleArray, Double, f64),
                 Bson::Boolean(_) => from_bson_array!(arr, BooleanArray, Boolean, bool),
@@ -194,22 +200,22 @@ impl AstarteType {
                 }
                 Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
                 Bson::Binary(_) => from_bson_array!(arr, BlobArray, Binary, Vec<u8>),
-                _ => None,
+                _ => Err(AstarteError::FromBsonError),
             },
-            Bson::Boolean(d) => Some(AstarteType::Boolean(d)),
-            Bson::Int32(d) => Some(AstarteType::Int32(d)),
-            Bson::Int64(d) => Some(AstarteType::Int64(d)),
-            Bson::Binary(d) => Some(AstarteType::Blob(d.bytes)),
-            Bson::DateTime(d) => Some(AstarteType::Datetime(d)),
-            _ => None,
+            Bson::Boolean(d) => Ok(AstarteType::Boolean(d)),
+            Bson::Int32(d) => Ok(AstarteType::Int32(d)),
+            Bson::Int64(d) => Ok(AstarteType::Int64(d)),
+            Bson::Binary(d) => Ok(AstarteType::Blob(d.bytes)),
+            Bson::DateTime(d) => Ok(AstarteType::Datetime(d)),
+            _ => Err(AstarteError::FromBsonError),
         }
     }
+}
 
-    pub fn from_bson_vec(d: Vec<Bson>) -> Option<Vec<Self>> {
-        let vec = d.iter().map(|f| AstarteType::from_bson(f.clone()));
-        let vec: Option<Vec<AstarteType>> = vec.collect();
-
-        vec
+impl AstarteType {
+    pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, AstarteError> {
+        let vec = d.iter().map(|f| f.clone().try_into());
+        vec.collect()
     }
 }
 
