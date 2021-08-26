@@ -38,10 +38,7 @@ pub struct AstarteSdk {
     device_id: String,
     credentials_secret: String,
     pairing_url: String,
-    private_key: PrivateKey,
-    csr: String,
-    certificate_pem: Vec<Certificate>,
-    broker_url: Url,
+    build_options: BuildOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: HashMap<String, Interface>,
@@ -70,6 +67,7 @@ pub struct AstarteOptions {
     credentials_secret: String,
     pairing_url: String,
     interfaces: HashMap<String, Interface>,
+    build_options: Option<BuildOptions>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -120,6 +118,15 @@ pub enum AstarteError {
     Unreported,
 }
 
+#[derive(Debug, Clone)]
+struct BuildOptions {
+    private_key: PrivateKey,
+    csr: String,
+    certificate_pem: Vec<Certificate>,
+    broker_url: Url,
+    mqtt_opts: MqttOptions,
+}
+
 impl AstarteOptions {
     pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
         AstarteOptions {
@@ -128,6 +135,7 @@ impl AstarteOptions {
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
             interfaces: HashMap::new(),
+            build_options: None,
         }
     }
 
@@ -241,8 +249,8 @@ impl AstarteOptions {
         Ok(())
     }
 
-    /// Creates and connects an astarte client
-    pub async fn build(&mut self) -> Result<AstarteSdk, AstarteBuilderError> {
+    /// build Astarte client, call this before `connect`
+    pub async fn build(&mut self) -> Result<(), AstarteBuilderError> {
         let cn = format!("{}/{}", self.realm, self.device_id);
 
         if self.interfaces.is_empty() {
@@ -262,10 +270,30 @@ impl AstarteOptions {
 
         let broker_url = self.populate_broker_url().await?;
 
-        let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key);
+        let mqtt_opts = self.build_mqtt_opts(&certificate_pem, &broker_url, &private_key)?;
+
+        self.build_options = Some(BuildOptions {
+            private_key,
+            csr,
+            certificate_pem,
+            broker_url,
+            mqtt_opts,
+        });
+
+        Ok(())
+    }
+
+    /// Creates and connects an Astarte client
+    pub async fn connect(&mut self) -> Result<AstarteSdk, AstarteBuilderError> {
+        let cn = format!("{}/{}", self.realm, self.device_id);
+
+        let build_options = self
+            .build_options
+            .clone()
+            .ok_or_else(|| AstarteBuilderError::ConfigError("Missing or failed build".into()))?;
 
         // TODO: make cap configurable
-        let (client, eventloop) = AsyncClient::new(mqtt_opts?, 50);
+        let (client, eventloop) = AsyncClient::new(build_options.mqtt_opts.clone(), 50);
 
         self.subscribe(&client, &cn).await?;
 
@@ -274,10 +302,7 @@ impl AstarteOptions {
             device_id: self.device_id.to_owned(),
             credentials_secret: self.credentials_secret.to_owned(),
             pairing_url: self.pairing_url.to_owned(),
-            private_key,
-            csr: csr.clone(),
-            certificate_pem,
-            broker_url,
+            build_options,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: self.interfaces.to_owned(),
@@ -549,10 +574,7 @@ impl fmt::Debug for AstarteSdk {
             .field("device_id", &self.device_id)
             .field("credentials_secret", &self.credentials_secret)
             .field("pairing_url", &self.pairing_url)
-            .field("private_key", &self.private_key)
-            .field("csr", &self.csr)
-            .field("certificate_pem", &self.certificate_pem)
-            .field("broker_url", &self.broker_url)
+            .field("build_options", &self.build_options)
             .finish()
     }
 }

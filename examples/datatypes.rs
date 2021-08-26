@@ -40,7 +40,9 @@ async fn main() {
         .add_interface_files(&interfaces_directory)
         .unwrap();
 
-    let mut device = sdk_options.build().await.unwrap();
+    sdk_options.build().await.unwrap();
+
+    let mut device = sdk_options.connect().await.unwrap();
 
     let w = device.clone();
 
