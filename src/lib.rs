@@ -435,7 +435,7 @@ impl AstarteSdk {
 
     /// Send data to an astarte interface, with timestamp
     /// ```ignore
-    /// d.send_with_timestamp("com.test.interface", "/data", 4.5, Some(Utc.timestamp(1537449422, 0)) ).await?;
+    /// d.send_with_timestamp("com.test.interface", "/data", 4.5, Utc.timestamp(1537449422, 0) ).await?;
     /// ```
     pub async fn send_with_timestamp<D>(
         &self,
