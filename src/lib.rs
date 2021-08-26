@@ -429,15 +429,29 @@ impl AstarteSdk {
     where
         D: Into<AstarteType>,
     {
-        self.send_timestamp(interface_name, interface_path, data, None)
+        self.send_with_timestamp_impl(interface_name, interface_path, data, None)
             .await
     }
 
     /// Send data to an astarte interface, with timestamp
     /// ```ignore
-    /// d.send("com.test.interface", "/data", 4.5, Some(Utc.timestamp(1537449422, 0)) ).await?;
+    /// d.send_with_timestamp("com.test.interface", "/data", 4.5, Some(Utc.timestamp(1537449422, 0)) ).await?;
     /// ```
-    pub async fn send_timestamp<D>(
+    pub async fn send_with_timestamp<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        self.send_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
+            .await
+    }
+
+    async fn send_with_timestamp_impl<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
