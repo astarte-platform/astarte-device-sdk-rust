@@ -1,8 +1,4 @@
-//! Astarte is an Open Source IoT platform focused on Data management.
-//! It takes care of everything from collecting data from devices to delivering data to end-user applications.
-//! To achieve such a thing, it uses a mixture of mechanisms and paradigm to store organized data, perform live queries.
-//!
-//! <https://docs.astarte-platform.org/>
+#![doc = include_str!("../README.md")]
 
 mod crypto;
 mod interface;

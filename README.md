@@ -8,7 +8,7 @@ This package allows you to implement an Astarte Device using Rust.
 
 You can build the SDK and the example with
 
-```
+```sh
 cargo build
 ```
 
@@ -16,7 +16,7 @@ cargo build
 
 After building, you can run the example with
 
-```
+```sh
 cargo run --example simple -- \
     --credentials-secret <credentials-secret>
     --device-id <device-id>
