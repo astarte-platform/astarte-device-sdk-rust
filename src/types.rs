@@ -26,101 +26,33 @@ pub enum AstarteType {
     DatetimeArray(Vec<chrono::DateTime<chrono::Utc>>),
 }
 
-impl From<f64> for AstarteType {
-    fn from(d: f64) -> Self {
-        AstarteType::Double(d)
-    }
+// we implement From<T> from all the base types to AstarteType, using this macro
+macro_rules! impl_from {
+    ($typ:ty, $astartetype:tt) => {
+        impl From<$typ> for AstarteType {
+            fn from(d: $typ) -> Self {
+                AstarteType::$astartetype(d.into())
+            }
+        }
+    };
 }
 
-impl From<f32> for AstarteType {
-    fn from(d: f32) -> Self {
-        AstarteType::Double(d.into())
-    }
-}
-
-impl From<i32> for AstarteType {
-    fn from(d: i32) -> Self {
-        AstarteType::Int32(d)
-    }
-}
-
-impl From<i64> for AstarteType {
-    fn from(d: i64) -> Self {
-        AstarteType::Int64(d)
-    }
-}
-
-impl From<&str> for AstarteType {
-    fn from(d: &str) -> Self {
-        AstarteType::String(d.to_owned())
-    }
-}
-
-impl From<String> for AstarteType {
-    fn from(d: String) -> Self {
-        AstarteType::String(d)
-    }
-}
-
-impl From<bool> for AstarteType {
-    fn from(d: bool) -> Self {
-        AstarteType::Boolean(d)
-    }
-}
-
-impl From<Vec<u8>> for AstarteType {
-    fn from(d: Vec<u8>) -> Self {
-        AstarteType::Blob(d)
-    }
-}
-
-impl From<chrono::DateTime<chrono::Utc>> for AstarteType {
-    fn from(d: chrono::DateTime<chrono::Utc>) -> Self {
-        AstarteType::Datetime(d)
-    }
-}
-
-impl From<Vec<f64>> for AstarteType {
-    fn from(d: Vec<f64>) -> Self {
-        AstarteType::DoubleArray(d)
-    }
-}
-
-impl From<Vec<i32>> for AstarteType {
-    fn from(d: Vec<i32>) -> Self {
-        AstarteType::Int32Array(d)
-    }
-}
-
-impl From<Vec<i64>> for AstarteType {
-    fn from(d: Vec<i64>) -> Self {
-        AstarteType::Int64Array(d)
-    }
-}
-
-impl From<Vec<bool>> for AstarteType {
-    fn from(d: Vec<bool>) -> Self {
-        AstarteType::BooleanArray(d)
-    }
-}
-
-impl From<Vec<String>> for AstarteType {
-    fn from(d: Vec<String>) -> Self {
-        AstarteType::StringArray(d)
-    }
-}
-
-impl From<Vec<Vec<u8>>> for AstarteType {
-    fn from(d: Vec<Vec<u8>>) -> Self {
-        AstarteType::BlobArray(d)
-    }
-}
-
-impl From<Vec<chrono::DateTime<chrono::Utc>>> for AstarteType {
-    fn from(d: Vec<chrono::DateTime<chrono::Utc>>) -> Self {
-        AstarteType::DatetimeArray(d)
-    }
-}
+impl_from!(f64, Double);
+impl_from!(f32, Double);
+impl_from!(i32, Int32);
+impl_from!(i64, Int64);
+impl_from!(&str, String);
+impl_from!(String, String);
+impl_from!(bool, Boolean);
+impl_from!(Vec<u8>, Blob);
+impl_from!(chrono::DateTime<chrono::Utc>, Datetime);
+impl_from!(Vec<f64>, DoubleArray);
+impl_from!(Vec<i32>, Int32Array);
+impl_from!(Vec<i64>, Int64Array);
+impl_from!(Vec<bool>, BooleanArray);
+impl_from!(Vec<String>, StringArray);
+impl_from!(Vec<Vec<u8>>, BlobArray);
+impl_from!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
 
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
