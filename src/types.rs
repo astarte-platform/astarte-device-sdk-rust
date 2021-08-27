@@ -27,32 +27,45 @@ pub enum AstarteType {
 }
 
 // we implement From<T> from all the base types to AstarteType, using this macro
-macro_rules! impl_from {
+macro_rules! impl_traits {
     ($typ:ty, $astartetype:tt) => {
         impl From<$typ> for AstarteType {
             fn from(d: $typ) -> Self {
                 AstarteType::$astartetype(d.into())
             }
         }
+
+        impl From<&$typ> for AstarteType {
+            fn from(d: &$typ) -> Self {
+                AstarteType::$astartetype(d.clone().into())
+            }
+        }
+
+        impl PartialEq<$typ> for AstarteType {
+            fn eq(&self, other: &$typ) -> bool {
+                let oth: AstarteType = other.into();
+                oth == *self
+            }
+        }
     };
 }
 
-impl_from!(f64, Double);
-impl_from!(f32, Double);
-impl_from!(i32, Int32);
-impl_from!(i64, Int64);
-impl_from!(&str, String);
-impl_from!(String, String);
-impl_from!(bool, Boolean);
-impl_from!(Vec<u8>, Blob);
-impl_from!(chrono::DateTime<chrono::Utc>, Datetime);
-impl_from!(Vec<f64>, DoubleArray);
-impl_from!(Vec<i32>, Int32Array);
-impl_from!(Vec<i64>, Int64Array);
-impl_from!(Vec<bool>, BooleanArray);
-impl_from!(Vec<String>, StringArray);
-impl_from!(Vec<Vec<u8>>, BlobArray);
-impl_from!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
+impl_traits!(f64, Double);
+impl_traits!(f32, Double);
+impl_traits!(i32, Int32);
+impl_traits!(i64, Int64);
+impl_traits!(&str, String);
+impl_traits!(String, String);
+impl_traits!(bool, Boolean);
+impl_traits!(Vec<u8>, Blob);
+impl_traits!(chrono::DateTime<chrono::Utc>, Datetime);
+impl_traits!(Vec<f64>, DoubleArray);
+impl_traits!(Vec<i32>, Int32Array);
+impl_traits!(Vec<i64>, Int64Array);
+impl_traits!(Vec<bool>, BooleanArray);
+impl_traits!(Vec<String>, StringArray);
+impl_traits!(Vec<Vec<u8>>, BlobArray);
+impl_traits!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
 
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
@@ -266,5 +279,13 @@ mod test {
         } else {
             panic!(); // allow_panic
         }
+    }
+
+    #[test]
+    fn test_eq() {
+        assert!(AstarteType::Int32(12) == 12);
+        assert!(AstarteType::Double(12.0) == 12.0);
+        assert!(AstarteType::String("hello".to_owned()) == "hello");
+        assert!(AstarteType::Blob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
     }
 }

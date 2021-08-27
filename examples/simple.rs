@@ -62,7 +62,7 @@ async fn main() {
 
             if let astarte_sdk::Aggregation::Individual(var) = data.data {
                 if data.path == "/led" {
-                    if var == true.into() {
+                    if var == true {
                         println!("led is ON");
                     } else {
                         println!("led is OFF");
