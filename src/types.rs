@@ -27,7 +27,7 @@ pub enum AstarteType {
 }
 
 // we implement From<T> from all the base types to AstarteType, using this macro
-macro_rules! impl_traits {
+macro_rules! impl_type_conversion_traits {
     ($typ:ty, $astartetype:tt) => {
         impl From<$typ> for AstarteType {
             fn from(d: $typ) -> Self {
@@ -50,22 +50,22 @@ macro_rules! impl_traits {
     };
 }
 
-impl_traits!(f64, Double);
-impl_traits!(f32, Double);
-impl_traits!(i32, Int32);
-impl_traits!(i64, Int64);
-impl_traits!(&str, String);
-impl_traits!(String, String);
-impl_traits!(bool, Boolean);
-impl_traits!(Vec<u8>, Blob);
-impl_traits!(chrono::DateTime<chrono::Utc>, Datetime);
-impl_traits!(Vec<f64>, DoubleArray);
-impl_traits!(Vec<i32>, Int32Array);
-impl_traits!(Vec<i64>, Int64Array);
-impl_traits!(Vec<bool>, BooleanArray);
-impl_traits!(Vec<String>, StringArray);
-impl_traits!(Vec<Vec<u8>>, BlobArray);
-impl_traits!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
+impl_type_conversion_traits!(f64, Double);
+impl_type_conversion_traits!(f32, Double);
+impl_type_conversion_traits!(i32, Int32);
+impl_type_conversion_traits!(i64, Int64);
+impl_type_conversion_traits!(&str, String);
+impl_type_conversion_traits!(String, String);
+impl_type_conversion_traits!(bool, Boolean);
+impl_type_conversion_traits!(Vec<u8>, Blob);
+impl_type_conversion_traits!(chrono::DateTime<chrono::Utc>, Datetime);
+impl_type_conversion_traits!(Vec<f64>, DoubleArray);
+impl_type_conversion_traits!(Vec<i32>, Int32Array);
+impl_type_conversion_traits!(Vec<i64>, Int64Array);
+impl_type_conversion_traits!(Vec<bool>, BooleanArray);
+impl_type_conversion_traits!(Vec<String>, StringArray);
+impl_type_conversion_traits!(Vec<Vec<u8>>, BlobArray);
+impl_type_conversion_traits!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
 
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
