@@ -1,0 +1,20 @@
+{
+    "interface_name": "com.test.object",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "datastream",
+    "ownership": "device",
+    "aggregation": "object",
+    "mappings": [
+        {
+            "endpoint": "/button",
+            "type": "boolean",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/uptimeSeconds",
+            "type": "integer",
+            "explicit_timestamp": true
+        }
+    ]
+}

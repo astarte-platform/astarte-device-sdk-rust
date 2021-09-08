@@ -1,0 +1,13 @@
+{
+    "interface_name": "com.test.server",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "properties",
+    "ownership": "server",
+    "mappings": [
+        {
+            "endpoint": "/led",
+            "type": "boolean"
+        }
+    ]
+}

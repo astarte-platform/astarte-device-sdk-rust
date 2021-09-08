@@ -1,0 +1,79 @@
+{
+    "interface_name": "com.test.everything",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "datastream",
+    "ownership": "device",
+    "mappings": [
+        {
+            "endpoint": "/binaryblob",
+            "type": "binaryblob",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/binaryblobarray",
+            "type": "binaryblobarray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/boolean",
+            "type": "boolean",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/booleanarray",
+            "type": "booleanarray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/datetime",
+            "type": "datetime",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/datetimearray",
+            "type": "datetimearray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/double",
+            "type": "double",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/doublearray",
+            "type": "doublearray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/integer",
+            "type": "integer",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/integerarray",
+            "type": "integerarray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/longinteger",
+            "type": "longinteger",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/longintegerarray",
+            "type": "longintegerarray",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/string",
+            "type": "string",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/stringarray",
+            "type": "stringarray",
+            "explicit_timestamp": true
+        }
+    ]
+}

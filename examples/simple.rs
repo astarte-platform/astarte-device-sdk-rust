@@ -15,9 +15,6 @@ struct Cli {
     // Pairing URL
     #[structopt(short, long)]
     pairing_url: String,
-    // Interfaces directory
-    #[structopt(short, long)]
-    interfaces_directory: String,
 }
 
 #[tokio::main]
@@ -29,14 +26,13 @@ async fn main() {
         device_id,
         credentials_secret,
         pairing_url,
-        interfaces_directory,
     } = Cli::from_args();
 
     let mut sdk_options =
         AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
 
     sdk_options
-        .add_interface_files(&interfaces_directory)
+        .add_interface_files("./examples/interfaces")
         .unwrap();
 
     sdk_options.build().await.unwrap();
