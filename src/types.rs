@@ -199,7 +199,7 @@ mod test {
 
             let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap(); // allow_panic
 
-            let ty2 = AstarteSdk::deserialize(buf).unwrap(); // allow_panic
+            let ty2 = AstarteSdk::deserialize(&buf).unwrap(); // allow_panic
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
@@ -260,7 +260,7 @@ mod test {
 
         let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap(); // allow_panic
 
-        let data2 = AstarteSdk::deserialize(bytes).unwrap(); // allow_panic
+        let data2 = AstarteSdk::deserialize(&bytes).unwrap(); // allow_panic
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,

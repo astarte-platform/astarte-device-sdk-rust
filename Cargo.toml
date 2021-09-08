@@ -22,6 +22,8 @@ url = "2.1"
 bson = "1.2.2"
 log = "0.4"
 chrono = "0.4.19"
+sqlx = {version="0.5.1", features = ["sqlite", "macros", "runtime-actix-rustls"] }
+async-trait = "0.1.51"
 
 [dev-dependencies]
 structopt = "0.3"
