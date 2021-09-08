@@ -208,6 +208,7 @@ impl AstarteOptions {
             .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
+        // TODO: make keepalive configurable
         mqtt_opts.set_keep_alive(30);
 
         mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
