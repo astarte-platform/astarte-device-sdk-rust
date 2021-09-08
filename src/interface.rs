@@ -73,6 +73,7 @@ pub enum Aggregation {
     Object,
 }
 
+#[derive(Debug)]
 pub enum Mapping<'a> {
     Datastream(&'a DatastreamMapping),
     Properties(&'a PropertiesMapping),
@@ -94,7 +95,7 @@ pub struct DatastreamMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
-    reliability: Reliability,
+    pub reliability: Reliability,
     #[serde(default, skip_serializing_if = "is_default")]
     retention: Retention,
     #[serde(default, skip_serializing_if = "is_default")]

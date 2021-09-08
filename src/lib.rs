@@ -25,7 +25,7 @@ use url::Url;
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
-use crate::interface::Ownership;
+use crate::interface::{Ownership, Reliability};
 
 /// Astarte client
 #[derive(Clone)]
@@ -448,6 +448,27 @@ impl AstarteSdk {
             .await
     }
 
+    fn get_reliability(&self, interface_name: &str, interface_path: &str) -> rumqttc::QoS {
+        use rumqttc::QoS;
+
+        let mapping = &self
+            .interfaces
+            .iter()
+            .find(|i| i.0 == interface_name)
+            .and_then(|f| f.1.mapping(interface_path));
+
+        let reliability = match mapping {
+            Some(interface::Mapping::Datastream(m)) => m.reliability,
+            _ => Default::default(),
+        };
+
+        match reliability {
+            Reliability::Unreliable => QoS::AtMostOnce,
+            Reliability::Guaranteed => QoS::AtLeastOnce,
+            Reliability::Unique => QoS::ExactlyOnce,
+        }
+    }
+
     async fn send_with_timestamp_impl<D>(
         &self,
         interface_name: &str,
@@ -458,12 +479,14 @@ impl AstarteSdk {
     where
         D: Into<AstarteType>,
     {
+        trace!("sending {} {}", interface_name, interface_path);
+
         let buf = AstarteSdk::serialize_individual(data, timestamp)?;
 
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                rumqttc::QoS::AtLeastOnce,
+                self.get_reliability(interface_name, interface_path),
                 false,
                 buf,
             )
@@ -496,7 +519,7 @@ impl AstarteSdk {
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                rumqttc::QoS::ExactlyOnce,
+                self.get_reliability(interface_name, interface_path),
                 false,
                 buf,
             )
