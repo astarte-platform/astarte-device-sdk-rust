@@ -230,7 +230,7 @@ impl AstarteOptions {
         client
             .subscribe(
                 cn.to_owned() + "/control/consumer/properties",
-                rumqttc::QoS::AtLeastOnce,
+                rumqttc::QoS::ExactlyOnce,
             )
             .await?;
 
@@ -238,7 +238,7 @@ impl AstarteOptions {
             client
                 .subscribe(
                     cn.to_owned() + "/" + i.1.name() + "/#",
-                    rumqttc::QoS::AtLeastOnce,
+                    rumqttc::QoS::ExactlyOnce,
                 )
                 .await?;
         }
