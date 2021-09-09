@@ -186,7 +186,7 @@ impl AstarteType {
 #[cfg(test)]
 
 mod test {
-    use std::{collections::HashMap, convert::TryInto};
+    use std::collections::HashMap;
 
     use crate::{types::AstarteType, Aggregation, AstarteSdk};
 

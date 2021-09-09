@@ -618,7 +618,7 @@ impl fmt::Debug for AstarteSdk {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, convert::TryInto};
+    use std::collections::HashMap;
 
     use chrono::{TimeZone, Utc};
 
