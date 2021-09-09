@@ -87,7 +87,7 @@ async fn main() {
 
             // individual aggregation
             for i in data {
-                w.send("com.test.everything", &format!("/{}", i.1), i.0.clone())
+                w.send("com.test.Everything", &format!("/{}", i.1), i.0.clone())
                     .await
                     .unwrap();
 

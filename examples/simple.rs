@@ -1,4 +1,6 @@
-use astarte_sdk::AstarteOptions;
+use std::convert::TryInto;
+
+use astarte_sdk::{types::AstarteType, AstarteOptions};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -43,13 +45,10 @@ async fn main() {
     tokio::task::spawn(async move {
         let mut i: f64 = 0.0;
         loop {
-            w.send(
-                "com.test.everything",
-                "/double",
-                astarte_sdk::types::AstarteType::Double(i),
-            )
-            .await
-            .unwrap();
+            let data: AstarteType = i.try_into().unwrap();
+            w.send("com.test.Everything", "/double", data)
+                .await
+                .unwrap();
             println!("Sent {}", i);
 
             i += 1.1;
