@@ -43,7 +43,13 @@ async fn main() {
     tokio::task::spawn(async move {
         let mut i: f64 = 0.0;
         loop {
-            w.send("com.test.everything", "/double", i).await.unwrap();
+            w.send(
+                "com.test.everything",
+                "/double",
+                astarte_sdk::types::AstarteType::Double(i),
+            )
+            .await
+            .unwrap();
             println!("Sent {}", i);
 
             i += 1.1;

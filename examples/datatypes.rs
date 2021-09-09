@@ -43,7 +43,7 @@ async fn main() {
     let w = device.clone();
 
     let alltypes: Vec<AstarteType> = vec![
-        (4.5).into(),
+        AstarteType::Double(4.5),
         (-4).into(),
         true.into(),
         45543543534_i64.into(),

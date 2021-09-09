@@ -50,8 +50,6 @@ macro_rules! impl_type_conversion_traits {
     };
 }
 
-impl_type_conversion_traits!(f64, Double);
-impl_type_conversion_traits!(f32, Double);
 impl_type_conversion_traits!(i32, Int32);
 impl_type_conversion_traits!(i64, Int64);
 impl_type_conversion_traits!(&str, String);
@@ -66,6 +64,28 @@ impl_type_conversion_traits!(Vec<bool>, BooleanArray);
 impl_type_conversion_traits!(Vec<String>, StringArray);
 impl_type_conversion_traits!(Vec<Vec<u8>>, BlobArray);
 impl_type_conversion_traits!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
+
+// we implement float types on the side since they have different requirements
+impl std::convert::TryFrom<f64> for AstarteType {
+    type Error = AstarteError;
+    fn try_from(d: f64) -> Result<Self, Self::Error> {
+        if d.is_nan() || d.is_infinite() || d.is_subnormal() {
+            return Err(AstarteError::FloatError);
+        }
+        Ok(AstarteType::Double(d))
+    }
+}
+
+impl std::convert::TryFrom<f32> for AstarteType {
+    type Error = AstarteError;
+
+    fn try_from(d: f32) -> Result<Self, Self::Error> {
+        if d.is_nan() || d.is_infinite() || d.is_subnormal() {
+            return Err(AstarteError::FloatError);
+        }
+        Ok(AstarteType::Double(d.into()))
+    }
+}
 
 impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
@@ -166,14 +186,14 @@ impl AstarteType {
 #[cfg(test)]
 
 mod test {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, convert::TryInto};
 
     use crate::{types::AstarteType, Aggregation, AstarteSdk};
 
     #[test]
     fn test_individual_serialization() {
         let alltypes: Vec<AstarteType> = vec![
-            (4.5).into(),
+            AstarteType::Double(4.5),
             (-4).into(),
             true.into(),
             45543543534_i64.into(),
@@ -212,7 +232,7 @@ mod test {
     #[test]
     fn test_object_serialization() {
         let alltypes: Vec<AstarteType> = vec![
-            (4.5).into(),
+            AstarteType::Double(4.5),
             (-4).into(),
             true.into(),
             45543543534_i64.into(),
@@ -256,8 +276,6 @@ mod test {
             data.insert(*i.0, i.1.clone());
         }
 
-        //let data: std::collections::HashMap<String,AstarteType> = allendpoints.iter().zip(alltypes.iter()).collect();
-
         let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap(); // allow_panic
 
         let data2 = AstarteSdk::deserialize(bytes).unwrap(); // allow_panic
@@ -284,7 +302,6 @@ mod test {
     #[test]
     fn test_eq() {
         assert!(AstarteType::Int32(12) == 12);
-        assert!(AstarteType::Double(12.0) == 12.0);
         assert!(AstarteType::String("hello".to_owned()) == "hello");
         assert!(AstarteType::Blob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
     }

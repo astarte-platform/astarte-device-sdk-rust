@@ -110,6 +110,9 @@ pub enum AstarteError {
     #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
     FromBsonArrayError,
 
+    #[error("forbidden floating point number")]
+    FloatError,
+
     #[error("generic error")]
     Unreported,
 }
@@ -615,7 +618,7 @@ impl fmt::Debug for AstarteSdk {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, convert::TryInto};
 
     use chrono::{TimeZone, Utc};
 
@@ -631,8 +634,8 @@ mod test {
     //#[test] test is disabled because for some reason it serializes objects in random order
     fn _serialize_object() {
         let mut map: HashMap<&str, AstarteType> = HashMap::new();
-        map.insert("temp", 25.3123.into());
-        map.insert("hum", 67.112.into());
+        map.insert("temp", AstarteType::Double(25.3123));
+        map.insert("hum", AstarteType::Double(67.112));
 
         let buf = AstarteSdk::serialize_object(
             map.clone(),
@@ -670,15 +673,18 @@ mod test {
             &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
         )); // allow_panic
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(16.73, None).unwrap(), // allow_panic
+            &AstarteSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(), // allow_panic
             &vec![
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30,
                 0x40, 0x00
             ]
         )); // allow_panic
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(16.73, Some(Utc.timestamp(1537449422, 890000000)))
-                .unwrap(), // allow_panic
+            &AstarteSdk::serialize_individual(
+                AstarteType::Double(16.73),
+                Some(Utc.timestamp(1537449422, 890000000))
+            )
+            .unwrap(), // allow_panic
             &vec![
                 0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00,
                 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00
