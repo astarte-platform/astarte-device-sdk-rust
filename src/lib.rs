@@ -16,7 +16,7 @@ use rumqttc::{AsyncClient, ClientConfig, Event, MqttOptions, Transport};
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::path::Path;
 use std::sync::Arc;
 use types::AstarteType;
@@ -343,13 +343,13 @@ impl AstarteSdk {
             // keep consuming and processing packets until we have data for the user
             match self.eventloop.lock().await.poll().await? {
                 Event::Incoming(i) => {
-                    trace!("Incoming = {:?}", i);
+                    trace!("MQTT Incoming = {:?}", i);
 
                     match i {
                         rumqttc::Packet::ConnAck(p) => {
                             if !p.session_present {
-                                self.send_introspection().await;
-                                self.send_emptycache().await;
+                                self.send_introspection().await?;
+                                self.send_emptycache().await?;
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
@@ -372,7 +372,7 @@ impl AstarteSdk {
                         _ => {}
                     }
                 }
-                Event::Outgoing(o) => debug!("Outgoing = {:?}", o),
+                Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
             }
         }
     }
@@ -381,18 +381,18 @@ impl AstarteSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn send_emptycache(&self) {
+    async fn send_emptycache(&self) -> Result<(), AstarteError> {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
-        let err = self
-            .client
+        self.client
             .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
-            .await;
-        debug!("emptyCache = {:?}", err);
+            .await?;
+
+        Ok(())
     }
 
-    async fn send_introspection(&self) {
+    async fn send_introspection(&self) -> Result<(), AstarteError> {
         let mut introspection: String = self
             .interfaces
             .iter()
@@ -401,18 +401,17 @@ impl AstarteSdk {
         introspection.pop(); // remove last ";"
         let introspection = introspection; // drop mutability
 
-        debug!("introspection string = {}", introspection);
+        debug!("sending introspection = {}", introspection);
 
-        let err = self
-            .client
+        self.client
             .publish(
                 self.client_id(),
                 rumqttc::QoS::ExactlyOnce,
                 false,
                 introspection.clone(),
             )
-            .await;
-        debug!("introspection = {:?}", err);
+            .await?;
+        Ok(())
     }
 
     /// Send data to an astarte interface
