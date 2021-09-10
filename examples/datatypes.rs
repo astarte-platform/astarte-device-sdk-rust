@@ -100,7 +100,7 @@ async fn main() {
             obj.insert("button", true.into());
             obj.insert("uptimeSeconds", 67.into());
 
-            w.send_object_timestamp("com.test4.object", "/", obj, None)
+            w.send_object_timestamp("com.test.DeviceObject", "/", obj, None)
                 .await
                 .unwrap();
 

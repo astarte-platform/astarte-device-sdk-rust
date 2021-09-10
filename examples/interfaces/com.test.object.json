@@ -1,5 +1,5 @@
 {
-    "interface_name": "com.test.object",
+    "interface_name": "com.test.DeviceObject",
     "version_major": 0,
     "version_minor": 1,
     "type": "datastream",
