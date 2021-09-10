@@ -2,6 +2,7 @@
 
 mod crypto;
 mod interface;
+mod interfaces;
 mod pairing;
 pub mod types;
 
@@ -25,7 +26,8 @@ use url::Url;
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
-use crate::interface::{Ownership, Reliability};
+use crate::interface::Ownership;
+use crate::interfaces::Interfaces;
 
 /// Astarte client
 #[derive(Clone)]
@@ -37,7 +39,7 @@ pub struct AstarteSdk {
     build_options: BuildOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
-    interfaces: HashMap<String, Interface>,
+    interfaces: interfaces::Interfaces,
 }
 
 /// Builder for Astarte client
@@ -305,7 +307,7 @@ impl AstarteOptions {
             build_options,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: self.interfaces.to_owned(),
+            interfaces: Interfaces::new(self.interfaces.clone()),
         };
 
         Ok(device)
@@ -393,13 +395,7 @@ impl AstarteSdk {
     }
 
     async fn send_introspection(&self) -> Result<(), AstarteError> {
-        let mut introspection: String = self
-            .interfaces
-            .iter()
-            .map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1))
-            .collect();
-        introspection.pop(); // remove last ";"
-        let introspection = introspection; // drop mutability
+        let introspection = self.interfaces.get_introspection_string();
 
         debug!("sending introspection = {}", introspection);
 
@@ -450,27 +446,6 @@ impl AstarteSdk {
             .await
     }
 
-    fn get_reliability(&self, interface_name: &str, interface_path: &str) -> rumqttc::QoS {
-        use rumqttc::QoS;
-
-        let mapping = &self
-            .interfaces
-            .iter()
-            .find(|i| i.0 == interface_name)
-            .and_then(|f| f.1.mapping(interface_path));
-
-        let reliability = match mapping {
-            Some(interface::Mapping::Datastream(m)) => m.reliability,
-            _ => Default::default(),
-        };
-
-        match reliability {
-            Reliability::Unreliable => QoS::AtMostOnce,
-            Reliability::Guaranteed => QoS::AtLeastOnce,
-            Reliability::Unique => QoS::ExactlyOnce,
-        }
-    }
-
     async fn send_with_timestamp_impl<D>(
         &self,
         interface_name: &str,
@@ -488,7 +463,8 @@ impl AstarteSdk {
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                self.get_reliability(interface_name, interface_path),
+                self.interfaces
+                    .get_mqtt_reliability(interface_name, interface_path),
                 false,
                 buf,
             )
@@ -521,7 +497,8 @@ impl AstarteSdk {
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                self.get_reliability(interface_name, interface_path),
+                self.interfaces
+                    .get_mqtt_reliability(interface_name, interface_path),
                 false,
                 buf,
             )
