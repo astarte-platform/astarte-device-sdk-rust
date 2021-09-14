@@ -26,6 +26,37 @@ pub enum AstarteType {
     DatetimeArray(Vec<chrono::DateTime<chrono::Utc>>),
 }
 
+macro_rules! check_astype {
+    ($self:ident, $astartetype:tt) => {
+        if let AstarteType::$astartetype(_) = $self {
+            true
+        } else {
+            false
+        }
+    };
+}
+
+impl PartialEq<crate::interface::MappingType> for AstarteType {
+    fn eq(&self, other: &crate::interface::MappingType) -> bool {
+        match other {
+            crate::interface::MappingType::Double => check_astype!(self, Double),
+            crate::interface::MappingType::Integer => check_astype!(self, Int32),
+            crate::interface::MappingType::Boolean => check_astype!(self, Boolean),
+            crate::interface::MappingType::LongInteger => check_astype!(self, Int64),
+            crate::interface::MappingType::String => check_astype!(self, String),
+            crate::interface::MappingType::BinaryBlob => check_astype!(self, Blob),
+            crate::interface::MappingType::DateTime => check_astype!(self, Datetime),
+            crate::interface::MappingType::DoubleArray => check_astype!(self, DoubleArray),
+            crate::interface::MappingType::IntegerArray => check_astype!(self, Int32Array),
+            crate::interface::MappingType::BooleanArray => check_astype!(self, BooleanArray),
+            crate::interface::MappingType::LongIntegerArray => check_astype!(self, Int64Array),
+            crate::interface::MappingType::StringArray => check_astype!(self, StringArray),
+            crate::interface::MappingType::BinaryBlobArray => check_astype!(self, BlobArray),
+            crate::interface::MappingType::DateTimeArray => check_astype!(self, DatetimeArray),
+        }
+    }
+}
+
 // we implement From<T> from all the base types to AstarteType, using this macro
 macro_rules! impl_type_conversion_traits {
     ($typ:ty, $astartetype:tt) => {

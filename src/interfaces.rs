@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::Interface;
+use crate::{interface::traits::Mapping, AstarteError, Interface};
 
 #[derive(Clone)]
 pub struct Interfaces {
@@ -50,5 +50,47 @@ impl Interfaces {
             crate::interface::Reliability::Guaranteed => QoS::AtLeastOnce,
             crate::interface::Reliability::Unique => QoS::ExactlyOnce,
         }
+    }
+
+    pub async fn validate_send(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: &[u8],
+        timestamp: &Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), AstarteError> {
+        let mapping = self
+            .get_mapping(interface_name, interface_path)
+            .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+
+        let data = crate::AstarteSdk::deserialize(data.to_vec())?;
+
+        match data {
+            crate::Aggregation::Individual(individual) => {
+                if individual != mapping.mapping_type() {
+                    return Err(AstarteError::SendError(
+                        "You are sending the wrong type for this mapping".into(),
+                    ));
+                }
+            }
+            crate::Aggregation::Object(object) => {
+                for obj in object {
+                    println!("{:?} {:?}", mapping, obj.1);
+                }
+            }
+        }
+
+        match mapping {
+            crate::interface::Mapping::Datastream(map) => {
+                if !map.explicit_timestamp && timestamp.is_some() {
+                    return Err(AstarteError::SendError(
+                        "Do not send timestamp to a mapping without explicit timestamp".into(),
+                    ));
+                }
+            }
+            crate::interface::Mapping::Properties(_map) => {}
+        }
+
+        Ok(())
     }
 }

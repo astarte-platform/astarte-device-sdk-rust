@@ -115,6 +115,9 @@ pub enum AstarteError {
     #[error("forbidden floating point number")]
     FloatError,
 
+    #[error("send error")]
+    SendError(String),
+
     #[error("generic error")]
     Unreported,
 }
@@ -460,6 +463,10 @@ impl AstarteSdk {
 
         let buf = AstarteSdk::serialize_individual(data, timestamp)?;
 
+        self.interfaces
+            .validate_send(interface_name, interface_path, &buf, &timestamp)
+            .await?;
+
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
@@ -493,6 +500,9 @@ impl AstarteSdk {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
         let buf = AstarteSdk::serialize_object(data, timestamp)?;
+        self.interfaces
+            .validate_send(interface_name, interface_path, &buf, &timestamp)
+            .await?;
 
         self.client
             .publish(
