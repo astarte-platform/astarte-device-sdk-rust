@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use astarte_sdk::{types::AstarteType, AstarteOptions};
+use astarte_sdk::AstarteOptions;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -32,7 +32,6 @@ async fn main() {
 
     let mut sdk_options =
         AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
-
     sdk_options
         .add_interface_files("./examples/interfaces")
         .unwrap();
@@ -42,34 +41,36 @@ async fn main() {
     let mut device = sdk_options.connect().await.unwrap();
 
     let w = device.clone();
+
     tokio::task::spawn(async move {
-        let mut i: f64 = 0.0;
         loop {
-            let data: AstarteType = i.try_into().unwrap();
-            w.send("com.test.Everything", "/double", data)
-                .await
-                .unwrap();
-            println!("Sent {}", i);
+            std::thread::sleep(std::time::Duration::from_millis(5000));
 
-            i += 1.1;
+            // object aggregation
+            let mut obj: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
+                std::collections::HashMap::new();
+            obj.insert("latitude", 37.534543.try_into().unwrap());
+            obj.insert("longitude", 45.543.try_into().unwrap());
+            obj.insert("altitude", 650.6.try_into().unwrap());
+            obj.insert("accuracy", 12.0.try_into().unwrap());
+            obj.insert("altitudeAccuracy", 10.0.try_into().unwrap());
+            obj.insert("heading", 237.0.try_into().unwrap());
+            obj.insert("speed", 250.0.try_into().unwrap());
 
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            w.send_object_timestamp(
+                "org.astarte-platform.genericsensors.Geolocation",
+                "/1/",
+                obj,
+                None,
+            )
+            .await
+            .unwrap();
         }
     });
 
     loop {
         if let Ok(data) = device.poll().await {
-            println!("incoming: {:?}", data);
-
-            if let astarte_sdk::Aggregation::Individual(var) = data.data {
-                if data.path == "/1/enable" {
-                    if var == true {
-                        println!("sensor is ON");
-                    } else {
-                        println!("sensor is OFF");
-                    }
-                }
-            }
+            println!("incoming data: {:?}", data);
         }
     }
 }

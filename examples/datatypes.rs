@@ -94,16 +94,6 @@ async fn main() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
 
-            // object aggregation
-            let mut obj: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
-                std::collections::HashMap::new();
-            obj.insert("button", true.into());
-            obj.insert("uptimeSeconds", 67.into());
-
-            w.send_object_timestamp("com.test.DeviceObject", "/", obj, None)
-                .await
-                .unwrap();
-
             std::thread::sleep(std::time::Duration::from_millis(5000));
         }
     });
