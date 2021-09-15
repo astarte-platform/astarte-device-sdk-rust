@@ -28,42 +28,47 @@ pub enum AstarteType {
 
 // we implement From<T> from all the base types to AstarteType, using this macro
 macro_rules! impl_type_conversion_traits {
-    ($typ:ty, $astartetype:tt) => {
-        impl From<$typ> for AstarteType {
-            fn from(d: $typ) -> Self {
-                AstarteType::$astartetype(d.into())
-            }
-        }
+    ( {$( ($typ:ty, $astartetype:tt) ,)*}) => {
 
-        impl From<&$typ> for AstarteType {
-            fn from(d: &$typ) -> Self {
-                AstarteType::$astartetype(d.clone().into())
-            }
-        }
+        $(
+                impl From<$typ> for AstarteType {
+                    fn from(d: $typ) -> Self {
+                        AstarteType::$astartetype(d.into())
+                    }
+                }
 
-        impl PartialEq<$typ> for AstarteType {
-            fn eq(&self, other: &$typ) -> bool {
-                let oth: AstarteType = other.into();
-                oth == *self
-            }
-        }
+                impl From<&$typ> for AstarteType {
+                    fn from(d: &$typ) -> Self {
+                        AstarteType::$astartetype(d.clone().into())
+                    }
+                }
+
+                impl PartialEq<$typ> for AstarteType {
+                    fn eq(&self, other: &$typ) -> bool {
+                        let oth: AstarteType = other.into();
+                        oth == *self
+                    }
+                }
+        )*
     };
 }
 
-impl_type_conversion_traits!(i32, Int32);
-impl_type_conversion_traits!(i64, Int64);
-impl_type_conversion_traits!(&str, String);
-impl_type_conversion_traits!(String, String);
-impl_type_conversion_traits!(bool, Boolean);
-impl_type_conversion_traits!(Vec<u8>, Blob);
-impl_type_conversion_traits!(chrono::DateTime<chrono::Utc>, Datetime);
-impl_type_conversion_traits!(Vec<f64>, DoubleArray);
-impl_type_conversion_traits!(Vec<i32>, Int32Array);
-impl_type_conversion_traits!(Vec<i64>, Int64Array);
-impl_type_conversion_traits!(Vec<bool>, BooleanArray);
-impl_type_conversion_traits!(Vec<String>, StringArray);
-impl_type_conversion_traits!(Vec<Vec<u8>>, BlobArray);
-impl_type_conversion_traits!(Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray);
+impl_type_conversion_traits!({
+    (i32, Int32),
+    (i64, Int64),
+    (&str, String),
+    (String, String),
+    (bool, Boolean),
+    (Vec<u8>, Blob),
+    (chrono::DateTime<chrono::Utc>, Datetime),
+    (Vec<f64>, DoubleArray),
+    (Vec<i32>, Int32Array),
+    (Vec<i64>, Int64Array),
+    (Vec<bool>, BooleanArray),
+    (Vec<String>, StringArray),
+    (Vec<Vec<u8>>, BlobArray),
+    (Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray),
+});
 
 // we implement float types on the side since they have different requirements
 impl std::convert::TryFrom<f64> for AstarteType {
