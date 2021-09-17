@@ -83,6 +83,7 @@ impl AstarteDatabase for Database {
 }
 
 impl Database {
+    #![allow(dead_code)]
     pub async fn new(path: &str) -> Result<Self, crate::AstarteBuilderError> {
         let exists = std::path::Path::new(&path).exists();
 

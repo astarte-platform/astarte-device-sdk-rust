@@ -28,7 +28,6 @@ use url::Url;
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
-use crate::database::Database;
 use crate::interface::Ownership;
 use crate::interfaces::Interfaces;
 
@@ -43,7 +42,7 @@ pub struct AstarteSdk {
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: interfaces::Interfaces,
-    database: database::Database,
+    database: Option<database::Database>,
 }
 
 /// Builder for Astarte client
@@ -70,6 +69,7 @@ pub struct AstarteOptions {
     pairing_url: String,
     interfaces: HashMap<String, Interface>,
     build_options: Option<BuildOptions>,
+    database: Option<Box<dyn AstarteDatabase>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -150,7 +150,12 @@ impl AstarteOptions {
             pairing_url: pairing_url.to_owned(),
             interfaces: HashMap::new(),
             build_options: None,
+            database: None,
         }
+    }
+
+    pub fn add_database<T: AstarteDatabase + 'static>(&mut self, database: T) {
+        self.database = Some(Box::new(database));
     }
 
     /// Add an interface from a json file
@@ -321,7 +326,7 @@ impl AstarteOptions {
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: Interfaces::new(self.interfaces.clone()),
-            database: Database::new("/tmp/astarte.db").await?,
+            database: None, //Some(Database::new("/tmp/astarte.db").await?),
         };
 
         Ok(device)
@@ -366,7 +371,9 @@ impl AstarteSdk {
                             if !p.session_present {
                                 self.send_introspection().await?;
                                 self.send_emptycache().await?;
-                                self.database.clear().await?;
+                                if let Some(database) = &self.database {
+                                    database.clear().await?;
+                                }
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
@@ -380,27 +387,27 @@ impl AstarteSdk {
 
                             let ifpath = interface.clone() + &path;
 
-                            if let Some(major_version) = self.interfaces.get_property_major(&ifpath)
-                            {
-                                self.database
-                                    .store_prop(&ifpath, &bdata, major_version)
-                                    .await?;
+                            if let Some(database) = &self.database {
+                                if let Some(major_version) =
+                                    self.interfaces.get_property_major(&ifpath)
+                                {
+                                    database.store_prop(&ifpath, &bdata, major_version).await?;
 
-                                if cfg!(debug_assertions) {
-                                    let original = crate::AstarteSdk::deserialize(&bdata)?;
-                                    if let Aggregation::Individual(data) = original {
-                                        let db = self
-                                            .database
-                                            .load_prop(&ifpath, major_version)
-                                            .await
-                                            .expect("load_prop failed")
-                                            .expect(
-                                                "property wasn't correctly saved in the database",
-                                            );
-                                        assert!(data == db);
-                                        trace!("database test ok");
-                                    } else {
-                                        panic!("This should be impossible");
+                                    if cfg!(debug_assertions) {
+                                        let original = crate::AstarteSdk::deserialize(&bdata)?;
+                                        if let Aggregation::Individual(data) = original {
+                                            let db = database
+                                                .load_prop(&ifpath, major_version)
+                                                .await
+                                                .expect("load_prop failed")
+                                                .expect(
+                                                    "property wasn't correctly saved in the database",
+                                                );
+                                            assert!(data == db);
+                                            trace!("database test ok");
+                                        } else {
+                                            panic!("This should be impossible");
+                                        }
                                     }
                                 }
                             }
@@ -630,9 +637,12 @@ impl AstarteSdk {
 
     async fn _get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
         //todo
-        let prop = self.database.load_prop(key, 1).await?;
+        if let Some(database) = &self.database {
+            let prop = database.load_prop(key, 1).await?;
+            return Ok(prop);
+        }
 
-        Ok(prop)
+        Ok(None)
     }
 }
 
