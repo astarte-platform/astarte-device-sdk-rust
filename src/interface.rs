@@ -97,18 +97,18 @@ pub struct DatastreamMapping {
     #[serde(default, skip_serializing_if = "is_default")]
     pub reliability: Reliability,
     #[serde(default, skip_serializing_if = "is_default")]
-    retention: Retention,
+    pub retention: Retention,
     #[serde(default, skip_serializing_if = "is_default")]
-    explicit_timestamp: bool,
+    pub explicit_timestamp: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expiry: Option<u32>,
+    pub expiry: Option<u32>,
     // TODO: merge database_retention_policy and database_retention_ttl in a
     // single type (adjacently tagged enum works ok except when there's no
     // database_retention_policy key in JSON)
     #[serde(default, skip_serializing_if = "is_default")]
-    database_retention_policy: DatabaseRetentionPolicy,
+    pub database_retention_policy: DatabaseRetentionPolicy,
     #[serde(default)]
-    database_retention_ttl: Option<u32>,
+    pub database_retention_ttl: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -116,7 +116,7 @@ pub struct PropertiesMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
-    allow_unset: bool,
+    pub allow_unset: bool,
 }
 
 // TODO: investigate pro/cons of tagged enum like

@@ -10,20 +10,55 @@ use crate::AstarteError;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstarteType {
     Double(f64),
-    Int32(i32),
+    Integer(i32),
     Boolean(bool),
-    Int64(i64),
+    LongInteger(i64),
     String(String),
-    Blob(Vec<u8>),
-    Datetime(chrono::DateTime<chrono::Utc>),
+    BinaryBlob(Vec<u8>),
+    DateTime(chrono::DateTime<chrono::Utc>),
 
     DoubleArray(Vec<f64>),
-    Int32Array(Vec<i32>),
+    IntegerArray(Vec<i32>),
     BooleanArray(Vec<bool>),
-    Int64Array(Vec<i64>),
+    LongIntegerArray(Vec<i64>),
     StringArray(Vec<String>),
-    BlobArray(Vec<Vec<u8>>),
-    DatetimeArray(Vec<chrono::DateTime<chrono::Utc>>),
+    BinaryBlobArray(Vec<Vec<u8>>),
+    DateTimeArray(Vec<chrono::DateTime<chrono::Utc>>),
+}
+
+impl PartialEq<crate::interface::MappingType> for AstarteType {
+    fn eq(&self, other: &crate::interface::MappingType) -> bool {
+        macro_rules! check_astype_match {
+            ( $self:ident, $other:ident, {$( $astartetype:tt ,)*}) => {
+                match $other {
+                    $(
+                        crate::interface::MappingType::$astartetype => if let AstarteType::$astartetype(_) = $self {
+                                true
+                            } else {
+                                false
+                            }
+                    )*
+                }
+            };
+        }
+
+        check_astype_match!(self, other, {
+            Double,
+            Integer,
+            Boolean,
+            LongInteger,
+            String,
+            BinaryBlob,
+            DateTime,
+            DoubleArray,
+            IntegerArray,
+            BooleanArray,
+            LongIntegerArray,
+            StringArray,
+            BinaryBlobArray,
+            DateTimeArray,
+        })
+    }
 }
 
 // we implement From<T> from all the base types to AstarteType, using this macro
@@ -54,20 +89,20 @@ macro_rules! impl_type_conversion_traits {
 }
 
 impl_type_conversion_traits!({
-    (i32, Int32),
-    (i64, Int64),
+    (i32, Integer),
+    (i64, LongInteger),
     (&str, String),
     (String, String),
     (bool, Boolean),
-    (Vec<u8>, Blob),
-    (chrono::DateTime<chrono::Utc>, Datetime),
+    (Vec<u8>, BinaryBlob),
+    (chrono::DateTime<chrono::Utc>, DateTime),
     (Vec<f64>, DoubleArray),
-    (Vec<i32>, Int32Array),
-    (Vec<i64>, Int64Array),
+    (Vec<i32>, IntegerArray),
+    (Vec<i64>, LongIntegerArray),
     (Vec<bool>, BooleanArray),
     (Vec<String>, StringArray),
-    (Vec<Vec<u8>>, BlobArray),
-    (Vec<chrono::DateTime<chrono::Utc>>, DatetimeArray),
+    (Vec<Vec<u8>>, BinaryBlobArray),
+    (Vec<chrono::DateTime<chrono::Utc>>, DateTimeArray),
 });
 
 // we implement float types on the side since they have different requirements
@@ -96,28 +131,28 @@ impl From<AstarteType> for Bson {
     fn from(d: AstarteType) -> Self {
         match d {
             AstarteType::Double(d) => Bson::Double(d),
-            AstarteType::Int32(d) => Bson::Int32(d),
+            AstarteType::Integer(d) => Bson::Int32(d),
             AstarteType::Boolean(d) => Bson::Boolean(d),
-            AstarteType::Int64(d) => Bson::Int64(d),
+            AstarteType::LongInteger(d) => Bson::Int64(d),
             AstarteType::String(d) => Bson::String(d),
-            AstarteType::Blob(d) => Bson::Binary(Binary {
+            AstarteType::BinaryBlob(d) => Bson::Binary(Binary {
                 bytes: d,
                 subtype: bson::spec::BinarySubtype::Generic,
             }),
-            AstarteType::Datetime(d) => Bson::DateTime(d),
+            AstarteType::DateTime(d) => Bson::DateTime(d),
             AstarteType::DoubleArray(d) => d.iter().collect(),
-            AstarteType::Int32Array(d) => d.iter().collect(),
+            AstarteType::IntegerArray(d) => d.iter().collect(),
             AstarteType::BooleanArray(d) => d.iter().collect(),
-            AstarteType::Int64Array(d) => d.iter().collect(),
+            AstarteType::LongIntegerArray(d) => d.iter().collect(),
             AstarteType::StringArray(d) => d.iter().collect(),
-            AstarteType::BlobArray(d) => d
+            AstarteType::BinaryBlobArray(d) => d
                 .iter()
                 .map(|d| Binary {
                     bytes: d.clone(),
                     subtype: bson::spec::BinarySubtype::Generic,
                 })
                 .collect(),
-            AstarteType::DatetimeArray(d) => d.iter().collect(),
+            AstarteType::DateTimeArray(d) => d.iter().collect(),
         }
     }
 }
@@ -162,20 +197,20 @@ impl std::convert::TryFrom<Bson> for AstarteType {
             Bson::Array(arr) => match arr[0] {
                 Bson::Double(_) => from_bson_array!(arr, DoubleArray, Double, f64),
                 Bson::Boolean(_) => from_bson_array!(arr, BooleanArray, Boolean, bool),
-                Bson::Int32(_) => from_bson_array!(arr, Int32Array, Int32, i32),
-                Bson::Int64(_) => from_bson_array!(arr, Int64Array, Int64, i64),
+                Bson::Int32(_) => from_bson_array!(arr, IntegerArray, Int32, i32),
+                Bson::Int64(_) => from_bson_array!(arr, LongIntegerArray, Int64, i64),
                 Bson::DateTime(_) => {
-                    from_bson_array!(arr, DatetimeArray, DateTime, chrono::DateTime<chrono::Utc>)
+                    from_bson_array!(arr, DateTimeArray, DateTime, chrono::DateTime<chrono::Utc>)
                 }
                 Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
-                Bson::Binary(_) => from_bson_array!(arr, BlobArray, Binary, Vec<u8>),
+                Bson::Binary(_) => from_bson_array!(arr, BinaryBlobArray, Binary, Vec<u8>),
                 _ => Err(AstarteError::FromBsonError),
             },
             Bson::Boolean(d) => Ok(AstarteType::Boolean(d)),
-            Bson::Int32(d) => Ok(AstarteType::Int32(d)),
-            Bson::Int64(d) => Ok(AstarteType::Int64(d)),
-            Bson::Binary(d) => Ok(AstarteType::Blob(d.bytes)),
-            Bson::DateTime(d) => Ok(AstarteType::Datetime(d)),
+            Bson::Int32(d) => Ok(AstarteType::Integer(d)),
+            Bson::Int64(d) => Ok(AstarteType::LongInteger(d)),
+            Bson::Binary(d) => Ok(AstarteType::BinaryBlob(d.bytes)),
+            Bson::DateTime(d) => Ok(AstarteType::DateTime(d)),
             _ => Err(AstarteError::FromBsonError),
         }
     }
@@ -306,8 +341,8 @@ mod test {
 
     #[test]
     fn test_eq() {
-        assert!(AstarteType::Int32(12) == 12);
+        assert!(AstarteType::Integer(12) == 12);
         assert!(AstarteType::String("hello".to_owned()) == "hello");
-        assert!(AstarteType::Blob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
+        assert!(AstarteType::BinaryBlob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
     }
 }
