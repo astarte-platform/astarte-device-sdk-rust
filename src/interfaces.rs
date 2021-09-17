@@ -52,6 +52,18 @@ impl Interfaces {
         }
     }
 
+    /// returns major version if the property exists, None otherwise
+    pub fn get_property_major(&self, ifpath: &str) -> Option<i32> {
+        // todo: this could be optimized
+        self.interfaces
+            .iter()
+            .map(|f| f.1.get_properties_paths())
+            .flatten()
+            .filter(|f| f.0 == *ifpath)
+            .map(|f| f.1)
+            .next()
+    }
+
     pub async fn validate_send(
         &self,
         interface_name: &str,
@@ -63,7 +75,7 @@ impl Interfaces {
             .get_mapping(interface_name, interface_path)
             .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
-        let data = crate::AstarteSdk::deserialize(data.to_vec())?;
+        let data = crate::AstarteSdk::deserialize(data)?;
 
         match data {
             crate::Aggregation::Individual(individual) => {

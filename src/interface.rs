@@ -235,6 +235,22 @@ impl Interface {
             Interface::Properties(iface) => iface.base.ownership,
         }
     }
+
+    pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
+        if let Interface::Properties(iface) = self {
+            let name = iface.base.interface_name.clone();
+
+            let mappings = iface
+                .mappings
+                .iter()
+                .map(|f| (name.clone() + &f.base.endpoint, iface.base.version_major))
+                .collect();
+
+            return mappings;
+        }
+
+        Vec::new()
+    }
 }
 
 impl std::str::FromStr for Interface {

@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod crypto;
+mod database;
 mod interface;
 mod interfaces;
 mod pairing;
@@ -8,6 +9,7 @@ pub mod types;
 
 use bson::{to_document, Bson};
 use crypto::Bundle;
+use database::AstarteDatabase;
 use itertools::Itertools;
 use log::{debug, trace};
 use openssl::error::ErrorStack;
@@ -26,6 +28,7 @@ use url::Url;
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
+use crate::database::Database;
 use crate::interface::Ownership;
 use crate::interfaces::Interfaces;
 
@@ -40,6 +43,7 @@ pub struct AstarteSdk {
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: interfaces::Interfaces,
+    database: database::Database,
 }
 
 /// Builder for Astarte client
@@ -90,6 +94,9 @@ pub enum AstarteBuilderError {
 
     #[error("pairing error")]
     PairingError(#[from] PairingError),
+
+    #[error("database error")]
+    DbError(#[from] sqlx::Error),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -117,6 +124,9 @@ pub enum AstarteError {
 
     #[error("send error")]
     SendError(String),
+
+    #[error("database error")]
+    DbError(#[from] sqlx::Error),
 
     #[error("generic error")]
     Unreported,
@@ -311,6 +321,7 @@ impl AstarteOptions {
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: Interfaces::new(self.interfaces.clone()),
+            database: Database::new("/tmp/astarte.db").await?,
         };
 
         Ok(device)
@@ -355,6 +366,7 @@ impl AstarteSdk {
                             if !p.session_present {
                                 self.send_introspection().await?;
                                 self.send_emptycache().await?;
+                                self.database.clear().await?;
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
@@ -366,7 +378,34 @@ impl AstarteSdk {
 
                             debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                            let data = AstarteSdk::deserialize(bdata)?;
+                            let ifpath = interface.clone() + &path;
+
+                            if let Some(major_version) = self.interfaces.get_property_major(&ifpath)
+                            {
+                                self.database
+                                    .store_prop(&ifpath, &bdata, major_version)
+                                    .await?;
+
+                                if cfg!(debug_assertions) {
+                                    let original = crate::AstarteSdk::deserialize(&bdata)?;
+                                    if let Aggregation::Individual(data) = original {
+                                        let db = self
+                                            .database
+                                            .load_prop(&ifpath, major_version)
+                                            .await
+                                            .expect("load_prop failed")
+                                            .expect(
+                                                "property wasn't correctly saved in the database",
+                                            );
+                                        assert!(data == db);
+                                        trace!("database test ok");
+                                    } else {
+                                        panic!("This should be impossible");
+                                    }
+                                }
+                            }
+
+                            let data = AstarteSdk::deserialize(&bdata)?;
 
                             return Ok(Clientbound {
                                 interface,
@@ -562,7 +601,7 @@ impl AstarteSdk {
         Ok(buf)
     }
 
-    fn deserialize(bdata: Vec<u8>) -> Result<Aggregation, AstarteError> {
+    fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
         if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
             trace!("{:?}", deserialized);
             if let Some(v) = deserialized.get("v") {
@@ -587,6 +626,13 @@ impl AstarteSdk {
         } else {
             Err(AstarteError::DeserializationError)
         }
+    }
+
+    async fn _get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
+        //todo
+        let prop = self.database.load_prop(key, 1).await?;
+
+        Ok(prop)
     }
 }
 
