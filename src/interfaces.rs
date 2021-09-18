@@ -73,6 +73,11 @@ impl Interfaces {
     ) -> Result<(), AstarteError> {
         let data = crate::AstarteSdk::deserialize(data)?;
 
+        let interface = self
+            .interfaces
+            .get(interface_name)
+            .ok_or_else(|| AstarteError::SendError("Interface does not exists".into()))?;
+
         match data {
             crate::Aggregation::Individual(individual) => {
                 let mapping = self
@@ -98,8 +103,22 @@ impl Interfaces {
                 }
             }
             crate::Aggregation::Object(object) => {
-                for _obj in object {
-                    //println!("{:?} {:?}", mapping, obj.1);
+                for obj in &object {
+                    let mapping = self
+                        .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
+                        .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+
+                    if *obj.1 != mapping.mapping_type() {
+                        return Err(AstarteError::SendError(
+                            "You are sending the wrong type for this object mapping".into(),
+                        ));
+                    }
+                }
+
+                if object.len() < interface.mappings_len() {
+                    return Err(AstarteError::SendError(
+                        "You are missing some mappings from the object".into(),
+                    ));
                 }
             }
         }
@@ -132,6 +151,8 @@ mod test {
             .unwrap_err();
         ifa.validate_send("com.test.Everything", "/gfdgfdgfd", &buf, &None)
             .unwrap_err();
+        ifa.validate_send("com.fdsjkhfds.fdsfg", "/gfdgfdgfd", &buf, &None)
+            .unwrap_err();
 
         let mut obj: std::collections::HashMap<&str, AstarteType> =
             std::collections::HashMap::new();
@@ -143,7 +164,7 @@ mod test {
         obj.insert("heading", 237.0.try_into().unwrap());
         obj.insert("speed", 250.0.try_into().unwrap());
 
-        let buf = AstarteSdk::serialize_object(obj, None).unwrap();
+        let buf = AstarteSdk::serialize_object(obj.clone(), None).unwrap();
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
@@ -152,5 +173,41 @@ mod test {
             &None,
         )
         .unwrap();
+
+        // nonexisting object field
+        let mut obj2 = obj.clone();
+        obj2.insert("latitudef", 37.534543.try_into().unwrap());
+        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+
+        // wrong type
+        let mut obj2 = obj.clone();
+        obj2.insert("latitude", AstarteType::Boolean(false));
+        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+
+        // missing object field
+        let mut obj2 = obj.clone();
+        obj2.remove("latitude");
+        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
     }
 }

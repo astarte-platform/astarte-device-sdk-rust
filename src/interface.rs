@@ -229,6 +229,13 @@ impl Interface {
         None
     }
 
+    pub fn mappings_len(&self) -> usize {
+        match &self {
+            Self::Datastream(d) => d.mappings.len(),
+            Self::Properties(p) => p.mappings.len(),
+        }
+    }
+
     pub fn get_ownership(&self) -> Ownership {
         match &self {
             Interface::Datastream(iface) => iface.base.ownership,
