@@ -64,45 +64,93 @@ impl Interfaces {
             .next()
     }
 
-    pub async fn validate_send(
+    pub fn validate_send(
         &self,
         interface_name: &str,
         interface_path: &str,
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
-        let mapping = self
-            .get_mapping(interface_name, interface_path)
-            .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
-
         let data = crate::AstarteSdk::deserialize(data)?;
 
         match data {
             crate::Aggregation::Individual(individual) => {
+                let mapping = self
+                    .get_mapping(interface_name, interface_path)
+                    .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+
                 if individual != mapping.mapping_type() {
                     return Err(AstarteError::SendError(
                         "You are sending the wrong type for this mapping".into(),
                     ));
                 }
+
+                match mapping {
+                    crate::interface::Mapping::Datastream(map) => {
+                        if !map.explicit_timestamp && timestamp.is_some() {
+                            return Err(AstarteError::SendError(
+                                "Do not send timestamp to a mapping without explicit timestamp"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    crate::interface::Mapping::Properties(_map) => {}
+                }
             }
             crate::Aggregation::Object(object) => {
-                for obj in object {
-                    println!("{:?} {:?}", mapping, obj.1);
+                for _obj in object {
+                    //println!("{:?} {:?}", mapping, obj.1);
                 }
             }
-        }
-
-        match mapping {
-            crate::interface::Mapping::Datastream(map) => {
-                if !map.explicit_timestamp && timestamp.is_some() {
-                    return Err(AstarteError::SendError(
-                        "Do not send timestamp to a mapping without explicit timestamp".into(),
-                    ));
-                }
-            }
-            crate::interface::Mapping::Properties(_map) => {}
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::convert::TryInto;
+
+    use crate::{types::AstarteType, AstarteOptions, AstarteSdk};
+
+    #[test]
+    fn teset() {
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+
+        options.add_interface_files("examples/interfaces/").unwrap();
+
+        let ifa = super::Interfaces::new(options.interfaces);
+
+        let buf = AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+
+        ifa.validate_send("com.test.Everything", "/boolean", &buf, &None)
+            .unwrap();
+        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
+            .unwrap_err();
+        ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &None)
+            .unwrap_err();
+        ifa.validate_send("com.test.Everything", "/gfdgfdgfd", &buf, &None)
+            .unwrap_err();
+
+        let mut obj: std::collections::HashMap<&str, AstarteType> =
+            std::collections::HashMap::new();
+        obj.insert("latitude", 37.534543.try_into().unwrap());
+        obj.insert("longitude", 45.543.try_into().unwrap());
+        obj.insert("altitude", 650.6.try_into().unwrap());
+        obj.insert("accuracy", 12.0.try_into().unwrap());
+        obj.insert("altitudeAccuracy", 10.0.try_into().unwrap());
+        obj.insert("heading", 237.0.try_into().unwrap());
+        obj.insert("speed", 250.0.try_into().unwrap());
+
+        let buf = AstarteSdk::serialize_object(obj, None).unwrap();
+
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/",
+            &buf,
+            &None,
+        )
+        .unwrap();
     }
 }
