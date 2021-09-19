@@ -73,6 +73,8 @@ impl Interfaces {
     ) -> Result<(), AstarteError> {
         let data = crate::AstarteSdk::deserialize(data)?;
 
+        println!("{:?}", data);
+
         let interface = self
             .interfaces
             .get(interface_name)
@@ -134,11 +136,9 @@ mod test {
     use crate::{types::AstarteType, AstarteOptions, AstarteSdk};
 
     #[test]
-    fn teset() {
+    fn test_individual() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
-
         options.add_interface_files("examples/interfaces/").unwrap();
-
         let ifa = super::Interfaces::new(options.interfaces);
 
         let buf = AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
@@ -149,10 +149,49 @@ mod test {
             .unwrap_err();
         ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &None)
             .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/gfdgfdgfd", &buf, &None)
+        ifa.validate_send("com.test.Everything", "/doesnotexists", &buf, &None)
             .unwrap_err();
-        ifa.validate_send("com.fdsjkhfds.fdsfg", "/gfdgfdgfd", &buf, &None)
+        ifa.validate_send(
+            "com.doesnotexists.doesnotexists",
+            "/doesnotexists",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+        ifa.validate_send("com.doesnotexists.doesnotexists", "/boolean", &buf, &None)
             .unwrap_err();
+
+        let timestamp = Some(chrono::TimeZone::timestamp(&chrono::Utc, 1537449422, 0));
+
+        ifa.validate_send("com.test.Everything", "/boolean", &buf, &timestamp)
+            .unwrap();
+        ifa.validate_send("com.test.Everything", "/double", &buf, &timestamp)
+            .unwrap_err();
+        ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &timestamp)
+            .unwrap_err();
+        ifa.validate_send("com.test.Everything", "/doesnotexists", &buf, &timestamp)
+            .unwrap_err();
+        ifa.validate_send(
+            "com.doesnotexists.doesnotexists",
+            "/doesnotexists",
+            &buf,
+            &timestamp,
+        )
+        .unwrap_err();
+        ifa.validate_send(
+            "com.doesnotexists.doesnotexists",
+            "/boolean",
+            &buf,
+            &timestamp,
+        )
+        .unwrap_err();
+    }
+
+    #[test]
+    fn test_object() {
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options.add_interface_files("examples/interfaces/").unwrap();
+        let ifa = super::Interfaces::new(options.interfaces);
 
         let mut obj: std::collections::HashMap<&str, AstarteType> =
             std::collections::HashMap::new();
@@ -173,6 +212,17 @@ mod test {
             &None,
         )
         .unwrap();
+
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/2/3/",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+
+        ifa.validate_send("org.doesnotexists.doesnotexists", "/1/", &buf, &None)
+            .unwrap_err();
 
         // nonexisting object field
         let mut obj2 = obj.clone();
