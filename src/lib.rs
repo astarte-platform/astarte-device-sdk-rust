@@ -633,11 +633,13 @@ impl AstarteSdk {
         }
     }
 
-    async fn _get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
-        //todo
+    /// get property from database, if present
+    pub async fn get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
         if let Some(database) = &self.database {
-            let prop = database.load_prop(key, 1).await?;
-            return Ok(prop);
+            if let Some(major) = self.interfaces.get_property_major(key) {
+                let prop = database.load_prop(key, major).await?;
+                return Ok(prop);
+            }
         }
 
         Ok(None)
