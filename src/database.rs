@@ -132,7 +132,7 @@ mod test {
 
     #[tokio::test]
     async fn test_db() {
-        let db = Database::new("/tmp/test.sqlite3").await.unwrap();
+        let db = Database::new("/tmp/test-astarte-db.sqlite3").await.unwrap();
 
         let ty = AstarteType::Integer(23);
         let ser = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();

@@ -509,8 +509,10 @@ impl AstarteSdk {
 
         let buf = AstarteSdk::serialize_individual(data, timestamp)?;
 
-        self.interfaces
-            .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+        if cfg!(debug_assertions) {
+            self.interfaces
+                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+        }
 
         self.client
             .publish(
@@ -545,8 +547,11 @@ impl AstarteSdk {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
         let buf = AstarteSdk::serialize_object(data, timestamp)?;
-        self.interfaces
-            .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+
+        if cfg!(debug_assertions) {
+            self.interfaces
+                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+        }
 
         self.client
             .publish(
