@@ -26,13 +26,19 @@ impl AstarteDatabase for Database {
     async fn store_prop(&self, key: &str, value: &[u8], version: i32) -> Result<(), AstarteError> {
         trace!("Storing property {} in db ({:?})", key, value);
 
-        //let serialized = crate::AstarteSdk::serialize_individual(value, None)?;
-        sqlx::query("insert or replace into propcache (path, value, version) VALUES (?,?,?)")
-            .bind(key)
-            .bind(value)
-            .bind(version)
-            .execute(&self.db_conn)
-            .await?;
+        if value.is_empty() {
+            //if unset?
+            trace!("Unsetting {}", key);
+            self.delete_prop(key).await?;
+        } else {
+            //let serialized = crate::AstarteSdk::serialize_individual(value, None)?;
+            sqlx::query("insert or replace into propcache (path, value, version) VALUES (?,?,?)")
+                .bind(key)
+                .bind(value)
+                .bind(version)
+                .execute(&self.db_conn)
+                .await?;
+        }
 
         Ok(())
     }
@@ -160,6 +166,14 @@ mod test {
 
         assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
 
+        // unset
+
+        db.store_prop("com.test/test", &ser, 1).await.unwrap();
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap().unwrap(), ty);
+
+        db.store_prop("com.test/test", &[], 1).await.unwrap();
+
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
         // clear
 
         db.store_prop("com.test/test", &ser, 1).await.unwrap();
