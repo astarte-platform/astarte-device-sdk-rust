@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::str::FromStr;
 
-use log::{info, trace};
+use log::{info, trace, warn};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::{types::AstarteType, AstarteError, AstarteSdk};
@@ -42,30 +42,37 @@ impl AstarteDatabase for Database {
         key: &str,
         version: i32,
     ) -> Result<Option<AstarteType>, AstarteError> {
-        let res: (Vec<u8>, i32) =
+        let res: Option<(Vec<u8>, i32)> =
             sqlx::query_as("select value, version from propcache where path=?")
                 .bind(key)
-                .fetch_one(&self.db_conn)
+                .fetch_optional(&self.db_conn)
                 .await?;
 
-        trace!("Loaded property {} in db ({:?})", key, res.0);
+        if let Some(res) = res {
+            trace!("Loaded property {} in db ({:?})", key, res.0);
 
-        if res.1 != version {
-            self.delete_prop(key).await?;
-            return Ok(None);
+            //if version mismatch, delete
+            if res.1 != version {
+                self.delete_prop(key).await?;
+                return Ok(None);
+            }
+
+            let data = AstarteSdk::deserialize(&res.0)?;
+
+            if let crate::Aggregation::Individual(data) = data {
+                return Ok(Some(data));
+            }
+
+            warn!("why are we here?");
+
+            Ok(None)
+        } else {
+            Ok(None)
         }
-
-        let data = AstarteSdk::deserialize(&res.0)?;
-
-        if let crate::Aggregation::Individual(data) = data {
-            return Ok(Some(data));
-        }
-
-        Ok(None)
     }
 
     async fn delete_prop(&self, key: &str) -> Result<(), AstarteError> {
-        sqlx::query("delete from propcache where value=?")
+        sqlx::query("delete from propcache where path=?")
             .bind(key)
             .execute(&self.db_conn)
             .await?;
@@ -129,13 +136,37 @@ mod test {
 
         let ty = AstarteType::Integer(23);
         let ser = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
+
+        db.clear().await.unwrap();
+
+        //non existing
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
+
         db.store_prop("com.test/test", &ser, 1).await.unwrap();
-        let res = db.load_prop("com.test/test", 1).await.unwrap().unwrap();
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap().unwrap(), ty);
 
-        assert_eq!(ty, res);
+        //major version mismatch
+        assert_eq!(db.load_prop("com.test/test", 2).await.unwrap(), None);
 
-        let res = db.load_prop("com.test/test", 2).await.unwrap();
+        // after mismatch the path should be deleted
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
 
-        assert_eq!(None, res);
+        // delete
+
+        db.store_prop("com.test/test", &ser, 1).await.unwrap();
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap().unwrap(), ty);
+
+        db.delete_prop("com.test/test").await.unwrap();
+
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
+
+        // clear
+
+        db.store_prop("com.test/test", &ser, 1).await.unwrap();
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap().unwrap(), ty);
+
+        db.clear().await.unwrap();
+
+        assert_eq!(db.load_prop("com.test/test", 1).await.unwrap(), None);
     }
 }
