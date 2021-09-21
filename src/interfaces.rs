@@ -153,16 +153,11 @@ mod test {
             .unwrap_err();
         ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &None)
             .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/doesnotexists", &buf, &None)
+        ifa.validate_send("com.test.Everything", "/fake", &buf, &None)
             .unwrap_err();
-        ifa.validate_send(
-            "com.doesnotexists.doesnotexists",
-            "/doesnotexists",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-        ifa.validate_send("com.doesnotexists.doesnotexists", "/boolean", &buf, &None)
+        ifa.validate_send("com.fake.fake", "/fake", &buf, &None)
+            .unwrap_err();
+        ifa.validate_send("com.fake.fake", "/boolean", &buf, &None)
             .unwrap_err();
 
         let timestamp = Some(chrono::TimeZone::timestamp(&chrono::Utc, 1537449422, 0));
@@ -173,22 +168,12 @@ mod test {
             .unwrap_err();
         ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &timestamp)
             .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/doesnotexists", &buf, &timestamp)
+        ifa.validate_send("com.test.Everything", "/fake", &buf, &timestamp)
             .unwrap_err();
-        ifa.validate_send(
-            "com.doesnotexists.doesnotexists",
-            "/doesnotexists",
-            &buf,
-            &timestamp,
-        )
-        .unwrap_err();
-        ifa.validate_send(
-            "com.doesnotexists.doesnotexists",
-            "/boolean",
-            &buf,
-            &timestamp,
-        )
-        .unwrap_err();
+        ifa.validate_send("com.fake.fake", "/fake", &buf, &timestamp)
+            .unwrap_err();
+        ifa.validate_send("com.fake.fake", "/boolean", &buf, &timestamp)
+            .unwrap_err();
     }
 
     #[test]
