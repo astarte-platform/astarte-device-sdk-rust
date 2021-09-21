@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{interface::traits::Mapping, AstarteError, Interface};
+use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone)]
 pub struct Interfaces {
@@ -64,6 +64,32 @@ impl Interfaces {
             .next()
     }
 
+    pub fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
+        fn validate_float(d: &f64) -> Result<(), AstarteError> {
+            let error = Err(AstarteError::SendError(
+                "You are sending the wrong type for this mapping".into(),
+            ));
+
+            if d.is_infinite() || d.is_nan() || d.is_subnormal() {
+                error
+            } else {
+                Ok(())
+            }
+        }
+
+        match data {
+            AstarteType::Double(d) => validate_float(d)?,
+            AstarteType::DoubleArray(d) => {
+                for n in d {
+                    validate_float(n)?
+                }
+            }
+            _ => {}
+        };
+
+        Ok(())
+    }
+
     pub fn validate_send(
         &self,
         interface_name: &str,
@@ -90,6 +116,8 @@ impl Interfaces {
                     ));
                 }
 
+                Interfaces::validate_float(&individual)?;
+
                 match mapping {
                     crate::interface::Mapping::Datastream(map) => {
                         if !map.explicit_timestamp && timestamp.is_some() {
@@ -110,6 +138,8 @@ impl Interfaces {
             }
             crate::Aggregation::Object(object) => {
                 for obj in &object {
+                    Interfaces::validate_float(obj.1)?;
+
                     let mapping = self
                         .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
                         .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
@@ -173,6 +203,11 @@ mod test {
         ifa.validate_send("com.fake.fake", "/fake", &buf, &timestamp)
             .unwrap_err();
         ifa.validate_send("com.fake.fake", "/boolean", &buf, &timestamp)
+            .unwrap_err();
+
+        let buf = AstarteSdk::serialize_individual(AstarteType::Double(f64::NAN), None).unwrap(); // NaN
+
+        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
             .unwrap_err();
     }
 
