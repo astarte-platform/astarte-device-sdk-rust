@@ -209,6 +209,15 @@ mod test {
 
         ifa.validate_send("com.test.Everything", "/double", &buf, &None)
             .unwrap_err();
+
+        let buf = AstarteSdk::serialize_individual(
+            AstarteType::DoubleArray(vec![1.0, 2.0, f64::NAN, 4.0]),
+            None,
+        )
+        .unwrap(); // NaN
+
+        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
+            .unwrap_err();
     }
 
     #[test]
@@ -275,6 +284,18 @@ mod test {
         // missing object field
         let mut obj2 = obj.clone();
         obj2.remove("latitude");
+        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/1/",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+
+        // invalid float
+        let mut obj2 = obj.clone();
+        obj2.insert("latitude", AstarteType::Double(f64::NAN));
         let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
