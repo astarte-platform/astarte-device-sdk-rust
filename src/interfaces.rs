@@ -71,16 +71,14 @@ impl Interfaces {
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
-        let data = crate::AstarteSdk::deserialize(data)?;
-
-        println!("{:?}", data);
+        let data_deserialized = crate::AstarteSdk::deserialize(data)?;
 
         let interface = self
             .interfaces
             .get(interface_name)
             .ok_or_else(|| AstarteError::SendError("Interface does not exists".into()))?;
 
-        match data {
+        match data_deserialized {
             crate::Aggregation::Individual(individual) => {
                 let mapping = self
                     .get_mapping(interface_name, interface_path)
@@ -101,7 +99,13 @@ impl Interfaces {
                             ));
                         }
                     }
-                    crate::interface::Mapping::Properties(_map) => {}
+                    crate::interface::Mapping::Properties(map) => {
+                        if data.is_empty() && !map.allow_unset {
+                            return Err(AstarteError::SendError(
+                                "Do not unset a mapping without allow_unset".into(),
+                            ));
+                        }
+                    }
                 }
             }
             crate::Aggregation::Object(object) => {

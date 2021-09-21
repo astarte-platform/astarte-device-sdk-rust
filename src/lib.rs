@@ -527,6 +527,34 @@ impl AstarteSdk {
         Ok(())
     }
 
+    /// unset a device property
+    pub async fn unset<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+    ) -> Result<(), AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        trace!("unsetting {} {}", interface_name, interface_path);
+
+        if cfg!(debug_assertions) {
+            self.interfaces
+                .validate_send(interface_name, interface_path, &[], &None)?;
+        }
+
+        self.client
+            .publish(
+                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
+                rumqttc::QoS::ExactlyOnce,
+                false,
+                [],
+            )
+            .await?;
+
+        Ok(())
+    }
+
     /// Send data to an object interface
     pub async fn send_object(
         &self,
