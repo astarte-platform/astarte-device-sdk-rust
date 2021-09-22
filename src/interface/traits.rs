@@ -49,12 +49,12 @@ pub(crate) trait Mapping {
     }
 
     fn is_compatible(&self, path: &str) -> bool {
-        if !path.starts_with("/") {
+        if !path.starts_with('/') {
             return false;
         }
 
-        let endpoint_tokens = self.endpoint().trim_start_matches("/").split("/");
-        let path_tokens = path.trim_start_matches("/").split("/");
+        let endpoint_tokens = self.endpoint().trim_start_matches('/').split('/');
+        let path_tokens = path.trim_start_matches('/').split('/');
 
         for pair in endpoint_tokens.zip_longest(path_tokens) {
             match pair {
@@ -62,7 +62,7 @@ pub(crate) trait Mapping {
                 Left(_) => return false,
                 Right(_) => return false,
                 Both(endpoint_token, path_token) => {
-                    if endpoint_token.starts_with("%{") && endpoint_token.ends_with("}") {
+                    if endpoint_token.starts_with("%{") && endpoint_token.ends_with('}') {
                         continue;
                     }
 

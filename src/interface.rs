@@ -73,6 +73,7 @@ pub enum Aggregation {
     Object,
 }
 
+#[derive(Debug)]
 pub enum Mapping<'a> {
     Datastream(&'a DatastreamMapping),
     Properties(&'a PropertiesMapping),
@@ -94,20 +95,20 @@ pub struct DatastreamMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
-    reliability: Reliability,
+    pub reliability: Reliability,
     #[serde(default, skip_serializing_if = "is_default")]
-    retention: Retention,
+    pub retention: Retention,
     #[serde(default, skip_serializing_if = "is_default")]
-    explicit_timestamp: bool,
+    pub explicit_timestamp: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expiry: Option<u32>,
+    pub expiry: Option<u32>,
     // TODO: merge database_retention_policy and database_retention_ttl in a
     // single type (adjacently tagged enum works ok except when there's no
     // database_retention_policy key in JSON)
     #[serde(default, skip_serializing_if = "is_default")]
-    database_retention_policy: DatabaseRetentionPolicy,
+    pub database_retention_policy: DatabaseRetentionPolicy,
     #[serde(default)]
-    database_retention_ttl: Option<u32>,
+    pub database_retention_ttl: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -115,7 +116,7 @@ pub struct PropertiesMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
-    allow_unset: bool,
+    pub allow_unset: bool,
 }
 
 // TODO: investigate pro/cons of tagged enum like
@@ -198,11 +199,6 @@ impl Interface {
         Ok(interface)
     }
 
-    pub fn from_str(s: &str) -> Result<Self, Error> {
-        let interface = serde_json::from_str(s)?;
-        Ok(interface)
-    }
-
     pub fn aggregation(&self) -> Aggregation {
         match &self {
             Self::Datastream(d) => d.aggregation,
@@ -230,8 +226,47 @@ impl Interface {
             }
         }
 
-        return None;
+        None
     }
+
+    pub fn mappings_len(&self) -> usize {
+        match &self {
+            Self::Datastream(d) => d.mappings.len(),
+            Self::Properties(p) => p.mappings.len(),
+        }
+    }
+
+    pub fn get_ownership(&self) -> Ownership {
+        match &self {
+            Interface::Datastream(iface) => iface.base.ownership,
+            Interface::Properties(iface) => iface.base.ownership,
+        }
+    }
+
+    pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
+        if let Interface::Properties(iface) = self {
+            let name = iface.base.interface_name.clone();
+
+            let mappings = iface
+                .mappings
+                .iter()
+                .map(|f| (name.clone() + &f.base.endpoint, iface.base.version_major))
+                .collect();
+
+            return mappings;
+        }
+
+        Vec::new()
+    }
+}
+
+impl std::str::FromStr for Interface {
+    fn from_str(s: &str) -> Result<Self, Error> {
+        let interface = serde_json::from_str(s)?;
+        Ok(interface)
+    }
+
+    type Err = Error;
 }
 
 impl InterfaceTrait for Interface {
@@ -266,6 +301,8 @@ impl MappingTrait for PropertiesMapping {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::traits::Interface as InterfaceTrait;
     use super::traits::Mapping as MappingTrait;
     use super::{
@@ -351,7 +388,7 @@ mod tests {
 
         let interface = Interface::Datastream(datastream_interface);
 
-        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let deser_interface = Interface::from_str(interface_json).unwrap(); //allow_panic
 
         assert_eq!(interface, deser_interface);
 

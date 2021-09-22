@@ -1,4 +1,4 @@
-use crate::Device;
+use crate::AstarteOptions;
 use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
@@ -50,25 +50,24 @@ pub enum PairingError {
     Crypto(#[from] ErrorStack),
 }
 
-pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> {
-    let Device {
+pub async fn fetch_credentials(device: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
+    let AstarteOptions {
         realm,
         device_id,
         credentials_secret,
         pairing_url,
-        csr,
         ..
     } = device;
 
-    let mut url = Url::parse(&pairing_url)?;
+    let mut url = Url::parse(pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
-        .push(&realm)
+        .push(realm)
         .push("devices")
-        .push(&device_id)
+        .push(device_id)
         .push("protocols")
         .push("astarte_mqtt_v1")
         .push("credentials");
@@ -105,8 +104,8 @@ pub async fn fetch_credentials(device: &Device) -> Result<String, PairingError> 
     }
 }
 
-pub async fn fetch_broker_url(device: &Device) -> Result<String, PairingError> {
-    let Device {
+pub async fn fetch_broker_url(device: &AstarteOptions) -> Result<String, PairingError> {
+    let AstarteOptions {
         realm,
         device_id,
         credentials_secret,
@@ -114,15 +113,15 @@ pub async fn fetch_broker_url(device: &Device) -> Result<String, PairingError> {
         ..
     } = device;
 
-    let mut url = Url::parse(&pairing_url)?;
+    let mut url = Url::parse(pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
-        .push(&realm)
+        .push(realm)
         .push("devices")
-        .push(&device_id);
+        .push(device_id);
 
     let client = reqwest::Client::new();
     let response = client
