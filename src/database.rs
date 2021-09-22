@@ -13,9 +13,17 @@ pub struct Database {
 
 #[async_trait]
 pub trait AstarteDatabase {
-    async fn store_prop(&self, key: &str, value: &[u8], version: i32) -> Result<(), AstarteError>;
-    async fn load_prop(&self, key: &str, version: i32)
-        -> Result<Option<AstarteType>, AstarteError>;
+    async fn store_prop(
+        &self,
+        key: &str,
+        value: &[u8],
+        interface_major: i32,
+    ) -> Result<(), AstarteError>;
+    async fn load_prop(
+        &self,
+        key: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, AstarteError>;
     async fn delete_prop(&self, key: &str) -> Result<(), AstarteError>;
 
     async fn clear(&self) -> Result<(), AstarteError>;
@@ -23,7 +31,12 @@ pub trait AstarteDatabase {
 
 #[async_trait]
 impl AstarteDatabase for Database {
-    async fn store_prop(&self, key: &str, value: &[u8], version: i32) -> Result<(), AstarteError> {
+    async fn store_prop(
+        &self,
+        key: &str,
+        value: &[u8],
+        interface_major: i32,
+    ) -> Result<(), AstarteError> {
         trace!("Storing property {} in db ({:?})", key, value);
 
         if value.is_empty() {
@@ -32,12 +45,14 @@ impl AstarteDatabase for Database {
             self.delete_prop(key).await?;
         } else {
             //let serialized = crate::AstarteSdk::serialize_individual(value, None)?;
-            sqlx::query("insert or replace into propcache (path, value, version) VALUES (?,?,?)")
-                .bind(key)
-                .bind(value)
-                .bind(version)
-                .execute(&self.db_conn)
-                .await?;
+            sqlx::query(
+                "insert or replace into propcache (path, value, interface_major) VALUES (?,?,?)",
+            )
+            .bind(key)
+            .bind(value)
+            .bind(interface_major)
+            .execute(&self.db_conn)
+            .await?;
         }
 
         Ok(())
@@ -46,10 +61,10 @@ impl AstarteDatabase for Database {
     async fn load_prop(
         &self,
         key: &str,
-        version: i32,
+        interface_major: i32,
     ) -> Result<Option<AstarteType>, AstarteError> {
         let res: Option<(Vec<u8>, i32)> =
-            sqlx::query_as("select value, version from propcache where path=?")
+            sqlx::query_as("select value, interface_major from propcache where path=?")
                 .bind(key)
                 .fetch_optional(&self.db_conn)
                 .await?;
@@ -58,7 +73,7 @@ impl AstarteDatabase for Database {
             trace!("Loaded property {} in db ({:?})", key, res.0);
 
             //if version mismatch, delete
-            if res.1 != version {
+            if res.1 != interface_major {
                 self.delete_prop(key).await?;
                 return Ok(None);
             }
@@ -110,7 +125,7 @@ impl Database {
 
         if !exists {
             info!("initializing db");
-            sqlx::query("CREATE TABLE propcache (path TEXT PRIMARY KEY, value BLOB NOT NULL, version INTEGER NOT NULL)").execute(&conn).await?;
+            sqlx::query("CREATE TABLE propcache (path TEXT PRIMARY KEY, value BLOB NOT NULL, interface_major INTEGER NOT NULL)").execute(&conn).await?;
         }
 
         Ok(Database { db_conn: conn })
