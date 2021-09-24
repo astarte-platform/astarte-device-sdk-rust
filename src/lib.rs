@@ -22,6 +22,7 @@ use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use types::AstarteType;
 use url::Url;
 
@@ -70,6 +71,7 @@ pub struct AstarteOptions {
     interfaces: HashMap<String, Interface>,
     build_options: Option<BuildOptions>,
     database: Option<Box<dyn AstarteDatabase>>,
+    keepalive: Duration,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -151,7 +153,14 @@ impl AstarteOptions {
             interfaces: HashMap::new(),
             build_options: None,
             database: None,
+            keepalive: Duration::from_secs(30),
         }
+    }
+
+    /// Set time after which client should ping the broker
+    /// if there is no other data exchange
+    pub fn set_keep_alive(&mut self, duration: Duration) {
+        self.keepalive = duration;
     }
 
     pub fn add_database<T: AstarteDatabase + 'static>(&mut self, database: T) {
@@ -231,8 +240,24 @@ impl AstarteOptions {
             .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
-        // TODO: make keepalive configurable
-        mqtt_opts.set_keep_alive(30);
+
+        let secs = self.keepalive.as_secs();
+
+        // TODO: remove this if rumqtt accepts Duration
+        if secs > u16::MAX as u64 {
+            return Err(AstarteBuilderError::ConfigError(format!(
+                "keepalive should be at max {} seconds",
+                u16::MAX
+            )));
+        }
+
+        if secs < 5 {
+            return Err(AstarteBuilderError::ConfigError(
+                "Keepalive should be >= 5 secs".into(),
+            ));
+        }
+
+        mqtt_opts.set_keep_alive(secs as u16);
 
         mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
 
