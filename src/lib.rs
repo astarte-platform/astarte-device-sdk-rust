@@ -459,6 +459,99 @@ impl AstarteSdk {
         Ok(())
     }
 
+    /// unset a device property
+    pub async fn unset<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+    ) -> Result<(), AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        trace!("unsetting {} {}", interface_name, interface_path);
+
+        if cfg!(debug_assertions) {
+            self.interfaces
+                .validate_send(interface_name, interface_path, &[], &None)?;
+        }
+
+        self.client
+            .publish(
+                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
+                rumqttc::QoS::ExactlyOnce,
+                false,
+                [],
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    /// Serialize data directly from Bson
+    fn serialize(
+        data: Bson,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError> {
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
+               "t": timestamp,
+               "v": data
+            }
+        } else {
+            bson::doc! {
+               "v": data,
+            }
+        };
+
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf)?;
+        trace!("serialized {:#?}", doc);
+        Ok(buf)
+    }
+
+    fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
+        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
+            trace!("{:?}", deserialized);
+            if let Some(v) = deserialized.get("v") {
+                if let Bson::Document(doc) = v {
+                    let strings = doc.iter().map(|f| f.0.clone());
+
+                    let data = doc.iter().map(|f| f.1.clone().try_into());
+                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
+                    let data = data?;
+
+                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+
+                    Ok(Aggregation::Object(hmap))
+                } else if let Ok(v) = v.clone().try_into() {
+                    Ok(Aggregation::Individual(v))
+                } else {
+                    Err(AstarteError::DeserializationError)
+                }
+            } else {
+                Err(AstarteError::DeserializationError)
+            }
+        } else {
+            Err(AstarteError::DeserializationError)
+        }
+    }
+
+    /// get property from database, if present
+    pub async fn get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
+        if let Some(database) = &self.database {
+            if let Some(major) = self.interfaces.get_property_major(key) {
+                let prop = database.load_prop(key, major).await?;
+                return Ok(prop);
+            }
+        }
+
+        Ok(None)
+    }
+
+    // ------------------------------------------------------------------------
+    // scalar types
+    // ------------------------------------------------------------------------
+
     /// Send data to an astarte interface
     /// ```ignore
     /// d.send("com.test.interface", "/data", 4.5).await?;
@@ -527,53 +620,49 @@ impl AstarteSdk {
         Ok(())
     }
 
-    /// unset a device property
-    pub async fn unset<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-    ) -> Result<(), AstarteError>
+    /// Serialize an astarte type into a vec of bytes
+    fn serialize_individual<D>(
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError>
     where
         D: Into<AstarteType>,
     {
-        trace!("unsetting {} {}", interface_name, interface_path);
-
-        if cfg!(debug_assertions) {
-            self.interfaces
-                .validate_send(interface_name, interface_path, &[], &None)?;
-        }
-
-        self.client
-            .publish(
-                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                rumqttc::QoS::ExactlyOnce,
-                false,
-                [],
-            )
-            .await?;
-
-        Ok(())
+        AstarteSdk::serialize(data.into().into(), timestamp)
     }
 
-    /// Send data to an object interface
-    pub async fn send_object(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: HashMap<&str, AstarteType>,
-    ) -> Result<(), AstarteError> {
-        self.send_object_timestamp(interface_name, interface_path, data, None)
-            .await
+    // ------------------------------------------------------------------------
+    // object types
+    // ------------------------------------------------------------------------
+
+    /// helper function to convert from an HashMap of AstarteType to an HashMap of Bson
+    pub fn to_bson_map(data: HashMap<&str, AstarteType>) -> HashMap<&str, Bson> {
+        data.into_iter().map(|f| (f.0, f.1.into())).collect()
     }
 
-    /// Send data to an object interface. with timestamp
-    pub async fn send_object_timestamp(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: HashMap<&str, AstarteType>,
+    /// Serialize a group of astarte types to a vec of bytes, representing an object
+    fn serialize_object<T>(
+        data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<Vec<u8>, AstarteError>
+    where
+        T: serde::Serialize,
+    {
+        let doc = to_document(&data)?;
+
+        AstarteSdk::serialize(Bson::Document(doc), timestamp)
+    }
+
+    async fn send_object_with_timestamp_impl<T>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: T,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), AstarteError>
+    where
+        T: serde::Serialize,
+    {
         let buf = AstarteSdk::serialize_object(data, timestamp)?;
 
         if cfg!(debug_assertions) {
@@ -594,88 +683,33 @@ impl AstarteSdk {
         Ok(())
     }
 
-    /// Serialize an astarte type into a vec of bytes
-    fn serialize_individual<D>(
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
+    /// Send data to an object interface. with timestamp
+    pub async fn send_object_with_timestamp<T>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: T,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AstarteError>
     where
-        D: Into<AstarteType>,
+        T: serde::Serialize,
     {
-        AstarteSdk::serialize(data.into().into(), timestamp)
+        self.send_object_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
+            .await
     }
 
-    /// Serialize a group of astarte types to a vec of bytes, representing an object
-    fn serialize_object(
-        data: HashMap<&str, AstarteType>,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError> {
-        let data: HashMap<&str, Bson> = data.into_iter().map(|f| (f.0, f.1.into())).collect();
-
-        let doc = to_document(&data)?;
-
-        AstarteSdk::serialize(Bson::Document(doc), timestamp)
-    }
-
-    /// Serialize data directly from Bson
-    fn serialize(
-        data: Bson,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError> {
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
-               "t": timestamp,
-               "v": data
-            }
-        } else {
-            bson::doc! {
-               "v": data,
-            }
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        trace!("serialized {:#?}", doc);
-        Ok(buf)
-    }
-
-    fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
-            trace!("{:?}", deserialized);
-            if let Some(v) = deserialized.get("v") {
-                if let Bson::Document(doc) = v {
-                    let strings = doc.iter().map(|f| f.0.clone());
-
-                    let data = doc.iter().map(|f| f.1.clone().try_into());
-                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
-                    let data = data?;
-
-                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
-
-                    Ok(Aggregation::Object(hmap))
-                } else if let Ok(v) = v.clone().try_into() {
-                    Ok(Aggregation::Individual(v))
-                } else {
-                    Err(AstarteError::DeserializationError)
-                }
-            } else {
-                Err(AstarteError::DeserializationError)
-            }
-        } else {
-            Err(AstarteError::DeserializationError)
-        }
-    }
-
-    /// get property from database, if present
-    pub async fn get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
-        if let Some(database) = &self.database {
-            if let Some(major) = self.interfaces.get_property_major(key) {
-                let prop = database.load_prop(key, major).await?;
-                return Ok(prop);
-            }
-        }
-
-        Ok(None)
+    /// Send data to an object interface. with timestamp
+    pub async fn send_object<T>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: T,
+    ) -> Result<(), AstarteError>
+    where
+        T: serde::Serialize,
+    {
+        self.send_object_with_timestamp_impl(interface_name, interface_path, data, None)
+            .await
     }
 }
 
@@ -693,8 +727,6 @@ impl fmt::Debug for AstarteSdk {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-
     use chrono::{TimeZone, Utc};
 
     use crate::{types::AstarteType, AstarteSdk};
@@ -704,41 +736,6 @@ mod test {
 
         println!("matching {:?}\nwith     {:?}\n", a, b);
         matching == a.len() && matching == b.len()
-    }
-
-    //#[test] test is disabled because for some reason it serializes objects in random order
-    fn _serialize_object() {
-        let mut map: HashMap<&str, AstarteType> = HashMap::new();
-        map.insert("temp", AstarteType::Double(25.3123));
-        map.insert("hum", AstarteType::Double(67.112));
-
-        let buf = AstarteSdk::serialize_object(
-            map.clone(),
-            None, /*Some(Utc.timestamp(1537449422890,0))*/
-        )
-        .unwrap(); // allow_panic
-
-        assert!(do_vecs_match(
-            &buf,
-            &vec![
-                0x28, 0x00, 0x00, 0x00, 0x03, 0x76, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, 0x68, 0x75,
-                0x6d, 0x00, 0xba, 0x49, 0x0c, 0x02, 0x2b, 0xc7, 0x50, 0x40, 0x01, 0x74, 0x65, 0x6d,
-                0x70, 0x00, 0x72, 0x8a, 0x8e, 0xe4, 0xf2, 0x4f, 0x39, 0x40, 0x00, 0x00
-            ]
-        ));
-
-        let buf =
-            AstarteSdk::serialize_object(map, Some(Utc.timestamp(1537449422, 890000000))).unwrap(); // allow_panic
-
-        assert!(do_vecs_match(
-            &buf,
-            &vec![
-                0x33, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0xfb, 0x9d, 0x4f, 0xf7, 0x65, 0x01, 0x00,
-                0x00, 0x03, 0x76, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, 0x68, 0x75, 0x6d, 0x00, 0xba,
-                0x49, 0x0c, 0x02, 0x2b, 0xc7, 0x50, 0x40, 0x01, 0x74, 0x65, 0x6d, 0x70, 0x00, 0x72,
-                0x8a, 0x8e, 0xe4, 0xf2, 0x4f, 0x39, 0x40, 0x00, 0x00
-            ]
-        ));
     }
 
     #[test]
