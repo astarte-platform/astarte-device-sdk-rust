@@ -5,6 +5,7 @@ mod database;
 mod interface;
 mod interfaces;
 mod pairing;
+pub mod registration;
 pub mod types;
 
 use bson::{to_document, Bson};
