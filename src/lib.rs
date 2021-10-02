@@ -126,6 +126,9 @@ pub enum AstarteError {
     #[error("send error")]
     SendError(String),
 
+    #[error("receive error")]
+    ReceiveError(String),
+
     #[error("database error")]
     DbError(#[from] sqlx::Error),
 
@@ -413,8 +416,15 @@ impl AstarteSdk {
                                 }
                             }
 
-                            let data = AstarteSdk::deserialize(&bdata)?;
+                            if cfg!(debug_assertions) {
+                                self.interfaces.validate_receive(
+                                    &interface,
+                                    &path,
+                                    bdata.clone(),
+                                )?;
+                            }
 
+                            let data = AstarteSdk::deserialize(&bdata)?;
                             return Ok(Clientbound {
                                 interface,
                                 path,

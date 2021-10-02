@@ -111,9 +111,11 @@ impl Interfaces {
                     .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
                 if individual != mapping.mapping_type() {
-                    return Err(AstarteError::SendError(
-                        "You are sending the wrong type for this mapping".into(),
-                    ));
+                    return Err(AstarteError::SendError(format!(
+                        "You are sending the wrong type for this mapping: got {:?}, expected {:?}",
+                        individual,
+                        mapping.mapping_type()
+                    )));
                 }
 
                 Interfaces::validate_float(&individual)?;
@@ -146,13 +148,101 @@ impl Interfaces {
 
                     if *obj.1 != mapping.mapping_type() {
                         return Err(AstarteError::SendError(
-                            "You are sending the wrong type for this object mapping".into(),
+                            format!("You are sending the wrong type for this object mapping: got {:?}, expected {:?}", *obj.1, mapping.mapping_type()),
                         ));
+                    }
+
+                    match mapping {
+                        crate::interface::Mapping::Datastream(map) => {
+                            if !map.explicit_timestamp && timestamp.is_some() {
+                                return Err(AstarteError::SendError(
+                                    "Do not send timestamp to a mapping without explicit timestamp"
+                                        .into(),
+                                ));
+                            }
+                        }
+                        crate::interface::Mapping::Properties(_) => {
+                            return Err(AstarteError::SendError(
+                                "Can't send object to properties".into(),
+                            ));
+                        }
                     }
                 }
 
                 if object.len() < interface.mappings_len() {
                     return Err(AstarteError::SendError(
+                        "You are missing some mappings from the object".into(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn validate_receive(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        bdata: Vec<u8>,
+    ) -> Result<(), AstarteError> {
+        let interface = self
+            .interfaces
+            .get(interface_name)
+            .ok_or_else(|| AstarteError::ReceiveError("Interface does not exists".into()))?;
+
+        let data = crate::AstarteSdk::deserialize(&bdata)?;
+
+        match data {
+            crate::Aggregation::Individual(individual) => {
+                let mapping = self
+                    .get_mapping(interface_name, interface_path)
+                    .ok_or_else(|| AstarteError::ReceiveError("Mapping doesn't exist".into()))?;
+
+                match mapping {
+                    crate::interface::Mapping::Datastream(_) => {}
+                    crate::interface::Mapping::Properties(map) => {
+                        if bdata.is_empty() && !map.allow_unset {
+                            return Err(AstarteError::ReceiveError(
+                                "Do not unset a mapping without allow_unset".into(),
+                            ));
+                        }
+                    }
+                }
+
+                if individual != mapping.mapping_type() {
+                    return Err(AstarteError::ReceiveError(
+                        "You are receiving the wrong type for this mapping".into(),
+                    ));
+                }
+
+                Interfaces::validate_float(&individual)?;
+            }
+            crate::Aggregation::Object(object) => {
+                for obj in &object {
+                    Interfaces::validate_float(obj.1)?;
+
+                    let mapping = self
+                        .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
+                        .ok_or_else(|| {
+                            AstarteError::ReceiveError("Mapping doesn't exist".into())
+                        })?;
+
+                    if *obj.1 != mapping.mapping_type() {
+                        return Err(AstarteError::ReceiveError(
+                            "You are receiving the wrong type for this object mapping".into(),
+                        ));
+                    }
+
+                    if let crate::interface::Mapping::Properties(_) = mapping {
+                        return Err(AstarteError::ReceiveError(
+                            "Can't send object to properties".into(),
+                        ));
+                    }
+                }
+
+                if object.len() < interface.mappings_len() {
+                    return Err(AstarteError::ReceiveError(
                         "You are missing some mappings from the object".into(),
                     ));
                 }
