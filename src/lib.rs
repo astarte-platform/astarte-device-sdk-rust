@@ -795,22 +795,22 @@ mod test {
     #[test]
     fn serialize_individual() {
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(false, None).unwrap(), // allow_panic
+            &AstarteSdk::serialize_individual(false, None).unwrap(),
             &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
-        )); // allow_panic
+        ));
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(), // allow_panic
+            &AstarteSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(),
             &vec![
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30,
                 0x40, 0x00
             ]
-        )); // allow_panic
+        ));
         assert!(do_vecs_match(
             &AstarteSdk::serialize_individual(
                 AstarteType::Double(16.73),
                 Some(Utc.timestamp(1537449422, 890000000))
             )
-            .unwrap(), // allow_panic
+            .unwrap(),
             &vec![
                 0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00,
                 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00
@@ -821,8 +821,7 @@ mod test {
     #[test]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let (realm, device, interface, path) = crate::parse_topic(&topic).unwrap(); // allow_panic
-
+        let (realm, device, interface, path) = crate::parse_topic(&topic).unwrap();
         assert!(realm == "test");
         assert!(device == "u-WraCwtK_G_fjJf63TiAw");
         assert!(interface == "com.interface.test");
