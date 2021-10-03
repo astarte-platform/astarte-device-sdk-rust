@@ -257,14 +257,14 @@ mod test {
         for ty in alltypes {
             println!("checking {:?}", ty);
 
-            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap(); // allow_panic
+            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
 
-            let ty2 = AstarteSdk::deserialize(&buf).unwrap(); // allow_panic
+            let ty2 = AstarteSdk::deserialize(&buf).unwrap();
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
             } else {
-                panic!(); // allow_panic
+                panic!();
             }
         }
     }
@@ -316,9 +316,9 @@ mod test {
             data.insert(*i.0, i.1.clone());
         }
 
-        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap(); // allow_panic
+        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap();
 
-        let data2 = AstarteSdk::deserialize(&bytes).unwrap(); // allow_panic
+        let data2 = AstarteSdk::deserialize(&bytes).unwrap();
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,
@@ -335,7 +335,7 @@ mod test {
         if let Aggregation::Object(data2) = data2 {
             assert!(hashmap_match(&data, &data2));
         } else {
-            panic!(); // allow_panic
+            panic!();
         }
     }
 
