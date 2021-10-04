@@ -236,7 +236,7 @@ mod test {
         obj.insert("heading", 237.0.try_into().unwrap());
         obj.insert("speed", 250.0.try_into().unwrap());
 
-        let buf = AstarteSdk::serialize_object(obj.clone(), None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj.clone()), None).unwrap();
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
@@ -260,7 +260,7 @@ mod test {
         // nonexisting object field
         let mut obj2 = obj.clone();
         obj2.insert("latitudef", 37.534543.try_into().unwrap());
-        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1/",
@@ -272,7 +272,7 @@ mod test {
         // wrong type
         let mut obj2 = obj.clone();
         obj2.insert("latitude", AstarteType::Boolean(false));
-        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1/",
@@ -284,7 +284,7 @@ mod test {
         // missing object field
         let mut obj2 = obj.clone();
         obj2.remove("latitude");
-        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1/",
@@ -296,7 +296,7 @@ mod test {
         // invalid float
         let mut obj2 = obj.clone();
         obj2.insert("latitude", AstarteType::Double(f64::NAN));
-        let buf = AstarteSdk::serialize_object(obj2, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1/",
