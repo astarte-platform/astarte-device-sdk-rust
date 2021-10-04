@@ -71,6 +71,7 @@ impl Interfaces {
     }
 
     /// returns major version if the property exists, None otherwise
+    /// ifpath is like org.astarte-platform.genericsensors.SamplingRate/1/enable
     pub fn get_property_major(&self, ifpath: &str) -> Option<i32> {
         // todo: this could be optimized
         self.interfaces
