@@ -24,6 +24,7 @@ impl Interfaces {
         introspection
     }
 
+    /// gets mapping from the json description, given the path
     pub fn get_mapping(
         &self,
         interface_name: &str,
@@ -185,20 +186,24 @@ impl Interfaces {
         &self,
         interface_name: &str,
         interface_path: &str,
-        bdata: Vec<u8>,
+        bdata: &[u8],
     ) -> Result<(), AstarteError> {
-        let interface = self
-            .interfaces
-            .get(interface_name)
-            .ok_or_else(|| AstarteError::ReceiveError("Interface does not exists".into()))?;
+        let interface = self.interfaces.get(interface_name).ok_or_else(|| {
+            AstarteError::ReceiveError(format!("Interface '{}' does not exists", interface_name))
+        })?;
 
-        let data = crate::AstarteSdk::deserialize(&bdata)?;
+        let data = crate::AstarteSdk::deserialize(bdata)?;
 
         match data {
             crate::Aggregation::Individual(individual) => {
                 let mapping = self
                     .get_mapping(interface_name, interface_path)
-                    .ok_or_else(|| AstarteError::ReceiveError("Mapping doesn't exist".into()))?;
+                    .ok_or_else(|| {
+                        AstarteError::ReceiveError(format!(
+                            "Mapping '{}' doesn't exist",
+                            interface_path
+                        ))
+                    })?;
 
                 match mapping {
                     crate::interface::Mapping::Datastream(_) => {}
@@ -256,9 +261,9 @@ impl Interfaces {
 
 #[cfg(test)]
 mod test {
-    use std::convert::TryInto;
+    use std::{collections::HashMap, convert::TryInto};
 
-    use crate::{types::AstarteType, AstarteOptions, AstarteSdk};
+    use crate::{types::AstarteType, Aggregation, AstarteOptions, AstarteSdk};
 
     #[test]
     fn test_individual() {
@@ -395,5 +400,128 @@ mod test {
             &None,
         )
         .unwrap_err();
+    }
+
+    #[test]
+    fn test_individual_recv() {
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options.add_interface_files("examples/interfaces/").unwrap();
+        let ifa = super::Interfaces::new(options.interfaces);
+
+        let boolean_buf =
+            AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        let integer_buf = AstarteSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+
+        ifa.validate_receive(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/2/enable",
+            &boolean_buf,
+        )
+        .unwrap();
+
+        ifa.validate_receive(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/2/enable",
+            &integer_buf,
+        )
+        .unwrap_err();
+
+        ifa.validate_receive(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/2/3/4/enable",
+            &boolean_buf,
+        )
+        .unwrap_err();
+
+        ifa.validate_receive(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/nope/enable",
+            &boolean_buf,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_object_recv() {
+        use std::str::FromStr;
+
+        let interface_json = r#"
+        {
+            "interface_name": "com.test4.object",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "ownership": "server",
+            "aggregation": "object",
+            "mappings": [
+                {
+                    "endpoint": "/bottone",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/uptimeSeconds",
+                    "type": "integer",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+
+        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
+        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
+
+        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+
+        let ifa = super::Interfaces::new(ifa);
+
+        let inner_data: HashMap<&str, AstarteType> = [
+            ("bottone", AstarteType::Boolean(false)),
+            ("uptimeSeconds", AstarteType::Integer(324)),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+
+        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+            .unwrap();
+        ifa.validate_receive("org.astarte-platform.test.test", "/no", &buf)
+            .unwrap_err();
+        ifa.validate_receive("org.astarte-platform.test.no", "/", &buf)
+            .unwrap_err();
+
+        let inner_data: HashMap<&str, AstarteType> = [
+            ("bottonefoo", AstarteType::Boolean(false)),
+            ("uptimeSeconds", AstarteType::Integer(324)),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+
+        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+            .unwrap_err();
+
+        let inner_data: HashMap<&str, AstarteType> = [("bottone", AstarteType::Boolean(false))]
+            .iter()
+            .cloned()
+            .collect();
+        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+
+        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+            .unwrap_err();
+
+        let inner_data: HashMap<&str, AstarteType> = [
+            ("bottone", AstarteType::Double(3.3)),
+            ("uptimeSeconds", AstarteType::Integer(324)),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+
+        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+            .unwrap_err();
     }
 }

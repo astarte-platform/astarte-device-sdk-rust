@@ -417,11 +417,8 @@ impl AstarteSdk {
                             }
 
                             if cfg!(debug_assertions) {
-                                self.interfaces.validate_receive(
-                                    &interface,
-                                    &path,
-                                    bdata.clone(),
-                                )?;
+                                self.interfaces
+                                    .validate_receive(&interface, &path, &bdata)?;
                             }
 
                             let data = AstarteSdk::deserialize(&bdata)?;

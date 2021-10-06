@@ -359,6 +359,7 @@ mod tests {
         assert_eq!(mapping.is_compatible("/bar/value"), true);
         assert_eq!(mapping.is_compatible("/value"), false);
         assert_eq!(mapping.is_compatible("/foo/bar/value"), false);
+        assert_eq!(mapping.is_compatible("/foo/value/bar"), false);
         assert_eq!(mapping.endpoint(), "/%{sensor_id}/value");
         assert_eq!(mapping.mapping_type(), MappingType::Double);
         assert_eq!(mapping.description(), Some("Mapping description"));
