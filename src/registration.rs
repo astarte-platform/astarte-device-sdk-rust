@@ -6,21 +6,22 @@ use uuid::Uuid;
 
 use crate::pairing::PairingError;
 
-#[derive(Serialize, Deserialize, Debug)]
-struct RegisterApiResponse {
-    data: RegisterData,
-}
-#[derive(Serialize, Deserialize, Debug)]
-struct RegisterData {
-    credentials_secret: String,
-}
-
+/// Obtain a credentials secret from the astarte API
 pub async fn register_device(
     token: &str,
     pairing_url: &str,
     realm: &str,
     device_id: &str,
 ) -> Result<String, PairingError> {
+    #[derive(Serialize, Deserialize, Debug)]
+    struct RegisterApiResponse {
+        data: RegisterData,
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct RegisterData {
+        credentials_secret: String,
+    }
+
     let mut url = Url::parse(pairing_url)?;
 
     url.path_segments_mut()
@@ -59,7 +60,7 @@ pub async fn register_device(
     }
 }
 
-/// Generate a device Id in a random way based on UUIDv4.
+/// Generate a random device Id with UUIDv4.
 pub fn generate_random_uuid() -> String {
     let uuid = Uuid::new_v4();
     base64::encode_config(uuid.as_bytes(), base64::URL_SAFE_NO_PAD)

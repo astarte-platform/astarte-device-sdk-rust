@@ -1,10 +1,11 @@
-use crate::AstarteOptions;
 use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
+
+use crate::builder::AstarteBuilder;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse {
@@ -50,8 +51,8 @@ pub enum PairingError {
     Crypto(#[from] ErrorStack),
 }
 
-pub async fn fetch_credentials(device: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
-    let AstarteOptions {
+pub async fn fetch_credentials(device: &AstarteBuilder, csr: &str) -> Result<String, PairingError> {
+    let AstarteBuilder {
         realm,
         device_id,
         credentials_secret,
@@ -104,8 +105,8 @@ pub async fn fetch_credentials(device: &AstarteOptions, csr: &str) -> Result<Str
     }
 }
 
-pub async fn fetch_broker_url(device: &AstarteOptions) -> Result<String, PairingError> {
-    let AstarteOptions {
+pub async fn fetch_broker_url(device: &AstarteBuilder) -> Result<String, PairingError> {
+    let AstarteBuilder {
         realm,
         device_id,
         credentials_secret,

@@ -22,5 +22,4 @@ cargo run --example simple -- \
     --device-id <device-id>
     --pairing-url <pairing-url>
     --realm <realm>
-    --interfaces-directory <interfaces-directory>
 ```

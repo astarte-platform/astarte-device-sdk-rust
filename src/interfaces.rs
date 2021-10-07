@@ -263,11 +263,11 @@ impl Interfaces {
 mod test {
     use std::{collections::HashMap, convert::TryInto};
 
-    use crate::{types::AstarteType, Aggregation, AstarteOptions, AstarteSdk};
+    use crate::{builder::AstarteBuilder, types::AstarteType, AstarteSdk};
 
     #[test]
     fn test_individual() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
@@ -318,7 +318,7 @@ mod test {
 
     #[test]
     fn test_object() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
@@ -404,7 +404,7 @@ mod test {
 
     #[test]
     fn test_individual_recv() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
