@@ -316,7 +316,8 @@ mod test {
             data.insert(*i.0, i.1.clone());
         }
 
-        let bytes = AstarteSdk::serialize_object(data.clone(), None).unwrap(); // allow_panic
+        let bytes =
+            AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap(); // allow_panic
 
         let data2 = AstarteSdk::deserialize(&bytes).unwrap(); // allow_panic
 
