@@ -275,11 +275,11 @@ impl Interfaces {
 mod test {
     use std::{collections::HashMap, convert::TryInto};
 
-    use crate::{types::AstarteType, Aggregation, AstarteOptions, AstarteSdk};
+    use crate::{builder::AstarteBuilder, types::AstarteType, AstarteSdk};
 
     #[test]
     fn test_individual() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
@@ -330,7 +330,7 @@ mod test {
 
     #[test]
     fn test_object() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
@@ -416,7 +416,7 @@ mod test {
 
     #[test]
     fn test_individual_recv() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = AstarteBuilder::new("test", "test", "test", "test");
         options.add_interface_files("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
@@ -494,7 +494,7 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
         ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
             .unwrap();
@@ -510,7 +510,7 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
         ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
             .unwrap_err();
@@ -522,7 +522,7 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(inner_data, None).unwrap();
+        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
         ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
             .unwrap_err();

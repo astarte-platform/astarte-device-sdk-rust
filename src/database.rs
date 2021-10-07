@@ -19,16 +19,18 @@
 use async_trait::async_trait;
 use std::str::FromStr;
 
-use log::{info, trace, warn};
+use log::{trace, warn};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::{types::AstarteType, AstarteError, AstarteSdk};
 
+/// Implementation of the [AstarteDatabase] trait for an sqlite database backend
 #[derive(Clone)]
-pub struct Database {
+pub struct AstarteSqliteDatabase {
     db_conn: sqlx::Pool<sqlx::Sqlite>,
 }
 
+/// Database backend for the astarte client can be made by implementing this trait
 #[async_trait]
 pub trait AstarteDatabase {
     async fn store_prop(
@@ -44,11 +46,12 @@ pub trait AstarteDatabase {
     ) -> Result<Option<AstarteType>, AstarteError>;
     async fn delete_prop(&self, key: &str) -> Result<(), AstarteError>;
 
+    /// Removes all saved properties from the database
     async fn clear(&self) -> Result<(), AstarteError>;
 }
 
 #[async_trait]
-impl AstarteDatabase for Database {
+impl AstarteDatabase for AstarteSqliteDatabase {
     async fn store_prop(
         &self,
         key: &str,
@@ -128,25 +131,17 @@ impl AstarteDatabase for Database {
     }
 }
 
-impl Database {
-    #![allow(dead_code)]
-    pub async fn new(path: &str) -> Result<Self, crate::AstarteBuilderError> {
-        let exists = std::path::Path::new(&path).exists();
-
-        info!("database exists: {} ({})", exists, path);
-
-        let database_path = &format!("sqlite://{}", path);
-
-        let options = SqliteConnectOptions::from_str(database_path)?.create_if_missing(true);
+impl AstarteSqliteDatabase {
+    /// Creates an sqlite database for the astarte client
+    /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details
+    pub async fn new(uri: &str) -> Result<Self, crate::builder::AstarteBuilderError> {
+        let options = SqliteConnectOptions::from_str(uri)?.create_if_missing(true);
 
         let conn = SqlitePoolOptions::new().connect_with(options).await?;
 
-        if !exists {
-            info!("initializing db");
-            sqlx::query("CREATE TABLE propcache (path TEXT PRIMARY KEY, value BLOB NOT NULL, interface_major INTEGER NOT NULL)").execute(&conn).await?;
-        }
+        sqlx::query("CREATE TABLE if not exists propcache (path TEXT PRIMARY KEY, value BLOB NOT NULL, interface_major INTEGER NOT NULL)").execute(&conn).await?;
 
-        Ok(Database { db_conn: conn })
+        Ok(AstarteSqliteDatabase { db_conn: conn })
     }
 }
 
@@ -154,24 +149,11 @@ impl Database {
 mod test {
     use crate::database::AstarteDatabase;
     use crate::AstarteSdk;
-    use crate::{database::Database, types::AstarteType};
-
-    /*
-    #[test]
-    fn test_ser() {
-        let ty = AstarteType::Int32(23);
-
-        let serialized = AstarteSdk::serialize_individual(ty, None);
-
-        println!("{:?}", serialized);
-
-        assert!(false);
-
-    }*/
+    use crate::{database::AstarteSqliteDatabase, types::AstarteType};
 
     #[tokio::test]
     async fn test_db() {
-        let db = Database::new("/tmp/test-astarte-db.sqlite3").await.unwrap();
+        let db = AstarteSqliteDatabase::new("sqlite::memory:").await.unwrap();
 
         let ty = AstarteType::Integer(23);
         let ser = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();

@@ -334,7 +334,8 @@ mod test {
             data.insert(*i.0, i.1.clone());
         }
 
-        let bytes = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap();
+        let bytes =
+            AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap();
 
         let data2 = AstarteSdk::deserialize(&bytes).unwrap();
 

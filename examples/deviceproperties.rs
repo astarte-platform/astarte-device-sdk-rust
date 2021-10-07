@@ -1,6 +1,4 @@
-use std::convert::TryInto;
-
-use astarte_sdk::{types::AstarteType, AstarteOptions};
+use astarte_sdk::builder::AstarteBuilder;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -31,7 +29,7 @@ async fn main() {
     } = Cli::from_args();
 
     let mut sdk_options =
-        AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+        AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
 
     sdk_options
         .add_interface_files("./examples/interfaces")

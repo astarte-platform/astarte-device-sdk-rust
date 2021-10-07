@@ -16,7 +16,8 @@
  * limitations under the License.
  */
 
-use astarte_sdk::AstarteOptions;
+
+use astarte_sdk::builder::AstarteBuilder;
 use structopt::StructOpt;
 
 use serde::Serialize;
@@ -49,7 +50,7 @@ async fn main() {
     } = Cli::from_args();
 
     let mut sdk_options =
-        AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
+        AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
     sdk_options
         .add_interface_files("./examples/interfaces")
         .unwrap();
