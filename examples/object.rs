@@ -1,7 +1,8 @@
-use std::convert::TryInto;
-
 use astarte_sdk::builder::AstarteBuilder;
+
 use structopt::StructOpt;
+
+use serde::Serialize;
 
 #[derive(Debug, StructOpt)]
 struct Cli {
@@ -46,22 +47,33 @@ async fn main() {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(5000));
 
-            // object aggregation
-            let mut obj: std::collections::HashMap<&str, astarte_sdk::types::AstarteType> =
-                std::collections::HashMap::new();
-            obj.insert("latitude", 37.534543.try_into().unwrap());
-            obj.insert("longitude", 45.543.try_into().unwrap());
-            obj.insert("altitude", 650.6.try_into().unwrap());
-            obj.insert("accuracy", 12.0.try_into().unwrap());
-            obj.insert("altitudeAccuracy", 10.0.try_into().unwrap());
-            obj.insert("heading", 237.0.try_into().unwrap());
-            obj.insert("speed", 250.0.try_into().unwrap());
+            #[derive(Serialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Geolocation {
+                latitude: f64,
+                longitude: f64,
+                altitude: f64,
+                accuracy: f64,
+                altitude_accuracy: f64,
+                heading: f64,
+                speed: f64,
+            }
 
-            w.send_object_timestamp(
+            // object aggregation
+            let data = Geolocation {
+                latitude: 1.34,
+                longitude: 2.34,
+                altitude: 3.34,
+                accuracy: 4.34,
+                altitude_accuracy: 5.34,
+                heading: 6.34,
+                speed: 7.34,
+            };
+
+            w.send_object(
                 "org.astarte-platform.genericsensors.Geolocation",
                 "/1/",
-                obj,
-                None,
+                data,
             )
             .await
             .unwrap();
