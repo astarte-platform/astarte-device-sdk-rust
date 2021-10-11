@@ -139,8 +139,6 @@ impl AstarteSdk {
 
                             debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                            let ifpath = interface.clone() + &path;
-
                             //error!("we are db {:?}", self.database);
 
                             if let Some(database) = &self.database {
@@ -150,14 +148,16 @@ impl AstarteSdk {
                                     self.interfaces.get_property_major(&interface, &path)
                                 //if it's a property
                                 {
-                                    database.store_prop(&ifpath, &bdata, major_version).await?;
+                                    database
+                                        .store_prop(&interface, &path, &bdata, major_version)
+                                        .await?;
 
                                     if cfg!(debug_assertions) {
                                         // database selftest / sanity check for debug builds
                                         let original = crate::AstarteSdk::deserialize(&bdata)?;
                                         if let Aggregation::Individual(data) = original {
                                             let db = database
-                                                .load_prop(&ifpath, major_version)
+                                                .load_prop(&interface, &path, major_version)
                                                 .await
                                                 .expect("load_prop failed")
                                                 .expect(
@@ -315,9 +315,7 @@ impl AstarteSdk {
     ) -> Result<Option<AstarteType>, AstarteError> {
         if let Some(database) = &self.database {
             if let Some(major) = self.interfaces.get_property_major(interface, path) {
-                let prop = database
-                    .load_prop(&(String::from(interface) + path), major)
-                    .await?;
+                let prop = database.load_prop(interface, path, major).await?;
                 return Ok(prop);
             }
         }
@@ -437,8 +435,6 @@ impl AstarteSdk {
     where
         D: Into<AstarteType>,
     {
-        let ifpath = &(interface_name.to_string() + interface_path);
-
         if let Some(db) = &self.database {
             //if database is present
 
@@ -451,7 +447,7 @@ impl AstarteSdk {
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
-                let db_data = db.load_prop(ifpath, 0).await?;
+                let db_data = db.load_prop(interface_name, interface_path, 0).await?;
 
                 if let Some(db_data) = db_data {
                     // if already in db
@@ -474,8 +470,6 @@ impl AstarteSdk {
     where
         D: Into<AstarteType>,
     {
-        let ifpath = &(interface_name.to_string() + interface_path);
-
         if let Some(db) = &self.database {
             //if database is present
 
@@ -489,7 +483,8 @@ impl AstarteSdk {
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
                 let bin = AstarteSdk::serialize_individual(data, None)?;
-                db.store_prop(ifpath, &bin, 0).await?;
+                db.store_prop(interface_name, interface_path, &bin, 0)
+                    .await?;
                 debug!("Stored new property in database");
             }
         }
@@ -608,7 +603,7 @@ mod test {
 
     use crate::{types::AstarteType, AstarteSdk};
 
-    fn do_vecs_match(a: &Vec<u8>, b: &Vec<u8>) -> bool {
+    fn do_vecs_match(a: &[u8], b: &[u8]) -> bool {
         let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
 
         println!("matching {:?}\nwith     {:?}\n", a, b);
@@ -619,11 +614,11 @@ mod test {
     fn serialize_individual() {
         assert!(do_vecs_match(
             &AstarteSdk::serialize_individual(false, None).unwrap(),
-            &vec![0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
+            &[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
         ));
         assert!(do_vecs_match(
             &AstarteSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(),
-            &vec![
+            &[
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30,
                 0x40, 0x00
             ]
@@ -634,7 +629,7 @@ mod test {
                 Some(Utc.timestamp(1537449422, 890000000))
             )
             .unwrap(),
-            &vec![
+            &[
                 0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00,
                 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00
             ]
