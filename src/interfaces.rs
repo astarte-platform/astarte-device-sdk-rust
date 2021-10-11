@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone)]
@@ -56,13 +58,15 @@ impl Interfaces {
     /// returns major version if the property exists, None otherwise
     /// ifpath is like org.astarte-platform.genericsensors.SamplingRate/1/enable
     pub fn get_property_major(&self, ifpath: &str) -> Option<i32> {
-        // todo: this could be optimized
+        use crate::interface::traits::Interface;
+
+        let ifpath: String = String::from("/") + &ifpath.split('/').skip(1).join("/"); //remove the name of the interface
+
         self.interfaces
             .iter()
-            .map(|f| f.1.get_properties_paths())
+            .map(|f| (f.1.mapping(&ifpath), f.1.base_interface().version_major))
+            .map(|x| if x.0.is_some() { Some(x.1) } else { None })
             .flatten()
-            .filter(|f| f.0 == *ifpath)
-            .map(|f| f.1)
             .next()
     }
 
@@ -261,7 +265,7 @@ impl Interfaces {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, convert::TryInto};
+    use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
     use crate::{builder::AstarteBuilder, types::AstarteType, AstarteSdk};
 
@@ -523,5 +527,115 @@ mod test {
 
         ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
             .unwrap_err();
+    }
+
+    #[test]
+    fn test_get_property() {
+        let interface_json = r#"
+        {
+            "interface_name": "com.test4.object",
+            "version_major": 12,
+            "version_minor": 1,
+            "type": "properties",
+            "ownership": "server",
+            "mappings": [
+                {
+                    "endpoint": "/button",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/uptimeSeconds",
+                    "type": "integer",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+
+        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
+        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
+
+        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+
+        let ifa = super::Interfaces::new(ifa);
+
+        assert!(ifa.get_property_major("com.test4.object/button").unwrap() == 12);
+        assert!(
+            ifa.get_property_major("com.test4.object/uptimeSeconds")
+                .unwrap()
+                == 12
+        );
+        assert!(ifa
+            .get_property_major("com.test4.object/button/foo")
+            .is_none());
+        assert!(ifa
+            .get_property_major("com.test4.object/buttonfoo")
+            .is_none());
+        assert!(ifa
+            .get_property_major("com.test4.object/foo/button")
+            .is_none());
+        assert!(ifa.get_property_major("com.test4.object/").is_none());
+
+        let interface_json = r#"
+        {
+            "interface_name": "org.astarte-platform.genericsensors.SamplingRate",
+            "version_major": 12,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Configure sensors sampling rate and enable/disable.",
+            "doc": "",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/enable",
+                    "type": "boolean",
+                    "allow_unset": true,
+                    "description": "Enable/disable sensor data transmission.",
+                    "doc": ""
+                },
+                {
+                    "endpoint": "/%{sensor_id}/samplingPeriod",
+                    "type": "integer",
+                    "allow_unset": true,
+                    "description": "Sensor sample transmission period.",
+                    "doc": ""
+                }
+            ]
+        }
+        "#;
+
+        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
+        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
+
+        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+
+        let ifa = super::Interfaces::new(ifa);
+
+        assert!(
+            ifa.get_property_major("org.astarte-platform.genericsensors.SamplingRate/1/enable")
+                .unwrap()
+                == 12
+        );
+        assert!(
+            ifa.get_property_major(
+                "org.astarte-platform.genericsensors.SamplingRate/999999/enable"
+            )
+            .unwrap()
+                == 12
+        );
+        assert!(
+            ifa.get_property_major(
+                "org.astarte-platform.genericsensors.SamplingRate/foobar/enable"
+            )
+            .unwrap()
+                == 12
+        );
+        assert!(ifa
+            .get_property_major("org.astarte-platform.genericsensors.SamplingRate/foo/bar/enable")
+            .is_none());
+        assert!(ifa
+            .get_property_major("org.astarte-platform.genericsensors.SamplingRate/")
+            .is_none());
     }
 }

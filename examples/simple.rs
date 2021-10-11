@@ -1,6 +1,4 @@
-use std::convert::TryInto;
-
-use astarte_sdk::{builder::AstarteBuilder, types::AstarteType};
+use astarte_sdk::builder::AstarteBuilder;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -43,15 +41,14 @@ async fn main() {
 
     let w = device.clone();
     tokio::task::spawn(async move {
-        let mut i: f64 = 0.0;
+        let mut i: i64 = 0;
         loop {
-            let data: AstarteType = i.try_into().unwrap();
-            w.send("com.test.Everything", "/double", data)
+            w.send("com.test.Everything", "/longinteger", i)
                 .await
                 .unwrap();
             println!("Sent {}", i);
 
-            i += 1.1;
+            i += 11;
 
             std::thread::sleep(std::time::Duration::from_millis(1000));
         }

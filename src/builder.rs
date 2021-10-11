@@ -45,6 +45,7 @@ pub struct BuildOptions {
 ///
 /// ```
 
+#[derive(Clone)]
 pub struct AstarteBuilder {
     pub(crate) realm: String,
     pub(crate) device_id: String,
@@ -52,7 +53,7 @@ pub struct AstarteBuilder {
     pub(crate) pairing_url: String,
     pub(crate) interfaces: HashMap<String, Interface>,
     pub(crate) build_options: Option<BuildOptions>,
-    pub(crate) database: Option<Box<dyn AstarteDatabase>>,
+    pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -95,8 +96,8 @@ impl AstarteBuilder {
         }
     }
 
-    pub fn add_database<T: AstarteDatabase + 'static>(&mut self, database: T) {
-        self.database = Some(Box::new(database));
+    pub fn with_database<T: AstarteDatabase + 'static + Sync + Send>(&mut self, database: T) {
+        self.database = Some(Arc::new(database));
     }
 
     /// Add an interface from a json file
@@ -267,7 +268,7 @@ impl AstarteBuilder {
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: Interfaces::new(self.interfaces.clone()),
-            database: None, //Some(Database::new("/tmp/astarte.db").await?),
+            database: self.database.clone(),
         };
 
         Ok(device)
