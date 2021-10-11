@@ -46,14 +46,34 @@ async fn main() {
 
     let w = device.clone();
     tokio::task::spawn(async move {
-        let mut i: i64 = 0;
         loop {
-            w.send("com.test.Everything", "/longinteger", i)
-                .await
-                .unwrap();
-            println!("Sent {}", i);
+            w.send(
+                "org.astarte-platform.genericsensors.AvailableSensors",
+                "/1/name",
+                "foo",
+            )
+            .await
+            .unwrap();
 
-            i += 11;
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            w.send(
+                "org.astarte-platform.genericsensors.AvailableSensors",
+                "/1/name",
+                "foo",
+            )
+            .await
+            .unwrap();
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            w.send(
+                "org.astarte-platform.genericsensors.AvailableSensors",
+                "/1/name",
+                "bar",
+            )
+            .await
+            .unwrap();
 
             std::thread::sleep(std::time::Duration::from_millis(1000));
         }

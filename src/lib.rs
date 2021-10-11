@@ -410,7 +410,7 @@ impl AstarteSdk {
         }
 
         if self
-            .check_database_on_send(interface_name, interface_path, data)
+            .check_property_on_send(interface_name, interface_path, data.clone())
             .await?
         {
             debug!("property was already sent, no need to send it again");
@@ -427,12 +427,15 @@ impl AstarteSdk {
             )
             .await?;
 
+        // we store the property in the database after it has been successfully sent
+        self.store_property_on_send(interface_name, interface_path, data)
+            .await?;
         Ok(())
     }
 
     /// checks if a property mapping has alredy been sent, so we don't have to send the same thing again
     /// returns true if property was already sent
-    async fn check_database_on_send<D>(
+    async fn check_property_on_send<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
@@ -462,12 +465,39 @@ impl AstarteSdk {
                     if db_data == data {
                         return Ok(true);
                     }
-                } else {
-                    return Ok(false);
                 }
+            }
+        }
 
+        Ok(false)
+    }
+
+    async fn store_property_on_send<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+    ) -> Result<bool, AstarteError>
+    where
+        D: Into<AstarteType>,
+    {
+        let ifpath = &(interface_name.to_string() + interface_path);
+
+        if let Some(db) = &self.database {
+            //if database is present
+
+            let data: AstarteType = data.into();
+
+            let mapping = self
+                .interfaces
+                .get_mapping(interface_name, interface_path)
+                .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+
+            if let crate::interface::Mapping::Properties(_) = mapping {
+                //if mapping is a property
                 let bin = AstarteSdk::serialize_individual(data, None)?;
                 db.store_prop(ifpath, &bin, 0).await?;
+                debug!("Stored new property in database");
             }
         }
 
