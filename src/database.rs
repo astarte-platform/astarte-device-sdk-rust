@@ -19,13 +19,13 @@
 use async_trait::async_trait;
 use std::str::FromStr;
 
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::{types::AstarteType, AstarteError, AstarteSdk};
 
 /// Implementation of the [AstarteDatabase] trait for an sqlite database backend
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AstarteSqliteDatabase {
     db_conn: sqlx::Pool<sqlx::Sqlite>,
 }
@@ -58,11 +58,11 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         value: &[u8],
         interface_major: i32,
     ) -> Result<(), AstarteError> {
-        trace!("Storing property {} in db ({:?})", key, value);
+        debug!("Storing property {} in db ({:?})", key, value);
 
         if value.is_empty() {
             //if unset?
-            trace!("Unsetting {}", key);
+            debug!("Unsetting {}", key);
             self.delete_prop(key).await?;
         } else {
             //let serialized = crate::AstarteSdk::serialize_individual(value, None)?;

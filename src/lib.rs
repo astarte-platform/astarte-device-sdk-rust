@@ -30,7 +30,7 @@ pub mod types;
 use bson::{to_document, Bson};
 use database::AstarteDatabase;
 use itertools::Itertools;
-use log::{debug, trace};
+use log::{debug, error, trace};
 use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, Event};
 use std::collections::HashMap;
@@ -52,7 +52,7 @@ pub struct AstarteSdk {
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: interfaces::Interfaces,
-    database: Option<database::AstarteSqliteDatabase>,
+    database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -160,12 +160,16 @@ impl AstarteSdk {
                             let ifpath = interface.clone() + &path;
 
                             if let Some(database) = &self.database {
+                                //if database is loaded
+
                                 if let Some(major_version) =
                                     self.interfaces.get_property_major(&ifpath)
+                                //if it's a property
                                 {
                                     database.store_prop(&ifpath, &bdata, major_version).await?;
 
                                     if cfg!(debug_assertions) {
+                                        // database selftest / sanity check for debug builds
                                         let original = crate::AstarteSdk::deserialize(&bdata)?;
                                         if let Aggregation::Individual(data) = original {
                                             let db = database
@@ -176,9 +180,13 @@ impl AstarteSdk {
                                                     "property wasn't correctly saved in the database",
                                                 );
                                             assert!(data == db);
+                                            let prop = self.get_property(&ifpath).await?.expect(
+                                                "property wasn't correctly saved in the database",
+                                            );
+                                            assert!(data == prop);
                                             trace!("database test ok");
                                         } else {
-                                            panic!("This should be impossible");
+                                            panic!("This should be impossible, can't have object properties");
                                         }
                                     }
                                 }
@@ -325,7 +333,7 @@ impl AstarteSdk {
     }
 
     // ------------------------------------------------------------------------
-    // scalar types
+    // individual types
     // ------------------------------------------------------------------------
 
     /// Send data to an astarte interface
@@ -390,7 +398,7 @@ impl AstarteSdk {
     where
         D: Into<AstarteType>,
     {
-        trace!("sending {} {}", interface_name, interface_path);
+        debug!("sending {} {}", interface_name, interface_path);
 
         let data: AstarteType = data.into();
 
@@ -405,7 +413,7 @@ impl AstarteSdk {
             .check_database_on_send(interface_name, interface_path, data)
             .await?
         {
-            // if property was already sent, no need to send it again
+            debug!("property was already sent, no need to send it again");
             return Ok(());
         }
 
@@ -436,7 +444,7 @@ impl AstarteSdk {
         let ifpath = &(interface_name.to_string() + interface_path);
 
         if let Some(db) = &self.database {
-            //if database is active
+            //if database is present
 
             let data: AstarteType = data.into();
 
