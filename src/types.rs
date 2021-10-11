@@ -344,9 +344,9 @@ mod test {
             map2: &HashMap<String, AstarteType>,
         ) -> bool {
             map1.len() == map2.len()
-                && map1
-                    .keys()
-                    .all(|k| map2.contains_key(k.clone()) && map1[k] == map2[k.clone()])
+                && map1.keys().all(|k| {
+                    map2.contains_key(<&str>::clone(k)) && map1[k] == map2[<&str>::clone(k)]
+                })
         }
 
         println!("\nComparing {:?}\nto {:?}", data, data2);
