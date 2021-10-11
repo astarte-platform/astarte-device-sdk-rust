@@ -18,8 +18,6 @@
 
 use std::collections::HashMap;
 
-use itertools::Itertools;
-
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone)]
@@ -74,18 +72,13 @@ impl Interfaces {
     }
 
     /// returns major version if the property exists, None otherwise
-    /// ifpath is like org.astarte-platform.genericsensors.SamplingRate/1/enable
-    pub fn get_property_major(&self, ifpath: &str) -> Option<i32> {
+    pub fn get_property_major(&self, interface: &str, path: &str) -> Option<i32> {
         use crate::interface::traits::Interface;
 
-        let ifpath: String = String::from("/") + &ifpath.split('/').skip(1).join("/"); //remove the name of the interface
+        let iface = self.interfaces.get(interface)?;
+        iface.mapping(path)?;
 
-        self.interfaces
-            .iter()
-            .map(|f| (f.1.mapping(&ifpath), f.1.base_interface().version_major))
-            .map(|x| if x.0.is_some() { Some(x.1) } else { None })
-            .flatten()
-            .next()
+        Some(iface.version().0)
     }
 
     pub fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
@@ -279,7 +272,9 @@ impl Interfaces {
 mod test {
     use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
-    use crate::{builder::AstarteBuilder, types::AstarteType, AstarteSdk};
+    use crate::{
+        builder::AstarteBuilder, interface::traits::Interface, types::AstarteType, AstarteSdk,
+    };
 
     #[test]
     fn test_individual() {
@@ -463,7 +458,7 @@ mod test {
 
         let interface_json = r#"
         {
-            "interface_name": "com.test4.object",
+            "interface_name": "com.test.object",
             "version_major": 0,
             "version_minor": 1,
             "type": "datastream",
@@ -487,7 +482,7 @@ mod test {
         let deser_interface = crate::Interface::from_str(interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
 
-        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+        ifa.insert(deser_interface.name().into(), deser_interface);
 
         let ifa = super::Interfaces::new(ifa);
 
@@ -500,12 +495,10 @@ mod test {
         .collect();
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
-        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
-            .unwrap();
-        ifa.validate_receive("org.astarte-platform.test.test", "/no", &buf)
+        ifa.validate_receive("com.test.object", "/", &buf).unwrap();
+        ifa.validate_receive("com.test.object", "/no", &buf)
             .unwrap_err();
-        ifa.validate_receive("org.astarte-platform.test.no", "/", &buf)
-            .unwrap_err();
+        ifa.validate_receive("com.test.no", "/", &buf).unwrap_err();
 
         let inner_data: HashMap<&str, AstarteType> = [
             ("buttonfoo", AstarteType::Boolean(false)),
@@ -516,7 +509,7 @@ mod test {
         .collect();
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
-        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+        ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();
 
         let inner_data: HashMap<&str, AstarteType> = [
@@ -528,7 +521,7 @@ mod test {
         .collect();
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
-        ifa.validate_receive("org.astarte-platform.test.test", "/", &buf)
+        ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();
     }
 
@@ -536,7 +529,7 @@ mod test {
     fn test_get_property() {
         let interface_json = r#"
         {
-            "interface_name": "com.test4.object",
+            "interface_name": "org.astarte-platform.test.test",
             "version_major": 12,
             "version_minor": 1,
             "type": "properties",
@@ -559,26 +552,32 @@ mod test {
         let deser_interface = crate::Interface::from_str(interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
 
-        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+        ifa.insert(deser_interface.name().into(), deser_interface);
 
         let ifa = super::Interfaces::new(ifa);
 
-        assert!(ifa.get_property_major("com.test4.object/button").unwrap() == 12);
         assert!(
-            ifa.get_property_major("com.test4.object/uptimeSeconds")
+            ifa.get_property_major("org.astarte-platform.test.test", "/button")
+                .unwrap()
+                == 12
+        );
+        assert!(
+            ifa.get_property_major("org.astarte-platform.test.test", "/uptimeSeconds")
                 .unwrap()
                 == 12
         );
         assert!(ifa
-            .get_property_major("com.test4.object/button/foo")
+            .get_property_major("org.astarte-platform.test.test", "/button/foo")
             .is_none());
         assert!(ifa
-            .get_property_major("com.test4.object/buttonfoo")
+            .get_property_major("org.astarte-platform.test.test", "/buttonfoo")
             .is_none());
         assert!(ifa
-            .get_property_major("com.test4.object/foo/button")
+            .get_property_major("org.astarte-platform.test.test", "/foo/button")
             .is_none());
-        assert!(ifa.get_property_major("com.test4.object/").is_none());
+        assert!(ifa
+            .get_property_major("org.astarte-platform.test.test", "/")
+            .is_none());
 
         let interface_json = r#"
         {
@@ -611,34 +610,42 @@ mod test {
         let deser_interface = crate::Interface::from_str(interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
 
-        ifa.insert("org.astarte-platform.test.test".into(), deser_interface);
+        ifa.insert(deser_interface.name().into(), deser_interface);
 
         let ifa = super::Interfaces::new(ifa);
 
         assert!(
-            ifa.get_property_major("org.astarte-platform.genericsensors.SamplingRate/1/enable")
-                .unwrap()
-                == 12
-        );
-        assert!(
             ifa.get_property_major(
-                "org.astarte-platform.genericsensors.SamplingRate/999999/enable"
+                "org.astarte-platform.genericsensors.SamplingRate",
+                "/1/enable"
             )
             .unwrap()
                 == 12
         );
         assert!(
             ifa.get_property_major(
-                "org.astarte-platform.genericsensors.SamplingRate/foobar/enable"
+                "org.astarte-platform.genericsensors.SamplingRate",
+                "/999999/enable"
+            )
+            .unwrap()
+                == 12
+        );
+        assert!(
+            ifa.get_property_major(
+                "org.astarte-platform.genericsensors.SamplingRate",
+                "/foobar/enable"
             )
             .unwrap()
                 == 12
         );
         assert!(ifa
-            .get_property_major("org.astarte-platform.genericsensors.SamplingRate/foo/bar/enable")
+            .get_property_major(
+                "org.astarte-platform.genericsensors.SamplingRate",
+                "/foo/bar/enable"
+            )
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.genericsensors.SamplingRate/")
+            .get_property_major("org.astarte-platform.genericsensors.SamplingRate", "/")
             .is_none());
     }
 }

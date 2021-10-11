@@ -44,14 +44,14 @@ pub enum Interface {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct BaseInterface {
-    pub interface_name: String,
-    pub version_major: i32,
-    pub version_minor: i32,
-    pub ownership: Ownership,
+    interface_name: String,
+    version_major: i32,
+    version_minor: i32,
+    ownership: Ownership,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub doc: Option<String>,
+    doc: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]

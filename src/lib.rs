@@ -163,7 +163,7 @@ impl AstarteSdk {
                                 //if database is loaded
 
                                 if let Some(major_version) =
-                                    self.interfaces.get_property_major(&ifpath)
+                                    self.interfaces.get_property_major(&interface, &path)
                                 //if it's a property
                                 {
                                     database.store_prop(&ifpath, &bdata, major_version).await?;
@@ -180,7 +180,10 @@ impl AstarteSdk {
                                                     "property wasn't correctly saved in the database",
                                                 );
                                             assert!(data == db);
-                                            let prop = self.get_property(&ifpath).await?.expect(
+                                            let prop = self
+                                                .get_property(&interface, &path)
+                                                .await?
+                                                .expect(
                                                 "property wasn't correctly saved in the database",
                                             );
                                             assert!(data == prop);
@@ -321,10 +324,16 @@ impl AstarteSdk {
     }
 
     /// get property from database, if present
-    pub async fn get_property(&self, key: &str) -> Result<Option<AstarteType>, AstarteError> {
+    pub async fn get_property(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> Result<Option<AstarteType>, AstarteError> {
         if let Some(database) = &self.database {
-            if let Some(major) = self.interfaces.get_property_major(key) {
-                let prop = database.load_prop(key, major).await?;
+            if let Some(major) = self.interfaces.get_property_major(interface, path) {
+                let prop = database
+                    .load_prop(&(String::from(interface) + path), major)
+                    .await?;
                 return Ok(prop);
             }
         }
