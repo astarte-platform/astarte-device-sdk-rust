@@ -139,8 +139,6 @@ impl AstarteSdk {
 
                             debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                            //error!("we are db {:?}", self.database);
-
                             if let Some(database) = &self.database {
                                 //if database is loaded
 

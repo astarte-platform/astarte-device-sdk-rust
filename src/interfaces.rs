@@ -185,7 +185,7 @@ impl Interfaces {
         interface_path: &str,
         bdata: &[u8],
     ) -> Result<(), AstarteError> {
-        let interface = self.interfaces.get(interface_name).ok_or_else(|| {
+        self.interfaces.get(interface_name).ok_or_else(|| {
             AstarteError::ReceiveError(format!("Interface '{}' does not exists", interface_name))
         })?;
 
@@ -239,15 +239,9 @@ impl Interfaces {
 
                     if let crate::interface::Mapping::Properties(_) = mapping {
                         return Err(AstarteError::ReceiveError(
-                            "Can't send object to properties".into(),
+                            "Can't receive object aggregation from properties interface".into(),
                         ));
                     }
-                }
-
-                if object.len() < interface.mappings_len() {
-                    return Err(AstarteError::ReceiveError(
-                        "You are missing some mappings from the object".into(),
-                    ));
                 }
             }
         }
@@ -495,15 +489,6 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
-
-        ifa.validate_receive("com.test.object", "/", &buf)
-            .unwrap_err();
-
-        let inner_data: HashMap<&str, AstarteType> = [("bottone", AstarteType::Boolean(false))]
-            .iter()
-            .cloned()
-            .collect();
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf)

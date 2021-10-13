@@ -28,7 +28,7 @@ async fn main() {
         pairing_url,
     } = Cli::from_args();
 
-    let db = AstarteSqliteDatabase::new("sqlite:///tmp/astaerte-example-db.sqlite")
+    let db = AstarteSqliteDatabase::new("sqlite://astarte-example-db.sqlite")
         .await
         .unwrap();
 
@@ -47,8 +47,6 @@ async fn main() {
     let w = device.clone();
     tokio::task::spawn(async move {
         loop {
-            println!("------ loop");
-
             w.send(
                 "org.astarte-platform.genericsensors.AvailableSensors",
                 "/1/name",
