@@ -24,6 +24,8 @@ pub enum AstarteType {
     StringArray(Vec<String>),
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<chrono::DateTime<chrono::Utc>>),
+
+    Unset,
 }
 
 impl PartialEq<crate::interface::MappingType> for AstarteType {
@@ -153,6 +155,7 @@ impl From<AstarteType> for Bson {
                 })
                 .collect(),
             AstarteType::DateTimeArray(d) => d.iter().collect(),
+            AstarteType::Unset => Bson::Null,
         }
     }
 }

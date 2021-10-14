@@ -70,6 +70,9 @@ pub enum AstarteError {
     DbError(#[from] sqlx::Error),
 
     #[error("generic error")]
+    Reported(String),
+
+    #[error("generic error")]
     Unreported,
 }
 
@@ -244,13 +247,7 @@ impl AstarteSdk {
                 .validate_send(interface_name, interface_path, &[], &None)?;
         }
 
-        self.client
-            .publish(
-                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                rumqttc::QoS::ExactlyOnce,
-                false,
-                [],
-            )
+        self.send_with_timestamp_impl(interface_name, interface_path, AstarteType::Unset, None)
             .await?;
 
         Ok(())
@@ -261,6 +258,10 @@ impl AstarteSdk {
         data: Bson,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError> {
+        if let Bson::Null = data {
+            return Ok(Vec::new());
+        }
+
         let doc = if let Some(timestamp) = timestamp {
             bson::doc! {
                "t": timestamp,

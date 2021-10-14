@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::str::FromStr;
 
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::{types::AstarteType, AstarteError, AstarteSdk};
@@ -51,10 +51,9 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         if value.is_empty() {
             //if unset?
             debug!("Unsetting {} {}", interface, path);
-            self.delete_prop(interface, path).await?;
-        } else {
-            //let serialized = crate::AstarteSdk::serialize_individual(value, None)?;
-            sqlx::query(
+        }
+
+        sqlx::query(
                 "insert or replace into propcache (interface, path, value, interface_major) VALUES (?,?,?,?)",
             )
             .bind(interface)
@@ -63,7 +62,6 @@ impl AstarteDatabase for AstarteSqliteDatabase {
             .bind(interface_major)
             .execute(&self.db_conn)
             .await?;
-        }
 
         Ok(())
     }
@@ -91,15 +89,18 @@ impl AstarteDatabase for AstarteSqliteDatabase {
                 return Ok(None);
             }
 
-            let data = AstarteSdk::deserialize(&res.0)?;
-
-            if let crate::Aggregation::Individual(data) = data {
-                return Ok(Some(data));
+            if res.0.is_empty() {
+                return Ok(Some(AstarteType::Unset));
             }
 
-            warn!("why are we here?");
+            let data = AstarteSdk::deserialize(&res.0)?;
 
-            Ok(None)
+            match data {
+                crate::Aggregation::Individual(data) => Ok(Some(data)),
+                crate::Aggregation::Object(_) => Err(AstarteError::Reported(
+                    "BUG: extracting an object from the database".into(),
+                )),
+            }
         } else {
             Ok(None)
         }
@@ -190,7 +191,10 @@ mod test {
 
         db.store_prop("com.test", "/test", &[], 1).await.unwrap();
 
-        assert_eq!(db.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        assert_eq!(
+            db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
+            AstarteType::Unset
+        );
         // clear
 
         db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
