@@ -48,15 +48,15 @@ async fn main() {
         pairing_url,
     } = Cli::from_args();
 
-    let mut sdk_options =
+    let mut sdk_builder =
         AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
-    sdk_options
+    sdk_builder
         .add_interface_files("./examples/interfaces")
         .unwrap();
 
-    sdk_options.build().await.unwrap();
+    sdk_builder.build().await.unwrap();
 
-    let mut device = sdk_options.connect().await.unwrap();
+    let mut device = sdk_builder.connect().await.unwrap();
 
     let w = device.clone();
 
