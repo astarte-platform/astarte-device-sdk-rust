@@ -99,8 +99,11 @@ async fn main() {
     });
 
     loop {
-        if let Ok(data) = device.poll().await {
-            println!("incoming data: {:?}", data);
+        match device.poll().await {
+            Ok(data) => {
+                println!("incoming: {:?}", data);
+            }
+            Err(err) => log::error!("{:?}", err),
         }
     }
 }

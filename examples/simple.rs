@@ -74,18 +74,21 @@ async fn main() {
     });
 
     loop {
-        if let Ok(data) = device.poll().await {
-            println!("incoming: {:?}", data);
+        match device.poll().await {
+            Ok(data) => {
+                println!("incoming: {:?}", data);
 
-            if let astarte_sdk::Aggregation::Individual(var) = data.data {
-                if data.path == "/1/enable" {
-                    if var == true {
-                        println!("sensor is ON");
-                    } else {
-                        println!("sensor is OFF");
+                if let astarte_sdk::Aggregation::Individual(var) = data.data {
+                    if data.path == "/1/enable" {
+                        if var == true {
+                            println!("sensor is ON");
+                        } else {
+                            println!("sensor is OFF");
+                        }
                     }
                 }
             }
+            Err(err) => log::error!("{:?}", err),
         }
     }
 }
