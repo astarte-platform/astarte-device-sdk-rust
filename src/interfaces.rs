@@ -203,6 +203,10 @@ impl Interfaces {
         interface_path: &str,
         bdata: &[u8],
     ) -> Result<(), AstarteError> {
+        if interface_name == "control" {
+            return Ok(());
+        }
+
         self.interfaces.get(interface_name).ok_or_else(|| {
             AstarteError::ReceiveError(format!("Interface '{}' does not exists", interface_name))
         })?;

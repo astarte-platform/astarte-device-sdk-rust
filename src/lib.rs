@@ -152,63 +152,67 @@ impl AstarteSdk {
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
-                            // if we have data for the user, return
-                            let (_, _, interface, path) =
-                                parse_topic(&p.topic).ok_or(AstarteError::DeserializationError)?;
+                            let topic = parse_topic(&p.topic);
 
-                            let bdata = p.payload.to_vec();
+                            if let Some((_, _, interface, path)) = topic {
+                                if interface == "control" && path == "/consumer/properties" {
+                                    continue;
+                                }
 
-                            debug!("Incoming publish = {} {:?}", p.topic, bdata);
+                                let bdata = p.payload.to_vec();
 
-                            if let Some(database) = &self.database {
-                                //if database is loaded
+                                debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                                if let Some(major_version) =
-                                    self.interfaces.get_property_major(&interface, &path)
-                                //if it's a property
-                                {
-                                    database
-                                        .store_prop(&interface, &path, &bdata, major_version)
-                                        .await?;
+                                if let Some(database) = &self.database {
+                                    //if database is loaded
 
-                                    if cfg!(debug_assertions) {
-                                        // database selftest / sanity check for debug builds
-                                        let original = crate::AstarteSdk::deserialize(&bdata)?;
-                                        if let Aggregation::Individual(data) = original {
-                                            let db = database
+                                    if let Some(major_version) =
+                                        self.interfaces.get_property_major(&interface, &path)
+                                    //if it's a property
+                                    {
+                                        database
+                                            .store_prop(&interface, &path, &bdata, major_version)
+                                            .await?;
+
+                                        if cfg!(debug_assertions) {
+                                            // database selftest / sanity check for debug builds
+                                            let original = crate::AstarteSdk::deserialize(&bdata)?;
+                                            if let Aggregation::Individual(data) = original {
+                                                let db = database
                                                 .load_prop(&interface, &path, major_version)
                                                 .await
                                                 .expect("load_prop failed")
                                                 .expect(
                                                     "property wasn't correctly saved in the database",
                                                 );
-                                            assert!(data == db);
-                                            let prop = self
+                                                assert!(data == db);
+                                                let prop = self
                                                 .get_property(&interface, &path)
                                                 .await?
                                                 .expect(
                                                 "property wasn't correctly saved in the database",
                                             );
-                                            assert!(data == prop);
-                                            trace!("database test ok");
-                                        } else {
-                                            panic!("This should be impossible, can't have object properties");
+                                                assert!(data == prop);
+                                                trace!("database test ok");
+                                            } else {
+                                                panic!("This should be impossible, can't have object properties");
+                                            }
                                         }
                                     }
                                 }
-                            }
 
-                            if cfg!(debug_assertions) {
-                                self.interfaces
-                                    .validate_receive(&interface, &path, &bdata)?;
-                            }
+                                if cfg!(debug_assertions) {
+                                    self.interfaces
+                                        .validate_receive(&interface, &path, &bdata)?;
+                                }
 
-                            let data = AstarteSdk::deserialize(&bdata)?;
-                            return Ok(Clientbound {
-                                interface,
-                                path,
-                                data,
-                            });
+                                let data = AstarteSdk::deserialize(&bdata)?;
+                                return Ok(Clientbound {
+                                    interface,
+                                    path,
+                                    data,
+                                });
+                            }
                         }
                         _ => {}
                     }
