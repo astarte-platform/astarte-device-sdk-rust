@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-
 use astarte_sdk::builder::AstarteBuilder;
 use structopt::StructOpt;
 

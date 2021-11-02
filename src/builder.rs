@@ -2,6 +2,7 @@ use log::debug;
 use openssl::error::ErrorStack;
 use pairing::PairingError;
 use rumqttc::{AsyncClient, ClientConfig, MqttOptions, Transport};
+use rustls::ServerCertVerifier;
 use rustls::{internal::pemfile, Certificate, PrivateKey};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -54,6 +55,7 @@ pub struct AstarteBuilder {
     pub(crate) interfaces: HashMap<String, Interface>,
     pub(crate) build_options: Option<BuildOptions>,
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
+    pub(crate) ignore_ssl_errors: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -93,11 +95,16 @@ impl AstarteBuilder {
             interfaces: HashMap::new(),
             build_options: None,
             database: None,
+            ignore_ssl_errors: false,
         }
     }
 
     pub fn with_database<T: AstarteDatabase + 'static + Sync + Send>(&mut self, database: T) {
         self.database = Some(Arc::new(database));
+    }
+
+    pub fn ignore_ssl_errors(&mut self) {
+        self.ignore_ssl_errors = true;
     }
 
     /// Add an interface from a json file
@@ -175,8 +182,33 @@ impl AstarteBuilder {
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
         // TODO: make keepalive configurable
         mqtt_opts.set_keep_alive(30);
+        //mqtt_opts.set_clean_session(true);
 
-        mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
+        if self.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
+            struct OkVerifier {}
+            impl ServerCertVerifier for OkVerifier {
+                fn verify_server_cert(
+                    &self,
+                    _: &rustls::RootCertStore,
+                    _: &[Certificate],
+                    _: webpki::DNSNameRef,
+                    _: &[u8],
+                ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
+                    Ok(rustls::ServerCertVerified::assertion())
+                }
+            }
+
+            let mut clientconfig = tls_client_config.dangerous();
+            clientconfig.set_certificate_verifier(Arc::new(OkVerifier {}));
+
+            let tls_config =
+                rumqttc::TlsConfiguration::Rustls(Arc::new(clientconfig.cfg.to_owned()));
+            let transport = Transport::tls_with_config(tls_config);
+
+            mqtt_opts.set_transport(transport);
+        } else {
+            mqtt_opts.set_transport(Transport::tls_with_config(tls_client_config.into()));
+        }
 
         Ok(mqtt_opts)
     }
