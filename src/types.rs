@@ -42,6 +42,8 @@ pub enum AstarteType {
     StringArray(Vec<String>),
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<chrono::DateTime<chrono::Utc>>),
+
+    Unset,
 }
 
 impl PartialEq<crate::interface::MappingType> for AstarteType {
@@ -171,6 +173,7 @@ impl From<AstarteType> for Bson {
                 })
                 .collect(),
             AstarteType::DateTimeArray(d) => d.iter().collect(),
+            AstarteType::Unset => Bson::Null,
         }
     }
 }
@@ -275,14 +278,14 @@ mod test {
         for ty in alltypes {
             println!("checking {:?}", ty);
 
-            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap(); // allow_panic
+            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
 
-            let ty2 = AstarteSdk::deserialize(&buf).unwrap(); // allow_panic
+            let ty2 = AstarteSdk::deserialize(&buf).unwrap();
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
             } else {
-                panic!(); // allow_panic
+                panic!();
             }
         }
     }
@@ -335,18 +338,18 @@ mod test {
         }
 
         let bytes =
-            AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap(); // allow_panic
+            AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap();
 
-        let data2 = AstarteSdk::deserialize(&bytes).unwrap(); // allow_panic
+        let data2 = AstarteSdk::deserialize(&bytes).unwrap();
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,
             map2: &HashMap<String, AstarteType>,
         ) -> bool {
             map1.len() == map2.len()
-                && map1
-                    .keys()
-                    .all(|k| map2.contains_key(k.clone()) && map1[k] == map2[k.clone()])
+                && map1.keys().all(|k| {
+                    map2.contains_key(<&str>::clone(k)) && map1[k] == map2[<&str>::clone(k)]
+                })
         }
 
         println!("\nComparing {:?}\nto {:?}", data, data2);
@@ -354,7 +357,7 @@ mod test {
         if let Aggregation::Object(data2) = data2 {
             assert!(hashmap_match(&data, &data2));
         } else {
-            panic!(); // allow_panic
+            panic!();
         }
     }
 

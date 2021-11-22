@@ -373,10 +373,11 @@ mod tests {
             reliability: Reliability::Unreliable,
         };
 
-        assert_eq!(mapping.is_compatible("/foo/value"), true);
-        assert_eq!(mapping.is_compatible("/bar/value"), true);
-        assert_eq!(mapping.is_compatible("/value"), false);
-        assert_eq!(mapping.is_compatible("/foo/bar/value"), false);
+        assert!(mapping.is_compatible("/foo/value"));
+        assert!(mapping.is_compatible("/bar/value"));
+        assert!(!mapping.is_compatible("/value"));
+        assert!(!mapping.is_compatible("/foo/bar/value"));
+        assert!(!mapping.is_compatible("/foo/value/bar"));
         assert_eq!(mapping.endpoint(), "/%{sensor_id}/value");
         assert_eq!(mapping.mapping_type(), MappingType::Double);
         assert_eq!(mapping.description(), Some("Mapping description"));
@@ -406,7 +407,7 @@ mod tests {
 
         let interface = Interface::Datastream(datastream_interface);
 
-        let deser_interface = Interface::from_str(interface_json).unwrap(); //allow_panic
+        let deser_interface = Interface::from_str(interface_json).unwrap();
 
         assert_eq!(interface, deser_interface);
 

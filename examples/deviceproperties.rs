@@ -1,21 +1,3 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 use astarte_sdk::builder::AstarteBuilder;
 use structopt::StructOpt;
 
@@ -59,14 +41,24 @@ async fn main() {
 
     let w = device.clone();
     tokio::task::spawn(async move {
-        let mut i: i64 = 0;
         loop {
-            w.send("com.test.Everything", "/longinteger", i)
-                .await
-                .unwrap();
-            println!("Sent {}", i);
+            w.send(
+                "org.astarte-platform.genericsensors.AvailableSensors",
+                "/1/name",
+                "test",
+            )
+            .await
+            .unwrap();
 
-            i += 11;
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            w.send(
+                "org.astarte-platform.genericsensors.AvailableSensors",
+                "/1/name",
+                "test2",
+            )
+            .await
+            .unwrap();
 
             std::thread::sleep(std::time::Duration::from_millis(1000));
         }
@@ -76,16 +68,6 @@ async fn main() {
         match device.poll().await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
-
-                if let astarte_sdk::Aggregation::Individual(var) = data.data {
-                    if data.path == "/1/enable" {
-                        if var == true {
-                            println!("sensor is ON");
-                        } else {
-                            println!("sensor is OFF");
-                        }
-                    }
-                }
             }
             Err(err) => log::error!("{:?}", err),
         }
