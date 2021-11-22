@@ -56,6 +56,7 @@ pub struct AstarteBuilder {
     pub(crate) build_options: Option<BuildOptions>,
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
     pub(crate) ignore_ssl_errors: bool,
+    pub(crate) keepalive: std::time::Duration,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -96,11 +97,18 @@ impl AstarteBuilder {
             build_options: None,
             database: None,
             ignore_ssl_errors: false,
+            keepalive: std::time::Duration::from_secs(30),
         }
     }
 
     pub fn with_database<T: AstarteDatabase + 'static + Sync + Send>(&mut self, database: T) {
         self.database = Some(Arc::new(database));
+    }
+
+    /// Set time after which client should ping the broker
+    /// if there is no other data exchange
+    pub fn set_keep_alive(&mut self, duration: std::time::Duration) {
+        self.keepalive = duration;
     }
 
     pub fn ignore_ssl_errors(&mut self) {
@@ -180,9 +188,14 @@ impl AstarteBuilder {
             .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
 
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
-        // TODO: make keepalive configurable
-        mqtt_opts.set_keep_alive(30);
-        //mqtt_opts.set_clean_session(true);
+
+        if self.keepalive.as_secs() < 5 {
+            return Err(AstarteBuilderError::ConfigError(
+                "Keepalive should be >= 5 secs".into(),
+            ));
+        }
+
+        mqtt_opts.set_keep_alive(self.keepalive);
 
         if self.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
             struct OkVerifier {}
