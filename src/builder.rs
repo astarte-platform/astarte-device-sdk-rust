@@ -20,6 +20,7 @@ use crate::interfaces::Interfaces;
 use crate::{pairing, AstarteSdk};
 
 /// Options for astarte builder
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
     private_key: PrivateKey,
@@ -297,7 +298,8 @@ impl AstarteBuilder {
             credentials_secret: self.credentials_secret.to_owned(),
             pairing_url: self.pairing_url.to_owned(),
             build_options,
-            client,
+            builder: self.clone(),
+            client: Arc::new(tokio::sync::Mutex::new(client)),
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: Interfaces::new(self.interfaces.clone()),
             database: self.database.clone(),
