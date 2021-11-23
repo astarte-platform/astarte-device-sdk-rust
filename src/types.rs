@@ -159,7 +159,7 @@ impl From<AstarteType> for Bson {
                 bytes: d,
                 subtype: bson::spec::BinarySubtype::Generic,
             }),
-            AstarteType::DateTime(d) => Bson::DateTime(d),
+            AstarteType::DateTime(d) => Bson::DateTime(d.into()),
             AstarteType::DoubleArray(d) => d.iter().collect(),
             AstarteType::IntegerArray(d) => d.iter().collect(),
             AstarteType::BooleanArray(d) => d.iter().collect(),
@@ -192,6 +192,22 @@ macro_rules! from_bson_array {
 
         let ret: Result<Vec<$typ>, AstarteError> = ret.collect();
         Ok(AstarteType::$astartetype(ret?))
+    }};
+
+    // We have to specialize for DateTimeArray too because bson has its own datetime type
+    ($arr:ident, $astartetype:tt,DateTime,$typ:ty) => {{
+        let ret = $arr.iter().map(|x| {
+            if let Bson::DateTime(val) = x {
+                Ok(val.clone())
+            } else {
+                Err(AstarteError::FromBsonArrayError)
+            }
+        });
+
+        let ret: Result<Vec<bson::DateTime>, AstarteError> = ret.collect();
+        let ret: Vec<$typ> = ret?.iter().map(|f| f.to_chrono()).collect();
+
+        Ok(AstarteType::$astartetype(ret))
     }};
 
     ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {{
@@ -231,7 +247,7 @@ impl std::convert::TryFrom<Bson> for AstarteType {
             Bson::Int32(d) => Ok(AstarteType::Integer(d)),
             Bson::Int64(d) => Ok(AstarteType::LongInteger(d)),
             Bson::Binary(d) => Ok(AstarteType::BinaryBlob(d.bytes)),
-            Bson::DateTime(d) => Ok(AstarteType::DateTime(d)),
+            Bson::DateTime(d) => Ok(AstarteType::DateTime(d.into())),
             _ => Err(AstarteError::FromBsonError),
         }
     }
