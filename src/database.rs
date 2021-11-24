@@ -107,10 +107,6 @@ impl AstarteDatabase for AstarteSqliteDatabase {
                 return Ok(None);
             }
 
-            if res.0.is_empty() {
-                return Ok(Some(AstarteType::Unset));
-            }
-
             let data = AstarteSdk::deserialize(&res.0)?;
 
             match data {
