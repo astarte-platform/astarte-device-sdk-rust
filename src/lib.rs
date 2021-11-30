@@ -302,6 +302,9 @@ impl AstarteSdk {
     }
 
     fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
+        if bdata.is_empty() {
+            return Ok(Aggregation::Individual(AstarteType::Unset));
+        }
         if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
             trace!("{:?}", deserialized);
             if let Some(v) = deserialized.get("v") {

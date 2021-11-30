@@ -273,6 +273,7 @@ mod test {
                 chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
             ]
             .into(),
+            AstarteType::Unset,
         ];
 
         for ty in alltypes {
