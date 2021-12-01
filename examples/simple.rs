@@ -49,26 +49,31 @@ async fn main() {
     let mut sdk_builder =
         AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
 
-    sdk_builder
+    let mut device = sdk_builder
         .add_interface_files("./examples/interfaces")
+        .unwrap()
+        .build()
+        .await
         .unwrap();
 
-    sdk_builder.build().await.unwrap();
+    device.connect().await.unwrap();
 
-    let mut device = sdk_builder.connect().await.unwrap();
+    let mut w = device.clone();
 
-    let w = device.clone();
     tokio::task::spawn(async move {
         let mut i: i64 = 0;
         loop {
+            println!("Sending {}", i);
+
             w.send("com.test.Everything", "/longinteger", i)
                 .await
                 .unwrap();
+
             println!("Sent {}", i);
 
             i += 11;
 
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
         }
     });
 

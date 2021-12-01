@@ -41,6 +41,11 @@ use types::AstarteType;
 
 pub use interface::Interface;
 
+pub struct AstarteMqttTransport {
+    client: tokio::sync::Mutex<AsyncClient>,
+    eventloop: tokio::sync::Mutex<EventLoop>,
+}
+
 /// Astarte client
 #[derive(Clone)]
 pub struct AstarteSdk {
@@ -49,14 +54,16 @@ pub struct AstarteSdk {
     credentials_secret: String,
     pairing_url: String,
     build_options: builder::BuildOptions,
-    client: AsyncClient,
-    eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
+    transport: Option<Arc<AstarteMqttTransport>>,
     interfaces: interfaces::Interfaces,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum AstarteError {
+    #[error("No transport, are you missing .connect()?")]
+    NoTransport,
+
     #[error("bson serialize error")]
     BsonSerError(#[from] bson::ser::Error),
 
@@ -124,8 +131,8 @@ impl AstarteSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let mut d = sdk_options.connect().await.unwrap();
+    ///     let mut d = sdk_options.build().await.unwrap();
+    ///     d.connect().await.unwrap();
     ///
     ///     loop {
     ///         if let Ok(data) = d.poll().await {
@@ -137,12 +144,22 @@ impl AstarteSdk {
     pub async fn poll(&mut self) -> Result<Clientbound, AstarteError> {
         loop {
             // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
+            match self
+                .transport
+                .as_ref()
+                .ok_or(AstarteError::NoTransport)?
+                .eventloop
+                .lock()
+                .await
+                .poll()
+                .await?
+            {
                 Event::Incoming(i) => {
                     trace!("MQTT Incoming = {:?}", i);
 
                     match i {
                         rumqttc::Packet::ConnAck(p) => {
+                            println!("connack {:?}", p);
                             if !p.session_present {
                                 self.send_introspection().await?;
                                 self.send_emptycache().await?;
@@ -163,43 +180,7 @@ impl AstarteSdk {
 
                                 debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                                if let Some(database) = &self.database {
-                                    //if database is loaded
-
-                                    if let Some(major_version) =
-                                        self.interfaces.get_property_major(&interface, &path)
-                                    //if it's a property
-                                    {
-                                        database
-                                            .store_prop(&interface, &path, &bdata, major_version)
-                                            .await?;
-
-                                        if cfg!(debug_assertions) {
-                                            // database selftest / sanity check for debug builds
-                                            let original = crate::AstarteSdk::deserialize(&bdata)?;
-                                            if let Aggregation::Individual(data) = original {
-                                                let db = database
-                                                .load_prop(&interface, &path, major_version)
-                                                .await
-                                                .expect("load_prop failed")
-                                                .expect(
-                                                    "property wasn't correctly saved in the database",
-                                                );
-                                                assert!(data == db);
-                                                let prop = self
-                                                .get_property(&interface, &path)
-                                                .await?
-                                                .expect(
-                                                "property wasn't correctly saved in the database",
-                                            );
-                                                assert!(data == prop);
-                                                trace!("database test ok");
-                                            } else {
-                                                panic!("This should be impossible, can't have object properties");
-                                            }
-                                        }
-                                    }
-                                }
+                                self.publish_database(&interface, &path, &bdata).await?;
 
                                 if cfg!(debug_assertions) {
                                     self.interfaces
@@ -222,6 +203,120 @@ impl AstarteSdk {
         }
     }
 
+    /// database work for incoming properties
+    async fn publish_database(
+        &self,
+        interface: &str,
+        path: &str,
+        bdata: &[u8],
+    ) -> Result<(), AstarteError> {
+        if let Some(database) = &self.database {
+            //if database is loaded
+
+            if let Some(major_version) = self.interfaces.get_property_major(interface, path)
+            //if it's a property
+            {
+                database
+                    .store_prop(interface, path, bdata, major_version)
+                    .await?;
+
+                if cfg!(debug_assertions) {
+                    // database selftest / sanity check for debug builds
+                    let original = crate::AstarteSdk::deserialize(bdata)?;
+                    if let Aggregation::Individual(data) = original {
+                        let db = database
+                            .load_prop(interface, path, major_version)
+                            .await
+                            .expect("load_prop failed")
+                            .expect("property wasn't correctly saved in the database");
+                        assert!(data == db);
+                        let prop = self
+                            .get_property(interface, path)
+                            .await?
+                            .expect("property wasn't correctly saved in the database");
+                        assert!(data == prop);
+                        trace!("database test ok");
+                    } else {
+                        panic!("This should be impossible, can't have object properties");
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn subscribe(&mut self, client: &AsyncClient, cn: &str) -> Result<(), AstarteError> {
+        let ifaces = self
+            .interfaces
+            .interfaces
+            .clone()
+            .into_iter()
+            .filter(|i| i.1.get_ownership() == interface::Ownership::Server);
+
+        client
+            .subscribe(
+                cn.to_owned() + "/control/consumer/properties",
+                rumqttc::QoS::ExactlyOnce,
+            )
+            .await?;
+
+        for i in ifaces {
+            client
+                .subscribe(
+                    cn.to_owned() + "/" + interface::traits::Interface::name(&i.1) + "/#",
+                    rumqttc::QoS::ExactlyOnce,
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Creates and connects an Astarte client
+    pub async fn connect(&mut self) -> Result<(), AstarteError> {
+        log::info!("Connecting");
+
+        let cn = format!("{}/{}", self.realm, self.device_id);
+
+        trace!("{:#?}", self.build_options);
+
+        // TODO: make cap configurable
+        let (client, eventloop) = AsyncClient::new(self.build_options.mqtt_opts.clone(), 50);
+
+        self.subscribe(&client, &cn).await?;
+
+        let transport = AstarteMqttTransport {
+            client: tokio::sync::Mutex::new(client),
+            eventloop: tokio::sync::Mutex::new(eventloop),
+        };
+
+        self.transport = Some(Arc::new(transport));
+        log::info!("Connected");
+
+        Ok(())
+    }
+
+    pub async fn disconnect(&mut self) -> Result<(), AstarteError> {
+        log::info!("Disconnecting");
+        self.transport
+            .as_mut()
+            .ok_or(AstarteError::NoTransport)?
+            .client
+            .lock()
+            .await
+            .disconnect()
+            .await?;
+
+        //self.transport.as_mut().ok_or(AstarteError::NoTransport)?.eventloop.lock().await.handle().close();
+
+        //println!("{:?}",);
+
+        //self.transport = None;
+
+        Ok(())
+    }
+
     fn client_id(&self) -> String {
         format!("{}/{}", self.realm, self.device_id)
     }
@@ -230,7 +325,12 @@ impl AstarteSdk {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
-        self.client
+        self.transport
+            .as_ref()
+            .ok_or(AstarteError::NoTransport)?
+            .client
+            .lock()
+            .await
             .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
             .await?;
 
@@ -242,7 +342,12 @@ impl AstarteSdk {
 
         debug!("sending introspection = {}", introspection);
 
-        self.client
+        self.transport
+            .as_ref()
+            .ok_or(AstarteError::NoTransport)?
+            .client
+            .lock()
+            .await
             .publish(
                 self.client_id(),
                 rumqttc::QoS::ExactlyOnce,
@@ -356,8 +461,8 @@ impl AstarteSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let d = sdk_options.connect().await.unwrap();
+    ///     let mut d = sdk_options.build().await.unwrap();
+    ///     d.connect().await.unwrap();
     ///
     ///     d.send("com.test.interface", "/data", 45).await.unwrap();
     /// }
@@ -383,8 +488,8 @@ impl AstarteSdk {
     ///     use chrono::Utc;
     ///     use chrono::TimeZone;
     ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let d = sdk_options.connect().await.unwrap();
+    ///     let mut d = sdk_options.build().await.unwrap();
+    ///     d.connect().await.unwrap();
     ///
     ///     d.send_with_timestamp("com.test.interface", "/data", 45, Utc.timestamp(1537449422, 0) ).await.unwrap();
     /// }
@@ -432,7 +537,12 @@ impl AstarteSdk {
             return Ok(());
         }
 
-        self.client
+        self.transport
+            .as_ref()
+            .ok_or(AstarteError::NoTransport)?
+            .client
+            .lock()
+            .await
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
                 self.interfaces
@@ -566,7 +676,12 @@ impl AstarteSdk {
                 .validate_send(interface_name, interface_path, &buf, &timestamp)?;
         }
 
-        self.client
+        self.transport
+            .as_ref()
+            .ok_or(AstarteError::NoTransport)?
+            .client
+            .lock()
+            .await
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
                 self.interfaces

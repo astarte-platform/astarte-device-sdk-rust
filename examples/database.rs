@@ -58,9 +58,9 @@ async fn main() {
         .unwrap()
         .with_database(db);
 
-    sdk_builder.build().await.unwrap();
+    let mut device = sdk_builder.build().await.unwrap();
 
-    let mut device = sdk_builder.connect().await.unwrap();
+    device.connect().await.unwrap();
 
     let w = device.clone();
     tokio::task::spawn(async move {
