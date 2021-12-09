@@ -31,8 +31,8 @@ use bson::{to_document, Bson};
 use database::AstarteDatabase;
 use itertools::Itertools;
 use log::{debug, error, trace};
-use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, Event};
+use rumqttc::{ConnectionError, EventLoop};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
@@ -65,6 +65,9 @@ pub enum AstarteError {
 
     #[error("mqtt connection error")]
     ConnectionError(#[from] rumqttc::ConnectionError),
+
+    #[error("mqtt ssl error")]
+    TlsError(rumqttc::Error),
 
     #[error("malformed input from Astarte backend")]
     DeserializationError,
@@ -137,87 +140,102 @@ impl AstarteSdk {
     pub async fn poll(&mut self) -> Result<Clientbound, AstarteError> {
         loop {
             // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
-                Event::Incoming(i) => {
-                    trace!("MQTT Incoming = {:?}", i);
+            match self.eventloop.lock().await.poll().await {
+                Ok(ev) => match ev {
+                    Event::Incoming(i) => {
+                        trace!("MQTT Incoming = {:?}", i);
 
-                    match i {
-                        rumqttc::Packet::ConnAck(p) => {
-                            if !p.session_present {
-                                self.send_introspection().await?;
-                                self.send_emptycache().await?;
-                                if let Some(database) = &self.database {
-                                    database.clear().await?;
+                        match i {
+                            rumqttc::Packet::ConnAck(p) => {
+                                if !p.session_present {
+                                    self.send_introspection().await?;
+                                    self.send_emptycache().await?;
+                                    if let Some(database) = &self.database {
+                                        database.clear().await?;
+                                    }
                                 }
                             }
-                        }
-                        rumqttc::Packet::Publish(p) => {
-                            let topic = parse_topic(&p.topic);
+                            rumqttc::Packet::Publish(p) => {
+                                let topic = parse_topic(&p.topic);
 
-                            if let Some((_, _, interface, path)) = topic {
-                                if interface == "control" && path == "/consumer/properties" {
-                                    continue;
-                                }
+                                if let Some((_, _, interface, path)) = topic {
+                                    if interface == "control" && path == "/consumer/properties" {
+                                        continue;
+                                    }
 
-                                let bdata = p.payload.to_vec();
+                                    let bdata = p.payload.to_vec();
 
-                                debug!("Incoming publish = {} {:?}", p.topic, bdata);
+                                    debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                                if let Some(database) = &self.database {
-                                    //if database is loaded
+                                    if let Some(database) = &self.database {
+                                        //if database is loaded
 
-                                    if let Some(major_version) =
-                                        self.interfaces.get_property_major(&interface, &path)
-                                    //if it's a property
-                                    {
-                                        database
-                                            .store_prop(&interface, &path, &bdata, major_version)
-                                            .await?;
+                                        if let Some(major_version) =
+                                            self.interfaces.get_property_major(&interface, &path)
+                                        //if it's a property
+                                        {
+                                            database
+                                                .store_prop(
+                                                    &interface,
+                                                    &path,
+                                                    &bdata,
+                                                    major_version,
+                                                )
+                                                .await?;
 
-                                        if cfg!(debug_assertions) {
-                                            // database selftest / sanity check for debug builds
-                                            let original = crate::AstarteSdk::deserialize(&bdata)?;
-                                            if let Aggregation::Individual(data) = original {
-                                                let db = database
-                                                .load_prop(&interface, &path, major_version)
-                                                .await
-                                                .expect("load_prop failed")
-                                                .expect(
+                                            if cfg!(debug_assertions) {
+                                                // database selftest / sanity check for debug builds
+                                                let original =
+                                                    crate::AstarteSdk::deserialize(&bdata)?;
+                                                if let Aggregation::Individual(data) = original {
+                                                    let db = database
+                                                    .load_prop(&interface, &path, major_version)
+                                                    .await
+                                                    .expect("load_prop failed")
+                                                    .expect(
+                                                        "property wasn't correctly saved in the database",
+                                                    );
+                                                    assert!(data == db);
+                                                    let prop = self
+                                                    .get_property(&interface, &path)
+                                                    .await?
+                                                    .expect(
                                                     "property wasn't correctly saved in the database",
                                                 );
-                                                assert!(data == db);
-                                                let prop = self
-                                                .get_property(&interface, &path)
-                                                .await?
-                                                .expect(
-                                                "property wasn't correctly saved in the database",
-                                            );
-                                                assert!(data == prop);
-                                                trace!("database test ok");
-                                            } else {
-                                                panic!("This should be impossible, can't have object properties");
+                                                    assert!(data == prop);
+                                                    trace!("database test ok");
+                                                } else {
+                                                    panic!("This should be impossible, can't have object properties");
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                if cfg!(debug_assertions) {
-                                    self.interfaces
-                                        .validate_receive(&interface, &path, &bdata)?;
-                                }
+                                    if cfg!(debug_assertions) {
+                                        self.interfaces
+                                            .validate_receive(&interface, &path, &bdata)?;
+                                    }
 
-                                let data = AstarteSdk::deserialize(&bdata)?;
-                                return Ok(Clientbound {
-                                    interface,
-                                    path,
-                                    data,
-                                });
+                                    let data = AstarteSdk::deserialize(&bdata)?;
+                                    return Ok(Clientbound {
+                                        interface,
+                                        path,
+                                        data,
+                                    });
+                                }
                             }
+                            _ => {}
                         }
-                        _ => {}
+                    }
+                    Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
+                },
+                Err(err) => {
+                    if let ConnectionError::Network(err) = err {
+                        return Err(AstarteError::TlsError(err));
+                    } else {
+                        return Err(err.into());
                     }
                 }
-                Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
             }
         }
     }

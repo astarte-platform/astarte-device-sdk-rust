@@ -39,6 +39,12 @@ struct Cli {
 async fn main() {
     env_logger::init();
 
+    loop {
+        program_main().await;
+    }
+}
+
+async fn program_main() {
     let Cli {
         realm,
         device_id,
@@ -87,7 +93,10 @@ async fn main() {
                     }
                 }
             }
-            Err(err) => log::error!("{:?}", err),
+            Err(err) => {
+                log::error!("{:?}", err);
+                return;
+            }
         }
     }
 }
