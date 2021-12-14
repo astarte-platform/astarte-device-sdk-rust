@@ -81,6 +81,12 @@ impl Interfaces {
         Some(iface.version().0)
     }
 
+    /// returns ownership if the interface is present in device introspection, None otherwise
+    pub fn get_ownership(&self, interface: &str) -> Option<crate::interface::Ownership> {
+        let iface = self.interfaces.get(interface)?;
+        Some(iface.get_ownership())
+    }
+
     pub fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
         fn validate_float(d: &f64) -> Result<(), AstarteError> {
             let error = Err(AstarteError::SendError(
@@ -651,5 +657,68 @@ mod test {
         assert!(ifa
             .get_property_major("org.astarte-platform.genericsensors.SamplingRate", "/")
             .is_none());
+    }
+
+    #[test]
+    fn test_get_ownership() {
+        let server_owned_interface_json = r#"
+        {
+            "interface_name": "org.astarte-platform.server-owned.test",
+            "version_major": 12,
+            "version_minor": 1,
+            "type": "properties",
+            "ownership": "server",
+            "mappings": [
+                {
+                    "endpoint": "/button",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+
+        let deser_interface = crate::Interface::from_str(server_owned_interface_json).unwrap();
+        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
+
+        ifa.insert(deser_interface.name().into(), deser_interface);
+
+        let ifa = super::Interfaces::new(ifa);
+
+        assert!(
+            ifa.get_ownership("org.astarte-platform.server-owned.test")
+                .unwrap()
+                == crate::interface::Ownership::Server
+        );
+
+        let device_owned_interface_json = r#"
+        {
+            "interface_name": "org.astarte-platform.device-owned.test",
+            "version_major": 12,
+            "version_minor": 1,
+            "type": "properties",
+            "ownership": "device",
+            "mappings": [
+                {
+                    "endpoint": "/button",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+
+        let deser_interface = crate::Interface::from_str(device_owned_interface_json).unwrap();
+        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
+
+        ifa.insert(deser_interface.name().into(), deser_interface);
+
+        let ifa = super::Interfaces::new(ifa);
+
+        assert!(
+            ifa.get_ownership("org.astarte-platform.device-owned.test")
+                .unwrap()
+                == crate::interface::Ownership::Device
+        );
     }
 }
