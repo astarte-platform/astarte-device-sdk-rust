@@ -146,9 +146,6 @@ impl AstarteSdk {
                             if !p.session_present {
                                 self.send_introspection().await?;
                                 self.send_emptycache().await?;
-                                if let Some(database) = &self.database {
-                                    database.clear().await?;
-                                }
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
@@ -156,6 +153,7 @@ impl AstarteSdk {
 
                             if let Some((_, _, interface, path)) = topic {
                                 if interface == "control" && path == "/consumer/properties" {
+                                    // TODO: implement consumer purge properties
                                     continue;
                                 }
 
