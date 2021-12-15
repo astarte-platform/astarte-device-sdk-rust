@@ -277,13 +277,13 @@ mod test {
     use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
     use crate::{
-        builder::AstarteBuilder, interface::traits::Interface, types::AstarteType, AstarteSdk,
+        builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteSdk,
     };
 
     #[test]
     fn test_individual() {
-        let mut options = AstarteBuilder::new("test", "test", "test", "test");
-        options.add_interface_files("examples/interfaces/").unwrap();
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options.interface_directory("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
         let buf = AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
@@ -333,8 +333,8 @@ mod test {
 
     #[test]
     fn test_object() {
-        let mut options = AstarteBuilder::new("test", "test", "test", "test");
-        options.add_interface_files("examples/interfaces/").unwrap();
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options.interface_directory("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
         let mut obj: std::collections::HashMap<&str, AstarteType> =
@@ -419,8 +419,8 @@ mod test {
 
     #[test]
     fn test_individual_recv() {
-        let mut options = AstarteBuilder::new("test", "test", "test", "test");
-        options.add_interface_files("examples/interfaces/").unwrap();
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options.interface_directory("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
         let boolean_buf =

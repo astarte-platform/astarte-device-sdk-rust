@@ -28,11 +28,12 @@ pub mod registration;
 pub mod types;
 
 use bson::{to_document, Bson};
+use builder::AstarteOptions;
 use database::AstarteDatabase;
 use itertools::Itertools;
 use log::{debug, error, trace};
-use rumqttc::EventLoop;
 use rumqttc::{AsyncClient, Event};
+use rumqttc::{EventLoop, MqttOptions};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
@@ -46,9 +47,7 @@ pub use interface::Interface;
 pub struct AstarteSdk {
     realm: String,
     device_id: String,
-    credentials_secret: String,
-    pairing_url: String,
-    build_options: builder::BuildOptions,
+    mqtt_options: MqttOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: interfaces::Interfaces,
@@ -87,6 +86,9 @@ pub enum AstarteError {
     #[error("database error")]
     DbError(#[from] sqlx::Error),
 
+    #[error("builder error")]
+    BuilderError(#[from] builder::AstarteBuilderError),
+
     #[error("generic error")]
     Reported(String),
 
@@ -119,13 +121,63 @@ fn parse_topic(topic: &str) -> Option<(String, String, String, String)> {
 }
 
 impl AstarteSdk {
+    pub async fn new(opts: &AstarteOptions) -> Result<AstarteSdk, AstarteError> {
+        let cn = format!("{}/{}", opts.realm, opts.device_id);
+
+        let mqtt_options = pairing::get_transport_config(opts).await?;
+
+        // TODO: make cap configurable
+        let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
+
+        let device = AstarteSdk {
+            realm: opts.realm.to_owned(),
+            device_id: opts.device_id.to_owned(),
+            mqtt_options,
+            client,
+            eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
+            interfaces: interfaces::Interfaces::new(opts.interfaces.clone()),
+            database: opts.database.clone(),
+        };
+
+        device.subscribe(&cn).await?;
+
+        Ok(device)
+    }
+
+    async fn subscribe(&self, cn: &str) -> Result<(), AstarteError> {
+        let ifaces = self
+            .interfaces
+            .interfaces
+            .clone()
+            .into_iter()
+            .filter(|i| i.1.get_ownership() == interface::Ownership::Server);
+
+        self.client
+            .subscribe(
+                cn.to_owned() + "/control/consumer/properties",
+                rumqttc::QoS::ExactlyOnce,
+            )
+            .await?;
+
+        for i in ifaces {
+            self.client
+                .subscribe(
+                    cn.to_owned() + "/" + interface::traits::Interface::name(&i.1) + "/#",
+                    rumqttc::QoS::ExactlyOnce,
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
     /// Poll updates from mqtt, this is where you receive data
     /// ```no_run
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let mut d = sdk_options.connect().await.unwrap();
+    ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
+    ///                           .build();
+    ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
     ///
     ///     loop {
     ///         if let Ok(data) = d.poll().await {
@@ -355,9 +407,9 @@ impl AstarteSdk {
     /// ```no_run
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let d = sdk_options.connect().await.unwrap();
+    ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
+    ///                           .build();
+    ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
     ///
     ///     d.send("com.test.interface", "/data", 45).await.unwrap();
     /// }
@@ -382,9 +434,9 @@ impl AstarteSdk {
     /// async fn main() {
     ///     use chrono::Utc;
     ///     use chrono::TimeZone;
-    ///     let mut sdk_options = astarte_sdk::builder::AstarteBuilder::new("_","_","_","_");
-    ///     sdk_options.build().await.unwrap();
-    ///     let d = sdk_options.connect().await.unwrap();
+    ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
+    ///                           .build();
+    ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
     ///
     ///     d.send_with_timestamp("com.test.interface", "/data", 45, Utc.timestamp(1537449422, 0) ).await.unwrap();
     /// }
@@ -614,9 +666,9 @@ impl fmt::Debug for AstarteSdk {
         f.debug_struct("Device")
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
-            .field("credentials_secret", &self.credentials_secret)
-            .field("pairing_url", &self.pairing_url)
-            .field("build_options", &self.build_options)
+            //.field("credentials_secret", &self.credentials_secret)
+            //.field("pairing_url", &self.pairing_url)
+            .field("mqtt_options", &self.mqtt_options)
             .finish()
     }
 }

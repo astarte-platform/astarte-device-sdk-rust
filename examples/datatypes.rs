@@ -18,7 +18,7 @@
 
 use std::vec;
 
-use astarte_sdk::{builder::AstarteBuilder, types::AstarteType};
+use astarte_sdk::{builder::AstarteOptions, types::AstarteType, AstarteError};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -38,7 +38,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AstarteError> {
     env_logger::init();
 
     let Cli {
@@ -48,15 +48,11 @@ async fn main() {
         pairing_url,
     } = Cli::from_args();
 
-    let mut sdk_builder =
-        AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
-    sdk_builder
-        .add_interface_files("./examples/interfaces")
-        .unwrap();
+    let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
+        .interface_directory("./examples/interfaces")?
+        .build();
 
-    sdk_builder.build().await.unwrap();
-
-    let mut device = sdk_builder.connect().await.unwrap();
+    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
 
     let w = device.clone();
 
