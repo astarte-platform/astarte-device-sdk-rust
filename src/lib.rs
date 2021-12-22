@@ -29,6 +29,7 @@ pub mod types;
 
 use bson::{to_document, Bson};
 use database::AstarteDatabase;
+use database::StoredProp;
 use itertools::Itertools;
 use log::{debug, error, trace};
 use rumqttc::EventLoop;
@@ -146,9 +147,7 @@ impl AstarteSdk {
                             if !p.session_present {
                                 self.send_introspection().await?;
                                 self.send_emptycache().await?;
-                                if let Some(database) = &self.database {
-                                    database.clear().await?;
-                                }
+                                self.send_device_owned_properties().await?;
                             }
                         }
                         rumqttc::Packet::Publish(p) => {
@@ -156,6 +155,7 @@ impl AstarteSdk {
 
                             if let Some((_, _, interface, path)) = topic {
                                 if interface == "control" && path == "/consumer/properties" {
+                                    // TODO: implement consumer purge properties
                                     continue;
                                 }
 
@@ -250,6 +250,40 @@ impl AstarteSdk {
                 introspection.clone(),
             )
             .await?;
+        Ok(())
+    }
+
+    async fn send_device_owned_properties(&self) -> Result<(), AstarteError> {
+        if let Some(database) = &self.database {
+            let properties = database.load_all_props().await?;
+            // publish only device-owned properties...
+            let device_owned_properties: Vec<StoredProp> = properties
+                .into_iter()
+                .filter(|prop| {
+                    self.interfaces.get_ownership(&prop.interface)
+                        == Some(crate::interface::Ownership::Device)
+                })
+                .collect();
+            for prop in device_owned_properties {
+                let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
+                if let Some(version_major) = self
+                    .interfaces
+                    .get_property_major(&prop.interface, &prop.path)
+                {
+                    // ..and only if they are up-to-date
+                    if version_major == prop.interface_major {
+                        debug!(
+                            "sending device-owned property = {}{}",
+                            prop.interface, prop.path
+                        );
+                        self.client
+                            .publish(topic, rumqttc::QoS::ExactlyOnce, false, prop.value)
+                            .await?;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

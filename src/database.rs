@@ -21,6 +21,7 @@ use std::str::FromStr;
 
 use log::{debug, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::FromRow;
 
 use crate::{types::AstarteType, AstarteError, AstarteSdk};
 
@@ -28,6 +29,15 @@ use crate::{types::AstarteType, AstarteError, AstarteSdk};
 #[derive(Clone, Debug)]
 pub struct AstarteSqliteDatabase {
     db_conn: sqlx::Pool<sqlx::Sqlite>,
+}
+
+/// This struct represents a property stored in the database
+#[derive(FromRow, Debug, PartialEq)]
+pub struct StoredProp {
+    pub interface: String,
+    pub path: String,
+    pub value: Vec<u8>,
+    pub interface_major: i32,
 }
 
 /// Database backend for the astarte client can be made by implementing this trait
@@ -50,6 +60,9 @@ pub trait AstarteDatabase {
 
     /// Removes all saved properties from the database
     async fn clear(&self) -> Result<(), AstarteError>;
+
+    /// Retrieves all property values in the database, together with their interface name, path and major version
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
 }
 
 #[async_trait]
@@ -137,6 +150,14 @@ impl AstarteDatabase for AstarteSqliteDatabase {
 
         Ok(())
     }
+
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+        let res: Vec<StoredProp> = sqlx::query_as("select * from propcache")
+            .fetch_all(&self.db_conn)
+            .await?;
+
+        return Ok(res);
+    }
 }
 
 impl AstarteSqliteDatabase {
@@ -157,7 +178,7 @@ impl AstarteSqliteDatabase {
 mod test {
     use crate::database::AstarteDatabase;
     use crate::AstarteSdk;
-    use crate::{database::AstarteSqliteDatabase, types::AstarteType};
+    use crate::{database::AstarteSqliteDatabase, database::StoredProp, types::AstarteType};
 
     #[tokio::test]
     async fn test_db() {
@@ -220,5 +241,26 @@ mod test {
         db.clear().await.unwrap();
 
         assert_eq!(db.load_prop("com.test", "/test", 1).await.unwrap(), None);
+
+        // load all props
+        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test2", "/test", &ser, 1).await.unwrap();
+        assert_eq!(
+            db.load_all_props().await.unwrap(),
+            vec![
+                StoredProp {
+                    interface: "com.test".into(),
+                    path: "/test".into(),
+                    value: ser.clone(),
+                    interface_major: 1,
+                },
+                StoredProp {
+                    interface: "com.test2".into(),
+                    path: "/test".into(),
+                    value: ser.clone(),
+                    interface_major: 1,
+                }
+            ]
+        );
     }
 }
