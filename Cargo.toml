@@ -29,6 +29,7 @@ async-trait = "0.1.51"
 uuid = {version="0.8.2", features = ["v5", "v4"] }
 base64 = "0.13.0"
 webpki = "0.21.4"
+flate2 = "1.0"
 
 [dev-dependencies]
 structopt = "0.3"

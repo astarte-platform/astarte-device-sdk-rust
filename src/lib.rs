@@ -154,12 +154,12 @@ impl AstarteSdk {
                             let topic = parse_topic(&p.topic);
 
                             if let Some((_, _, interface, path)) = topic {
+                                let bdata = p.payload.to_vec();
+
                                 if interface == "control" && path == "/consumer/properties" {
-                                    // TODO: implement consumer purge properties
+                                    self.purge_properties(bdata).await?;
                                     continue;
                                 }
-
-                                let bdata = p.payload.to_vec();
 
                                 debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
@@ -224,6 +224,25 @@ impl AstarteSdk {
 
     fn client_id(&self) -> String {
         format!("{}/{}", self.realm, self.device_id)
+    }
+
+    async fn purge_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+        if let Some(db) = &self.database {
+            let stored_props = db.load_all_props().await?;
+
+            let paths = utils::extract_set_properties(&bdata);
+
+            for stored_prop in stored_props {
+                if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
+                    continue;
+                }
+
+                db.delete_prop(&stored_prop.interface, &stored_prop.path)
+                    .await?;
+            }
+        }
+
+        Ok(())
     }
 
     async fn send_emptycache(&self) -> Result<(), AstarteError> {
@@ -655,6 +674,19 @@ impl fmt::Debug for AstarteSdk {
     }
 }
 
+mod utils {
+    pub fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
+        use flate2::read::ZlibDecoder;
+        use std::io::prelude::*;
+
+        let mut d = ZlibDecoder::new(&bdata[4..]);
+        let mut s = String::new();
+        d.read_to_string(&mut s).unwrap();
+
+        s.split(';').map(|x| x.to_owned()).collect()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use chrono::{TimeZone, Utc};
@@ -702,5 +734,22 @@ mod test {
         assert!(device == "u-WraCwtK_G_fjJf63TiAw");
         assert!(interface == "com.interface.test");
         assert!(path == "/led/red");
+    }
+
+    #[test]
+    fn test_deflate() {
+        let example = b"com.example.MyInterface/some/path;org.example.DraftInterface/otherPath";
+
+        let bdata: Vec<u8> = vec![
+            0x00, 0x00, 0x00, 0x46, 0x78, 0x9c, 0x4b, 0xce, 0xcf, 0xd5, 0x4b, 0xad, 0x48, 0xcc,
+            0x2d, 0xc8, 0x49, 0xd5, 0xf3, 0xad, 0xf4, 0xcc, 0x2b, 0x49, 0x2d, 0x4a, 0x4b, 0x4c,
+            0x4e, 0xd5, 0x2f, 0xce, 0xcf, 0x4d, 0xd5, 0x2f, 0x48, 0x2c, 0xc9, 0xb0, 0xce, 0x2f,
+            0x4a, 0x87, 0xab, 0x70, 0x29, 0x4a, 0x4c, 0x2b, 0x41, 0x28, 0xca, 0x2f, 0xc9, 0x48,
+            0x2d, 0x0a, 0x00, 0x2a, 0x02, 0x00, 0xb2, 0x0c, 0x1a, 0xc9,
+        ];
+
+        let s = crate::utils::extract_set_properties(&bdata);
+
+        assert!(s.join(";").as_bytes() == example);
     }
 }
