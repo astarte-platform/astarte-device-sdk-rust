@@ -165,7 +165,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
 impl AstarteSqliteDatabase {
     /// Creates an sqlite database for the astarte client
     /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details
-    pub async fn new(uri: &str) -> Result<Self, crate::builder::AstarteBuilderError> {
+    pub async fn new(uri: &str) -> Result<Self, AstarteError> {
         let options = SqliteConnectOptions::from_str(uri)?.create_if_missing(true);
 
         let conn = SqlitePoolOptions::new().connect_with(options).await?;

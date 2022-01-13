@@ -44,6 +44,7 @@ use std::sync::Arc;
 use types::AstarteType;
 
 pub use interface::Interface;
+pub use interfaces::Interfaces;
 
 /// Astarte client
 #[derive(Clone)]
@@ -53,12 +54,18 @@ pub struct AstarteSdk {
     mqtt_options: MqttOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
-    interfaces: interfaces::Interfaces,
+    interfaces: Arc<interfaces::Interfaces>,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum AstarteError {
+    #[error("configuration error")]
+    ConfigError(String),
+
+    #[error("pairing error")]
+    PairingError(#[from] pairing::PairingError),
+
     #[error("bson serialize error")]
     BsonSerError(#[from] bson::ser::Error),
 
@@ -80,6 +87,9 @@ pub enum AstarteError {
     #[error("forbidden floating point number")]
     FloatError,
 
+    #[error("error creating interface")]
+    InterfaceError(#[from] interface::Error),
+
     #[error("send error")]
     SendError(String),
 
@@ -89,8 +99,8 @@ pub enum AstarteError {
     #[error("database error")]
     DbError(#[from] sqlx::Error),
 
-    #[error("builder error")]
-    BuilderError(#[from] builder::AstarteBuilderError),
+    #[error("io error")]
+    IoError(#[from] std::io::Error),
 
     #[error("generic error")]
     Reported(String),
@@ -125,8 +135,6 @@ fn parse_topic(topic: &str) -> Option<(String, String, String, String)> {
 
 impl AstarteSdk {
     pub async fn new(opts: &AstarteOptions) -> Result<AstarteSdk, AstarteError> {
-        let cn = format!("{}/{}", opts.realm, opts.device_id);
-
         let mqtt_options = pairing::get_transport_config(opts).await?;
 
         // TODO: make cap configurable
@@ -138,18 +146,20 @@ impl AstarteSdk {
             mqtt_options,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: interfaces::Interfaces::new(opts.interfaces.clone()),
+            interfaces: Arc::new(opts.interfaces.clone()),
             database: opts.database.clone(),
         };
 
-        device.subscribe(&cn).await?;
+        device.subscribe().await?;
 
         device.poll_connack().await?;
 
         Ok(device)
     }
 
-    async fn subscribe(&self, cn: &str) -> Result<(), AstarteError> {
+    async fn subscribe(&self) -> Result<(), AstarteError> {
+        let cn = format!("{}/{}", self.realm, self.device_id);
+
         let ifaces = self
             .interfaces
             .interfaces
@@ -203,6 +213,15 @@ impl AstarteSdk {
             self.send_device_owned_properties().await?;
             info!("connack done");
         }
+        Ok(())
+    }
+    pub async fn update_interfaces(
+        &mut self,
+        interfaces: interfaces::Interfaces,
+    ) -> Result<(), AstarteError> {
+        self.interfaces = Arc::new(interfaces);
+        self.subscribe().await?;
+        self.send_introspection().await?;
 
         Ok(())
     }

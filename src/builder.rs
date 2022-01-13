@@ -18,21 +18,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use log::debug;
-use openssl::error::ErrorStack;
-use pairing::PairingError;
-
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::path::Path;
 use std::sync::Arc;
 
-use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
 
 use crate::database::AstarteDatabase;
 use crate::interface::{self};
-use crate::pairing;
+use crate::AstarteError;
 
 /// Builder for Astarte client
 ///
@@ -62,37 +54,10 @@ pub struct AstarteOptions {
     pub(crate) device_id: String,
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
-    pub(crate) interfaces: HashMap<String, Interface>,
+    pub(crate) interfaces: crate::interfaces::Interfaces,
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum AstarteBuilderError {
-    #[error("private key or CSR creation failed")]
-    CryptoGeneration(#[from] ErrorStack),
-
-    #[error("device must have at least an interface")]
-    MissingInterfaces,
-
-    #[error("error creating interface")]
-    InterfaceError(#[from] interface::Error),
-
-    #[error("io error")]
-    IoError(#[from] std::io::Error),
-
-    #[error("configuration error")]
-    ConfigError(String),
-
-    #[error("mqtt error")]
-    MqttError(#[from] rumqttc::ClientError),
-
-    #[error("pairing error")]
-    PairingError(#[from] PairingError),
-
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
 }
 
 impl AstarteOptions {
@@ -102,7 +67,7 @@ impl AstarteOptions {
             device_id: device_id.to_owned(),
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
-            interfaces: HashMap::new(),
+            interfaces: Default::default(),
             database: None,
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
@@ -131,36 +96,18 @@ impl AstarteOptions {
         self
     }
 
-    /// Add an interface from a json file
-    pub fn interface_file<'a>(
-        &'a mut self,
-        file_path: &Path,
-    ) -> Result<&'a mut Self, AstarteBuilderError> {
-        let interface = Interface::from_file(file_path)?;
-        let name = interface.name();
-        debug!("Added interface {}", name);
-        self.interfaces.insert(name.to_owned(), interface);
+    pub fn interface_directory(
+        &mut self,
+        interfaces_directory: &str,
+    ) -> Result<&mut Self, AstarteError> {
+        self.interfaces
+            .add_interface_directory(interfaces_directory)?;
+
         Ok(self)
     }
 
-    /// Add all json interface description inside a specified directory
-    pub fn interface_directory<'a>(
-        &'a mut self,
-        interfaces_directory: &str,
-    ) -> Result<&'a mut Self, AstarteBuilderError> {
-        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
-        let it = interface_files.filter_map(Result::ok).filter(|f| {
-            if let Some(ext) = f.path().extension() {
-                ext == "json"
-            } else {
-                false
-            }
-        });
-
-        for f in it {
-            self.interface_file(&f.path())?;
-        }
-
+    pub fn interface_file(&mut self, interface_file: &str) -> Result<&mut Self, AstarteError> {
+        self.interfaces.add_interface_file(interface_file)?;
         Ok(self)
     }
 
