@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-use astarte_sdk::{builder::AstarteBuilder, database::AstarteSqliteDatabase};
+use astarte_sdk::{builder::AstarteOptions, database::AstarteSqliteDatabase, AstarteError};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -36,7 +36,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AstarteError> {
     env_logger::init();
 
     let Cli {
@@ -46,21 +46,14 @@ async fn main() {
         pairing_url,
     } = Cli::from_args();
 
-    let db = AstarteSqliteDatabase::new("sqlite://astarte-example-db.sqlite")
-        .await
-        .unwrap();
+    let db = AstarteSqliteDatabase::new("sqlite://astarte-example-db.sqlite").await?;
 
-    let mut sdk_builder =
-        AstarteBuilder::new(&realm, &device_id, &credentials_secret, &pairing_url);
+    let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
+        .interface_directory("./examples/interfaces")?
+        .database(db)
+        .build();
 
-    sdk_builder
-        .add_interface_files("./examples/interfaces")
-        .unwrap()
-        .with_database(db);
-
-    sdk_builder.build().await.unwrap();
-
-    let mut device = sdk_builder.connect().await.unwrap();
+    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
 
     let w = device.clone();
     tokio::task::spawn(async move {
