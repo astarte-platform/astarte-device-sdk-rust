@@ -129,6 +129,8 @@ impl AstarteSdk {
 
         let mqtt_options = pairing::get_transport_config(opts).await?;
 
+        debug!("{:#?}", mqtt_options);
+
         // TODO: make cap configurable
         let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
 

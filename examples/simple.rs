@@ -61,7 +61,7 @@ async fn main() -> Result<(), AstarteError> {
     tokio::task::spawn(async move {
         let mut i: i64 = 0;
         loop {
-            w.send("com.test.Everything", "/longinteger", i)
+            w.send("org.astarte-platform.test.Everything", "/longinteger", i)
                 .await
                 .unwrap();
             println!("Sent {}", i);

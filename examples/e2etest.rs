@@ -1,7 +1,7 @@
 /*
  * This file is part of Astarte.
  *
- * Copyright 2021 SECO Mind Srl
+ * Copyright 2022 SECO Mind Srl
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,45 +18,28 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::vec;
-
-use astarte_sdk::{builder::AstarteOptions, types::AstarteType, AstarteError};
-use structopt::StructOpt;
-
-#[derive(Debug, StructOpt)]
-struct Cli {
-    // Realm name
-    #[structopt(short, long)]
-    realm: String,
-    // Device id
-    #[structopt(short, long)]
-    device_id: String,
-    // Credentials secret
-    #[structopt(short, long)]
-    credentials_secret: String,
-    // Pairing URL
-    #[structopt(short, long)]
-    pairing_url: String,
-}
+use astarte_sdk::builder::AstarteOptions;
+use astarte_sdk::types::AstarteType;
+use log::error;
 
 #[tokio::main]
-async fn main() -> Result<(), AstarteError> {
+async fn main() {
     env_logger::init();
 
-    let Cli {
-        realm,
-        device_id,
-        credentials_secret,
-        pairing_url,
-    } = Cli::from_args();
+    let realm = "test";
+    let device_id = std::env::var("E2E_DEVICE_ID").unwrap();
+    let credentials_secret = std::env::var("E2E_CREDENTIALS_SECRET").unwrap();
+    let pairing_url = "https://api.autotest.astarte-platform.org/pairing";
 
-    let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
-        .interface_directory("./examples/interfaces")?
+    let sdk_options = AstarteOptions::new(realm, &device_id, &credentials_secret, pairing_url)
+        .interface_file(std::path::Path::new(
+            "./examples/interfaces/org.astarte-platform.test.Everything.json",
+        ))
+        .unwrap()
+        .ignore_ssl_errors()
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
-
-    let w = device.clone();
+    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
 
     let alltypes: Vec<AstarteType> = vec![
         AstarteType::Double(4.5),
@@ -97,21 +80,35 @@ async fn main() -> Result<(), AstarteError> {
         "datetimearray",
     ];
 
+    let w = device.clone();
     tokio::task::spawn(async move {
-        loop {
+        for _ in 0..3 {
             let data = alltypes.iter().zip(allendpoints.iter());
 
             // individual aggregation
             for i in data {
-                w.send("com.test.Everything", &format!("/{}", i.1), i.0.clone())
-                    .await
-                    .unwrap();
+                let ret = w
+                    .send(
+                        "org.astarte-platform.test.Everything",
+                        &format!("/{}", i.1),
+                        i.0.clone(),
+                    )
+                    .await;
+
+                if let Err(err) = ret {
+                    error!("send error {:?}", err);
+                    std::process::exit(1);
+                }
 
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(5000));
+            std::thread::sleep(std::time::Duration::from_millis(300));
         }
+
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        println!("Test completed successfully");
+        std::process::exit(0);
     });
 
     loop {
@@ -119,7 +116,10 @@ async fn main() -> Result<(), AstarteError> {
             Ok(data) => {
                 println!("incoming: {:?}", data);
             }
-            Err(err) => log::error!("{:?}", err),
+            Err(err) => {
+                log::error!("poll error {:?}", err);
+                std::process::exit(1);
+            }
         }
     }
 }
