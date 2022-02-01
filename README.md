@@ -1,3 +1,9 @@
+<!--
+Copyright 2021,2022 SECO Mind Srl
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Astarte Device SDK Rust
 
 *Warning: this SDK is experimental, correctness and API stability are currently not guaranteed*

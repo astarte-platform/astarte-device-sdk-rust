@@ -1,3 +1,10 @@
+# This file is part of Astarte.
+#
+# Copyright 2022 SECO Mind Srl
+#
+# SPDX-License-Identifier: CC0-1.0
+
+
 [package]
 name = "astarte_sdk"
 version = "0.1.0"
