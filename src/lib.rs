@@ -34,7 +34,7 @@ use builder::AstarteOptions;
 use database::AstarteDatabase;
 use database::StoredProp;
 use itertools::Itertools;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use rumqttc::{AsyncClient, Event};
 use rumqttc::{EventLoop, MqttOptions};
 use std::collections::HashMap;
@@ -132,7 +132,7 @@ impl AstarteSdk {
         // TODO: make cap configurable
         let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
 
-        let device = AstarteSdk {
+        let mut device = AstarteSdk {
             realm: opts.realm.to_owned(),
             device_id: opts.device_id.to_owned(),
             mqtt_options,
@@ -143,6 +143,8 @@ impl AstarteSdk {
         };
 
         device.subscribe(&cn).await?;
+
+        device.poll_connack().await?;
 
         Ok(device)
     }
@@ -174,6 +176,37 @@ impl AstarteSdk {
         Ok(())
     }
 
+    async fn poll_connack(&mut self) -> Result<(), AstarteError> {
+        loop {
+            // keep consuming and processing packets until we have data for the user
+            match self.eventloop.lock().await.poll().await? {
+                Event::Incoming(i) => {
+                    trace!("MQTT Incoming = {i:?}");
+
+                    if let rumqttc::Packet::ConnAck(p) = i {
+                        return self.connack(p).await;
+                    } else {
+                        error!("BUG: not connack inside poll_connack {i:?}");
+                    }
+                }
+                Event::Outgoing(i) => {
+                    error!("BUG: not connack inside poll_connack {i:?}");
+                }
+            }
+        }
+    }
+
+    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), AstarteError> {
+        if !p.session_present {
+            self.send_introspection().await?;
+            self.send_emptycache().await?;
+            self.send_device_owned_properties().await?;
+            info!("connack done");
+        }
+
+        Ok(())
+    }
+
     /// Poll updates from mqtt, this is where you receive data
     /// ```no_run
     /// #[tokio::main]
@@ -198,11 +231,7 @@ impl AstarteSdk {
 
                     match i {
                         rumqttc::Packet::ConnAck(p) => {
-                            if !p.session_present {
-                                self.send_introspection().await?;
-                                self.send_emptycache().await?;
-                                self.send_device_owned_properties().await?;
-                            }
+                            self.connack(p).await?;
                         }
                         rumqttc::Packet::Publish(p) => {
                             let topic = parse_topic(&p.topic);
