@@ -29,10 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
 
-use crate::{
-    builder::{AstarteBuilderError, AstarteOptions},
-    crypto::Bundle,
-};
+use crate::{builder::AstarteOptions, crypto::Bundle, AstarteError};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse {
@@ -199,7 +196,7 @@ fn build_mqtt_opts(
     certificate_pem: &[Certificate],
     private_key: &PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, AstarteBuilderError> {
+) -> Result<MqttOptions, AstarteError> {
     let AstarteOptions {
         realm, device_id, ..
     } = options;
@@ -207,21 +204,21 @@ fn build_mqtt_opts(
     let client_id = format!("{}/{}", realm, device_id);
     let host = broker_url
         .host_str()
-        .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| AstarteError::ConfigError("bad broker url".into()))?;
     let port = broker_url
         .port()
-        .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| AstarteError::ConfigError("bad broker url".into()))?;
     let mut tls_client_config = rumqttc::ClientConfig::new();
     tls_client_config.root_store = rustls_native_certs::load_native_certs()
-        .map_err(|_| AstarteBuilderError::ConfigError("could not load platform certs".into()))?;
+        .map_err(|_| AstarteError::ConfigError("could not load platform certs".into()))?;
     tls_client_config
         .set_single_client_cert(certificate_pem.to_owned(), private_key.to_owned())
-        .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
+        .map_err(|_| AstarteError::ConfigError("cannot setup client auth".into()))?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if options.keepalive.as_secs() < 5 {
-        return Err(AstarteBuilderError::ConfigError(
+        return Err(AstarteError::ConfigError(
             "Keepalive should be >= 5 secs".into(),
         ));
     }
@@ -258,9 +255,7 @@ fn build_mqtt_opts(
     Ok(mqtt_opts)
 }
 
-pub async fn get_transport_config(
-    opts: &AstarteOptions,
-) -> Result<MqttOptions, AstarteBuilderError> {
+pub async fn get_transport_config(opts: &AstarteOptions) -> Result<MqttOptions, AstarteError> {
     let (certificate_pem, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

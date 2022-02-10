@@ -55,7 +55,7 @@ async fn main() -> Result<(), AstarteError> {
         .database(db)
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    let (device, mut eventloop) = astarte_sdk::AstarteSdk::new(sdk_options).await?;
 
     let w = device.clone();
     tokio::task::spawn(async move {
@@ -73,7 +73,7 @@ async fn main() -> Result<(), AstarteError> {
     });
 
     loop {
-        match device.poll().await {
+        match device.poll(&mut eventloop).await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
 

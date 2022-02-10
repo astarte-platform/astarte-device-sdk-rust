@@ -1,7 +1,7 @@
 /*
  * This file is part of Astarte.
  *
- * Copyright 2021 SECO Mind Srl
+ * Copyright 2022 SECO Mind Srl
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,29 +48,38 @@ async fn main() -> Result<(), AstarteError> {
         pairing_url,
     } = Cli::from_args();
 
-    let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
-        .interface_directory("./examples/interfaces")?
-        .build();
+    let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url);
 
     let (device, mut eventloop) = astarte_sdk::AstarteSdk::new(sdk_options).await?;
 
     let w = device.clone();
     tokio::task::spawn(async move {
+        let mut i: i64 = 0;
         loop {
-            w.send(
-                "org.astarte-platform.genericsensors.AvailableSensors",
-                "/1/name",
-                "test",
-            )
-            .await
-            .unwrap();
+            let mut ifc = astarte_sdk::Interfaces::default();
+            ifc.add_interface_file("./examples/interfaces/com.test.Everything.json")
+                .unwrap();
+            w.update_interfaces(ifc).await.unwrap();
 
+            w.send("com.test.Everything", "/longinteger", i)
+                .await
+                .unwrap();
+            println!("Sent {}", i);
+
+            i += 11;
             std::thread::sleep(std::time::Duration::from_millis(1000));
 
+            let mut ifc = astarte_sdk::Interfaces::default();
+            ifc.add_interface_file(
+                "./examples/interfaces/org.astarte-platform.genericsensors.AvailableSensors.json",
+            )
+            .unwrap();
+            w.update_interfaces(ifc).await.unwrap();
+
             w.send(
                 "org.astarte-platform.genericsensors.AvailableSensors",
                 "/1/name",
-                "test2",
+                format!("{}", i),
             )
             .await
             .unwrap();

@@ -54,7 +54,7 @@ async fn main() -> Result<(), AstarteError> {
         .interface_directory("./examples/interfaces")?
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    let (device, mut eventloop) = astarte_sdk::AstarteSdk::new(sdk_options).await?;
 
     let w = device.clone();
 
@@ -96,7 +96,7 @@ async fn main() -> Result<(), AstarteError> {
     });
 
     loop {
-        match device.poll().await {
+        match device.poll(&mut eventloop).await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
             }
