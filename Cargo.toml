@@ -46,3 +46,8 @@ env_logger = "0.9.0"
 version = "1"
 default-features = false # Disable features which are enabled by default
 features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]
+
+
+[[bin]]
+name = "e2etest"
+path = "src/e2etest/e2etest.rs"

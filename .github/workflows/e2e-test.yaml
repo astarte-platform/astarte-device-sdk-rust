@@ -26,7 +26,7 @@ on:
   pull_request:
 
 jobs:
-  create-cluster:
+  e2e-test:
     runs-on: ubuntu-latest
     steps:
       - name: Create Astarte Cluster
@@ -44,7 +44,9 @@ jobs:
           echo "E2E_DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
           CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output "$DEVICE_ID")
           echo "E2E_CREDENTIALS_SECRET=$CREDENTIALS_SECRET" >> $GITHUB_ENV
-          echo "RUST_LOG=astarte_sdk=debug" >> $GITHUB_ENV
+          echo "RUST_LOG=debug" >> $GITHUB_ENV
+          TOKEN=$(astartectl utils gen-jwt appengine)
+          echo "E2E_TOKEN=$TOKEN" >> $GITHUB_ENV
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -53,4 +55,4 @@ jobs:
           toolchain: stable
           override: true
       - name: Run test
-        run: cargo run --example e2etest
+        run: cargo run --bin e2etest
