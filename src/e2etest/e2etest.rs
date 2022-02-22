@@ -24,7 +24,7 @@ use astarte_sdk::builder::AstarteOptions;
 use astarte_sdk::types::AstarteType;
 use serde_json::Value;
 
-fn get_data() -> Vec<(AstarteType, String)> {
+fn get_data() -> HashMap<String, AstarteType> {
     let alltypes: Vec<AstarteType> = vec![
         AstarteType::Double(4.5),
         (-4).into(),
@@ -75,6 +75,25 @@ fn get_data() -> Vec<(AstarteType, String)> {
         .zip(allendpoints.iter().cloned())
         .collect::<Vec<(AstarteType, String)>>();
 
+    let mut data_map = HashMap::new();
+
+    for i in &data {
+        data_map.insert(i.1.clone(), i.0.clone());
+    }
+
+    data_map
+}
+
+fn get_data_obj() -> HashMap<String, f64> {
+    let mut data: HashMap<String, f64> = HashMap::new();
+    data.insert("latitude".into(), 1.34);
+    data.insert("longitude".into(), 2.34);
+    data.insert("altitude".into(), 3.34);
+    data.insert("accuracy".into(), 4.34);
+    data.insert("altitudeAccuracy".into(), 5.34);
+    data.insert("heading".into(), 6.34);
+    data.insert("speed".into(), 7.34);
+
     data
 }
 
@@ -87,6 +106,8 @@ async fn main() {
         std::process::exit(1);
     }));
 
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
     let realm = "test";
     let device_id = std::env::var("E2E_DEVICE_ID").unwrap();
     let credentials_secret = std::env::var("E2E_CREDENTIALS_SECRET").unwrap();
@@ -95,6 +116,10 @@ async fn main() {
     let sdk_options = AstarteOptions::new(realm, &device_id, &credentials_secret, pairing_url)
         .interface_file(std::path::Path::new(
             "./examples/interfaces/org.astarte-platform.test.Everything.json",
+        ))
+        .unwrap()
+        .interface_file(std::path::Path::new(
+            "./examples/interfaces/org.astarte-platform.genericsensors.Geolocation.json",
         ))
         .unwrap()
         .ignore_ssl_errors()
@@ -109,26 +134,18 @@ async fn main() {
         for _ in 0..3 {
             // individual aggregation
             for i in &data {
-                let ret = w
-                    .send(
-                        "org.astarte-platform.test.Everything",
-                        &format!("/{}", i.1),
-                        i.0.clone(),
-                    )
-                    .await;
-
-                if let Err(err) = ret {
-                    println!("send error {:?}", err);
-                    std::process::exit(1);
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                w.send(
+                    "org.astarte-platform.test.Everything",
+                    &format!("/{}", i.0),
+                    i.1.clone(),
+                )
+                .await
+                .unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(1000));
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
         let json = reqwest::Client::new()
             .get(format!(
@@ -146,11 +163,43 @@ async fn main() {
             .await
             .unwrap();
 
-        let data = get_data();
-
         check_json(&data, json);
 
-        println!("Test completed successfully");
+        println!("Test 1 completed successfully");
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+        let data = get_data_obj();
+
+        w.send_object(
+            "org.astarte-platform.genericsensors.Geolocation",
+            "/45/",
+            data.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+        let json = reqwest::Client::new()
+        .get(format!(
+            "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.genericsensors.Geolocation",
+            realm, device_id
+        ))
+        .header(
+            "Authorization",
+            "Bearer ".to_string() + &std::env::var("E2E_TOKEN").unwrap(),
+        )
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+        println!("----------------\n{:?}", data);
+        println!("----------------\n{:?}", json);
+
+        check_json_obj(&data, json);
+
         std::process::exit(0);
     });
 
@@ -160,19 +209,38 @@ async fn main() {
                 println!("incoming: {:?}", data);
             }
             Err(err) => {
-                log::error!("poll error {:?}", err);
+                println!("poll error {:?}", err);
                 std::process::exit(1);
             }
         }
     }
 }
 
-fn check_json(data: &[(AstarteType, String)], json: String) {
+fn check_json(data: &HashMap<String, AstarteType>, json: String) {
+    fn parse_response_json(json: &str) -> HashMap<String, Value> {
+        let mut ret = HashMap::new();
+        let v: Value = serde_json::from_str(json).unwrap();
+
+        println!("{:#?}", v);
+
+        if let Value::Object(data) = v {
+            if let Value::Object(data) = &data["data"] {
+                for dat in data {
+                    if let Value::Object(dat2) = dat.1 {
+                        ret.insert(dat.0.clone(), dat2["value"].clone());
+                    }
+                }
+            }
+        }
+
+        ret
+    }
+
     let json = parse_response_json(&json);
 
     for i in data {
-        let atype = &i.0;
-        let jtype = &json[&i.1.to_string()];
+        let atype = &i.1;
+        let jtype = &json[&i.0.to_string()];
 
         println!("{:?} {:?}", atype, jtype);
         assert!(compare_json_with_astartetype(atype, jtype));
@@ -247,23 +315,43 @@ fn encode_blob(blob: &[u8]) -> String {
     base64::encode_config(blob, base64::STANDARD)
 }
 
-fn parse_response_json(json: &str) -> HashMap<String, Value> {
-    let mut ret = HashMap::new();
-    let v: Value = serde_json::from_str(json).unwrap();
+fn check_json_obj(data: &HashMap<String, f64>, json: String) {
+    fn parse_response_json(json: &str) -> HashMap<String, f64> {
+        let mut ret = HashMap::new();
+        let v: Value = serde_json::from_str(json).unwrap();
 
-    println!("{:#?}", v);
+        println!("{:#?}", v);
 
-    if let Value::Object(data) = v {
-        if let Value::Object(data) = &data["data"] {
-            for dat in data {
-                if let Value::Object(dat2) = dat.1 {
-                    ret.insert(dat.0.clone(), dat2["value"].clone());
+        if let Value::Object(data) = v {
+            if let Value::Object(data) = &data["data"] {
+                if let Value::Object(data) = &data["45"] {
+                    if let Value::Array(arr) = &data[""] {
+                        if let Value::Object(data) = &arr.first().unwrap() {
+                            for dat in data {
+                                if let Value::Number(dat2) = dat.1 {
+                                    ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        ret
     }
 
-    ret
+    let json = parse_response_json(&json);
+
+    for i in data {
+        let jtype = &json[&i.0.to_string()];
+
+        println!("{:?} {:?}", i.1, jtype);
+        assert!(compare_json_with_astartetype(
+            &AstarteType::Double(*i.1),
+            &Value::Number(serde_json::Number::from_f64(*jtype).unwrap())
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -378,5 +466,10 @@ mod tests {
         let data = get_data();
 
         check_json(&data, json.to_string());
+
+        let json = "{\"data\":{\"45\":{\"\":[{\"accuracy\":4.34,\"altitude\":3.34,\"altitudeAccuracy\":5.34,\"heading\":6.34,\"latitude\":1.34,\"longitude\":2.34,\"speed\":7.34,\"timestamp\":\"2022-02-21T18:16:25.027Z\"}]}}}";
+
+        let data = crate::get_data_obj();
+        crate::check_json_obj(&data, json.to_string());
     }
 }

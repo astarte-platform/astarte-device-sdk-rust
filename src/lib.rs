@@ -72,7 +72,7 @@ pub enum AstarteError {
     DeserializationError,
 
     #[error("error converting from Bson to AstarteType")]
-    FromBsonError,
+    FromBsonError(String),
 
     #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
     FromBsonArrayError,
@@ -605,7 +605,9 @@ impl AstarteSdk {
             let mapping = self
                 .interfaces
                 .get_mapping(interface_name, interface_path)
-                .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                .ok_or_else(|| {
+                    AstarteError::SendError(format!("Mapping {} doesn't exist", interface_path))
+                })?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property

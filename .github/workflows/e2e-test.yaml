@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v2
       - name: Install interface
         run: | 
-          astartectl realm-management interfaces install $GITHUB_WORKSPACE/examples/interfaces/org.astarte-platform.test.Everything.json
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/examples/interfaces/*.json --non-interactive
           astartectl realm-management interfaces ls
       - name: Register device
         run: |
