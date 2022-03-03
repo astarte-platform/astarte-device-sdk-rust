@@ -24,7 +24,7 @@ use http::StatusCode;
 use openssl::error::ErrorStack;
 use reqwest::Url;
 use rumqttc::MqttOptions;
-use rustls::{internal::pemfile, Certificate, PrivateKey};
+use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
@@ -174,7 +174,7 @@ async fn populate_credentials(
 
     let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
 
-    let private_key = pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+    let private_key = rustls_pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
         .map_err(|_| PairingError::ConfigError("failed pkcs8 key extraction".into()))?
         .remove(0);
 
@@ -183,9 +183,12 @@ async fn populate_credentials(
 
     let cert_pem = fetch_credentials(opts, &csr).await?;
     let mut cert_pem_bytes = cert_pem.as_bytes();
-    let certs =
-        pemfile::certs(&mut cert_pem_bytes).map_err(|_| PairingError::InvalidCredentials)?;
-    Ok((certs, private_key))
+    let certs = rustls_pemfile::certs(&mut cert_pem_bytes)
+        .map_err(|_| PairingError::InvalidCredentials)?
+        .iter()
+        .map(|c| Certificate(c.clone()))
+        .collect();
+    Ok((certs, PrivateKey(private_key)))
 }
 
 async fn populate_broker_url(opts: &AstarteOptions) -> Result<Url, PairingError> {
@@ -211,11 +214,16 @@ fn build_mqtt_opts(
     let port = broker_url
         .port()
         .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
-    let mut tls_client_config = rumqttc::ClientConfig::new();
-    tls_client_config.root_store = rustls_native_certs::load_native_certs()
-        .map_err(|_| AstarteBuilderError::ConfigError("could not load platform certs".into()))?;
-    tls_client_config
-        .set_single_client_cert(certificate_pem.to_owned(), private_key.to_owned())
+
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
+        root_cert_store.add(&rustls::Certificate(cert.0))?;
+    }
+
+    let mut tls_client_config = rumqttc::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_root_certificates(root_cert_store)
+        .with_single_cert(certificate_pem.to_owned(), private_key.to_owned())
         .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
@@ -230,15 +238,17 @@ fn build_mqtt_opts(
 
     if options.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
         struct OkVerifier {}
-        impl rustls::ServerCertVerifier for OkVerifier {
+        impl rustls::client::ServerCertVerifier for OkVerifier {
             fn verify_server_cert(
                 &self,
-                _: &rustls::RootCertStore,
+                _: &Certificate,
                 _: &[Certificate],
-                _: webpki::DNSNameRef,
+                _: &rustls::ServerName,
+                _: &mut dyn Iterator<Item = &[u8]>,
                 _: &[u8],
-            ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-                Ok(rustls::ServerCertVerified::assertion())
+                _: std::time::SystemTime,
+            ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::ServerCertVerified::assertion())
             }
         }
 

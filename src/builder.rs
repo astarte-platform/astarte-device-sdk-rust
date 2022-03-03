@@ -79,20 +79,23 @@ pub enum AstarteBuilderError {
     #[error("error creating interface")]
     InterfaceError(#[from] interface::Error),
 
-    #[error("io error")]
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
 
     #[error("configuration error")]
     ConfigError(String),
 
-    #[error("mqtt error")]
+    #[error(transparent)]
     MqttError(#[from] rumqttc::ClientError),
 
     #[error("pairing error")]
     PairingError(#[from] PairingError),
 
-    #[error("database error")]
+    #[error(transparent)]
     DbError(#[from] sqlx::Error),
+
+    #[error(transparent)]
+    PkiError(#[from] webpki::Error),
 }
 
 impl AstarteOptions {
