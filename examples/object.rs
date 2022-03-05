@@ -60,8 +60,6 @@ async fn main() -> Result<(), AstarteError> {
 
     tokio::task::spawn(async move {
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(5000));
-
             #[derive(Serialize)]
             #[serde(rename_all = "camelCase")]
             struct Geolocation {
@@ -85,13 +83,17 @@ async fn main() -> Result<(), AstarteError> {
                 speed: 7.34,
             };
 
+            println!("Sending");
+
             w.send_object(
                 "org.astarte-platform.genericsensors.Geolocation",
-                "/1/",
+                "/1",
                 data,
             )
             .await
             .unwrap();
+
+            tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
         }
     });
 

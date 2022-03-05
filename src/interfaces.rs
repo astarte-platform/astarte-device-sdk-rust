@@ -91,7 +91,7 @@ impl Interfaces {
 
     pub fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
         fn validate_float(d: &f64) -> Result<(), AstarteError> {
-            let error = Err(AstarteError::SendError(
+            let error = Err(AstarteError::ValidationError(
                 "You are sending the wrong type for this mapping".into(),
             ));
 
@@ -127,16 +127,16 @@ impl Interfaces {
         let interface = self
             .interfaces
             .get(interface_name)
-            .ok_or_else(|| AstarteError::SendError("Interface does not exists".into()))?;
+            .ok_or_else(|| AstarteError::ValidationError("Interface does not exists".into()))?;
 
         match data_deserialized {
             crate::Aggregation::Individual(individual) => {
                 let mapping = self
                     .get_mapping(interface_name, interface_path)
-                    .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                    .ok_or_else(|| AstarteError::ValidationError("Mapping doesn't exist".into()))?;
 
                 if individual != mapping.mapping_type() {
-                    return Err(AstarteError::SendError(format!(
+                    return Err(AstarteError::ValidationError(format!(
                         "You are sending the wrong type for this mapping: got {:?}, expected {:?}",
                         individual,
                         mapping.mapping_type()
@@ -148,7 +148,7 @@ impl Interfaces {
                 match mapping {
                     crate::interface::Mapping::Datastream(map) => {
                         if !map.explicit_timestamp && timestamp.is_some() {
-                            return Err(AstarteError::SendError(
+                            return Err(AstarteError::ValidationError(
                                 "Do not send timestamp to a mapping without explicit timestamp"
                                     .into(),
                             ));
@@ -156,7 +156,7 @@ impl Interfaces {
                     }
                     crate::interface::Mapping::Properties(map) => {
                         if data.is_empty() && !map.allow_unset {
-                            return Err(AstarteError::SendError(
+                            return Err(AstarteError::ValidationError(
                                 "Do not unset a mapping without allow_unset".into(),
                             ));
                         }
@@ -168,11 +168,16 @@ impl Interfaces {
                     Interfaces::validate_float(obj.1)?;
 
                     let mapping = self
-                        .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
-                        .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                        .get_mapping(
+                            interface_name,
+                            &format!("{}/{}", interface_path.trim_end_matches('/'), obj.0),
+                        )
+                        .ok_or_else(|| {
+                            AstarteError::ValidationError("Mapping doesn't exist".into())
+                        })?;
 
                     if *obj.1 != mapping.mapping_type() {
-                        return Err(AstarteError::SendError(
+                        return Err(AstarteError::ValidationError(
                             format!("You are sending the wrong type for this object mapping: got {:?}, expected {:?}", *obj.1, mapping.mapping_type()),
                         ));
                     }
@@ -180,14 +185,14 @@ impl Interfaces {
                     match mapping {
                         crate::interface::Mapping::Datastream(map) => {
                             if !map.explicit_timestamp && timestamp.is_some() {
-                                return Err(AstarteError::SendError(
+                                return Err(AstarteError::ValidationError(
                                     "Do not send timestamp to a mapping without explicit timestamp"
                                         .into(),
                                 ));
                             }
                         }
                         crate::interface::Mapping::Properties(_) => {
-                            return Err(AstarteError::SendError(
+                            return Err(AstarteError::ValidationError(
                                 "Can't send object to properties".into(),
                             ));
                         }
@@ -195,7 +200,7 @@ impl Interfaces {
                 }
 
                 if object.len() < interface.mappings_len() {
-                    return Err(AstarteError::SendError(
+                    return Err(AstarteError::ValidationError(
                         "You are missing some mappings from the object".into(),
                     ));
                 }

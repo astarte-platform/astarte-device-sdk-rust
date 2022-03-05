@@ -65,7 +65,7 @@ async fn main() -> Result<(), AstarteError> {
             .await
             .unwrap();
 
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
             w.send(
                 "org.astarte-platform.genericsensors.AvailableSensors",
@@ -75,7 +75,7 @@ async fn main() -> Result<(), AstarteError> {
             .await
             .unwrap();
 
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         }
     });
 

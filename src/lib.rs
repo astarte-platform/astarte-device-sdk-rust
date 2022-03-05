@@ -80,8 +80,8 @@ pub enum AstarteError {
     #[error("forbidden floating point number")]
     FloatError,
 
-    #[error("send error")]
-    SendError(String),
+    #[error("send validation error")]
+    ValidationError(String),
 
     #[error("receive error")]
     ReceiveError(String),
@@ -603,7 +603,7 @@ impl AstarteSdk {
             let mapping = self
                 .interfaces
                 .get_mapping(interface_name, interface_path)
-                .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                .ok_or_else(|| AstarteError::ValidationError("Mapping doesn't exist".into()))?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
@@ -638,7 +638,7 @@ impl AstarteSdk {
             let mapping = self
                 .interfaces
                 .get_mapping(interface_name, interface_path)
-                .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                .ok_or_else(|| AstarteError::ValidationError("Mapping doesn't exist".into()))?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property

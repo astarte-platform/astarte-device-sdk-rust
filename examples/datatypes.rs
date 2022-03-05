@@ -107,10 +107,10 @@ async fn main() -> Result<(), AstarteError> {
                     .await
                     .unwrap();
 
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(5000));
+            tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
         }
     });
 

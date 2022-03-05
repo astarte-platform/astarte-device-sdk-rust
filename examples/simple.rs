@@ -68,7 +68,7 @@ async fn main() -> Result<(), AstarteError> {
 
             i += 11;
 
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         }
     });
 
