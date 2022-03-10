@@ -166,10 +166,16 @@ impl Interfaces {
             crate::Aggregation::Object(object) => {
                 for obj in &object {
                     Interfaces::validate_float(obj.1)?;
+                    let mapping_path = format!("{}/{}", interface_path, obj.0);
 
-                    let mapping = self
-                        .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
-                        .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                    let mapping =
+                        self.get_mapping(interface_name, &mapping_path)
+                            .ok_or_else(|| {
+                                AstarteError::SendError(format!(
+                                    "Mapping '{}' doesn't exist",
+                                    mapping_path
+                                ))
+                            })?;
 
                     if *obj.1 != mapping.mapping_type() {
                         return Err(AstarteError::SendError(
@@ -255,11 +261,15 @@ impl Interfaces {
                 for obj in &object {
                     Interfaces::validate_float(obj.1)?;
 
-                    let mapping = self
-                        .get_mapping(interface_name, &format!("{}{}", interface_path, obj.0))
-                        .ok_or_else(|| {
-                            AstarteError::ReceiveError("Mapping doesn't exist".into())
-                        })?;
+                    let mapping_path = format!("{}/{}", interface_path, obj.0);
+                    let mapping =
+                        self.get_mapping(interface_name, &mapping_path)
+                            .ok_or_else(|| {
+                                AstarteError::ReceiveError(format!(
+                                    "Mapping '{}' doesn't exist",
+                                    mapping_path
+                                ))
+                            })?;
 
                     if *obj.1 != mapping.mapping_type() {
                         return Err(AstarteError::ReceiveError(
@@ -359,7 +369,7 @@ mod test {
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/",
+            "/1",
             &buf,
             &None,
         )
@@ -367,7 +377,7 @@ mod test {
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/2/3/",
+            "/1/2/3",
             &buf,
             &None,
         )
@@ -382,7 +392,7 @@ mod test {
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/",
+            "/1",
             &buf,
             &None,
         )
@@ -394,7 +404,7 @@ mod test {
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/",
+            "/1",
             &buf,
             &None,
         )
@@ -406,7 +416,7 @@ mod test {
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/",
+            "/1",
             &buf,
             &None,
         )
@@ -418,7 +428,7 @@ mod test {
         let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/1/",
+            "/1",
             &buf,
             &None,
         )
