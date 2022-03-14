@@ -260,6 +260,51 @@ impl AstarteType {
         let vec = d.iter().map(|f| f.clone().try_into());
         vec.collect()
     }
+
+    /// If the `AstarteType` is a Boolean, returns the associated bool. Returns None
+    /// otherwise.
+    pub fn as_bool(&self) -> Option<bool> {
+        match *self {
+            AstarteType::Boolean(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// If the `AstarteType` is a Double, returns the associated f64. Returns None
+    /// otherwise.
+    pub fn as_f64(&self) -> Option<f64> {
+        match *self {
+            AstarteType::Double(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// If the `AstarteType` is an LongInteger, returns the associated i64. Returns None
+    /// otherwise.
+    pub fn as_i64(&self) -> Option<i64> {
+        match *self {
+            AstarteType::LongInteger(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// If the `AstarteType` is an Integer, returns the associated i32. Returns None
+    /// otherwise.
+    pub fn as_i32(&self) -> Option<i32> {
+        match *self {
+            AstarteType::Integer(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// If the `AstarteType` is a String, returns the associated str. Returns None
+    /// otherwise.
+    pub fn as_str(&self) -> Option<&str> {
+        match *self {
+            AstarteType::String(ref s) => Some(s),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
