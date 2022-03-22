@@ -1,5 +1,5 @@
 {
-    "interface_name": "com.test.Everything",
+    "interface_name": "org.astarte-platform.test.Everything",
     "version_major": 0,
     "version_minor": 1,
     "type": "datastream",

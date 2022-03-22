@@ -306,13 +306,28 @@ mod test {
 
         let buf = AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
 
-        ifa.validate_send("com.test.Everything", "/boolean", &buf, &None)
-            .unwrap();
-        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
-            .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &None)
-            .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/fake", &buf, &None)
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/boolean",
+            &buf,
+            &None,
+        )
+        .unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/double",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/booleanarray",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
+        ifa.validate_send("org.astarte-platform.test.Everything", "/fake", &buf, &None)
             .unwrap_err();
         ifa.validate_send("com.fake.fake", "/fake", &buf, &None)
             .unwrap_err();
@@ -321,14 +336,34 @@ mod test {
 
         let timestamp = Some(chrono::TimeZone::timestamp(&chrono::Utc, 1537449422, 0));
 
-        ifa.validate_send("com.test.Everything", "/boolean", &buf, &timestamp)
-            .unwrap();
-        ifa.validate_send("com.test.Everything", "/double", &buf, &timestamp)
-            .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/booleanarray", &buf, &timestamp)
-            .unwrap_err();
-        ifa.validate_send("com.test.Everything", "/fake", &buf, &timestamp)
-            .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/boolean",
+            &buf,
+            &timestamp,
+        )
+        .unwrap();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/double",
+            &buf,
+            &timestamp,
+        )
+        .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/booleanarray",
+            &buf,
+            &timestamp,
+        )
+        .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/fake",
+            &buf,
+            &timestamp,
+        )
+        .unwrap_err();
         ifa.validate_send("com.fake.fake", "/fake", &buf, &timestamp)
             .unwrap_err();
         ifa.validate_send("com.fake.fake", "/boolean", &buf, &timestamp)
@@ -336,8 +371,13 @@ mod test {
 
         let buf = AstarteSdk::serialize_individual(AstarteType::Double(f64::NAN), None).unwrap(); // NaN
 
-        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
-            .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/double",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
 
         let buf = AstarteSdk::serialize_individual(
             AstarteType::DoubleArray(vec![1.0, 2.0, f64::NAN, 4.0]),
@@ -345,8 +385,13 @@ mod test {
         )
         .unwrap(); // NaN
 
-        ifa.validate_send("com.test.Everything", "/double", &buf, &None)
-            .unwrap_err();
+        ifa.validate_send(
+            "org.astarte-platform.test.Everything",
+            "/double",
+            &buf,
+            &None,
+        )
+        .unwrap_err();
     }
 
     #[test]

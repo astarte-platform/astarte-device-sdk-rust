@@ -243,14 +243,20 @@ impl std::convert::TryFrom<Bson> for AstarteType {
                 }
                 Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
                 Bson::Binary(_) => from_bson_array!(arr, BinaryBlobArray, Binary, Vec<u8>),
-                _ => Err(AstarteError::FromBsonError),
+                _ => Err(AstarteError::FromBsonError(format!(
+                    "Can't convert array {:?} to astarte",
+                    arr
+                ))),
             },
             Bson::Boolean(d) => Ok(AstarteType::Boolean(d)),
             Bson::Int32(d) => Ok(AstarteType::Integer(d)),
             Bson::Int64(d) => Ok(AstarteType::LongInteger(d)),
             Bson::Binary(d) => Ok(AstarteType::BinaryBlob(d.bytes)),
             Bson::DateTime(d) => Ok(AstarteType::DateTime(d.into())),
-            _ => Err(AstarteError::FromBsonError),
+            _ => Err(AstarteError::FromBsonError(format!(
+                "Can't convert {:?} to astarte",
+                d
+            ))),
         }
     }
 }
