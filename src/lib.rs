@@ -99,14 +99,14 @@ pub enum AstarteError {
     Unreported,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Aggregation {
     Individual(AstarteType),
     Object(HashMap<String, AstarteType>),
 }
 
 /// data from astarte to device
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Clientbound {
     pub interface: String,
     pub path: String,
