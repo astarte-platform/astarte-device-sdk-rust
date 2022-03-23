@@ -172,7 +172,7 @@ async fn main() {
 
         w.send_object(
             "org.astarte-platform.genericsensors.Geolocation",
-            "/45/",
+            "/45",
             data.clone(),
         )
         .await
@@ -240,7 +240,9 @@ fn check_json(data: &HashMap<String, AstarteType>, json: String) {
 
     for i in data {
         let atype = &i.1;
-        let jtype = &json[&i.0.to_string()];
+        let jtype = &json
+            .get(i.0)
+            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
 
         println!("{:?} {:?}", atype, jtype);
         assert!(compare_json_with_astartetype(atype, jtype));
@@ -324,13 +326,11 @@ fn check_json_obj(data: &HashMap<String, f64>, json: String) {
 
         if let Value::Object(data) = v {
             if let Value::Object(data) = &data["data"] {
-                if let Value::Object(data) = &data["45"] {
-                    if let Value::Array(arr) = &data[""] {
-                        if let Value::Object(data) = &arr.first().unwrap() {
-                            for dat in data {
-                                if let Value::Number(dat2) = dat.1 {
-                                    ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
-                                }
+                if let Value::Array(data) = &data["45"] {
+                    if let Value::Object(data) = &data[0] {
+                        for dat in data {
+                            if let Value::Number(dat2) = dat.1 {
+                                ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
                             }
                         }
                     }
@@ -344,7 +344,9 @@ fn check_json_obj(data: &HashMap<String, f64>, json: String) {
     let json = parse_response_json(&json);
 
     for i in data {
-        let jtype = &json[&i.0.to_string()];
+        let jtype = json
+            .get(i.0)
+            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
 
         println!("{:?} {:?}", i.1, jtype);
         assert!(compare_json_with_astartetype(
@@ -467,7 +469,7 @@ mod tests {
 
         check_json(&data, json.to_string());
 
-        let json = "{\"data\":{\"45\":{\"\":[{\"accuracy\":4.34,\"altitude\":3.34,\"altitudeAccuracy\":5.34,\"heading\":6.34,\"latitude\":1.34,\"longitude\":2.34,\"speed\":7.34,\"timestamp\":\"2022-02-21T18:16:25.027Z\"}]}}}";
+        let json = "{\"data\":{\"45\":[{\"accuracy\":4.34,\"altitude\":3.34,\"altitudeAccuracy\":5.34,\"heading\":6.34,\"latitude\":1.34,\"longitude\":2.34,\"speed\":7.34,\"timestamp\":\"2022-03-23T14:43:21.909Z\"}]}}";
 
         let data = crate::get_data_obj();
         crate::check_json_obj(&data, json.to_string());
