@@ -42,7 +42,7 @@ jobs:
         run: |
           DEVICE_ID=$(astartectl utils device-id generate-random)
           echo "E2E_DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
-          CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output "$DEVICE_ID")
+          CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output -- "$DEVICE_ID")
           echo "E2E_CREDENTIALS_SECRET=$CREDENTIALS_SECRET" >> $GITHUB_ENV
           echo "RUST_LOG=debug" >> $GITHUB_ENV
           TOKEN=$(astartectl utils gen-jwt appengine)
