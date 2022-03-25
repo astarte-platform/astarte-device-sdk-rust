@@ -55,7 +55,7 @@ jobs:
       matrix:
         toolchain:
         - stable
-        - nightly
+        - beta
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -78,7 +78,7 @@ jobs:
       matrix:
         toolchain:
         - stable
-        - nightly
+        - beta
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
