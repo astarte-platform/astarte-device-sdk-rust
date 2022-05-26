@@ -348,26 +348,34 @@ mod tests {
                     \"explicit_timestamp\": true,
                     \"description\": \"Mapping description\",
                     \"doc\": \"Mapping doc\"
+                },
+                {
+                    \"endpoint\": \"/%{sensor_id}/otherValue\",
+                    \"type\": \"longinteger\",
+                    \"explicit_timestamp\": true,
+                    \"description\": \"Mapping description\",
+                    \"doc\": \"Mapping doc\"
                 }
             ]
         }";
 
-        let endpoint = "/%{sensor_id}/value".to_owned();
-        let mapping_type = MappingType::Double;
-        let explicit_timestamp = true;
-        let description = Some("Mapping description".to_owned());
-        let doc = Some("Mapping doc".to_owned());
-
-        let base_mapping = BaseMapping {
-            endpoint,
-            mapping_type,
-            description,
-            doc,
+        let value_base_mapping = BaseMapping {
+            endpoint: "/%{sensor_id}/value".to_owned(),
+            mapping_type: MappingType::Double,
+            description: Some("Mapping description".to_owned()),
+            doc: Some("Mapping doc".to_owned()),
         };
 
-        let mapping = DatastreamMapping {
-            base: base_mapping,
-            explicit_timestamp,
+        let other_value_base_mapping = BaseMapping {
+            endpoint: "/%{sensor_id}/otherValue".to_owned(),
+            mapping_type: MappingType::LongInteger,
+            description: Some("Mapping description".to_owned()),
+            doc: Some("Mapping doc".to_owned()),
+        };
+
+        let value_mapping = DatastreamMapping {
+            base: value_base_mapping,
+            explicit_timestamp: true,
             database_retention_policy: DatabaseRetentionPolicy::NoTtl,
             database_retention_ttl: None,
             expiry: None,
@@ -375,15 +383,30 @@ mod tests {
             reliability: Reliability::Unreliable,
         };
 
-        assert!(mapping.is_compatible("/foo/value"));
-        assert!(mapping.is_compatible("/bar/value"));
-        assert!(!mapping.is_compatible("/value"));
-        assert!(!mapping.is_compatible("/foo/bar/value"));
-        assert!(!mapping.is_compatible("/foo/value/bar"));
-        assert_eq!(mapping.endpoint(), "/%{sensor_id}/value");
-        assert_eq!(mapping.mapping_type(), MappingType::Double);
-        assert_eq!(mapping.description(), Some("Mapping description"));
-        assert_eq!(mapping.doc(), Some("Mapping doc"));
+        let other_value_mapping = DatastreamMapping {
+            base: other_value_base_mapping,
+            explicit_timestamp: true,
+            database_retention_policy: DatabaseRetentionPolicy::NoTtl,
+            database_retention_ttl: None,
+            expiry: None,
+            retention: Retention::Discard,
+            reliability: Reliability::Unreliable,
+        };
+
+        assert!(value_mapping.is_compatible("/foo/value"));
+        assert!(value_mapping.is_compatible("/bar/value"));
+        assert!(!value_mapping.is_compatible("/value"));
+        assert!(!value_mapping.is_compatible("/foo/bar/value"));
+        assert!(!value_mapping.is_compatible("/foo/value/bar"));
+        assert!(other_value_mapping.is_compatible("/foo/otherValue"));
+        assert!(other_value_mapping.is_compatible("/bar/otherValue"));
+        assert!(!other_value_mapping.is_compatible("/otherValue"));
+        assert!(!other_value_mapping.is_compatible("/foo/bar/otherValue"));
+        assert!(!other_value_mapping.is_compatible("/foo/value/otherValue"));
+        assert_eq!(value_mapping.endpoint(), "/%{sensor_id}/value");
+        assert_eq!(value_mapping.mapping_type(), MappingType::Double);
+        assert_eq!(value_mapping.description(), Some("Mapping description"));
+        assert_eq!(value_mapping.doc(), Some("Mapping doc"));
 
         let interface_name = "org.astarte-platform.genericsensors.Values".to_owned();
         let version_major = 1;
@@ -404,7 +427,7 @@ mod tests {
         let datastream_interface = DatastreamInterface {
             base: base_interface,
             aggregation: Aggregation::Individual,
-            mappings: vec![mapping],
+            mappings: vec![value_mapping, other_value_mapping],
         };
 
         let interface = Interface::Datastream(datastream_interface);

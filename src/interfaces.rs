@@ -517,6 +517,13 @@ mod test {
             &boolean_buf,
         )
         .unwrap();
+
+        ifa.validate_receive(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/nope/samplingPeriod",
+            &integer_buf,
+        )
+        .unwrap();
     }
 
     #[test]
