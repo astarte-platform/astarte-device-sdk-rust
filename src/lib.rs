@@ -125,8 +125,6 @@ fn parse_topic(topic: &str) -> Option<(String, String, String, String)> {
 
 impl AstarteSdk {
     pub async fn new(opts: &AstarteOptions) -> Result<AstarteSdk, AstarteError> {
-        let cn = format!("{}/{}", opts.realm, opts.device_id);
-
         let mqtt_options = pairing::get_transport_config(opts).await?;
 
         debug!("{:#?}", mqtt_options);
@@ -144,14 +142,12 @@ impl AstarteSdk {
             database: opts.database.clone(),
         };
 
-        device.subscribe(&cn).await?;
-
         device.poll_connack().await?;
 
         Ok(device)
     }
 
-    async fn subscribe(&self, cn: &str) -> Result<(), AstarteError> {
+    async fn subscribe(&self) -> Result<(), AstarteError> {
         let ifaces = self
             .interfaces
             .interfaces
@@ -161,7 +157,7 @@ impl AstarteSdk {
 
         self.client
             .subscribe(
-                cn.to_owned() + "/control/consumer/properties",
+                self.client_id() + "/control/consumer/properties",
                 rumqttc::QoS::ExactlyOnce,
             )
             .await?;
@@ -169,7 +165,7 @@ impl AstarteSdk {
         for i in ifaces {
             self.client
                 .subscribe(
-                    cn.to_owned() + "/" + interface::traits::Interface::name(&i.1) + "/#",
+                    self.client_id() + "/" + interface::traits::Interface::name(&i.1) + "/#",
                     rumqttc::QoS::ExactlyOnce,
                 )
                 .await?;
@@ -200,6 +196,7 @@ impl AstarteSdk {
 
     async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), AstarteError> {
         if !p.session_present {
+            self.subscribe().await?;
             self.send_introspection().await?;
             self.send_emptycache().await?;
             self.send_device_owned_properties().await?;
