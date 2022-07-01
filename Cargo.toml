@@ -20,9 +20,10 @@ itertools = "0.10"
 http = "0.2"
 openssl = { version = "0.10", features = ["vendored"] }
 reqwest = { version = "0.11", features = ["json"] }
-rumqttc = "0.10"
-rustls = "0.19"
-rustls-native-certs = "0.5"
+rumqttc = "0.11"
+rustls = { version="0.20.2", features = ["dangerous_configuration"]}
+rustls-native-certs = "0.6.1"
+rustls-pemfile = "0.3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
@@ -35,7 +36,7 @@ sqlx = {version="0.5.1", features = ["sqlite", "macros", "runtime-actix-rustls"]
 async-trait = "0.1.51"
 uuid = {version="0.8.2", features = ["v5", "v4"] }
 base64 = "0.13.0"
-webpki = "0.21.4"
+webpki = "0.22.0"
 flate2 = "1.0"
 
 [dev-dependencies]
