@@ -22,6 +22,7 @@ use std::convert::TryInto;
 
 use bson::{Binary, Bson};
 
+use crate::interface::MappingType;
 use crate::AstarteError;
 
 /// Types supported by astarte
@@ -48,8 +49,8 @@ pub enum AstarteType {
     Unset,
 }
 
-impl PartialEq<crate::interface::MappingType> for AstarteType {
-    fn eq(&self, other: &crate::interface::MappingType) -> bool {
+impl PartialEq<MappingType> for AstarteType {
+    fn eq(&self, other: &MappingType) -> bool {
         macro_rules! check_astype_match {
             ( $self:ident, $other:ident, {$( $astartetype:tt ,)*}) => {
                 match $other {
@@ -62,6 +63,12 @@ impl PartialEq<crate::interface::MappingType> for AstarteType {
                     )*
                 }
             };
+        }
+
+        if other == &MappingType::LongInteger {
+            if let AstarteType::Integer(_) = self {
+                return true;
+            }
         }
 
         check_astype_match!(self, other, {

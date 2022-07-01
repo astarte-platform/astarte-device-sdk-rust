@@ -775,7 +775,8 @@ mod utils {
 mod test {
     use chrono::{TimeZone, Utc};
 
-    use crate::{types::AstarteType, AstarteSdk};
+    use crate::interface::MappingType;
+    use crate::{types::AstarteType, Aggregation, AstarteSdk};
 
     fn do_vecs_match(a: &[u8], b: &[u8]) -> bool {
         let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
@@ -835,5 +836,32 @@ mod test {
         let s = crate::utils::extract_set_properties(&bdata);
 
         assert!(s.join(";").as_bytes() == example);
+    }
+
+    #[test]
+    fn test_integer_longinteger_compatibility() {
+        let integer_buf =
+            AstarteSdk::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
+        if let Aggregation::Individual(astarte_type) = integer_buf {
+            assert_eq!(astarte_type, MappingType::LongInteger);
+        } else {
+            panic!("Deserialization in not individual");
+        }
+    }
+
+    #[test]
+    fn test_bson_serialization() {
+        let og_value: i64 = 3600;
+        let buf = AstarteSdk::serialize_individual(og_value, None).unwrap();
+        if let Aggregation::Individual(astarte_type) = AstarteSdk::deserialize(&buf).unwrap() {
+            assert_eq!(astarte_type, AstarteType::LongInteger(3600));
+            if let AstarteType::LongInteger(value) = astarte_type {
+                assert_eq!(value, 3600);
+            } else {
+                panic!("Astarte Type is not LongInteger");
+            }
+        } else {
+            panic!("Deserialization in not individual");
+        }
     }
 }
