@@ -112,10 +112,10 @@ impl AstarteOptions {
         }
     }
 
-    pub fn database<'a, T: AstarteDatabase + 'static + Sync + Send>(
-        &'a mut self,
+    pub fn database<T: AstarteDatabase + 'static + Sync + Send>(
+        &mut self,
         database: T,
-    ) -> &'a mut Self {
+    ) -> &mut Self {
         self.database = Some(Arc::new(database));
         self
     }
