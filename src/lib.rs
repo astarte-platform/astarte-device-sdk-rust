@@ -25,36 +25,54 @@ mod crypto;
 pub mod database;
 mod interface;
 mod interfaces;
+mod mqtt_client;
 mod pairing;
 pub mod registration;
 pub mod types;
 
-use bson::{to_document, Bson};
+use bson::Bson;
 use builder::AstarteOptions;
 use database::AstarteDatabase;
 use database::StoredProp;
 use itertools::Itertools;
 use log::{debug, error, info, trace};
-use rumqttc::{AsyncClient, Event};
-use rumqttc::{EventLoop, MqttOptions};
+use rumqttc::Event;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
+use tokio::sync::broadcast::Sender;
+use tokio::sync::mpsc::Receiver as MpscReceiver;
 use types::AstarteType;
 
+use crate::mqtt_client::*;
+use crate::private::ISubject as privISubject;
 pub use interface::Interface;
+
+pub trait IObserver {
+    fn update(&self, clientbound: &Clientbound);
+}
+
+pub trait ISubject<'a, T: IObserver> {
+    fn attach(&mut self, observer: &'a T);
+    fn detach(&mut self, observer: &'a T);
+}
+pub(crate) mod private {
+    use crate::{Clientbound, IObserver};
+
+    pub trait ISubject<'a, T: IObserver> {
+        fn notify_observers(&self, clientbound: &Clientbound);
+    }
+}
 
 /// Astarte client
 #[derive(Clone)]
-pub struct AstarteSdk {
+pub struct AstarteSdk<'a, T: IObserver> {
     realm: String,
     device_id: String,
-    mqtt_options: MqttOptions,
-    client: AsyncClient,
-    eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: interfaces::Interfaces,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
+    mqtt_outbound_channel: Sender<MqttOutboundType>,
+    observers: Vec<&'a T>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -123,26 +141,25 @@ fn parse_topic(topic: &str) -> Option<(String, String, String, String)> {
     Some((realm, device, interface, path))
 }
 
-impl AstarteSdk {
-    pub async fn new(opts: &AstarteOptions) -> Result<AstarteSdk, AstarteError> {
-        let mqtt_options = pairing::get_transport_config(opts).await?;
+impl<T: IObserver + Clone + PartialEq + std::marker::Sync> AstarteSdk<'static, T> {
+    pub async fn new(opts: &AstarteOptions) -> Result<AstarteSdk<'static, T>, AstarteError>
+    where
+        T: 'static,
+    {
+        let mqtt_client = MQTTClient::new(opts).await?;
 
-        debug!("{:#?}", mqtt_options);
-
-        // TODO: make cap configurable
-        let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
-
-        let mut device = AstarteSdk {
+        let device = AstarteSdk {
             realm: opts.realm.to_owned(),
             device_id: opts.device_id.to_owned(),
-            mqtt_options,
-            client,
-            eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: interfaces::Interfaces::new(opts.interfaces.clone()),
             database: opts.database.clone(),
+            mqtt_outbound_channel: mqtt_client.outbound_tx_channel,
+            observers: Vec::new(),
         };
 
-        device.poll_connack().await?;
+        let _ = device
+            .start_mqtt_event_handler(mqtt_client.inbound_rx_channel)
+            .await;
 
         Ok(device)
     }
@@ -155,43 +172,21 @@ impl AstarteSdk {
             .into_iter()
             .filter(|i| i.1.get_ownership() == interface::Ownership::Server);
 
-        self.client
-            .subscribe(
+        let _ = self
+            .mqtt_outbound_channel
+            .send(MqttOutboundType::Subscription(
                 self.client_id() + "/control/consumer/properties",
-                rumqttc::QoS::ExactlyOnce,
-            )
-            .await?;
+            ));
 
         for i in ifaces {
-            self.client
-                .subscribe(
+            let _ = self
+                .mqtt_outbound_channel
+                .send(MqttOutboundType::Subscription(
                     self.client_id() + "/" + interface::traits::Interface::name(&i.1) + "/#",
-                    rumqttc::QoS::ExactlyOnce,
-                )
-                .await?;
+                ));
         }
 
         Ok(())
-    }
-
-    async fn poll_connack(&mut self) -> Result<(), AstarteError> {
-        loop {
-            // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
-                Event::Incoming(i) => {
-                    trace!("MQTT Incoming = {i:?}");
-
-                    if let rumqttc::Packet::ConnAck(p) = i {
-                        return self.connack(p).await;
-                    } else {
-                        error!("BUG: not connack inside poll_connack {i:?}");
-                    }
-                }
-                Event::Outgoing(i) => {
-                    error!("BUG: not connack inside poll_connack {i:?}");
-                }
-            }
-        }
     }
 
     async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), AstarteError> {
@@ -200,108 +195,105 @@ impl AstarteSdk {
             self.send_introspection().await?;
             self.send_emptycache().await?;
             self.send_device_owned_properties().await?;
+            self.mqtt_outbound_channel.send(MqttOutboundType::Ready);
             info!("connack done");
         }
 
         Ok(())
     }
 
-    /// Poll updates from mqtt, this is where you receive data
-    /// ```no_run
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
-    ///                           .build();
-    ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
-    ///
-    ///     loop {
-    ///         if let Ok(data) = d.poll().await {
-    ///             println!("incoming: {:?}", data);
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    pub async fn poll(&mut self) -> Result<Clientbound, AstarteError> {
-        loop {
-            // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
-                Event::Incoming(i) => {
-                    trace!("MQTT Incoming = {:?}", i);
+    async fn start_mqtt_event_handler(&self, mut inbound_rx_channel: MpscReceiver<Event>) {
+        let self_clone = self.to_owned();
+        tokio::spawn(async move {
+            loop {
+                match inbound_rx_channel.recv().await.unwrap() {
+                    Event::Incoming(i) => {
+                        trace!("MQTT Incoming = {:?}", i);
 
-                    match i {
-                        rumqttc::Packet::ConnAck(p) => {
-                            self.connack(p).await?;
-                        }
-                        rumqttc::Packet::Publish(p) => {
-                            let topic = parse_topic(&p.topic);
+                        match i {
+                            rumqttc::Packet::ConnAck(p) => {
+                                let _ = self_clone.connack(p).await;
+                            }
+                            rumqttc::Packet::Publish(p) => {
+                                let topic = parse_topic(&p.topic);
 
-                            if let Some((_, _, interface, path)) = topic {
-                                let bdata = p.payload.to_vec();
+                                if let Some((_, _, interface, path)) = topic {
+                                    let bdata = p.payload.to_vec();
 
-                                if interface == "control" && path == "/consumer/properties" {
-                                    self.purge_properties(bdata).await?;
-                                    continue;
-                                }
+                                    if interface == "control" && path == "/consumer/properties" {
+                                        self_clone.purge_properties(bdata).await.unwrap();
+                                        continue;
+                                    }
 
-                                debug!("Incoming publish = {} {:?}", p.topic, bdata);
+                                    debug!("Incoming publish = {} {:?}", p.topic, bdata);
 
-                                if let Some(database) = &self.database {
-                                    //if database is loaded
+                                    if let Some(database) = &self_clone.database {
+                                        //if database is loaded
 
-                                    if let Some(major_version) =
-                                        self.interfaces.get_property_major(&interface, &path)
-                                    //if it's a property
-                                    {
-                                        database
-                                            .store_prop(&interface, &path, &bdata, major_version)
-                                            .await?;
-
-                                        if cfg!(debug_assertions) {
-                                            // database selftest / sanity check for debug builds
-                                            let original = crate::AstarteSdk::deserialize(&bdata)?;
-                                            if let Aggregation::Individual(data) = original {
-                                                let db = database
-                                                .load_prop(&interface, &path, major_version)
+                                        if let Some(major_version) = self_clone
+                                            .interfaces
+                                            .get_property_major(&interface, &path)
+                                        //if it's a property
+                                        {
+                                            database
+                                                .store_prop(
+                                                    &interface,
+                                                    &path,
+                                                    &bdata,
+                                                    major_version,
+                                                )
                                                 .await
-                                                .expect("load_prop failed")
-                                                .expect(
-                                                    "property wasn't correctly saved in the database",
-                                                );
-                                                assert!(data == db);
-                                                let prop = self
-                                                .get_property(&interface, &path)
-                                                .await?
-                                                .expect(
-                                                "property wasn't correctly saved in the database",
-                                            );
-                                                assert!(data == prop);
-                                                trace!("database test ok");
-                                            } else {
-                                                panic!("This should be impossible, can't have object properties");
+                                                .unwrap();
+
+                                            if cfg!(debug_assertions) {
+                                                // database self test / sanity check for debug builds
+                                                let original = utils::deserialize(&bdata).unwrap();
+                                                if let Aggregation::Individual(data) = original {
+                                                    let db = database
+                                                    .load_prop(&interface, &path, major_version)
+                                                    .await
+                                                    .expect("load_prop failed")
+                                                    .expect(
+                                                        "property wasn't correctly saved in the database",
+                                                    );
+                                                    assert!(data == db);
+                                                    let prop = self_clone
+                                                    .get_property(&interface, &path)
+                                                    .await.unwrap()
+                                                    .expect(
+                                                        "property wasn't correctly saved in the database",
+                                                    );
+                                                    assert!(data == prop);
+                                                    trace!("database test ok");
+                                                } else {
+                                                    panic!("This should be impossible, can't have object properties");
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                if cfg!(debug_assertions) {
-                                    self.interfaces
-                                        .validate_receive(&interface, &path, &bdata)?;
-                                }
+                                    if cfg!(debug_assertions) {
+                                        self_clone
+                                            .interfaces
+                                            .validate_receive(&interface, &path, &bdata)
+                                            .unwrap();
+                                    }
 
-                                let data = AstarteSdk::deserialize(&bdata)?;
-                                return Ok(Clientbound {
-                                    interface,
-                                    path,
-                                    data,
-                                });
+                                    let data = utils::deserialize(&bdata).unwrap();
+                                    self_clone.notify_observers(&Clientbound {
+                                        interface,
+                                        path,
+                                        data,
+                                    });
+                                }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
                 }
-                Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
             }
-        }
+        });
     }
 
     fn client_id(&self) -> String {
@@ -331,9 +323,11 @@ impl AstarteSdk {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
-        self.client
-            .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
-            .await?;
+        let _ = self
+            .mqtt_outbound_channel
+            .send(MqttOutboundType::EmptyCache(EmptyCacheMessage {
+                client_id: self.client_id(),
+            }));
 
         Ok(())
     }
@@ -343,14 +337,12 @@ impl AstarteSdk {
 
         debug!("sending introspection = {}", introspection);
 
-        self.client
-            .publish(
-                self.client_id(),
-                rumqttc::QoS::ExactlyOnce,
-                false,
-                introspection.clone(),
-            )
-            .await?;
+        let _ = self
+            .mqtt_outbound_channel
+            .send(MqttOutboundType::Introspection(IntrospectionMessage {
+                client_id: self.client_id(),
+                introspection,
+            }));
         Ok(())
     }
 
@@ -366,21 +358,20 @@ impl AstarteSdk {
                 })
                 .collect();
             for prop in device_owned_properties {
-                let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
-                if let Some(version_major) = self
+                if let Some(_) = self
                     .interfaces
                     .get_property_major(&prop.interface, &prop.path)
                 {
-                    // ..and only if they are up-to-date
-                    if version_major == prop.interface_major {
-                        debug!(
-                            "sending device-owned property = {}{}",
-                            prop.interface, prop.path
-                        );
-                        self.client
-                            .publish(topic, rumqttc::QoS::ExactlyOnce, false, prop.value)
-                            .await?;
-                    }
+                    let msg = AstarteOutboundMessage {
+                        client_id: self.client_id(),
+                        interface: prop.interface,
+                        path: prop.path,
+                        buf: prop.value,
+                        qos: rumqttc::QoS::ExactlyOnce,
+                    };
+                    let _ = self
+                        .mqtt_outbound_channel
+                        .send(MqttOutboundType::OutboundMessage(msg));
                 }
             }
         }
@@ -410,62 +401,6 @@ impl AstarteSdk {
         Ok(())
     }
 
-    /// Serialize data directly from Bson
-    fn serialize(
-        data: Bson,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError> {
-        if let Bson::Null = data {
-            return Ok(Vec::new());
-        }
-
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
-               "t": timestamp,
-               "v": data
-            }
-        } else {
-            bson::doc! {
-               "v": data,
-            }
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        trace!("serialized {:#?}", doc);
-        Ok(buf)
-    }
-
-    fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
-        if bdata.is_empty() {
-            return Ok(Aggregation::Individual(AstarteType::Unset));
-        }
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
-            trace!("{:?}", deserialized);
-            if let Some(v) = deserialized.get("v") {
-                if let Bson::Document(doc) = v {
-                    let strings = doc.iter().map(|f| f.0.clone());
-
-                    let data = doc.iter().map(|f| f.1.clone().try_into());
-                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
-                    let data = data?;
-
-                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
-
-                    Ok(Aggregation::Object(hmap))
-                } else if let Ok(v) = v.clone().try_into() {
-                    Ok(Aggregation::Individual(v))
-                } else {
-                    Err(AstarteError::DeserializationError)
-                }
-            } else {
-                Err(AstarteError::DeserializationError)
-            }
-        } else {
-            Err(AstarteError::DeserializationError)
-        }
-    }
-
     /// get property from database, if present
     pub async fn get_property(
         &self,
@@ -488,11 +423,23 @@ impl AstarteSdk {
 
     /// Send data to an astarte interface
     /// ```no_run
+    ///
+    /// use astarte_sdk::Clientbound;
+    /// use astarte_sdk::ISubject;
+    /// #[derive(Clone, PartialEq)]
+    /// struct EventHandler{}
+    /// impl astarte_sdk::IObserver for EventHandler{
+    ///     fn update(&self, clientbound: &Clientbound) {
+    ///         let data = clientbound.to_owned();
+    ///         println!("incoming: {:?}", data);
+    ///     }
+    /// }
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
     ///                           .build();
     ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
+    ///     d.attach(&EventHandler{});
     ///
     ///     d.send("com.test.interface", "/data", 45).await.unwrap();
     /// }
@@ -511,17 +458,32 @@ impl AstarteSdk {
             .await
     }
 
-    /// Send data to an astarte interface, with timestamp
+    /// Send data to an astarte interface
     /// ```no_run
+    ///
+    /// use astarte_sdk::Clientbound;
+    /// use astarte_sdk::ISubject;
+    /// use astarte_sdk::types::AstarteType;
+    /// use chrono::Utc;
+    /// use chrono::TimeZone;
+    ///
+    ///
+    /// #[derive(Clone, PartialEq)]
+    /// struct EventHandler{}
+    /// impl astarte_sdk::IObserver for EventHandler{
+    ///     fn update(&self, clientbound: &Clientbound) {
+    ///         let data = clientbound.to_owned();
+    ///         println!("incoming: {:?}", data);
+    ///     }
+    /// }
     /// #[tokio::main]
     /// async fn main() {
-    ///     use chrono::Utc;
-    ///     use chrono::TimeZone;
     ///     let mut sdk_options = astarte_sdk::builder::AstarteOptions::new("_","_","_","_")
     ///                           .build();
     ///     let mut d = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
+    ///     d.attach(&EventHandler{});
     ///
-    ///     d.send_with_timestamp("com.test.interface", "/data", 45, Utc.timestamp(1537449422, 0) ).await.unwrap();
+    ///     d.send_with_timestamp("com.test.interface", "/data", AstarteType::Integer(45), Utc.timestamp(1537449422, 0) ).await.unwrap();
     /// }
     /// ```
     pub async fn send_with_timestamp<D>(
@@ -552,7 +514,7 @@ impl AstarteSdk {
 
         let data: AstarteType = data.into();
 
-        let buf = AstarteSdk::serialize_individual(data.clone(), timestamp)?;
+        let buf = utils::serialize_individual(data.clone(), timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces
@@ -567,15 +529,18 @@ impl AstarteSdk {
             return Ok(());
         }
 
-        self.client
-            .publish(
-                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                self.interfaces
-                    .get_mqtt_reliability(interface_name, interface_path),
-                false,
-                buf,
-            )
-            .await?;
+        let msg = AstarteOutboundMessage {
+            client_id: self.client_id(),
+            interface: interface_name.to_owned(),
+            path: interface_path.to_owned(),
+            buf: utils::serialize_individual(data.clone(), timestamp)?,
+            qos: self
+                .interfaces
+                .get_mqtt_reliability(interface_name, interface_path),
+        };
+        let _ = self
+            .mqtt_outbound_channel
+            .send(MqttOutboundType::OutboundMessage(msg));
 
         // we store the property in the database after it has been successfully sent
         self.store_property_on_send(interface_name, interface_path, data)
@@ -643,7 +608,7 @@ impl AstarteSdk {
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
-                let bin = AstarteSdk::serialize_individual(data, None)?;
+                let bin = utils::serialize_individual(data, None)?;
                 db.store_prop(interface_name, interface_path, &bin, 0)
                     .await?;
                 debug!("Stored new property in database");
@@ -653,15 +618,195 @@ impl AstarteSdk {
         Ok(false)
     }
 
+    async fn send_object_with_timestamp_impl<S>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: S,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), AstarteError>
+    where
+        S: serde::Serialize,
+    {
+        let buf = utils::serialize_object(data, timestamp)?;
+
+        if cfg!(debug_assertions) {
+            self.interfaces
+                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+        }
+
+        let msg = AstarteOutboundMessage {
+            client_id: self.client_id(),
+            interface: interface_name.to_owned(),
+            path: interface_path.to_owned(),
+            buf,
+            qos: self
+                .interfaces
+                .get_mqtt_reliability(interface_name, interface_path),
+        };
+        let _ = self
+            .mqtt_outbound_channel
+            .send(MqttOutboundType::OutboundMessage(msg));
+
+        Ok(())
+    }
+
+    /// Send data to an object interface. with timestamp
+    pub async fn send_object_with_timestamp<S>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: S,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AstarteError>
+    where
+        S: serde::Serialize,
+    {
+        self.send_object_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
+            .await
+    }
+
+    /// Send data to an object interface. with timestamp
+    pub async fn send_object<S>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: S,
+    ) -> Result<(), AstarteError>
+    where
+        S: serde::Serialize,
+    {
+        self.send_object_with_timestamp_impl(interface_name, interface_path, data, None)
+            .await
+    }
+}
+
+impl<'a, T: IObserver + PartialEq> ISubject<'a, T> for AstarteSdk<'a, T> {
+    fn attach(&mut self, observer: &'a T) {
+        self.observers.push(observer);
+    }
+    fn detach(&mut self, observer: &'a T) {
+        if let Some(idx) = self.observers.iter().position(|x| *x == observer) {
+            self.observers.remove(idx);
+        }
+    }
+}
+impl<'a, T: IObserver + PartialEq> privISubject<'a, T> for AstarteSdk<'a, T> {
+    fn notify_observers(&self, clientbound: &Clientbound) {
+        for item in self.observers.iter() {
+            item.update(clientbound);
+        }
+    }
+}
+
+impl<'a, T: IObserver + PartialEq> fmt::Debug for AstarteSdk<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Device")
+            .field("realm", &self.realm)
+            .field("device_id", &self.device_id)
+            //.field("credentials_secret", &self.credentials_secret)
+            //.field("pairing_url", &self.pairing_url)
+            // .field("mqtt_options", &self.mqtt_options)
+            .finish()
+    }
+}
+
+mod utils {
+    use crate::{Aggregation, AstarteError, AstarteType};
+    use bson::{to_document, Bson};
+    use log::trace;
+    use std::collections::HashMap;
+    use std::convert::TryInto;
+
+    pub(crate) fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
+        use flate2::read::ZlibDecoder;
+        use std::io::prelude::*;
+
+        let mut d = ZlibDecoder::new(&bdata[4..]);
+        let mut s = String::new();
+        d.read_to_string(&mut s).unwrap();
+
+        s.split(';').map(|x| x.to_owned()).collect()
+    }
+
+    /// Serialize data directly from Bson
+    pub(crate) fn serialize(
+        data: Bson,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError> {
+        if let Bson::Null = data {
+            return Ok(Vec::new());
+        }
+
+        let doc = if let Some(timestamp) = timestamp {
+            bson::doc! {
+               "t": timestamp,
+               "v": data
+            }
+        } else {
+            bson::doc! {
+               "v": data,
+            }
+        };
+
+        let mut buf = Vec::new();
+        doc.to_writer(&mut buf)?;
+        trace!("serialized {:#?}", doc);
+        Ok(buf)
+    }
+
+    pub(crate) fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
+        if bdata.is_empty() {
+            return Ok(Aggregation::Individual(AstarteType::Unset));
+        }
+        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
+            trace!("{:?}", deserialized);
+            if let Some(v) = deserialized.get("v") {
+                if let Bson::Document(doc) = v {
+                    let strings = doc.iter().map(|f| f.0.clone());
+
+                    let data = doc.iter().map(|f| f.1.clone().try_into());
+                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
+                    let data = data?;
+
+                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+
+                    Ok(Aggregation::Object(hmap))
+                } else if let Ok(v) = v.clone().try_into() {
+                    Ok(Aggregation::Individual(v))
+                } else {
+                    Err(AstarteError::DeserializationError)
+                }
+            } else {
+                Err(AstarteError::DeserializationError)
+            }
+        } else {
+            Err(AstarteError::DeserializationError)
+        }
+    }
+
+    /// Serialize a group of astarte types to a vec of bytes, representing an object
+    pub(crate) fn serialize_object<S>(
+        data: S,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<u8>, AstarteError>
+    where
+        S: serde::Serialize,
+    {
+        let doc = to_document(&data)?;
+
+        serialize(Bson::Document(doc), timestamp)
+    }
+
     /// Serialize an astarte type into a vec of bytes
-    fn serialize_individual<D>(
+    pub(crate) fn serialize_individual<D>(
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError>
     where
         D: Into<AstarteType>,
     {
-        AstarteSdk::serialize(data.into().into(), timestamp)
+        serialize(data.into().into(), timestamp)
     }
 
     // ------------------------------------------------------------------------
@@ -672,103 +817,6 @@ impl AstarteSdk {
     pub fn to_bson_map(data: HashMap<&str, AstarteType>) -> HashMap<&str, Bson> {
         data.into_iter().map(|f| (f.0, f.1.into())).collect()
     }
-
-    /// Serialize a group of astarte types to a vec of bytes, representing an object
-    fn serialize_object<T>(
-        data: T,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
-    where
-        T: serde::Serialize,
-    {
-        let doc = to_document(&data)?;
-
-        AstarteSdk::serialize(Bson::Document(doc), timestamp)
-    }
-
-    async fn send_object_with_timestamp_impl<T>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: T,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError>
-    where
-        T: serde::Serialize,
-    {
-        let buf = AstarteSdk::serialize_object(data, timestamp)?;
-
-        if cfg!(debug_assertions) {
-            self.interfaces
-                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
-        }
-
-        self.client
-            .publish(
-                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
-                self.interfaces
-                    .get_mqtt_reliability(interface_name, interface_path),
-                false,
-                buf,
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    /// Send data to an object interface. with timestamp
-    pub async fn send_object_with_timestamp<T>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: T,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AstarteError>
-    where
-        T: serde::Serialize,
-    {
-        self.send_object_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
-            .await
-    }
-
-    /// Send data to an object interface. with timestamp
-    pub async fn send_object<T>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: T,
-    ) -> Result<(), AstarteError>
-    where
-        T: serde::Serialize,
-    {
-        self.send_object_with_timestamp_impl(interface_name, interface_path, data, None)
-            .await
-    }
-}
-
-impl fmt::Debug for AstarteSdk {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Device")
-            .field("realm", &self.realm)
-            .field("device_id", &self.device_id)
-            //.field("credentials_secret", &self.credentials_secret)
-            //.field("pairing_url", &self.pairing_url)
-            .field("mqtt_options", &self.mqtt_options)
-            .finish()
-    }
-}
-
-mod utils {
-    pub fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
-        use flate2::read::ZlibDecoder;
-        use std::io::prelude::*;
-
-        let mut d = ZlibDecoder::new(&bdata[4..]);
-        let mut s = String::new();
-        d.read_to_string(&mut s).unwrap();
-
-        s.split(';').map(|x| x.to_owned()).collect()
-    }
 }
 
 #[cfg(test)]
@@ -776,7 +824,7 @@ mod test {
     use chrono::{TimeZone, Utc};
 
     use crate::interface::MappingType;
-    use crate::{types::AstarteType, Aggregation, AstarteSdk};
+    use crate::{types::AstarteType, utils, Aggregation, AstarteSdk};
 
     fn do_vecs_match(a: &[u8], b: &[u8]) -> bool {
         let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
@@ -788,18 +836,18 @@ mod test {
     #[test]
     fn serialize_individual() {
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(false, None).unwrap(),
+            &utils::serialize_individual(false, None).unwrap(),
             &[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
         ));
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(),
+            &utils::serialize_individual(AstarteType::Double(16.73), None).unwrap(),
             &[
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30,
                 0x40, 0x00
             ]
         ));
         assert!(do_vecs_match(
-            &AstarteSdk::serialize_individual(
+            &utils::serialize_individual(
                 AstarteType::Double(16.73),
                 Some(Utc.timestamp(1537449422, 890000000))
             )
@@ -840,8 +888,7 @@ mod test {
 
     #[test]
     fn test_integer_longinteger_compatibility() {
-        let integer_buf =
-            AstarteSdk::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
+        let integer_buf = utils::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
         if let Aggregation::Individual(astarte_type) = integer_buf {
             assert_eq!(astarte_type, MappingType::LongInteger);
         } else {
@@ -852,8 +899,8 @@ mod test {
     #[test]
     fn test_bson_serialization() {
         let og_value: i64 = 3600;
-        let buf = AstarteSdk::serialize_individual(og_value, None).unwrap();
-        if let Aggregation::Individual(astarte_type) = AstarteSdk::deserialize(&buf).unwrap() {
+        let buf = utils::serialize_individual(og_value, None).unwrap();
+        if let Aggregation::Individual(astarte_type) = utils::deserialize(&buf).unwrap() {
             assert_eq!(astarte_type, AstarteType::LongInteger(3600));
             if let AstarteType::LongInteger(value) = astarte_type {
                 assert_eq!(value, 3600);

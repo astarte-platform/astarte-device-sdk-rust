@@ -22,7 +22,27 @@ use std::{collections::HashMap, panic};
 
 use astarte_sdk::builder::AstarteOptions;
 use astarte_sdk::types::AstarteType;
+use astarte_sdk::{Clientbound, ISubject};
 use serde_json::Value;
+
+#[derive(Clone, PartialEq)]
+struct EventHandler {}
+impl astarte_sdk::IObserver for EventHandler {
+    fn update(&self, clientbound: &Clientbound) {
+        let data = clientbound.to_owned();
+        println!("incoming: {:?}", data);
+
+        if let astarte_sdk::Aggregation::Individual(var) = data.data {
+            if data.path == "/1/enable" {
+                if var == true {
+                    println!("sensor is ON");
+                } else {
+                    println!("sensor is OFF");
+                }
+            }
+        }
+    }
+}
 
 fn get_data() -> HashMap<String, AstarteType> {
     let alltypes: Vec<AstarteType> = vec![
@@ -126,6 +146,7 @@ async fn main() {
         .build();
 
     let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
+    device.attach(&EventHandler {});
 
     let data = get_data();
 
@@ -145,7 +166,7 @@ async fn main() {
             }
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(10000)).await;
 
         let json = reqwest::Client::new()
             .get(format!(
@@ -203,17 +224,7 @@ async fn main() {
         std::process::exit(0);
     });
 
-    loop {
-        match device.poll().await {
-            Ok(data) => {
-                println!("incoming: {:?}", data);
-            }
-            Err(err) => {
-                println!("poll error {:?}", err);
-                std::process::exit(1);
-            }
-        }
-    }
+    loop {}
 }
 
 fn check_json(data: &HashMap<String, AstarteType>, json: String) {

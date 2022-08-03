@@ -20,7 +20,7 @@ itertools = "0.10"
 http = "0.2"
 openssl = { version = "0.10", features = ["vendored"] }
 reqwest = { version = "0.11", features = ["json"] }
-rumqttc = "0.11"
+rumqttc = "0.13"
 rustls = { version="0.20.2", features = ["dangerous_configuration"]}
 rustls-native-certs = "0.6.1"
 rustls-pemfile = "0.3.0"

@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_sdk::{builder::AstarteOptions, AstarteError};
+use astarte_sdk::{builder::AstarteOptions, AstarteError, Clientbound, ISubject};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -37,6 +37,15 @@ struct Cli {
     pairing_url: String,
 }
 
+#[derive(Clone, PartialEq)]
+struct EventHandler {}
+impl astarte_sdk::IObserver for EventHandler {
+    fn update(&self, clientbound: &Clientbound) {
+        let data = clientbound.to_owned();
+        println!("incoming: {:?}", data);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AstarteError> {
     env_logger::init();
@@ -53,6 +62,7 @@ async fn main() -> Result<(), AstarteError> {
         .build();
 
     let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    device.attach(&EventHandler {});
 
     let w = device.clone();
     tokio::task::spawn(async move {
@@ -79,12 +89,5 @@ async fn main() -> Result<(), AstarteError> {
         }
     });
 
-    loop {
-        match device.poll().await {
-            Ok(data) => {
-                println!("incoming: {:?}", data);
-            }
-            Err(err) => log::error!("{:?}", err),
-        }
-    }
+    loop {}
 }

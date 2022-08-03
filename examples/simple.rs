@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_sdk::{builder::AstarteOptions, AstarteError};
+use astarte_sdk::{builder::AstarteOptions, AstarteError, AstarteSdk, Clientbound, ISubject};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -35,6 +35,25 @@ struct Cli {
     // Pairing URL
     #[structopt(short, long)]
     pairing_url: String,
+}
+
+#[derive(Clone, PartialEq)]
+struct EventHandler {}
+impl astarte_sdk::IObserver for EventHandler {
+    fn update(&self, clientbound: &Clientbound) {
+        let data = clientbound.to_owned();
+        println!("incoming: {:?}", data);
+
+        if let astarte_sdk::Aggregation::Individual(var) = data.data {
+            if data.path == "/1/enable" {
+                if var == true {
+                    println!("sensor is ON");
+                } else {
+                    println!("sensor is OFF");
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -55,7 +74,8 @@ async fn main() -> Result<(), AstarteError> {
         .database(db)
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    let mut device = AstarteSdk::new(&sdk_options).await?;
+    device.attach(&EventHandler {});
 
     let w = device.clone();
     tokio::task::spawn(async move {
@@ -72,22 +92,5 @@ async fn main() -> Result<(), AstarteError> {
         }
     });
 
-    loop {
-        match device.poll().await {
-            Ok(data) => {
-                println!("incoming: {:?}", data);
-
-                if let astarte_sdk::Aggregation::Individual(var) = data.data {
-                    if data.path == "/1/enable" {
-                        if var == true {
-                            println!("sensor is ON");
-                        } else {
-                            println!("sensor is OFF");
-                        }
-                    }
-                }
-            }
-            Err(err) => log::error!("{:?}", err),
-        }
-    }
+    loop {}
 }

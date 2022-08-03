@@ -25,7 +25,7 @@ use log::{debug, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::FromRow;
 
-use crate::{types::AstarteType, AstarteError, AstarteSdk};
+use crate::{types::AstarteType, utils, AstarteError};
 
 /// Implementation of the [AstarteDatabase] trait for an sqlite database backend
 #[derive(Clone, Debug)]
@@ -122,7 +122,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
                 return Ok(None);
             }
 
-            let data = AstarteSdk::deserialize(&res.0)?;
+            let data = utils::deserialize(&res.0)?;
 
             match data {
                 crate::Aggregation::Individual(data) => Ok(Some(data)),
@@ -179,6 +179,7 @@ impl AstarteSqliteDatabase {
 #[cfg(test)]
 mod test {
     use crate::database::AstarteDatabase;
+    use crate::utils;
     use crate::AstarteSdk;
     use crate::{database::AstarteSqliteDatabase, database::StoredProp, types::AstarteType};
 
@@ -189,7 +190,7 @@ mod test {
             .unwrap();
 
         let ty = AstarteType::Integer(23);
-        let ser = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
+        let ser = utils::serialize_individual(ty.clone(), None).unwrap();
 
         db.clear().await.unwrap();
 
