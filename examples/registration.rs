@@ -48,7 +48,7 @@ async fn main() {
     } = Cli::from_args();
 
     let credentials_secret =
-        astarte_sdk::registration::register_device(&token, &pairing_url, &realm, &device_id)
+        astarte_device_sdk::registration::register_device(&token, &pairing_url, &realm, &device_id)
             .await
             .unwrap();
 

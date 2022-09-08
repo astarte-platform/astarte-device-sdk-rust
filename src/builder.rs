@@ -37,7 +37,7 @@ use crate::pairing;
 /// Builder for Astarte client
 ///
 /// ```no_run
-/// use astarte_sdk::builder::AstarteOptions;
+/// use astarte_device_sdk::builder::AstarteOptions;
 ///
 /// #[tokio::main]
 /// async fn main(){

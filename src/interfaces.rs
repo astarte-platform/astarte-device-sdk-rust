@@ -122,7 +122,7 @@ impl Interfaces {
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
-        let data_deserialized = crate::AstarteSdk::deserialize(data)?;
+        let data_deserialized = crate::AstarteDeviceSdk::deserialize(data)?;
 
         let interface = self
             .interfaces
@@ -225,7 +225,7 @@ impl Interfaces {
             AstarteError::ReceiveError(format!("Interface '{}' does not exists", interface_name))
         })?;
 
-        let data = crate::AstarteSdk::deserialize(bdata)?;
+        let data = crate::AstarteDeviceSdk::deserialize(bdata)?;
 
         match data {
             crate::Aggregation::Individual(individual) => {
@@ -297,7 +297,7 @@ mod test {
     use chrono::{TimeZone, Utc};
 
     use crate::{
-        builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteSdk,
+        builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteDeviceSdk,
     };
 
     #[test]
@@ -306,7 +306,7 @@ mod test {
         options.interface_directory("examples/interfaces/").unwrap();
         let ifa = super::Interfaces::new(options.interfaces);
 
-        let buf = AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        let buf = AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
 
         ifa.validate_send(
             "org.astarte-platform.test.Everything",
@@ -371,7 +371,8 @@ mod test {
         ifa.validate_send("com.fake.fake", "/boolean", &buf, &timestamp)
             .unwrap_err();
 
-        let buf = AstarteSdk::serialize_individual(AstarteType::Double(f64::NAN), None).unwrap(); // NaN
+        let buf =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Double(f64::NAN), None).unwrap(); // NaN
 
         ifa.validate_send(
             "org.astarte-platform.test.Everything",
@@ -381,7 +382,7 @@ mod test {
         )
         .unwrap_err();
 
-        let buf = AstarteSdk::serialize_individual(
+        let buf = AstarteDeviceSdk::serialize_individual(
             AstarteType::DoubleArray(vec![1.0, 2.0, f64::NAN, 4.0]),
             None,
         )
@@ -412,7 +413,9 @@ mod test {
         obj.insert("heading", 237.0.try_into().unwrap());
         obj.insert("speed", 250.0.try_into().unwrap());
 
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj.clone()), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj.clone()), None)
+                .unwrap();
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
@@ -436,7 +439,8 @@ mod test {
         // nonexisting object field
         let mut obj2 = obj.clone();
         obj2.insert("latitudef", 37.534543.try_into().unwrap());
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -448,7 +452,8 @@ mod test {
         // wrong type
         let mut obj2 = obj.clone();
         obj2.insert("latitude", AstarteType::Boolean(false));
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -460,7 +465,8 @@ mod test {
         // missing object field
         let mut obj2 = obj.clone();
         obj2.remove("latitude");
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -472,7 +478,8 @@ mod test {
         // invalid float
         let mut obj2 = obj.clone();
         obj2.insert("latitude", AstarteType::Double(f64::NAN));
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(obj2), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -489,8 +496,9 @@ mod test {
         let ifa = super::Interfaces::new(options.interfaces);
 
         let boolean_buf =
-            AstarteSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
-        let integer_buf = AstarteSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        let integer_buf =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
 
         ifa.validate_receive(
             "org.astarte-platform.genericsensors.SamplingRate",
@@ -569,7 +577,9 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
+                .unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf).unwrap();
         ifa.validate_receive("com.test.object", "/no", &buf)
@@ -583,7 +593,9 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
+                .unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();
@@ -595,7 +607,9 @@ mod test {
         .iter()
         .cloned()
         .collect();
-        let buf = AstarteSdk::serialize_object(AstarteSdk::to_bson_map(inner_data), None).unwrap();
+        let buf =
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
+                .unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();

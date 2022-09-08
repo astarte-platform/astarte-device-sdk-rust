@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_sdk::{builder::AstarteOptions, AstarteError};
+use astarte_device_sdk::{builder::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -48,14 +48,14 @@ async fn main() -> Result<(), AstarteError> {
         pairing_url,
     } = Cli::from_args();
 
-    let db = astarte_sdk::database::AstarteSqliteDatabase::new("sqlite::memory:").await?;
+    let db = astarte_device_sdk::database::AstarteSqliteDatabase::new("sqlite::memory:").await?;
 
     let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
         .interface_directory("./examples/interfaces")?
         .database(db)
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await?;
 
     let w = device.clone();
     tokio::task::spawn(async move {
@@ -73,11 +73,11 @@ async fn main() -> Result<(), AstarteError> {
     });
 
     loop {
-        match device.poll().await {
+        match device.handle_events().await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
 
-                if let astarte_sdk::Aggregation::Individual(var) = data.data {
+                if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
                     if data.path == "/1/enable" {
                         if var == true {
                             println!("sensor is ON");

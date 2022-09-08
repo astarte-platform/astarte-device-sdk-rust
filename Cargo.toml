@@ -6,10 +6,9 @@
 
 
 [package]
-name = "astarte_sdk"
+name = "astarte-device-sdk"
 version = "0.1.0"
-authors = ["Riccardo Binetti"]
-edition = "2018"
+edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 
