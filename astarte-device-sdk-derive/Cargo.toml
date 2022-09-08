@@ -8,6 +8,13 @@
 name = "astarte-device-sdk-derive"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
+description ="Derive macros implementation used by Astarte Device SDK"
+homepage = "https://astarte.cloud/"
+documentation = "https://docs.rs/astarte-device-sdk-rust-derive"
+readme ="README.md"
+keywords = ["sdk", "iot", "astarte", "derive"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
