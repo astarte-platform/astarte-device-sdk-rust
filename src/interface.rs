@@ -26,6 +26,7 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
 
+use crate::interface::Error::MajorMinorError;
 use traits::Interface as InterfaceTrait;
 use traits::Mapping as MappingTrait;
 
@@ -35,6 +36,8 @@ pub enum Error {
     ParseError(#[from] serde_json::Error),
     #[error("cannot read interface file")]
     IoError(#[from] io::Error),
+    #[error("wrong major and minor")]
+    MajorMinorError,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -216,7 +219,8 @@ impl Interface {
     pub fn from_file(path: &Path) -> Result<Self, Error> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let interface = serde_json::from_reader(reader)?;
+        let interface: Interface = serde_json::from_reader(reader)?;
+        interface.validate()?;
         Ok(interface)
     }
 
@@ -300,15 +304,24 @@ impl Interface {
             Interface::Properties(iface) => iface.base.version_minor,
         }
     }
+
+    fn validate(&self) -> Result<(), Error> {
+        // TODO: add additional validation
+        if self.get_version_major() == 0 && self.get_version_minor() == 0 {
+            return Err(MajorMinorError);
+        }
+        Ok(())
+    }
 }
 
 impl std::str::FromStr for Interface {
+    type Err = Error;
+
     fn from_str(s: &str) -> Result<Self, Error> {
-        let interface = serde_json::from_str(s)?;
+        let interface: Interface = serde_json::from_str(s)?;
+        interface.validate()?;
         Ok(interface)
     }
-
-    type Err = Error;
 }
 
 impl InterfaceTrait for Interface {
@@ -355,6 +368,7 @@ impl Display for Interface {
 
 #[cfg(test)]
 mod tests {
+    use crate::interface::Error::MajorMinorError;
     use std::str::FromStr;
 
     use super::traits::Interface as InterfaceTrait;
@@ -478,5 +492,44 @@ mod tests {
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.doc(), Some("Interface doc"));
+    }
+
+    #[test]
+    fn validation_test() {
+        let interface_json = "
+        {
+            \"interface_name\": \"org.astarte-platform.genericsensors.Values\",
+            \"version_major\": 0,
+            \"version_minor\": 0,
+            \"type\": \"datastream\",
+            \"ownership\": \"device\",
+            \"description\": \"Interface description\",
+            \"doc\": \"Interface doc\",
+            \"mappings\": [
+                {
+                    \"endpoint\": \"/%{sensor_id}/value\",
+                    \"type\": \"double\",
+                    \"explicit_timestamp\": true,
+                    \"description\": \"Mapping description\",
+                    \"doc\": \"Mapping doc\"
+                },
+                {
+                    \"endpoint\": \"/%{sensor_id}/otherValue\",
+                    \"type\": \"longinteger\",
+                    \"explicit_timestamp\": true,
+                    \"description\": \"Mapping description\",
+                    \"doc\": \"Mapping doc\"
+                }
+            ]
+        }";
+
+        let deser_interface = Interface::from_str(interface_json);
+
+        assert!(deser_interface.is_err());
+        assert!(match deser_interface {
+            Err(MajorMinorError) => true,
+            Err(e) => panic!("expected MajorMinorError, got {:?}", e),
+            Ok(_) => panic!("Expected Err, got Ok"),
+        });
     }
 }
