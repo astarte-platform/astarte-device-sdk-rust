@@ -21,6 +21,7 @@
 pub(crate) mod traits;
 
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
@@ -278,6 +279,27 @@ impl Interface {
 
         Vec::new()
     }
+
+    pub fn get_name(&self) -> String {
+        match &self {
+            Interface::Datastream(iface) => iface.base.interface_name.clone(),
+            Interface::Properties(iface) => iface.base.interface_name.clone(),
+        }
+    }
+
+    pub fn get_version_major(&self) -> i32 {
+        match &self {
+            Interface::Datastream(iface) => iface.base.version_major,
+            Interface::Properties(iface) => iface.base.version_major,
+        }
+    }
+
+    pub fn get_version_minor(&self) -> i32 {
+        match &self {
+            Interface::Datastream(iface) => iface.base.version_minor,
+            Interface::Properties(iface) => iface.base.version_minor,
+        }
+    }
 }
 
 impl std::str::FromStr for Interface {
@@ -316,6 +338,18 @@ impl MappingTrait for DatastreamMapping {
 impl MappingTrait for PropertiesMapping {
     fn base_mapping(&self) -> &BaseMapping {
         &self.base
+    }
+}
+
+impl Display for Interface {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.get_name(),
+            self.get_version_major(),
+            self.get_version_minor()
+        )
     }
 }
 
