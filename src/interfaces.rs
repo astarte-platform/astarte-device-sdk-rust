@@ -135,7 +135,7 @@ impl Interfaces {
                     .get_mapping(interface_name, interface_path)
                     .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
-                if individual != mapping.mapping_type() {
+                if individual != AstarteType::Unset && individual != mapping.mapping_type() {
                     return Err(AstarteError::SendError(format!(
                         "You are sending the wrong type for this mapping: got {:?}, expected {:?}",
                         individual,

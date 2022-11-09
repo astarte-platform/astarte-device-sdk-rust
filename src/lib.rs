@@ -389,14 +389,11 @@ impl AstarteSdk {
     }
 
     /// unset a device property
-    pub async fn unset<D>(
+    pub async fn unset(
         &self,
         interface_name: &str,
         interface_path: &str,
-    ) -> Result<(), AstarteError>
-    where
-        D: Into<AstarteType>,
-    {
+    ) -> Result<(), AstarteError> {
         trace!("unsetting {} {}", interface_name, interface_path);
 
         if cfg!(debug_assertions) {

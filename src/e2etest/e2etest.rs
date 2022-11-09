@@ -122,6 +122,10 @@ async fn main() {
             "./examples/interfaces/org.astarte-platform.genericsensors.Geolocation.json",
         ))
         .unwrap()
+        .interface_file(std::path::Path::new(
+            "./examples/interfaces/org.astarte-platform.genericsensors.SamplingRate.json",
+        ))
+        .unwrap()
         .ignore_ssl_errors()
         .build();
 
@@ -199,6 +203,21 @@ async fn main() {
         println!("----------------\n{:?}", json);
 
         check_json_obj(&data, json);
+
+        w.send(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/1/enable",
+            true,
+        )
+        .await
+        .unwrap();
+
+        w.unset(
+            "org.astarte-platform.genericsensors.SamplingRate",
+            "/1/enable",
+        )
+        .await
+        .unwrap();
 
         std::process::exit(0);
     });
