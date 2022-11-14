@@ -40,9 +40,12 @@ use rumqttc::{EventLoop, MqttOptions};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
+use std::path::Path;
 use std::sync::Arc;
 use types::AstarteType;
 
+use crate::builder::AstarteBuilderError;
+use crate::interface::traits::Interface as iface;
 pub use interface::Interface;
 
 /// Astarte client
@@ -53,7 +56,7 @@ pub struct AstarteSdk {
     mqtt_options: MqttOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
-    interfaces: interfaces::Interfaces,
+    interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
 }
 
@@ -138,7 +141,9 @@ impl AstarteSdk {
             mqtt_options,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: interfaces::Interfaces::new(opts.interfaces.clone()),
+            interfaces: Arc::new(tokio::sync::RwLock::new(interfaces::Interfaces::new(
+                opts.interfaces.clone(),
+            ))),
             database: opts.database.clone(),
         };
 
@@ -148,10 +153,8 @@ impl AstarteSdk {
     }
 
     async fn subscribe(&self) -> Result<(), AstarteError> {
-        let ifaces = self
-            .interfaces
-            .interfaces
-            .clone()
+        let ifaces = &self.interfaces.read().await.interfaces;
+        let server_owned_ifaces = ifaces
             .into_iter()
             .filter(|i| i.1.get_ownership() == interface::Ownership::Server);
 
@@ -162,15 +165,27 @@ impl AstarteSdk {
             )
             .await?;
 
-        for i in ifaces {
+        for (_, iface) in server_owned_ifaces {
+            self.subscribe_server_owned_interface(&iface).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn subscribe_server_owned_interface(
+        &self,
+        iface: &Interface,
+    ) -> Result<(), AstarteError> {
+        if iface.get_ownership() == interface::Ownership::Server {
+            log::warn!("Unable to subscribe to {} as it is not server owned", iface);
+        } else {
             self.client
                 .subscribe(
-                    self.client_id() + "/" + interface::traits::Interface::name(&i.1) + "/#",
+                    self.client_id() + "/" + interface::traits::Interface::name(iface) + "/#",
                     rumqttc::QoS::ExactlyOnce,
                 )
                 .await?;
         }
-
         Ok(())
     }
 
@@ -203,6 +218,28 @@ impl AstarteSdk {
             info!("connack done");
         }
 
+        Ok(())
+    }
+
+    pub async fn add_interface(&self, file_path: &str) -> Result<(), AstarteError> {
+        let path = Path::new(file_path);
+        match Interface::from_file(path) {
+            Ok(interface) => {
+                if interface.get_ownership() == interface::Ownership::Server {
+                    self.subscribe_server_owned_interface(&interface).await?;
+                }
+                let interfaces_lock = self.interfaces.clone();
+                let mut interfaces = interfaces_lock.write().await;
+                let interfaces_map = &mut interfaces.interfaces;
+                interfaces_map.insert(interface.name().to_string(), interface);
+            }
+            Err(e) => {
+                return Err(AstarteError::BuilderError(
+                    AstarteBuilderError::InterfaceError(e),
+                ))
+            }
+        }
+        self.send_introspection().await?;
         Ok(())
     }
 
@@ -248,8 +285,11 @@ impl AstarteSdk {
                                 if let Some(database) = &self.database {
                                     //if database is loaded
 
-                                    if let Some(major_version) =
-                                        self.interfaces.get_property_major(&interface, &path)
+                                    if let Some(major_version) = self
+                                        .interfaces
+                                        .read()
+                                        .await
+                                        .get_property_major(&interface, &path)
                                     //if it's a property
                                     {
                                         database
@@ -285,6 +325,8 @@ impl AstarteSdk {
 
                                 if cfg!(debug_assertions) {
                                     self.interfaces
+                                        .read()
+                                        .await
                                         .validate_receive(&interface, &path, &bdata)?;
                                 }
 
@@ -339,7 +381,8 @@ impl AstarteSdk {
     }
 
     async fn send_introspection(&self) -> Result<(), AstarteError> {
-        let introspection = self.interfaces.get_introspection_string();
+        let interfaces = self.interfaces.read().await;
+        let introspection = interfaces.get_introspection_string();
 
         debug!("sending introspection = {}", introspection);
 
@@ -358,10 +401,11 @@ impl AstarteSdk {
         if let Some(database) = &self.database {
             let properties = database.load_all_props().await?;
             // publish only device-owned properties...
+            let interfaces = self.interfaces.read().await;
             let device_owned_properties: Vec<StoredProp> = properties
                 .into_iter()
                 .filter(|prop| {
-                    self.interfaces.get_ownership(&prop.interface)
+                    interfaces.get_ownership(&prop.interface)
                         == Some(crate::interface::Ownership::Device)
                 })
                 .collect();
@@ -369,6 +413,8 @@ impl AstarteSdk {
                 let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
                 if let Some(version_major) = self
                     .interfaces
+                    .read()
+                    .await
                     .get_property_major(&prop.interface, &prop.path)
                 {
                     // ..and only if they are up-to-date
@@ -400,8 +446,12 @@ impl AstarteSdk {
         trace!("unsetting {} {}", interface_name, interface_path);
 
         if cfg!(debug_assertions) {
-            self.interfaces
-                .validate_send(interface_name, interface_path, &[], &None)?;
+            self.interfaces.read().await.validate_send(
+                interface_name,
+                interface_path,
+                &[],
+                &None,
+            )?;
         }
 
         self.send_with_timestamp_impl(interface_name, interface_path, AstarteType::Unset, None)
@@ -473,7 +523,12 @@ impl AstarteSdk {
         path: &str,
     ) -> Result<Option<AstarteType>, AstarteError> {
         if let Some(database) = &self.database {
-            if let Some(major) = self.interfaces.get_property_major(interface, path) {
+            if let Some(major) = self
+                .interfaces
+                .read()
+                .await
+                .get_property_major(interface, path)
+            {
                 let prop = database.load_prop(interface, path, major).await?;
                 return Ok(prop);
             }
@@ -555,8 +610,12 @@ impl AstarteSdk {
         let buf = AstarteSdk::serialize_individual(data.clone(), timestamp)?;
 
         if cfg!(debug_assertions) {
-            self.interfaces
-                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+            self.interfaces.read().await.validate_send(
+                interface_name,
+                interface_path,
+                &buf,
+                &timestamp,
+            )?;
         }
 
         if self
@@ -571,6 +630,8 @@ impl AstarteSdk {
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
                 self.interfaces
+                    .read()
+                    .await
                     .get_mqtt_reliability(interface_name, interface_path),
                 false,
                 buf,
@@ -599,8 +660,8 @@ impl AstarteSdk {
 
             let data: AstarteType = data.into();
 
-            let mapping = self
-                .interfaces
+            let interfaces = self.interfaces.read().await;
+            let mapping = interfaces
                 .get_mapping(interface_name, interface_path)
                 .ok_or_else(|| {
                     AstarteError::SendError(format!("Mapping {} doesn't exist", interface_path))
@@ -636,8 +697,8 @@ impl AstarteSdk {
 
             let data: AstarteType = data.into();
 
-            let mapping = self
-                .interfaces
+            let interfaces = self.interfaces.read().await;
+            let mapping = interfaces
                 .get_mapping(interface_name, interface_path)
                 .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
@@ -699,14 +760,20 @@ impl AstarteSdk {
         let buf = AstarteSdk::serialize_object(data, timestamp)?;
 
         if cfg!(debug_assertions) {
-            self.interfaces
-                .validate_send(interface_name, interface_path, &buf, &timestamp)?;
+            self.interfaces.read().await.validate_send(
+                interface_name,
+                interface_path,
+                &buf,
+                &timestamp,
+            )?;
         }
 
         self.client
             .publish(
                 self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
                 self.interfaces
+                    .read()
+                    .await
                     .get_mqtt_reliability(interface_name, interface_path),
                 false,
                 buf,
