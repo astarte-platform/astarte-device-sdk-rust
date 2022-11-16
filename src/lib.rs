@@ -45,7 +45,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use types::AstarteType;
 
-use crate::interface::traits::Interface as iface;
+use crate::interface::traits::{Interface as iface, Mapping};
 pub use interface::Interface;
 
 /// Astarte client
@@ -192,6 +192,25 @@ impl AstarteSdk {
         Ok(())
     }
 
+    async fn unsubscribe_server_owned_interface(
+        &self,
+        iface: &Interface,
+    ) -> Result<(), AstarteError> {
+        if iface.get_ownership() == interface::Ownership::Server {
+            log::warn!(
+                "Unable to unsubscribe to {} as it is not server owned",
+                iface
+            );
+        } else {
+            self.client
+                .unsubscribe(
+                    self.client_id() + "/" + interface::traits::Interface::name(iface) + "/#",
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn poll_connack(&mut self) -> Result<(), AstarteError> {
         loop {
             // keep consuming and processing packets until we have data for the user
@@ -249,6 +268,30 @@ impl AstarteSdk {
         let mut interfaces = interfaces_lock.write().await;
         let interfaces_map = &mut interfaces.interfaces;
         interfaces_map.insert(interface.name().to_string(), interface);
+    }
+
+    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), AstarteError> {
+        let interface = self.remove_interface_from_map(interface_name).await?;
+        self.remove_properties_from_store(interface_name).await?;
+        self.send_introspection().await?;
+        if interface.get_ownership() == interface::Ownership::Server {
+            self.unsubscribe_server_owned_interface(&interface).await?;
+        }
+        Ok(())
+    }
+
+    async fn remove_interface_from_map(
+        &self,
+        interface_name: &str,
+    ) -> Result<Interface, AstarteError> {
+        let interfaces = self.interfaces.clone();
+        let mut interfaces_write_lock = interfaces.write().await;
+        let interfaces_map = &mut interfaces_write_lock.interfaces;
+        return interfaces_map
+            .remove(interface_name)
+            .ok_or(AstarteError::InterfaceError(
+                interface::Error::InterfaceNotFoundError,
+            ));
     }
 
     /// Poll updates from mqtt, this is where you receive data
@@ -696,7 +739,7 @@ impl AstarteSdk {
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<bool, AstarteError>
+    ) -> Result<(), AstarteError>
     where
         D: Into<AstarteType>,
     {
@@ -719,7 +762,30 @@ impl AstarteSdk {
             }
         }
 
-        Ok(false)
+        Ok(())
+    }
+
+    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), AstarteError> {
+        if let Some(db) = &self.database {
+            let interfaces = self.interfaces.read().await;
+            let mappings = interfaces
+                .interfaces
+                .iter()
+                .find(|(name, _)| name == &interface_name)
+                .and_then(|(_, i)| Some(i.mappings()))
+                .unwrap_or(vec![]);
+
+            for mapping in mappings {
+                if let crate::interface::Mapping::Properties(d) = mapping {
+                    //if mapping is a property
+                    let path = d.endpoint();
+                    db.delete_prop(interface_name, path).await?;
+                    debug!("Stored property {}{} deleted", interface_name, path);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Serialize an astarte type into a vec of bytes

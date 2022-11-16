@@ -38,6 +38,8 @@ pub enum Error {
     IoError(#[from] io::Error),
     #[error("wrong major and minor")]
     MajorMinorError,
+    #[error("interface not found")]
+    InterfaceNotFoundError,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -252,6 +254,13 @@ impl Interface {
         }
 
         None
+    }
+
+    pub fn mappings(&self) -> Vec<Mapping> {
+        return match &self {
+            Self::Datastream(d) => d.mappings.iter().map(|m| Mapping::Datastream(m)).collect(),
+            Self::Properties(p) => p.mappings.iter().map(|m| Mapping::Properties(m)).collect(),
+        };
     }
 
     pub fn mappings_len(&self) -> usize {
