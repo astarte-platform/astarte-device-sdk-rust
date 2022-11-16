@@ -746,14 +746,23 @@ impl AstarteSdk {
             let data: AstarteType = data.into();
 
             let interfaces = self.interfaces.read().await;
+            let interface_major = interfaces
+                .interfaces
+                .get(interface_name)
+                .ok_or_else(|| {
+                    AstarteError::InterfaceError(interface::Error::InterfaceNotFoundError)
+                })?
+                .get_version_major();
             let mapping = interfaces
                 .get_mapping(interface_name, interface_path)
-                .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                .ok_or_else(|| {
+                    AstarteError::InterfaceError(interface::Error::MappingNotFoundError)
+                })?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
                 let bin = AstarteSdk::serialize_individual(data, None)?;
-                db.store_prop(interface_name, interface_path, &bin, 0)
+                db.store_prop(interface_name, interface_path, &bin, interface_major)
                     .await?;
                 debug!("Stored new property in database");
             }
