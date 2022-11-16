@@ -41,10 +41,10 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use types::AstarteType;
 
-use crate::builder::AstarteBuilderError;
 use crate::interface::traits::Interface as iface;
 pub use interface::Interface;
 
@@ -94,6 +94,9 @@ pub enum AstarteError {
 
     #[error("builder error")]
     BuilderError(#[from] builder::AstarteBuilderError),
+
+    #[error(transparent)]
+    InterfaceError(#[from] interface::Error),
 
     #[error("generic error")]
     Reported(String),
@@ -221,26 +224,31 @@ impl AstarteSdk {
         Ok(())
     }
 
-    pub async fn add_interface(&self, file_path: &str) -> Result<(), AstarteError> {
+    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), AstarteError> {
         let path = Path::new(file_path);
-        match Interface::from_file(path) {
-            Ok(interface) => {
-                if interface.get_ownership() == interface::Ownership::Server {
-                    self.subscribe_server_owned_interface(&interface).await?;
-                }
-                let interfaces_lock = self.interfaces.clone();
-                let mut interfaces = interfaces_lock.write().await;
-                let interfaces_map = &mut interfaces.interfaces;
-                interfaces_map.insert(interface.name().to_string(), interface);
-            }
-            Err(e) => {
-                return Err(AstarteError::BuilderError(
-                    AstarteBuilderError::InterfaceError(e),
-                ))
-            }
+        let interface = Interface::from_file(path)?;
+        self.add_interface(interface).await
+    }
+
+    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), AstarteError> {
+        let interface: Interface = Interface::from_str(json_str)?;
+        self.add_interface(interface).await
+    }
+
+    pub async fn add_interface(&self, interface: Interface) -> Result<(), AstarteError> {
+        if interface.get_ownership() == interface::Ownership::Server {
+            self.subscribe_server_owned_interface(&interface).await?;
         }
+        self.add_interface_to_introspection(interface).await;
         self.send_introspection().await?;
         Ok(())
+    }
+
+    async fn add_interface_to_introspection(&self, interface: Interface) {
+        let interfaces_lock = self.interfaces.clone();
+        let mut interfaces = interfaces_lock.write().await;
+        let interfaces_map = &mut interfaces.interfaces;
+        interfaces_map.insert(interface.name().to_string(), interface);
     }
 
     /// Poll updates from mqtt, this is where you receive data
