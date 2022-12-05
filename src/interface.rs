@@ -40,6 +40,8 @@ pub enum Error {
     MajorMinorError,
     #[error("interface not found")]
     InterfaceNotFoundError,
+    #[error("mapping not found")]
+    MappingNotFoundError,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
