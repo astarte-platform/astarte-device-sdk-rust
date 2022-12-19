@@ -179,7 +179,7 @@ impl AstarteSdk {
         &self,
         iface: &Interface,
     ) -> Result<(), AstarteError> {
-        if iface.get_ownership() == interface::Ownership::Server {
+        if iface.get_ownership() != interface::Ownership::Server {
             log::warn!("Unable to subscribe to {} as it is not server owned", iface);
         } else {
             self.client
@@ -196,7 +196,7 @@ impl AstarteSdk {
         &self,
         iface: &Interface,
     ) -> Result<(), AstarteError> {
-        if iface.get_ownership() == interface::Ownership::Server {
+        if iface.get_ownership() != interface::Ownership::Server {
             log::warn!(
                 "Unable to unsubscribe to {} as it is not server owned",
                 iface
