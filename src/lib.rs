@@ -74,7 +74,7 @@ pub enum AstarteError {
     #[error("malformed input from Astarte backend")]
     DeserializationError,
 
-    #[error("error converting from Bson to AstarteType")]
+    #[error("error converting from Bson to AstarteType ({0})")]
     FromBsonError(String),
 
     #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
@@ -83,10 +83,10 @@ pub enum AstarteError {
     #[error("forbidden floating point number")]
     FloatError,
 
-    #[error("send error")]
+    #[error("send error ({0})")]
     SendError(String),
 
-    #[error("receive error")]
+    #[error("receive error ({0})")]
     ReceiveError(String),
 
     #[error("database error")]
@@ -98,7 +98,7 @@ pub enum AstarteError {
     #[error(transparent)]
     InterfaceError(#[from] interface::Error),
 
-    #[error("generic error")]
+    #[error("generic error ({0})")]
     Reported(String),
 
     #[error("generic error")]
