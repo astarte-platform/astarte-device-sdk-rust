@@ -5,3 +5,7 @@ Source: https://github.com/astarte-platform/astarte-device-sdk-rust
 Files: examples/interfaces/*
 Copyright: SECO Mind Srl
 License: CC0-1.0
+
+Files: tests/e2etest/interfaces/*
+Copyright: SECO Mind Srl
+License: CC0-1.0

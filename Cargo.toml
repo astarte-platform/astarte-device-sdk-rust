@@ -51,4 +51,4 @@ features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-f
 
 [[bin]]
 name = "e2etest"
-path = "src/e2etest/e2etest.rs"
+path = "tests/e2etest/main.rs"
