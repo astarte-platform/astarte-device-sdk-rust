@@ -38,7 +38,7 @@ jobs:
         with:
           profile: minimal
           # No toolchain matrix for fmt checking
-          toolchain: stable
+          toolchain: 1.59.0
           override: true
       - name: Add rustfmt
         run: rustup component add rustfmt
@@ -54,8 +54,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
+        - 1.59.0
         - stable
-        - beta
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -77,8 +77,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
+        - 1.59.0
         - stable
-        - beta
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
