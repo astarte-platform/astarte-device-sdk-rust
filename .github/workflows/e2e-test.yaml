@@ -35,8 +35,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Install interface
-        run: | 
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/examples/interfaces/*.json --non-interactive
+        run: |
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
           astartectl realm-management interfaces ls
       - name: Register device
         run: |

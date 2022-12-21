@@ -55,4 +55,4 @@ derive = ["astarte-device-sdk-derive"]
 
 [[bin]]
 name = "e2etest"
-path = "src/e2etest/e2etest.rs"
+path = "tests/e2etest/main.rs"
