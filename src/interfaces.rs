@@ -294,6 +294,8 @@ impl Interfaces {
 mod test {
     use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
+    use chrono::{TimeZone, Utc};
+
     use crate::{
         builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteSdk,
     };
@@ -334,7 +336,7 @@ mod test {
         ifa.validate_send("com.fake.fake", "/boolean", &buf, &None)
             .unwrap_err();
 
-        let timestamp = Some(chrono::TimeZone::timestamp(&chrono::Utc, 1537449422, 0));
+        let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
 
         ifa.validate_send(
             "org.astarte-platform.test.Everything",

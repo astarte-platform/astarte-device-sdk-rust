@@ -280,6 +280,8 @@ impl AstarteType {
 mod test {
     use std::collections::HashMap;
 
+    use chrono::{TimeZone, Utc};
+
     use crate::{types::AstarteType, Aggregation, AstarteSdk};
 
     #[test]
@@ -291,7 +293,7 @@ mod test {
             45543543534_i64.into(),
             "hello".into(),
             b"hello".to_vec().into(),
-            chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0).into(),
+            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
             vec![1.2, 3.4, 5.6, 7.8].into(),
             vec![1, 3, 5, 7].into(),
             vec![true, false, true, true].into(),
@@ -299,9 +301,9 @@ mod test {
             vec!["hello".to_owned(), "world".to_owned()].into(),
             vec![b"hello".to_vec(), b"world".to_vec()].into(),
             vec![
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
             ]
             .into(),
             AstarteType::Unset,
@@ -331,7 +333,7 @@ mod test {
             45543543534_i64.into(),
             "hello".into(),
             b"hello".to_vec().into(),
-            chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0).into(),
+            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
             vec![1.2, 3.4, 5.6, 7.8].into(),
             vec![1, 3, 5, 7].into(),
             vec![true, false, true, true].into(),
@@ -339,9 +341,9 @@ mod test {
             vec!["hello".to_owned(), "world".to_owned()].into(),
             vec![b"hello".to_vec(), b"world".to_vec()].into(),
             vec![
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
-                chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
             ]
             .into(),
         ];
