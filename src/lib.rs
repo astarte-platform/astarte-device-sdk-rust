@@ -948,7 +948,7 @@ mod test {
         assert!(do_vecs_match(
             &AstarteSdk::serialize_individual(
                 AstarteType::Double(16.73),
-                Some(Utc.timestamp(1537449422, 890000000))
+                Some(Utc.timestamp_opt(1537449422, 890000000).unwrap())
             )
             .unwrap(),
             &[

@@ -20,9 +20,11 @@
 
 use std::{collections::HashMap, panic};
 
+use chrono::{TimeZone, Utc};
+use serde_json::Value;
+
 use astarte_sdk::builder::AstarteOptions;
 use astarte_sdk::types::AstarteType;
-use serde_json::Value;
 
 fn get_data() -> HashMap<String, AstarteType> {
     let alltypes: Vec<AstarteType> = vec![
@@ -32,7 +34,7 @@ fn get_data() -> HashMap<String, AstarteType> {
         45543543534_i64.into(),
         "hello".into(),
         b"hello".to_vec().into(),
-        chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0).into(),
+        TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
         vec![1.2, 3.4, 5.6, 7.8].into(),
         vec![1, 3, 5, 7].into(),
         vec![true, false, true, true].into(),
@@ -40,9 +42,9 @@ fn get_data() -> HashMap<String, AstarteType> {
         vec!["hello".to_owned(), "world".to_owned()].into(),
         vec![b"hello".to_vec(), b"world".to_vec()].into(),
         vec![
-            chrono::TimeZone::timestamp(&chrono::Utc, 1627580808, 0),
-            chrono::TimeZone::timestamp(&chrono::Utc, 1627580809, 0),
-            chrono::TimeZone::timestamp(&chrono::Utc, 1627580810, 0),
+            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+            TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+            TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
         ]
         .into(),
     ];
