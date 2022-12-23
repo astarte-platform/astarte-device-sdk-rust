@@ -26,22 +26,21 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::Path;
 
-use crate::interface::Error::MajorMinorError;
 use traits::Interface as InterfaceTrait;
 use traits::Mapping as MappingTrait;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("cannot parse interface JSON")]
-    ParseError(#[from] serde_json::Error),
+    Parse(#[from] serde_json::Error),
     #[error("cannot read interface file")]
-    IoError(#[from] io::Error),
+    Io(#[from] io::Error),
     #[error("wrong major and minor")]
-    MajorMinorError,
+    MajorMinor,
     #[error("interface not found")]
-    InterfaceNotFoundError,
+    InterfaceNotFound,
     #[error("mapping not found")]
-    MappingNotFoundError,
+    MappingNotFound,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -260,8 +259,8 @@ impl Interface {
 
     pub fn mappings(&self) -> Vec<Mapping> {
         return match &self {
-            Self::Datastream(d) => d.mappings.iter().map(|m| Mapping::Datastream(m)).collect(),
-            Self::Properties(p) => p.mappings.iter().map(|m| Mapping::Properties(m)).collect(),
+            Self::Datastream(d) => d.mappings.iter().map(Mapping::Datastream).collect(),
+            Self::Properties(p) => p.mappings.iter().map(Mapping::Properties).collect(),
         };
     }
 
@@ -319,7 +318,7 @@ impl Interface {
     fn validate(&self) -> Result<(), Error> {
         // TODO: add additional validation
         if self.get_version_major() == 0 && self.get_version_minor() == 0 {
-            return Err(MajorMinorError);
+            return Err(Error::MajorMinor);
         }
         Ok(())
     }
@@ -379,7 +378,7 @@ impl Display for Interface {
 
 #[cfg(test)]
 mod tests {
-    use crate::interface::Error::MajorMinorError;
+    use crate::interface::Error;
     use std::str::FromStr;
 
     use super::traits::Interface as InterfaceTrait;
@@ -538,8 +537,8 @@ mod tests {
 
         assert!(deser_interface.is_err());
         assert!(match deser_interface {
-            Err(MajorMinorError) => true,
-            Err(e) => panic!("expected MajorMinorError, got {:?}", e),
+            Err(Error::MajorMinor) => true,
+            Err(e) => panic!("expected Error::MajorMinor, got {:?}", e),
             Ok(_) => panic!("Expected Err, got Ok"),
         });
     }
