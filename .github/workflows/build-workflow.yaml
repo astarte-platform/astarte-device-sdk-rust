@@ -71,6 +71,31 @@ jobs:
         with:
           command: check
 
+  clippy_check:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+        - 1.59.0
+        - stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+      - name: Add clippy
+        run: rustup component add clippy
+      - name: Run cargo clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --all-features -- -Dwarnings
+
   test:
     name: cargo test
     runs-on: ubuntu-latest

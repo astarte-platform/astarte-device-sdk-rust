@@ -158,7 +158,7 @@ impl AstarteSdk {
     async fn subscribe(&self) -> Result<(), AstarteError> {
         let ifaces = &self.interfaces.read().await.interfaces;
         let server_owned_ifaces = ifaces
-            .into_iter()
+            .iter()
             .filter(|i| i.1.get_ownership() == interface::Ownership::Server);
 
         self.client
@@ -169,7 +169,7 @@ impl AstarteSdk {
             .await?;
 
         for (_, iface) in server_owned_ifaces {
-            self.subscribe_server_owned_interface(&iface).await?;
+            self.subscribe_server_owned_interface(iface).await?;
         }
 
         Ok(())
@@ -287,11 +287,11 @@ impl AstarteSdk {
         let interfaces = self.interfaces.clone();
         let mut interfaces_write_lock = interfaces.write().await;
         let interfaces_map = &mut interfaces_write_lock.interfaces;
-        return interfaces_map
+        interfaces_map
             .remove(interface_name)
             .ok_or(AstarteError::InterfaceError(
-                interface::Error::InterfaceNotFoundError,
-            ));
+                interface::Error::InterfaceNotFound,
+            ))
     }
 
     /// Poll updates from mqtt, this is where you receive data
@@ -749,15 +749,15 @@ impl AstarteSdk {
             let interface_major = interfaces
                 .interfaces
                 .get(interface_name)
-                .ok_or_else(|| {
-                    AstarteError::InterfaceError(interface::Error::InterfaceNotFoundError)
-                })?
+                .ok_or(AstarteError::InterfaceError(
+                    interface::Error::InterfaceNotFound,
+                ))?
                 .get_version_major();
             let mapping = interfaces
                 .get_mapping(interface_name, interface_path)
-                .ok_or_else(|| {
-                    AstarteError::InterfaceError(interface::Error::MappingNotFoundError)
-                })?;
+                .ok_or(AstarteError::InterfaceError(
+                    interface::Error::MappingNotFound,
+                ))?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
                 //if mapping is a property
@@ -778,8 +778,8 @@ impl AstarteSdk {
                 .interfaces
                 .iter()
                 .find(|(name, _)| name == &interface_name)
-                .and_then(|(_, i)| Some(i.mappings()))
-                .unwrap_or(vec![]);
+                .map(|(_, i)| i.mappings())
+                .unwrap_or_default();
 
             for mapping in mappings {
                 if let crate::interface::Mapping::Properties(d) = mapping {

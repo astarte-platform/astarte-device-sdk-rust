@@ -60,7 +60,7 @@ pub async fn register_device(
     let client = reqwest::Client::new();
     let response = client
         .post(url)
-        .bearer_auth(&token)
+        .bearer_auth(token)
         .json(&payload)
         .send()
         .await?;
