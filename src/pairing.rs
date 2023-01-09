@@ -220,7 +220,7 @@ fn build_mqtt_opts(
         root_cert_store.add(&rustls::Certificate(cert.0))?;
     }
 
-    let mut tls_client_config = rumqttc::ClientConfig::builder()
+    let mut tls_client_config = rumqttc::tokio_rustls::rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_cert_store)
         .with_single_cert(certificate_pem.to_owned(), private_key.to_owned())
