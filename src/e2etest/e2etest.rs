@@ -20,6 +20,7 @@
 
 use std::{collections::HashMap, panic};
 
+use base64::Engine;
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
@@ -335,7 +336,7 @@ fn compare_json_with_astartetype(astype: &AstarteType, jstype: &Value) -> bool {
 }
 
 fn encode_blob(blob: &[u8]) -> String {
-    base64::encode_config(blob, base64::STANDARD)
+    base64::engine::general_purpose::STANDARD.encode(blob)
 }
 
 fn check_json_obj(data: &HashMap<String, f64>, json: String) {
