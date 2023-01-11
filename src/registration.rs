@@ -18,6 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use base64::Engine;
 use http::StatusCode;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -83,13 +84,13 @@ pub async fn register_device(
 /// Generate a random device Id with UUIDv4.
 pub fn generate_random_uuid() -> String {
     let uuid = Uuid::new_v4();
-    base64::encode_config(uuid.as_bytes(), base64::URL_SAFE_NO_PAD)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(uuid.as_bytes())
 }
 
 /// Generate a device Id based on UUID namespace identifier and a uniqueData.
 pub fn generate_uuid(namespace: uuid::Uuid, unique_data: &str) -> String {
     let uuid = Uuid::new_v5(&namespace, unique_data.as_bytes());
-    base64::encode_config(uuid.as_bytes(), base64::URL_SAFE_NO_PAD)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(uuid.as_bytes())
 }
 
 #[cfg(test)]
