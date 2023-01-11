@@ -18,211 +18,67 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::{collections::HashMap, panic};
+//! End to end tests for the Astarte SDK.
+//!
+//! Three separated tests are run, one after the other:
+//! - A test over datastreams
+//! - A test over aggregates
+//! - A test over properties
+//!
+//! All the test run only check for transmission from the Device to the Astarte remote instance.
+//! It is never checked if messages from the server are correctly handled.
+
+use std::collections::HashMap;
+use std::time::Duration;
+use std::{env, fs, panic, process};
 
 use base64::Engine;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
+use tokio::{task, time};
 
 use astarte_sdk::builder::AstarteOptions;
 use astarte_sdk::types::AstarteType;
-
-fn get_data() -> HashMap<String, AstarteType> {
-    let alltypes: Vec<AstarteType> = vec![
-        AstarteType::Double(4.5),
-        (-4).into(),
-        true.into(),
-        45543543534_i64.into(),
-        "hello".into(),
-        b"hello".to_vec().into(),
-        TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
-        vec![1.2, 3.4, 5.6, 7.8].into(),
-        vec![1, 3, 5, 7].into(),
-        vec![true, false, true, true].into(),
-        vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
-        vec!["hello".to_owned(), "world".to_owned()].into(),
-        vec![b"hello".to_vec(), b"world".to_vec()].into(),
-        vec![
-            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-            TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-            TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-        ]
-        .into(),
-    ];
-
-    let allendpoints = vec![
-        "double",
-        "integer",
-        "boolean",
-        "longinteger",
-        "string",
-        "binaryblob",
-        "datetime",
-        "doublearray",
-        "integerarray",
-        "booleanarray",
-        "longintegerarray",
-        "stringarray",
-        "binaryblobarray",
-        "datetimearray",
-    ];
-
-    let allendpoints = allendpoints
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<String>>();
-
-    let data = alltypes
-        .iter()
-        .cloned()
-        .zip(allendpoints.iter().cloned())
-        .collect::<Vec<(AstarteType, String)>>();
-
-    let mut data_map = HashMap::new();
-
-    for i in &data {
-        data_map.insert(i.1.clone(), i.0.clone());
-    }
-
-    data_map
-}
-
-fn get_data_obj() -> HashMap<String, f64> {
-    let mut data: HashMap<String, f64> = HashMap::new();
-    data.insert("latitude".into(), 1.34);
-    data.insert("longitude".into(), 2.34);
-    data.insert("altitude".into(), 3.34);
-    data.insert("accuracy".into(), 4.34);
-    data.insert("altitudeAccuracy".into(), 5.34);
-    data.insert("heading".into(), 6.34);
-    data.insert("speed".into(), 7.34);
-
-    data
-}
+use astarte_sdk::AstarteSdk;
 
 #[tokio::main]
 async fn main() {
+    // Set hook for panic with a custom message
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         println!("Test failed");
         orig_hook(panic_info);
-        std::process::exit(1);
+        process::exit(1);
     }));
 
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    time::sleep(Duration::from_secs(1)).await;
 
     let realm = "test";
-    let device_id = std::env::var("E2E_DEVICE_ID").unwrap();
-    let credentials_secret = std::env::var("E2E_CREDENTIALS_SECRET").unwrap();
+    let device_id = env::var("E2E_DEVICE_ID").unwrap();
+    let credentials_secret = env::var("E2E_CREDENTIALS_SECRET").unwrap();
     let pairing_url = "https://api.autotest.astarte-platform.org/pairing";
 
     let sdk_options = AstarteOptions::new(realm, &device_id, &credentials_secret, pairing_url)
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.test.Everything.json",
-        ))
-        .unwrap()
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.genericsensors.Geolocation.json",
-        ))
-        .unwrap()
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.genericsensors.SamplingRate.json",
-        ))
+        .interface_directory("./tests/e2etest/interfaces/")
         .unwrap()
         .ignore_ssl_errors()
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
+    let mut device = AstarteSdk::new(&sdk_options).await.unwrap();
 
-    let data = get_data();
+    let device_cpy = device.clone();
+    task::spawn(async move {
+        test_datastreams(&device_cpy, realm, &device_id).await;
 
-    let w = device.clone();
-    tokio::task::spawn(async move {
-        for _ in 0..3 {
-            // individual aggregation
-            for i in &data {
-                w.send(
-                    "org.astarte-platform.test.Everything",
-                    &format!("/{}", i.0),
-                    i.1.clone(),
-                )
-                .await
-                .unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        time::sleep(Duration::from_secs(1)).await;
 
-        let json = reqwest::Client::new()
-            .get(format!(
-                "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.test.Everything",
-                realm, device_id
-            ))
-            .header(
-                "Authorization",
-                "Bearer ".to_string() + &std::env::var("E2E_TOKEN").unwrap(),
-            )
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        test_aggregates(&device_cpy, realm, &device_id).await;
 
-        check_json(&data, json);
+        time::sleep(Duration::from_secs(1)).await;
 
-        println!("Test 1 completed successfully");
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        test_properties(&device_cpy).await;
 
-        let data = get_data_obj();
-
-        w.send_object(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/45",
-            data.clone(),
-        )
-        .await
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        let json = reqwest::Client::new()
-        .get(format!(
-            "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.genericsensors.Geolocation",
-            realm, device_id
-        ))
-        .header(
-            "Authorization",
-            "Bearer ".to_string() + &std::env::var("E2E_TOKEN").unwrap(),
-        )
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-
-        println!("----------------\n{:?}", data);
-        println!("----------------\n{:?}", json);
-
-        check_json_obj(&data, json);
-
-        w.send(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/1/enable",
-            true,
-        )
-        .await
-        .unwrap();
-
-        w.unset(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/1/enable",
-        )
-        .await
-        .unwrap();
-
-        std::process::exit(0);
+        process::exit(0);
     });
 
     loop {
@@ -232,268 +88,460 @@ async fn main() {
             }
             Err(err) => {
                 println!("poll error {:?}", err);
-                std::process::exit(1);
+                process::exit(1);
             }
         }
     }
 }
 
-fn check_json(data: &HashMap<String, AstarteType>, json: String) {
-    fn parse_response_json(json: &str) -> HashMap<String, Value> {
-        let mut ret = HashMap::new();
-        let v: Value = serde_json::from_str(json).unwrap();
+/// Run the end to end test over for the datastream types.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *realm*: the name of the Astarte realm on which the device is connected.
+/// - *device_id*: the device ID associated with the Astarte SDK instance.
+///
+async fn test_datastreams(device: &AstarteSdk, realm: &str, device_id: &str) {
+    // Retrive the mock data to use for testing from a file
+    let test_data_json_str = fs::read_to_string("./tests/e2etest/mock_data/data_datastream.json")
+        .expect("Unable to read json file");
+    let test_data_json: Value =
+        serde_json::from_str(&test_data_json_str).expect("JSON does not have correct format.");
+    let test_data = parse_datastream_data_from_json(test_data_json).unwrap();
 
-        println!("{:#?}", v);
+    // Send all the mock test data
+    for (key, value) in test_data.clone() {
+        device
+            .send(
+                "org.astarte-platform.e2etest.Datastream",
+                &format!("/{}", key),
+                value,
+            )
+            .await
+            .unwrap();
+        time::sleep(Duration::from_millis(5)).await;
+    }
 
-        if let Value::Object(data) = v {
-            if let Value::Object(data) = &data["data"] {
-                for dat in data {
-                    if let Value::Object(dat2) = dat.1 {
-                        ret.insert(dat.0.clone(), dat2["value"].clone());
-                    }
-                }
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Get the data stored in the server using an HTTPs GET command
+    let json_str = get_interface_data_from_astarte(
+        realm,
+        device_id,
+        "org.astarte-platform.e2etest.Datastream",
+    )
+    .await;
+
+    // Check if the sent and received data match
+    let json: Value = serde_json::from_str(&json_str).unwrap();
+    let received_data = parse_datastream_data_from_json(json).unwrap();
+    for (key, exp_value) in test_data.clone() {
+        if let Some(rcv_value) = received_data.get(&key) {
+            if exp_value.clone() != rcv_value.clone() {
+                panic!("Can't find {} in json {:?}", key, json_str);
             }
+        } else {
+            panic!("Missing key: {} in json {:?}", key, json_str);
         }
-
-        ret
     }
 
-    let json = parse_response_json(&json);
-
-    for i in data {
-        let atype = &i.1;
-        let jtype = &json
-            .get(i.0)
-            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
-
-        println!("{:?} {:?}", atype, jtype);
-        assert!(compare_json_with_astartetype(atype, jtype));
-    }
+    println!("Test datastreams completed successfully");
 }
 
-fn compare_json_with_astartetype(astype: &AstarteType, jstype: &Value) -> bool {
+/// Run the end to end test over for the aggregates types.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *realm*: the name of the Astarte realm on which the device is connected.
+/// - *device_id*: the device ID associated with the Astarte SDK instance.
+///
+async fn test_aggregates(device: &AstarteSdk, realm: &str, device_id: &str) {
+    // Retrive the mock data to use for testing from a file
+    let test_data_json_str = fs::read_to_string("./tests/e2etest/mock_data/data_aggregate.json")
+        .expect("Unable to read json file");
+    let test_data_json: Value =
+        serde_json::from_str(&test_data_json_str).expect("JSON does not have correct format.");
+    let test_data = parse_aggregate_data_from_json(test_data_json).unwrap();
+
+    // Send the mock test data
+    device
+        .send_object(
+            "org.astarte-platform.e2etest.Aggregate",
+            "/45",
+            test_data.clone(),
+        )
+        .await
+        .unwrap();
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Get the data stored in the server using an HTTPs GET command
+    let json_str =
+        get_interface_data_from_astarte(realm, device_id, "org.astarte-platform.e2etest.Aggregate")
+            .await;
+
+    // Check if the sent and received data match
+    let json: Value = serde_json::from_str(&json_str).unwrap();
+    let received_data = parse_aggregate_data_from_json(json).unwrap();
+    for (key, exp_value) in test_data.clone() {
+        if let Some(rcv_value) = received_data.get(&key) {
+            if exp_value != *rcv_value {
+                panic!("Can't find {} in json {:?}", key, json_str);
+            }
+        } else {
+            panic!("Missing key: {} in json {:?}", key, json_str);
+        }
+    }
+
+    println!("Test aggregates completed successfully");
+}
+
+/// Run the end to end test over for the properties types.
+///
+/// **N.B.** these tests are very shallow compared to the others.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+///
+async fn test_properties(device: &AstarteSdk) {
+    device
+        .send("org.astarte-platform.e2etest.Property", "/1/enable", true)
+        .await
+        .unwrap();
+
+    device
+        .unset("org.astarte-platform.e2etest.Property", "/1/enable")
+        .await
+        .unwrap();
+
+    println!("Test properties completed successfully");
+}
+
+/// Parse a json file containing only datastreams to a hash map.
+///
+/// This function is tailor made for the data_datastream.json file.
+///
+/// # Arguments
+/// - *json*: the input json file already parsed to a `serde_json::Value` type.
+///
+fn parse_datastream_data_from_json(json: Value) -> Result<HashMap<String, AstarteType>, String> {
+    let err = "Unable to parse the json data.";
+    let mut json_parsed: HashMap<String, AstarteType> = HashMap::new();
+
+    let data = json.get("data").ok_or(err)?;
+    if let Value::Object(data) = data {
+        for (key, value) in data {
+            let value = value.get("value").ok_or(err)?.clone();
+            let parsed_value = astarte_type_from_json_value(key, value)?;
+            json_parsed.insert(key.clone(), parsed_value);
+        }
+    } else {
+        return Err(err.to_string());
+    }
+    Ok(json_parsed)
+}
+
+/// Parse a single value to an Astarte type.
+///
+/// This function supports all base types of Astarte.
+///
+/// # Arguments
+/// - *astype*: the name of the astarte type to convert to.
+/// - *jsvalue*: the value to parse to an Astarte type.
+///
+fn astarte_type_from_json_value(astype: &str, jsvalue: Value) -> Result<AstarteType, String> {
+    let err = "Incorrect astarte type";
     match astype {
-        AstarteType::Double(d) => jstype.as_f64().unwrap() == *d,
-        AstarteType::Integer(i) => jstype.as_i64().unwrap() == *i as i64,
-        AstarteType::Boolean(b) => jstype.as_bool().unwrap() == *b,
-        AstarteType::LongInteger(i) => jstype.as_i64().unwrap() == *i,
-        AstarteType::String(d) => jstype.as_str().unwrap() == *d,
-        AstarteType::BinaryBlob(d) => jstype.as_str().unwrap() == encode_blob(d),
-        AstarteType::DateTime(d) => {
-            jstype.as_str().unwrap() == d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        "double" => Ok(AstarteType::Double(jsvalue.as_f64().ok_or(err)?)),
+        "integer" => Ok(AstarteType::Integer(
+            jsvalue.as_i64().map(|v| v as i32).ok_or(err)?,
+        )),
+        "boolean" => Ok(AstarteType::Boolean(jsvalue.as_bool().ok_or(err)?)),
+        "longinteger" => Ok(AstarteType::LongInteger(jsvalue.as_i64().ok_or(err)?)),
+        "string" => Ok(AstarteType::String(
+            jsvalue.as_str().map(|v| v.to_string()).ok_or(err)?,
+        )),
+        "binaryblob" => {
+            let bin_blob_str = jsvalue.as_str().ok_or(err)?;
+            let bin_blob = base64::engine::general_purpose::STANDARD
+                .decode(bin_blob_str)
+                .map_err(|err| err.to_string())?;
+            Ok(AstarteType::BinaryBlob(bin_blob))
         }
-        AstarteType::DoubleArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_f64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::IntegerArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_i64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1 as i64),
-        AstarteType::BooleanArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_bool())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::LongIntegerArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_i64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::StringArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::BinaryBlobArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == encode_blob(f.1)),
-        AstarteType::DateTimeArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == f.1.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-        AstarteType::Unset => todo!(),
+        "datetime" => {
+            let date_time_str = jsvalue.as_str().ok_or(err)?;
+            let date_time =
+                DateTime::parse_from_rfc3339(date_time_str).map_err(|err| err.to_string())?;
+            Ok(AstarteType::DateTime(DateTime::<Utc>::from(date_time)))
+        }
+        "doublearray" => {
+            let unparsed_vec: Result<Vec<f64>, &str> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_f64().ok_or(err))
+                .collect();
+            unparsed_vec
+                .map(AstarteType::DoubleArray)
+                .map_err(|e| e.to_string())
+        }
+        "integerarray" => {
+            let unparsed_vec: Result<Vec<i32>, &str> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_i64().map(|v| v as i32).ok_or(err))
+                .collect();
+            unparsed_vec
+                .map(AstarteType::IntegerArray)
+                .map_err(|e| e.to_string())
+        }
+        "booleanarray" => {
+            let unparsed_vec: Result<Vec<bool>, &str> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_bool().ok_or(err))
+                .collect();
+            unparsed_vec
+                .map(AstarteType::BooleanArray)
+                .map_err(|e| e.to_string())
+        }
+        "longintegerarray" => {
+            let unparsed_vec: Result<Vec<i64>, &str> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_i64().ok_or(err))
+                .collect();
+            unparsed_vec
+                .map(AstarteType::LongIntegerArray)
+                .map_err(|e| e.to_string())
+        }
+        "stringarray" => {
+            let unparsed_vec: Result<Vec<String>, &str> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_str().map(|v| v.to_string()).ok_or(err))
+                .collect();
+            unparsed_vec
+                .map(AstarteType::StringArray)
+                .map_err(|e| e.to_string())
+        }
+        "binaryblobarray" => {
+            let unparsed_vec: Result<Vec<Vec<u8>>, String> = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(|v| {
+                            base64::engine::general_purpose::STANDARD
+                                .decode(v)
+                                .map_err(|err| err.to_string())
+                        })
+                        .ok_or(err)?
+                })
+                .collect();
+            unparsed_vec.map(AstarteType::BinaryBlobArray)
+        }
+        "datetimearray" => {
+            let unparsed_vec = jsvalue
+                .as_array()
+                .ok_or(err)?
+                .iter()
+                .map(|v| v.as_str().ok_or(err))
+                .collect::<Result<Vec<&str>, &str>>()?;
+            let unparsed_vec = unparsed_vec
+                .iter()
+                .map(|v| DateTime::parse_from_rfc3339(v))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|err| err.to_string())?;
+            let parsed_vec = unparsed_vec
+                .iter()
+                .map(|dt| DateTime::<Utc>::from(*dt))
+                .collect::<Vec<_>>();
+            Ok(AstarteType::DateTimeArray(parsed_vec))
+        }
+        _ => Err(err.to_string()),
     }
 }
 
-fn encode_blob(blob: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(blob)
-}
+/// Parse a json file containing a single aggregate to a hash map.
+///
+/// This function is tailor made for the data_aggregate.json file.
+///
+/// # Arguments
+/// - *json*: the input json file already parsed to a `serde_json::Value` type.
+///
+fn parse_aggregate_data_from_json(json: Value) -> Result<HashMap<String, f64>, String> {
+    let err0 = "Unable to parse the json data.";
+    let err1 = "Incompatible astarte type";
+    let mut json_parsed: HashMap<String, f64> = HashMap::new();
 
-fn check_json_obj(data: &HashMap<String, f64>, json: String) {
-    fn parse_response_json(json: &str) -> HashMap<String, f64> {
-        let mut ret = HashMap::new();
-        let v: Value = serde_json::from_str(json).unwrap();
+    let data = json
+        .get("data")
+        .ok_or(err0)?
+        .get("45")
+        .ok_or(err0)?
+        .get(0)
+        .ok_or(err0)?;
 
-        println!("{:#?}", v);
-
-        if let Value::Object(data) = v {
-            if let Value::Object(data) = &data["data"] {
-                if let Value::Array(data) = &data["45"] {
-                    if let Value::Object(data) = &data[0] {
-                        for dat in data {
-                            if let Value::Number(dat2) = dat.1 {
-                                ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
-                            }
-                        }
-                    }
-                }
+    if let Value::Object(data) = data {
+        for (key, value) in data {
+            if let Value::Number(value) = value {
+                json_parsed.insert(key.clone(), value.as_f64().ok_or(err1)?);
             }
         }
-
-        ret
+    } else {
+        return Err(err0.to_string());
     }
+    Ok(json_parsed)
+}
 
-    let json = parse_response_json(&json);
-
-    for i in data {
-        let jtype = json
-            .get(i.0)
-            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
-
-        println!("{:?} {:?}", i.1, jtype);
-        assert!(compare_json_with_astartetype(
-            &AstarteType::Double(*i.1),
-            &Value::Number(serde_json::Number::from_f64(*jtype).unwrap())
-        ));
-    }
+/// Use HTTPS to fetch the content of an interface from an Astarte instance.
+///
+/// Returns the response to GET, a json file containing the interface content.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *realm*: the name of the Astarte realm on which the device is connected.
+/// - *interface*: The interface whose data should be retrived.
+///
+async fn get_interface_data_from_astarte(realm: &str, device_id: &str, interface: &str) -> String {
+    reqwest::Client::new()
+        .get(format!(
+            "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/{}",
+            realm, device_id, interface
+        ))
+        .header(
+            "Authorization",
+            "Bearer ".to_string() + &env::var("E2E_TOKEN").unwrap(),
+        )
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{check_json, get_data};
+    use std::collections::HashMap;
+    use std::fs;
+
+    use chrono::{TimeZone, Utc};
+    use serde_json::Value;
+
+    use crate::parse_aggregate_data_from_json;
+    use crate::parse_datastream_data_from_json;
+    use astarte_sdk::types::AstarteType;
+
+    #[rustfmt::skip]
+    fn get_expected_datastream_data() -> HashMap<String, AstarteType> {
+        let mut data_map: HashMap<String, AstarteType> = HashMap::new();
+
+        data_map.insert(
+            "double".to_string(),
+            AstarteType::Double(4.5)
+        );
+        data_map.insert(
+            "integer".to_string(),
+            AstarteType::Integer(-4));
+        data_map.insert(
+            "boolean".to_string(),
+            AstarteType::Boolean(true)
+        );
+        data_map.insert(
+            "longinteger".to_string(),
+            AstarteType::LongInteger(45543543534_i64),
+        );
+        data_map.insert(
+            "string".to_string(),
+            AstarteType::String("hello".into())
+        );
+        data_map.insert(
+            "binaryblob".to_string(),
+            AstarteType::BinaryBlob(b"hello".to_vec()),
+        );
+        data_map.insert(
+            "datetime".to_string(),
+            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+        );
+        data_map.insert(
+            "doublearray".to_string(),
+            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+        );
+        data_map.insert(
+            "integerarray".to_string(),
+            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
+        );
+        data_map.insert(
+            "booleanarray".to_string(),
+            AstarteType::BooleanArray(vec![true, false, true, true]),
+        );
+        data_map.insert(
+            "longintegerarray".to_string(),
+            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+        );
+        data_map.insert(
+            "stringarray".to_string(),
+            AstarteType::StringArray(vec!["hello".to_string(), "world".to_string()])
+        );
+        data_map.insert(
+            "binaryblobarray".to_string(),
+            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()])
+        );
+        data_map.insert(
+            "datetimearray".to_string(),
+            AstarteType::DateTimeArray(vec![
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
+            ])
+        );
+
+        data_map
+    }
+
+    fn get_expected_aggregate_data() -> HashMap<String, f64> {
+        let mut data_map: HashMap<String, f64> = HashMap::new();
+
+        data_map.insert("latitude".to_string(), 1.34);
+        data_map.insert("longitude".to_string(), 2.34);
+        data_map.insert("altitude".to_string(), 3.34);
+        data_map.insert("accuracy".to_string(), 4.34);
+        data_map.insert("altitudeAccuracy".to_string(), 5.34);
+        data_map.insert("heading".to_string(), 6.34);
+        data_map.insert("speed".to_string(), 7.34);
+
+        data_map
+    }
 
     #[test]
-    fn json() {
-        let json = r#"{
-            "data":{
-               "binaryblob":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":"aGVsbG8="
-               },
-               "binaryblobarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     "aGVsbG8=",
-                     "d29ybGQ="
-                  ]
-               },
-               "boolean":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":true
-               },
-               "booleanarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.074Z",
-                  "timestamp":"2021-09-10T12:22:42.074Z",
-                  "value":[
-                     true,
-                     false,
-                     true,
-                     true
-                  ]
-               },
-               "datetime":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":"2021-07-29T17:46:48.000Z"
-               },
-               "datetimearray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.098Z",
-                  "timestamp":"2021-09-10T12:22:42.098Z",
-                  "value":[
-                     "2021-07-29T17:46:48.000Z",
-                     "2021-07-29T17:46:49.000Z",
-                     "2021-07-29T17:46:50.000Z"
-                  ]
-               },
-               "double":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":4.5
-               },
-               "doublearray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":[
-                     1.2,
-                     3.4,
-                     5.6,
-                     7.8
-                  ]
-               },
-               "integer":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":-4
-               },
-               "integerarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.074Z",
-                  "timestamp":"2021-09-10T12:22:42.074Z",
-                  "value":[
-                     1,
-                     3,
-                     5,
-                     7
-                  ]
-               },
-               "longinteger":{
-                  "reception_timestamp":"2022-02-11T15:26:13.483Z",
-                  "timestamp":"2022-02-11T15:26:13.483Z",
-                  "value":45543543534
-               },
-               "longintegerarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     45543543534,
-                     45543543535,
-                     45543543536
-                  ]
-               },
-               "string":{
-                  "reception_timestamp":"2021-09-10T12:22:42.050Z",
-                  "timestamp":"2021-09-10T12:22:42.050Z",
-                  "value":"hello"
-               },
-               "stringarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     "hello",
-                     "world"
-                  ]
-               }
-            }
-         }"#;
-        let data = get_data();
+    fn test_get_datastream_data_from_json() {
+        let json_str = fs::read_to_string("./tests/e2etest/mock_data/data_datastream.json")
+            .expect("Unable to read file");
+        let json: Value =
+            serde_json::from_str(&json_str).expect("JSON does not have correct format.");
+        let test_data = parse_datastream_data_from_json(json).unwrap();
+        let expected_data = get_expected_datastream_data();
 
-        check_json(&data, json.to_string());
+        assert_eq!(test_data, expected_data);
+    }
 
-        let json = "{\"data\":{\"45\":[{\"accuracy\":4.34,\"altitude\":3.34,\"altitudeAccuracy\":5.34,\"heading\":6.34,\"latitude\":1.34,\"longitude\":2.34,\"speed\":7.34,\"timestamp\":\"2022-03-23T14:43:21.909Z\"}]}}";
+    #[test]
+    fn test_get_aggregate_data_from_json() {
+        let json_str = fs::read_to_string("./tests/e2etest/mock_data/data_aggregate.json")
+            .expect("Unable to read file");
+        let json: Value =
+            serde_json::from_str(&json_str).expect("JSON does not have correct format.");
 
-        let data = crate::get_data_obj();
-        crate::check_json_obj(&data, json.to_string());
+        let test_data = parse_aggregate_data_from_json(json).unwrap();
+        let expected_data = get_expected_aggregate_data();
+
+        assert_eq!(test_data, expected_data);
     }
 }

@@ -1,5 +1,5 @@
 {
-    "interface_name": "org.astarte-platform.genericsensors.SamplingRate",
+    "interface_name": "org.astarte-platform.e2etest.Property",
     "version_major": 1,
     "version_minor": 0,
     "type": "properties",

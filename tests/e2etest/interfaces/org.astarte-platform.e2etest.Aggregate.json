@@ -1,5 +1,5 @@
 {
-    "interface_name": "org.astarte-platform.genericsensors.Geolocation",
+    "interface_name": "org.astarte-platform.e2etest.Aggregate",
     "version_major": 1,
     "version_minor": 0,
     "type": "datastream",
