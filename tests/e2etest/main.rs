@@ -17,483 +17,667 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+//! End to end tests for the Astarte SDK.
+//!
+//! Three separated tests are run, one after the other:
+//! - A test over datastreams
+//! - A test over aggregates
+//! - A test over properties
 
-use std::{collections::HashMap, panic};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::{env, panic, process};
 
-use base64::Engine;
-use chrono::{TimeZone, Utc};
+use colored::Colorize;
 use serde_json::Value;
+use tokio::{task, time};
 
 use astarte_sdk::builder::AstarteOptions;
 use astarte_sdk::types::AstarteType;
+use astarte_sdk::AstarteSdk;
 
-fn get_data() -> HashMap<String, AstarteType> {
-    let alltypes: Vec<AstarteType> = vec![
-        AstarteType::Double(4.5),
-        (-4).into(),
-        true.into(),
-        45543543534_i64.into(),
-        "hello".into(),
-        b"hello".to_vec().into(),
-        TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
-        vec![1.2, 3.4, 5.6, 7.8].into(),
-        vec![1, 3, 5, 7].into(),
-        vec![true, false, true, true].into(),
-        vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
-        vec!["hello".to_owned(), "world".to_owned()].into(),
-        vec![b"hello".to_vec(), b"world".to_vec()].into(),
-        vec![
-            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-            TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-            TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-        ]
-        .into(),
-    ];
+mod mock_data_aggregate;
+mod mock_data_datastream;
+mod mock_data_property;
+mod utils;
 
-    let allendpoints = vec![
-        "double",
-        "integer",
-        "boolean",
-        "longinteger",
-        "string",
-        "binaryblob",
-        "datetime",
-        "doublearray",
-        "integerarray",
-        "booleanarray",
-        "longintegerarray",
-        "stringarray",
-        "binaryblobarray",
-        "datetimearray",
-    ];
+use mock_data_aggregate::MockDataAggregate;
+use mock_data_datastream::MockDataDatastream;
+use mock_data_property::MockDataProperty;
 
-    let allendpoints = allendpoints
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<String>>();
-
-    let data = alltypes
-        .iter()
-        .cloned()
-        .zip(allendpoints.iter().cloned())
-        .collect::<Vec<(AstarteType, String)>>();
-
-    let mut data_map = HashMap::new();
-
-    for i in &data {
-        data_map.insert(i.1.clone(), i.0.clone());
-    }
-
-    data_map
+#[derive(Clone)]
+struct TestCfg {
+    realm: String,
+    device_id: String,
+    credentials_secret: String,
+    api_url: String,
+    pairing_url: String,
+    interfaces_fld: PathBuf,
+    interface_datastream_so: String,
+    interface_datastream_do: String,
+    interface_aggregate_so: String,
+    interface_aggregate_do: String,
+    interface_property_so: String,
+    interface_property_do: String,
+    appengine_token: String,
 }
 
-fn get_data_obj() -> HashMap<String, f64> {
-    let mut data: HashMap<String, f64> = HashMap::new();
-    data.insert("latitude".into(), 1.34);
-    data.insert("longitude".into(), 2.34);
-    data.insert("altitude".into(), 3.34);
-    data.insert("accuracy".into(), 4.34);
-    data.insert("altitudeAccuracy".into(), 5.34);
-    data.insert("heading".into(), 6.34);
-    data.insert("speed".into(), 7.34);
+impl TestCfg {
+    pub fn init() -> Result<Self, String> {
+        let realm = env::var("E2E_REALM").map_err(|msg| msg.to_string())?;
+        let device_id = env::var("E2E_DEVICE_ID").map_err(|msg| msg.to_string())?;
+        let credentials_secret =
+            env::var("E2E_CREDENTIALS_SECRET").map_err(|msg| msg.to_string())?;
+        let api_url = env::var("E2E_API_URL").map_err(|msg| msg.to_string())?;
+        let pairing_url = format!("{api_url}/pairing");
 
-    data
+        let interfaces_fld = env::current_dir()
+            .map_err(|msg| msg.to_string())?
+            .join("tests")
+            .join("e2etest")
+            .join("interfaces");
+
+        let interface_datastream_so =
+            "org.astarte-platform.rust.e2etest.ServerDatastream".to_string();
+        let interface_datastream_do =
+            "org.astarte-platform.rust.e2etest.DeviceDatastream".to_string();
+        let interface_aggregate_so =
+            "org.astarte-platform.rust.e2etest.ServerAggregate".to_string();
+        let interface_aggregate_do =
+            "org.astarte-platform.rust.e2etest.DeviceAggregate".to_string();
+        let interface_property_do = "org.astarte-platform.rust.e2etest.DeviceProperty".to_string();
+        let interface_property_so = "org.astarte-platform.rust.e2etest.ServerProperty".to_string();
+
+        let appengine_token = std::env::var("E2E_TOKEN").map_err(|e| e.to_string())?;
+
+        Ok(TestCfg {
+            realm,
+            device_id,
+            credentials_secret,
+            api_url,
+            pairing_url,
+            interfaces_fld,
+            interface_datastream_so,
+            interface_datastream_do,
+            interface_aggregate_so,
+            interface_aggregate_do,
+            interface_property_so,
+            interface_property_do,
+            appengine_token,
+        })
+    }
 }
 
 #[tokio::main]
 async fn main() {
+    // Set hook for panic, forcing an exit(1) with each panic.
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         println!("Test failed");
         orig_hook(panic_info);
-        std::process::exit(1);
+        process::exit(1);
     }));
 
-    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+    let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
-    let realm = "test";
-    let device_id = std::env::var("E2E_DEVICE_ID").unwrap();
-    let credentials_secret = std::env::var("E2E_CREDENTIALS_SECRET").unwrap();
-    let pairing_url = "https://api.autotest.astarte-platform.org/pairing";
+    let sdk_options = AstarteOptions::new(
+        &test_cfg.realm,
+        &test_cfg.device_id,
+        &test_cfg.credentials_secret,
+        &test_cfg.pairing_url,
+    )
+    .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
+    .unwrap()
+    .ignore_ssl_errors()
+    .build();
 
-    let sdk_options = AstarteOptions::new(realm, &device_id, &credentials_secret, pairing_url)
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.test.Everything.json",
-        ))
-        .unwrap()
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.genericsensors.Geolocation.json",
-        ))
-        .unwrap()
-        .interface_file(std::path::Path::new(
-            "./examples/interfaces/org.astarte-platform.genericsensors.SamplingRate.json",
-        ))
-        .unwrap()
-        .ignore_ssl_errors()
-        .build();
+    let mut device = AstarteSdk::new(&sdk_options).await.unwrap();
+    let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
+    let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
+    let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
-
-    let data = get_data();
-
-    let w = device.clone();
-    tokio::task::spawn(async move {
-        for _ in 0..3 {
-            // individual aggregation
-            for i in &data {
-                w.send(
-                    "org.astarte-platform.test.Everything",
-                    &format!("/{}", i.0),
-                    i.1.clone(),
-                )
-                .await
-                .unwrap();
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        let json = reqwest::Client::new()
-            .get(format!(
-                "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.test.Everything",
-                realm, device_id
-            ))
-            .header(
-                "Authorization",
-                "Bearer ".to_string() + &std::env::var("E2E_TOKEN").unwrap(),
-            )
-            .send()
+    let device_cpy = device.clone();
+    let test_cfg_cpy = test_cfg.clone();
+    let rx_data_ind_datastream_cpy = rx_data_ind_datastream.clone();
+    let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
+    let rx_data_ind_prop_cpy = rx_data_ind_prop.clone();
+    task::spawn(async move {
+        // Run datastream tests
+        test_datastream_device_to_server(&device_cpy, &test_cfg_cpy)
             .await
-            .unwrap()
-            .text()
+            .unwrap();
+        test_datastream_server_to_device(&test_cfg_cpy, &rx_data_ind_datastream_cpy)
+            .await
+            .unwrap();
+        // Run aggregate tests
+        test_aggregate_device_to_server(&device_cpy, &test_cfg_cpy)
+            .await
+            .unwrap();
+        test_aggregate_server_to_device(&test_cfg_cpy, &rx_data_agg_datastream_cpy)
+            .await
+            .unwrap();
+        // Run properties tests
+        test_property_device_to_server(&device_cpy, &test_cfg_cpy)
+            .await
+            .unwrap();
+        test_property_server_to_device(&test_cfg_cpy, &rx_data_ind_prop_cpy)
             .await
             .unwrap();
 
-        check_json(&data, json);
-
-        println!("Test 1 completed successfully");
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        let data = get_data_obj();
-
-        w.send_object(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/45",
-            data.clone(),
-        )
-        .await
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-
-        let json = reqwest::Client::new()
-        .get(format!(
-            "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.genericsensors.Geolocation",
-            realm, device_id
-        ))
-        .header(
-            "Authorization",
-            "Bearer ".to_string() + &std::env::var("E2E_TOKEN").unwrap(),
-        )
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-
-        println!("----------------\n{:?}", data);
-        println!("----------------\n{:?}", json);
-
-        check_json_obj(&data, json);
-
-        w.send(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/1/enable",
-            true,
-        )
-        .await
-        .unwrap();
-
-        w.unset(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/1/enable",
-        )
-        .await
-        .unwrap();
-
-        std::process::exit(0);
+        println!("\nTest datastreams completed successfully");
+        process::exit(0);
     });
 
     loop {
+        // Poll any astarte message and store its content in the correct shared data structure
         match device.poll().await {
             Ok(data) => {
-                println!("incoming: {:?}", data);
+                if data.interface == test_cfg.interface_datastream_so {
+                    if let astarte_sdk::Aggregation::Individual(var) = data.data {
+                        let mut rx_data = rx_data_ind_datastream.lock().unwrap();
+                        let mut key = data.path.clone();
+                        key.remove(0);
+                        rx_data.insert(key, var);
+                    } else {
+                        panic!("Received unexpected message!");
+                    }
+                } else if data.interface == test_cfg.interface_aggregate_so {
+                    if let astarte_sdk::Aggregation::Object(var) = data.data {
+                        let mut rx_data = rx_data_agg_datastream.lock().unwrap();
+                        let mut sensor_n = data.path.clone();
+                        sensor_n.remove(0);
+                        rx_data.0 = sensor_n;
+                        for (key, value) in var {
+                            rx_data.1.insert(key, value);
+                        }
+                    } else {
+                        panic!("Received unexpected message!");
+                    }
+                } else if data.interface == test_cfg.interface_property_so {
+                    if let astarte_sdk::Aggregation::Individual(var) = data.clone().data {
+                        let mut rx_data = rx_data_ind_prop.lock().unwrap();
+                        let mut path = data.path.clone();
+                        path.remove(0); // Remove first forward slash
+                        let panic_msg = format!("Incorrect path in message {:?}", &data);
+                        let (sensor_n, key) = path.split_once('/').expect(&panic_msg);
+                        rx_data.0 = sensor_n.to_string();
+                        rx_data.1.insert(key.to_string(), var);
+                    } else {
+                        panic!("Received unexpected message!");
+                    }
+                } else {
+                    panic!("Received unexpected message!");
+                }
             }
             Err(err) => {
-                println!("poll error {:?}", err);
-                std::process::exit(1);
+                panic!("poll error {:?}", err);
             }
         }
     }
 }
 
-fn check_json(data: &HashMap<String, AstarteType>, json: String) {
-    fn parse_response_json(json: &str) -> HashMap<String, Value> {
-        let mut ret = HashMap::new();
-        let v: Value = serde_json::from_str(json).unwrap();
+/// Run the end to end tests from device to server for individual datastreams.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *test_cfg*: struct containing configuration settings for the tests.
+async fn test_datastream_device_to_server(
+    device: &AstarteSdk,
+    test_cfg: &TestCfg,
+) -> Result<(), String> {
+    let mock_data = MockDataDatastream::init();
+    let tx_data = mock_data.get_device_to_server_data_as_astarte();
 
-        println!("{:#?}", v);
-
-        if let Value::Object(data) = v {
-            if let Value::Object(data) = &data["data"] {
-                for dat in data {
-                    if let Value::Object(dat2) = dat.1 {
-                        ret.insert(dat.0.clone(), dat2["value"].clone());
-                    }
-                }
-            }
-        }
-
-        ret
+    // Send all the mock test data
+    let msg = "\nSending device owned datastreams from device to server.".cyan();
+    println!("{msg}");
+    for (key, value) in tx_data.clone() {
+        device
+            .send(&test_cfg.interface_datastream_do, &format!("/{key}"), value)
+            .await
+            .map_err(|e| e.to_string())?;
+        time::sleep(Duration::from_millis(5)).await;
     }
 
-    let json = parse_response_json(&json);
+    time::sleep(Duration::from_secs(1)).await;
 
-    for i in data {
-        let atype = &i.1;
-        let jtype = &json
-            .get(i.0)
-            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
+    // Get the stored data using http requests
+    println!("{}", "\nChecking data stored on the server.".cyan());
+    let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_datastream_do).await?;
 
-        println!("{:?} {:?}", atype, jtype);
-        assert!(compare_json_with_astartetype(atype, jtype));
-    }
-}
+    // Check if the sent and received data match
+    let data_json: Value = serde_json::from_str(&http_get_response)
+        .map_err(|_| "Reply from server is a bad json.".to_string())?;
 
-fn compare_json_with_astartetype(astype: &AstarteType, jstype: &Value) -> bool {
-    match astype {
-        AstarteType::Double(d) => jstype.as_f64().unwrap() == *d,
-        AstarteType::Integer(i) => jstype.as_i64().unwrap() == *i as i64,
-        AstarteType::Boolean(b) => jstype.as_bool().unwrap() == *b,
-        AstarteType::LongInteger(i) => jstype.as_i64().unwrap() == *i,
-        AstarteType::String(d) => jstype.as_str().unwrap() == *d,
-        AstarteType::BinaryBlob(d) => jstype.as_str().unwrap() == encode_blob(d),
-        AstarteType::DateTime(d) => {
-            jstype.as_str().unwrap() == d.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        }
-        AstarteType::DoubleArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_f64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::IntegerArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_i64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1 as i64),
-        AstarteType::BooleanArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_bool())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::LongIntegerArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_i64())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::StringArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == *f.1),
-        AstarteType::BinaryBlobArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == encode_blob(f.1)),
-        AstarteType::DateTimeArray(d) => jstype
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str())
-            .zip(d.iter())
-            .all(|f| f.0.unwrap() == f.1.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-        AstarteType::Unset => todo!(),
+    let rx_data = MockDataDatastream::init()
+        .fill_device_to_server_data_from_json(&data_json)?
+        .get_device_to_server_data_as_astarte();
+
+    if tx_data != rx_data {
+        Err(format!(
+            "Mismatch between server and device. Expected data: {:?}. Server data: {:?}.",
+            tx_data, rx_data
+        ))
+    } else {
+        Ok(())
     }
 }
 
-fn encode_blob(blob: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(blob)
-}
+/// Run the end to end tests from server to device for individual datastreams.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the tests.
+/// - *rx_data*: shared memory containing the received datastreams.
+/// A different process will poll the device and then store the matching received messages
+/// in this shared memory location.
+async fn test_datastream_server_to_device(
+    test_cfg: &TestCfg,
+    rx_data: &Arc<Mutex<HashMap<String, AstarteType>>>,
+) -> Result<(), String> {
+    let mock_data = MockDataDatastream::init();
 
-fn check_json_obj(data: &HashMap<String, f64>, json: String) {
-    fn parse_response_json(json: &str) -> HashMap<String, f64> {
-        let mut ret = HashMap::new();
-        let v: Value = serde_json::from_str(json).unwrap();
-
-        println!("{:#?}", v);
-
-        if let Value::Object(data) = v {
-            if let Value::Object(data) = &data["data"] {
-                if let Value::Array(data) = &data["45"] {
-                    if let Value::Object(data) = &data[0] {
-                        for dat in data {
-                            if let Value::Number(dat2) = dat.1 {
-                                ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        ret
+    // Send the data using http requests
+    let msg = "\nSending server owned datastreams from server to device.".cyan();
+    println!("{msg}");
+    for (key, value) in mock_data.get_server_to_device_data_as_json() {
+        http_post_to_intf(test_cfg, &test_cfg.interface_datastream_so, &key, value).await?;
     }
 
-    let json = parse_response_json(&json);
+    time::sleep(Duration::from_secs(1)).await;
 
-    for i in data {
-        let jtype = json
-            .get(i.0)
-            .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
+    // Lock the shared data and check if everything sent has been correctly received
 
-        println!("{:?} {:?}", i.1, jtype);
-        assert!(compare_json_with_astartetype(
-            &AstarteType::Double(*i.1),
-            &Value::Number(serde_json::Number::from_f64(*jtype).unwrap())
+    println!("{}", "\nChecking data received by the device.".cyan());
+    let rx_data_rw_acc = rx_data
+        .lock()
+        .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+
+    let exp_data = mock_data.get_server_to_device_data_as_astarte();
+    if exp_data != *rx_data_rw_acc {
+        Err(format!(
+            "Mismatch between expected and received data. Expected data: {:?}. Server data: {:?}.",
+            exp_data, rx_data_rw_acc
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Run the end to end tests from device to server for aggregate datastreams.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *test_cfg*: struct containing configuration settings for the tests.
+async fn test_aggregate_device_to_server(
+    device: &AstarteSdk,
+    test_cfg: &TestCfg,
+) -> Result<(), String> {
+    let mock_data = MockDataAggregate::init();
+    let tx_data = mock_data.get_device_to_server_data_as_struct();
+    let sensor_number: i8 = 45;
+
+    // Send all the mock test data
+    let msg = "\nSending device owned aggregate from device to server.".cyan();
+    println!("{msg}");
+    device
+        .send_object(
+            &test_cfg.interface_aggregate_do,
+            &format!("/{sensor_number}"),
+            tx_data.clone(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Get the stored data using http requests
+    println!("{}", "\nChecking data stored on the server.".cyan());
+    let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_aggregate_do).await?;
+
+    // Check if the sent and received data match
+    let data_json: Value = serde_json::from_str(&http_get_response)
+        .map_err(|_| "Reply from server is a bad json.".to_string())?;
+
+    let rx_data = MockDataAggregate::init()
+        .fill_device_to_server_data_from_json(&data_json, sensor_number)?
+        .get_device_to_server_data_as_struct();
+
+    if tx_data != rx_data {
+        Err(format!(
+            "Mismatch between server and device. Expected data: {:?}. Server data: {:?}.",
+            tx_data, rx_data
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Run the end to end tests from server to device for aggregate datastreams.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the tests.
+/// - *rx_data*: shared memory containing the received datastreams.
+/// A different process will poll the device and then store the matching received messages
+/// in this shared memory location.
+async fn test_aggregate_server_to_device(
+    test_cfg: &TestCfg,
+    rx_data: &Arc<Mutex<(String, HashMap<String, AstarteType>)>>,
+) -> Result<(), String> {
+    let mock_data = MockDataAggregate::init();
+    let sensor_number: i8 = 11;
+
+    // Send the data using http requests
+    let msg = "\nSending server owned aggregate from server to device.".cyan();
+    println!("{msg}");
+    http_post_to_intf(
+        test_cfg,
+        &test_cfg.interface_aggregate_so,
+        &format!("{sensor_number}"),
+        mock_data.get_server_to_device_data_as_json(),
+    )
+    .await?;
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Lock the shared data and check if everything sent has been correctly received
+    println!("{}", "\nChecking data received by the device.".cyan());
+    let rx_data_rw_acc = rx_data
+        .lock()
+        .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+
+    let exp_data = mock_data.get_server_to_device_data_as_astarte();
+
+    if (sensor_number.to_string() != rx_data_rw_acc.0) || (exp_data != rx_data_rw_acc.1) {
+        Err(format!(
+            "Mismatch between expected and received data. Expected data: {:?}. Server data: {:?}.",
+            exp_data, rx_data_rw_acc
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Run the end to end tests from device to server for properties.
+///
+/// # Arguments
+/// - *device*: the Astarte SDK instance to use for the test.
+/// - *test_cfg*: struct containing configuration settings for the tests.
+async fn test_property_device_to_server(
+    device: &AstarteSdk,
+    test_cfg: &TestCfg,
+) -> Result<(), String> {
+    let mock_data = MockDataProperty::init();
+    let tx_data = mock_data.get_device_to_server_data_as_astarte();
+    let sensor_number = 1;
+
+    // Send all the mock test data
+    let msg = "\nSet device owned property (will be also sent to server).".cyan();
+    println!("{msg}");
+    for (key, value) in tx_data.clone() {
+        device
+            .send(
+                &test_cfg.interface_property_do,
+                &format!("/{sensor_number}/{key}"),
+                value,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Get the stored data using http requests
+    println!("{}", "\nChecking data stored on the server.".cyan());
+    let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
+
+    // Check if the sent and received data match
+    let data_json: Value = serde_json::from_str(&http_get_response)
+        .map_err(|_| "Reply from server is a bad json.".to_string())?;
+
+    let rx_data = MockDataProperty::init()
+        .fill_device_to_server_data_from_json(&data_json, sensor_number)?
+        .get_device_to_server_data_as_astarte();
+
+    if tx_data != rx_data {
+        return Err(format!(
+            "Mismatch between server and device. Expected data: {:?}. Server data: {:?}.",
+            tx_data, rx_data
         ));
     }
+
+    // Unset one specific property
+    let msg = "\nUnset all the device owned property (will be also sent to server).".cyan();
+    println!("{msg}");
+    for (key, _) in tx_data.clone() {
+        device
+            .unset(
+                &test_cfg.interface_property_do,
+                &format!("/{sensor_number}/{key}"),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Get the stored data using http requests
+    println!("{}", "\nChecking data stored on the server.".cyan());
+    let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
+
+    if http_get_response != "{\"data\":{}}" {
+        Err(format!(
+            "Mismatch between server and device. Expected data: {{\"data\":{{}}}}. Server data: {:?}.",
+            http_get_response
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Run the end to end tests from server to device for properties.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the tests.
+/// - *rx_data*: shared memory containing the received properties.
+/// A different process will poll the device and then store the matching received messages
+/// in this shared memory location.
+async fn test_property_server_to_device(
+    test_cfg: &TestCfg,
+    rx_data: &Arc<Mutex<(String, HashMap<String, AstarteType>)>>,
+) -> Result<(), String> {
+    let mock_data = MockDataProperty::init();
+    let sensor_number: i8 = 42;
+
+    // Send the data using http requests
+    let msg = "\nSending server owned properties from server to device.".cyan();
+    println!("{msg}");
+    for (key, value) in mock_data.get_server_to_device_data_as_json() {
+        http_post_to_intf(
+            test_cfg,
+            &test_cfg.interface_property_so,
+            &format!("{sensor_number}/{key}"),
+            value,
+        )
+        .await?;
+    }
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Lock the shared data and check if everything sent has been correctly received
+    {
+        println!("{}", "\nChecking data received by the device.".cyan());
+        let rx_data_rw_acc = rx_data
+            .lock()
+            .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+
+        let exp_data = mock_data.get_server_to_device_data_as_astarte();
+        if (sensor_number.to_string() != rx_data_rw_acc.0) || (exp_data != rx_data_rw_acc.1) {
+            return Err(format!(
+            "Mismatch between expected and received data. Expected data: {:?}. Server data: {:?}.",
+            exp_data, rx_data_rw_acc
+        ));
+        }
+    }
+
+    // Unset all the properties
+    let msg = "\nUnsetting all the server owned properties (will be also sent to device).".cyan();
+    println!("{msg}");
+    for (key, _) in mock_data.get_server_to_device_data_as_json() {
+        http_delete_to_intf(
+            test_cfg,
+            &test_cfg.interface_property_so,
+            &format!("{sensor_number}/{key}"),
+        )
+        .await?;
+    }
+
+    time::sleep(Duration::from_secs(1)).await;
+
+    // Lock the shared data and check if everything sent has been correctly received
+    {
+        println!("{}", "\nChecking data received by the device.".cyan());
+        let rx_data_rw_acc = rx_data
+            .lock()
+            .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+
+        if (sensor_number.to_string() != rx_data_rw_acc.0)
+            || rx_data_rw_acc
+                .1
+                .iter()
+                .any(|(_, value)| value != &AstarteType::Unset)
+        {
+            return Err(format!(
+                "Uncorrect received data. Server data: {:?}.",
+                rx_data_rw_acc
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Perform an HTTP GET request to an Astarte interface.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the request.
+/// - *interface*: interface for which to perform the GET request.
+async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, String> {
+    let get_cmd = format!(
+        "{}/appengine/v1/{}/devices/{}/interfaces/{}",
+        test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface
+    );
+    println!("Sending HTTP GET request: {get_cmd}");
+    reqwest::Client::new()
+        .get(get_cmd)
+        .header(
+            "Authorization",
+            "Bearer ".to_string() + &test_cfg.appengine_token,
+        )
+        .send()
+        .await
+        .map_err(|e| format!("HTTP GET failure: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failure in parsing the HTTP GET result: {}", e))
+}
+
+/// Perform an HTTP POST request to an Astarte interface.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the request.
+/// - *interface*: interface on which to perform the POST request.
+/// - *path*: path for the endpoint on which the data should be written.
+/// - *value_json*: value to be sent, already formatted as a json string.
+async fn http_post_to_intf(
+    test_cfg: &TestCfg,
+    interface: &str,
+    path: &str,
+    value_json: String,
+) -> Result<(), String> {
+    let post_cmd = format!(
+        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
+    );
+    println!("Sending HTTP POST request: {post_cmd} {value_json}");
+    let response = reqwest::Client::new()
+        .post(post_cmd)
+        .header(
+            "Authorization",
+            "Bearer ".to_string() + &test_cfg.appengine_token,
+        )
+        .header("Content-Type", "application/json")
+        .body(value_json.clone())
+        .send()
+        .await
+        .map_err(|e| format!("HTTP POST failure: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failure in parsing the HTTP POST result: {}", e))?;
+    if response != value_json {
+        println!("Server response: {response}");
+    }
+    Ok(())
+}
+
+/// Perform an HTTP DELETE request to an Astarte interface.
+///
+/// # Arguments
+/// - *test_cfg*: struct containing configuration settings for the request.
+/// - *interface*: interface on which to perform the DELETE request.
+/// - *path*: path for the endpoint for which the data should be deleted.
+async fn http_delete_to_intf(
+    test_cfg: &TestCfg,
+    interface: &str,
+    path: &str,
+) -> Result<(), String> {
+    let post_cmd = format!(
+        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
+    );
+    println!("Sending HTTP DELETE request: {post_cmd}");
+    let response = reqwest::Client::new()
+        .delete(post_cmd)
+        .header(
+            "Authorization",
+            "Bearer ".to_string() + &test_cfg.appengine_token,
+        )
+        .send()
+        .await
+        .map_err(|e| format!("HTTP POST failure: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Failure in parsing the HTTP POST result: {}", e))?;
+    if !response.is_empty() {
+        println!("Server response: {response}");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{check_json, get_data};
+    use crate::main;
 
     #[test]
-    fn json() {
-        let json = r#"{
-            "data":{
-               "binaryblob":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":"aGVsbG8="
-               },
-               "binaryblobarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     "aGVsbG8=",
-                     "d29ybGQ="
-                  ]
-               },
-               "boolean":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":true
-               },
-               "booleanarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.074Z",
-                  "timestamp":"2021-09-10T12:22:42.074Z",
-                  "value":[
-                     true,
-                     false,
-                     true,
-                     true
-                  ]
-               },
-               "datetime":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":"2021-07-29T17:46:48.000Z"
-               },
-               "datetimearray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.098Z",
-                  "timestamp":"2021-09-10T12:22:42.098Z",
-                  "value":[
-                     "2021-07-29T17:46:48.000Z",
-                     "2021-07-29T17:46:49.000Z",
-                     "2021-07-29T17:46:50.000Z"
-                  ]
-               },
-               "double":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":4.5
-               },
-               "doublearray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.073Z",
-                  "timestamp":"2021-09-10T12:22:42.073Z",
-                  "value":[
-                     1.2,
-                     3.4,
-                     5.6,
-                     7.8
-                  ]
-               },
-               "integer":{
-                  "reception_timestamp":"2021-11-11T21:11:38.637Z",
-                  "timestamp":"2021-11-11T21:11:36.063Z",
-                  "value":-4
-               },
-               "integerarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.074Z",
-                  "timestamp":"2021-09-10T12:22:42.074Z",
-                  "value":[
-                     1,
-                     3,
-                     5,
-                     7
-                  ]
-               },
-               "longinteger":{
-                  "reception_timestamp":"2022-02-11T15:26:13.483Z",
-                  "timestamp":"2022-02-11T15:26:13.483Z",
-                  "value":45543543534
-               },
-               "longintegerarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     45543543534,
-                     45543543535,
-                     45543543536
-                  ]
-               },
-               "string":{
-                  "reception_timestamp":"2021-09-10T12:22:42.050Z",
-                  "timestamp":"2021-09-10T12:22:42.050Z",
-                  "value":"hello"
-               },
-               "stringarray":{
-                  "reception_timestamp":"2021-09-10T12:22:42.097Z",
-                  "timestamp":"2021-09-10T12:22:42.097Z",
-                  "value":[
-                     "hello",
-                     "world"
-                  ]
-               }
-            }
-         }"#;
-        let data = get_data();
+    #[ignore = "Only to be used in local"]
+    fn run_on_local() {
+        use std::env;
 
-        check_json(&data, json.to_string());
+        env::set_var("E2E_REALM", "simone1");
+        env::set_var("E2E_DEVICE_ID", "O00Q0DCyTdCTb9eIwxBbIw");
+        env::set_var(
+            "E2E_CREDENTIALS_SECRET",
+            "OYHFgnyQ3ka/Q5gZCRDc/3TsK8JDu+sfU4AnTZn2Kts=",
+        );
+        env::set_var("E2E_API_URL", "https://api.eu1.astarte.cloud");
+        env::set_var(
+            "E2E_TOKEN",
+            "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJhX2FlYSI6WyIuKjo6LioiXSwiYV9mIjpbIi4qOjouKiJd\
+        LCJhX3BhIjpbIi4qOjouKiJdLCJhX3JtYSI6WyIuKjo6LioiXSwiZXhwIjoxNjc0MjA0NjQ2LCJpYXQiOjE2Nz\
+        QxMTgyNDYsImlzcyI6IkFzdGFydGUgQ2xvdWQifQ.SHLkvKSZXYOrLFzZkj8mSTKN4NvfASBBo5FlccaDtrX4C\
+        lravm4FnW-0G654AeEv_UYQgSMDX_fmmMgGDcs1Fg",
+        );
 
-        let json = "{\"data\":{\"45\":[{\"accuracy\":4.34,\"altitude\":3.34,\"altitudeAccuracy\":5.34,\"heading\":6.34,\"latitude\":1.34,\"longitude\":2.34,\"speed\":7.34,\"timestamp\":\"2022-03-23T14:43:21.909Z\"}]}}";
-
-        let data = crate::get_data_obj();
-        crate::check_json_obj(&data, json.to_string());
+        main();
     }
 }

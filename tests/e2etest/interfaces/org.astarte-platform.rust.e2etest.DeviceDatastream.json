@@ -1,77 +1,77 @@
 {
-    "interface_name": "org.astarte-platform.test.Everything",
+    "interface_name": "org.astarte-platform.rust.e2etest.DeviceDatastream",
     "version_major": 0,
     "version_minor": 1,
     "type": "datastream",
     "ownership": "device",
     "mappings": [
         {
-            "endpoint": "/binaryblob",
+            "endpoint": "/binaryblob_endpoint",
             "type": "binaryblob",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/binaryblobarray",
+            "endpoint": "/binaryblobarray_endpoint",
             "type": "binaryblobarray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/boolean",
+            "endpoint": "/boolean_endpoint",
             "type": "boolean",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/booleanarray",
+            "endpoint": "/booleanarray_endpoint",
             "type": "booleanarray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/datetime",
+            "endpoint": "/datetime_endpoint",
             "type": "datetime",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/datetimearray",
+            "endpoint": "/datetimearray_endpoint",
             "type": "datetimearray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/double",
+            "endpoint": "/double_endpoint",
             "type": "double",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/doublearray",
+            "endpoint": "/doublearray_endpoint",
             "type": "doublearray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/integer",
+            "endpoint": "/integer_endpoint",
             "type": "integer",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/integerarray",
+            "endpoint": "/integerarray_endpoint",
             "type": "integerarray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/longinteger",
+            "endpoint": "/longinteger_endpoint",
             "type": "longinteger",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/longintegerarray",
+            "endpoint": "/longintegerarray_endpoint",
             "type": "longintegerarray",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/string",
+            "endpoint": "/string_endpoint",
             "type": "string",
             "explicit_timestamp": true
         },
         {
-            "endpoint": "/stringarray",
+            "endpoint": "/stringarray_endpoint",
             "type": "stringarray",
             "explicit_timestamp": true
         }

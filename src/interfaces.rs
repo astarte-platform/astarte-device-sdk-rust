@@ -249,7 +249,7 @@ impl Interfaces {
                     }
                 }
 
-                if individual != mapping.mapping_type() {
+                if (individual != AstarteType::Unset) && (individual != mapping.mapping_type()) {
                     return Err(AstarteError::ReceiveError(
                         "You are receiving the wrong type for this mapping".into(),
                     ));
