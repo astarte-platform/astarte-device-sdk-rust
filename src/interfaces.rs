@@ -296,6 +296,7 @@ mod test {
 
     use chrono::{TimeZone, Utc};
 
+    use crate::interfaces::Interfaces;
     use crate::{
         builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteDeviceSdk,
     };
@@ -800,5 +801,11 @@ mod test {
                 .unwrap()
                 == crate::interface::Ownership::Device
         );
+    }
+
+    #[test]
+    fn test_validate_float() {
+        Interfaces::validate_float(&AstarteType::Double(54.4)).unwrap();
+        Interfaces::validate_float(&AstarteType::Integer(12)).unwrap();
     }
 }

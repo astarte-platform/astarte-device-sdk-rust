@@ -65,7 +65,7 @@ impl PartialEq<MappingType> for AstarteType {
             };
         }
 
-        if other == &MappingType::LongInteger {
+        if other == &MappingType::LongInteger || other == &MappingType::Double {
             if let AstarteType::Integer(_) = self {
                 return true;
             }
@@ -319,6 +319,7 @@ mod test {
 
     use chrono::{DateTime, TimeZone, Utc};
 
+    use crate::interface::MappingType;
     use crate::{types::AstarteType, Aggregation, AstarteDeviceSdk, AstarteError};
 
     #[test]
@@ -503,5 +504,17 @@ mod test {
         assert_eq!(Vec::<DateTime<Utc>>::try_from(a_data)?, data);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_eq_astarte_type_with_mapping_type() {
+        assert_eq!(AstarteType::Double(0.0), MappingType::Double);
+        assert_eq!(AstarteType::Integer(0), MappingType::Double);
+
+        assert_eq!(AstarteType::Integer(0), MappingType::Integer);
+        assert_ne!(AstarteType::Double(0.0), MappingType::Integer);
+        assert_eq!(AstarteType::Integer(0), MappingType::LongInteger);
+
+        assert_eq!(AstarteType::LongInteger(0), MappingType::LongInteger);
     }
 }
