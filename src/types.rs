@@ -65,7 +65,7 @@ impl PartialEq<MappingType> for AstarteType {
             };
         }
 
-        if other == &MappingType::LongInteger {
+        if other == &MappingType::LongInteger || other == &MappingType::Double {
             if let AstarteType::Integer(_) = self {
                 return true;
             }
@@ -175,11 +175,35 @@ macro_rules! impl_reverse_type_conversion_traits {
     }
 }
 
+impl std::convert::TryFrom<AstarteType> for f64 {
+    type Error = AstarteError;
+    fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
+        if let AstarteType::Double(val) = var {
+            Ok(val)
+        } else if let AstarteType::Integer(val) = var {
+            Ok(val.into())
+        } else {
+            Err(AstarteError::Conversion)
+        }
+    }
+}
+
+impl std::convert::TryFrom<AstarteType> for i64 {
+    type Error = AstarteError;
+    fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
+        if let AstarteType::LongInteger(val) = var {
+            Ok(val)
+        } else if let AstarteType::Integer(val) = var {
+            Ok(val.into())
+        } else {
+            Err(AstarteError::Conversion)
+        }
+    }
+}
+
 impl_reverse_type_conversion_traits!(
-    (Double, f64),
     (Integer, i32),
     (Boolean, bool),
-    (LongInteger, i64),
     (String, String),
     (BinaryBlob, Vec<u8>),
     (DateTime, DateTime<Utc>),
@@ -315,10 +339,11 @@ impl AstarteType {
 
 mod test {
     use std::collections::HashMap;
-    use std::convert::TryFrom;
+    use std::convert::{TryFrom, TryInto};
 
     use chrono::{DateTime, TimeZone, Utc};
 
+    use crate::interface::MappingType;
     use crate::{types::AstarteType, Aggregation, AstarteDeviceSdk, AstarteError};
 
     #[test]
@@ -503,5 +528,43 @@ mod test {
         assert_eq!(Vec::<DateTime<Utc>>::try_from(a_data)?, data);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_eq_astarte_type_with_mapping_type() {
+        assert_eq!(AstarteType::Double(0.0), MappingType::Double);
+        assert_eq!(AstarteType::Integer(0), MappingType::Double);
+
+        assert_eq!(AstarteType::Integer(0), MappingType::Integer);
+        assert_ne!(AstarteType::Double(0.0), MappingType::Integer);
+        assert_eq!(AstarteType::Integer(0), MappingType::LongInteger);
+
+        assert_eq!(AstarteType::LongInteger(0), MappingType::LongInteger);
+    }
+
+    #[test]
+    fn test_conversion_from_astarte_integer_to_f64() {
+        let astarte_type_double = AstarteType::Integer(5);
+        let astarte_ind = Aggregation::Individual(astarte_type_double);
+
+        if let Aggregation::Individual(var) = astarte_ind {
+            let value: f64 = var.try_into().unwrap();
+            assert_eq!(5.0, value);
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn test_conversion_from_astarte_integer_to_i64() {
+        let astarte_type_double = AstarteType::Integer(5);
+        let astarte_ind = Aggregation::Individual(astarte_type_double);
+
+        if let Aggregation::Individual(var) = astarte_ind {
+            let value: i64 = var.try_into().unwrap();
+            assert_eq!(5, value);
+        } else {
+            panic!();
+        }
     }
 }
