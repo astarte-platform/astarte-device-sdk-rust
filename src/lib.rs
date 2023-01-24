@@ -610,7 +610,7 @@ impl AstarteDeviceSdk {
         data: D,
     ) -> Result<(), AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
         self.send_with_timestamp_impl(interface_name, interface_path, data, None)
             .await
@@ -637,7 +637,7 @@ impl AstarteDeviceSdk {
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
         self.send_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
             .await
@@ -651,11 +651,11 @@ impl AstarteDeviceSdk {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
         debug!("sending {} {}", interface_name, interface_path);
 
-        let data: AstarteType = data.into();
+        let data = data.try_into().map_err(|_| AstarteError::Conversion)?;
 
         let buf = AstarteDeviceSdk::serialize_individual(data.clone(), timestamp)?;
 
@@ -703,12 +703,12 @@ impl AstarteDeviceSdk {
         data: D,
     ) -> Result<bool, AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
         if let Some(db) = &self.database {
             //if database is present
 
-            let data: AstarteType = data.into();
+            let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
 
             let interfaces = self.interfaces.read().await;
             let mapping = interfaces
@@ -740,12 +740,12 @@ impl AstarteDeviceSdk {
         data: D,
     ) -> Result<(), AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
         if let Some(db) = &self.database {
             //if database is present
 
-            let data: AstarteType = data.into();
+            let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
 
             let interfaces = self.interfaces.read().await;
             let interface_major = interfaces
@@ -802,9 +802,10 @@ impl AstarteDeviceSdk {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError>
     where
-        D: Into<AstarteType>,
+        D: TryInto<AstarteType>,
     {
-        AstarteDeviceSdk::serialize(data.into().into(), timestamp)
+        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        AstarteDeviceSdk::serialize(data.into(), timestamp)
     }
 
     // ------------------------------------------------------------------------
