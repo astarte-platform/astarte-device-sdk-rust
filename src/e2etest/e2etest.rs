@@ -24,8 +24,8 @@ use base64::Engine;
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
-use astarte_sdk::builder::AstarteOptions;
-use astarte_sdk::types::AstarteType;
+use astarte_device_sdk::builder::AstarteOptions;
+use astarte_device_sdk::types::AstarteType;
 
 fn get_data() -> HashMap<String, AstarteType> {
     let alltypes: Vec<AstarteType> = vec![
@@ -132,7 +132,9 @@ async fn main() {
         .ignore_ssl_errors()
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await.unwrap();
+    let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options)
+        .await
+        .unwrap();
 
     let data = get_data();
 
@@ -226,7 +228,7 @@ async fn main() {
     });
 
     loop {
-        match device.poll().await {
+        match device.handle_events().await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
             }

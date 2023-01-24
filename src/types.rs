@@ -319,7 +319,7 @@ mod test {
 
     use chrono::{DateTime, TimeZone, Utc};
 
-    use crate::{types::AstarteType, Aggregation, AstarteError, AstarteSdk};
+    use crate::{types::AstarteType, Aggregation, AstarteDeviceSdk, AstarteError};
 
     #[test]
     fn test_individual_serialization() {
@@ -349,9 +349,9 @@ mod test {
         for ty in alltypes {
             println!("checking {:?}", ty);
 
-            let buf = AstarteSdk::serialize_individual(ty.clone(), None).unwrap();
+            let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
 
-            let ty2 = AstarteSdk::deserialize(&buf).unwrap();
+            let ty2 = AstarteDeviceSdk::deserialize(&buf).unwrap();
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
@@ -409,9 +409,10 @@ mod test {
         }
 
         let bytes =
-            AstarteSdk::serialize_object(AstarteSdk::to_bson_map(data.clone()), None).unwrap();
+            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(data.clone()), None)
+                .unwrap();
 
-        let data2 = AstarteSdk::deserialize(&bytes).unwrap();
+        let data2 = AstarteDeviceSdk::deserialize(&bytes).unwrap();
 
         fn hashmap_match(
             map1: &HashMap<&str, AstarteType>,

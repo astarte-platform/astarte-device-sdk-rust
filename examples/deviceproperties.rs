@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_sdk::{builder::AstarteOptions, AstarteError};
+use astarte_device_sdk::{builder::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -52,7 +52,7 @@ async fn main() -> Result<(), AstarteError> {
         .interface_directory("./examples/interfaces")?
         .build();
 
-    let mut device = astarte_sdk::AstarteSdk::new(&sdk_options).await?;
+    let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await?;
 
     let w = device.clone();
     tokio::task::spawn(async move {
@@ -80,7 +80,7 @@ async fn main() -> Result<(), AstarteError> {
     });
 
     loop {
-        match device.poll().await {
+        match device.handle_events().await {
             Ok(data) => {
                 println!("incoming: {:?}", data);
             }
