@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Interfaces {
     pub interfaces: HashMap<String, Interface>,
 }
@@ -233,18 +233,18 @@ impl Interfaces {
                     .get_mapping(interface_name, interface_path)
                     .ok_or_else(|| {
                         AstarteError::ReceiveError(format!(
-                            "Mapping '{}' doesn't exist",
-                            interface_path
+                            "Mapping '{interface_path}' doesn't exist",
                         ))
                     })?;
 
-                match mapping {
-                    crate::interface::Mapping::Datastream(_) => {}
-                    crate::interface::Mapping::Properties(map) => {
-                        if bdata.is_empty() && !map.allow_unset {
+                if let crate::interface::Mapping::Properties(map) = mapping {
+                    if individual == AstarteType::Unset {
+                        if !map.allow_unset {
                             return Err(AstarteError::ReceiveError(
                                 "Do not unset a mapping without allow_unset".into(),
                             ));
+                        } else {
+                            return Ok(());
                         }
                     }
                 }
@@ -266,8 +266,7 @@ impl Interfaces {
                         self.get_mapping(interface_name, &mapping_path)
                             .ok_or_else(|| {
                                 AstarteError::ReceiveError(format!(
-                                    "Mapping '{}' doesn't exist",
-                                    mapping_path
+                                    "Mapping '{mapping_path}' doesn't exist",
                                 ))
                             })?;
 
@@ -292,11 +291,12 @@ impl Interfaces {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
     use std::{collections::HashMap, convert::TryInto, str::FromStr};
 
     use chrono::{TimeZone, Utc};
 
-    use crate::interfaces::Interfaces;
     use crate::{
         builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteDeviceSdk,
     };
@@ -305,7 +305,7 @@ mod test {
     fn test_individual() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = super::Interfaces::new(options.interfaces);
+        let ifa = Interfaces::new(options.interfaces);
 
         let buf = AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
 
@@ -402,7 +402,7 @@ mod test {
     fn test_object() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = super::Interfaces::new(options.interfaces);
+        let ifa = Interfaces::new(options.interfaces);
 
         let mut obj: std::collections::HashMap<&str, AstarteType> =
             std::collections::HashMap::new();
@@ -494,7 +494,7 @@ mod test {
     fn test_individual_recv() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = super::Interfaces::new(options.interfaces);
+        let ifa = Interfaces::new(options.interfaces);
 
         let boolean_buf =
             AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
@@ -569,7 +569,7 @@ mod test {
 
         ifa.insert(deser_interface.name().into(), deser_interface);
 
-        let ifa = super::Interfaces::new(ifa);
+        let ifa = Interfaces::new(ifa);
 
         let inner_data: HashMap<&str, AstarteType> = [
             ("button", AstarteType::Boolean(false)),
@@ -645,7 +645,7 @@ mod test {
 
         ifa.insert(deser_interface.name().into(), deser_interface);
 
-        let ifa = super::Interfaces::new(ifa);
+        let ifa = Interfaces::new(ifa);
 
         assert!(
             ifa.get_property_major("org.astarte-platform.test.test", "/button")
@@ -703,7 +703,7 @@ mod test {
 
         ifa.insert(deser_interface.name().into(), deser_interface);
 
-        let ifa = super::Interfaces::new(ifa);
+        let ifa = Interfaces::new(ifa);
 
         assert!(
             ifa.get_property_major(
@@ -764,7 +764,7 @@ mod test {
 
         ifa.insert(deser_interface.name().into(), deser_interface);
 
-        let ifa = super::Interfaces::new(ifa);
+        let ifa = Interfaces::new(ifa);
 
         assert!(
             ifa.get_ownership("org.astarte-platform.server-owned.test")
@@ -794,7 +794,7 @@ mod test {
 
         ifa.insert(deser_interface.name().into(), deser_interface);
 
-        let ifa = super::Interfaces::new(ifa);
+        let ifa = Interfaces::new(ifa);
 
         assert!(
             ifa.get_ownership("org.astarte-platform.device-owned.test")
@@ -807,5 +807,132 @@ mod test {
     fn test_validate_float() {
         Interfaces::validate_float(&AstarteType::Double(54.4)).unwrap();
         Interfaces::validate_float(&AstarteType::Integer(12)).unwrap();
+    }
+
+    #[test]
+    fn test_validate_receive() {
+        let prop_intf_json = r#"
+        {
+            "interface_name": "org.astarte-platform.test.test",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "properties",
+            "ownership": "server",
+            "mappings": [
+                {
+                    "endpoint": "/boolean_endpoint",
+                    "type": "boolean",
+                    "allow_unset": true,
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/integer_endpoint",
+                    "type": "integer",
+                    "allow_unset": false,
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+        let prop_intf = crate::Interface::from_str(prop_intf_json).unwrap();
+        let prop_intf_name = prop_intf.name().to_string();
+        let aggr_intf_json = r#"
+        {
+            "interface_name": "com.test.object",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "ownership": "server",
+            "aggregation": "object",
+            "mappings": [
+                {
+                    "endpoint": "/boolean_endpoint",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/integer_endpoint",
+                    "type": "integer",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+
+        let aggr_intf = crate::Interface::from_str(aggr_intf_json).unwrap();
+        let aggr_intf_name = aggr_intf.name().to_string();
+        let interfaces = Interfaces::new(HashMap::from([
+            (prop_intf_name.clone(), prop_intf),
+            (aggr_intf_name.clone(), aggr_intf),
+        ]));
+
+        // Test non existant interface
+        interfaces
+            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test non existant path for property
+        interfaces
+            .validate_receive(&prop_intf_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving a set property
+        let boolean_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        interfaces
+            .validate_receive(&prop_intf_name, "/boolean_endpoint", &boolean_endpoint_data)
+            .unwrap();
+
+        // Test receiving an unset property
+        interfaces
+            .validate_receive(&prop_intf_name, "/boolean_endpoint", &Vec::new())
+            .unwrap();
+
+        // Test receiving an unset property for a property that can't be unset
+        interfaces
+            .validate_receive(&prop_intf_name, "/integer_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving a set property with the wrong type
+        let integer_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+        interfaces
+            .validate_receive(&prop_intf_name, "/boolean_endpoint", &integer_endpoint_data)
+            .unwrap_err();
+
+        // Test non existant path for aggregate
+        interfaces
+            .validate_receive(&aggr_intf_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving an aggregate
+        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
+            ("boolean_endpoint", AstarteType::Boolean(false).into()),
+            ("integer_endpoint", AstarteType::Integer(324).into()),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&aggr_intf_name, "", &aggr_data)
+            .unwrap();
+
+        // Test receiving an aggregate with wrong type
+        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
+            ("boolean_endpoint", AstarteType::Boolean(false).into()),
+            ("integer_endpoint", AstarteType::Boolean(false).into()),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&aggr_intf_name, "", &aggr_data)
+            .unwrap_err();
+
+        // Test receiving an aggregate on an property interface
+        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
+            ("boolean_endpoint", AstarteType::Boolean(false).into()),
+            ("integer_endpoint", AstarteType::Integer(324).into()),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&prop_intf_name, "", &aggr_data)
+            .unwrap_err();
     }
 }
