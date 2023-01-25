@@ -60,6 +60,19 @@ impl AstarteAggregate for HashMap<String, AstarteType> {
     }
 }
 
+// Re-export #[derive(AstarteAggregate)].
+//
+// The reason re-exporting is not enabled by default is that disabling it would
+// be annoying for crates that provide handwritten impls or data formats. They
+// would need to disable default features and then explicitly re-enable std.
+#[cfg(feature = "derive")]
+#[allow(unused_imports)]
+#[macro_use]
+extern crate astarte_device_sdk_derive;
+#[cfg(feature = "derive")]
+#[doc(hidden)]
+pub use astarte_device_sdk_derive::*;
+
 /// Astarte client
 #[derive(Clone)]
 pub struct AstarteDeviceSdk {

@@ -43,10 +43,8 @@ jobs:
       - name: Add rustfmt
         run: rustup component add rustfmt
       - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: |
+          cargo fmt --all -- --check
 
   check:
     name: cargo check
@@ -65,11 +63,10 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
           override: true
-
       - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        run: |
+          cargo check --all-targets
+          cargo check --all-features
 
   clippy_check:
     name: cargo clippy
@@ -92,11 +89,13 @@ jobs:
         run: rustup component add clippy
       - name: Run cargo clippy
         run: |
-          cargo clippy --all-targets --all-features -- -Dwarnings
+          cargo clippy --all-targets -- -Dwarnings
+          cargo clippy --all-features -- -Dwarnings
       - name: Run clippy in derive macros folder
         run: |
           cd ./astarte-device-sdk-derive
-          cargo clippy --all-targets --all-features -- -Dwarnings
+          cargo clippy --all-targets -- -Dwarnings
+          cargo clippy --all-features -- -Dwarnings
 
   test:
     name: cargo test
