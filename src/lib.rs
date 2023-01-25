@@ -29,7 +29,7 @@ mod pairing;
 pub mod registration;
 pub mod types;
 
-use bson::{to_document, Bson};
+use bson::Bson;
 use builder::AstarteOptions;
 use database::AstarteDatabase;
 use database::StoredProp;
@@ -38,8 +38,10 @@ use log::{debug, error, info, trace};
 use rumqttc::{AsyncClient, Event};
 use rumqttc::{EventLoop, MqttOptions};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
+use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -47,6 +49,16 @@ use types::AstarteType;
 
 use crate::interface::traits::{Interface as iface, Mapping};
 pub use interface::Interface;
+
+pub trait AstarteAggregate {
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError>;
+}
+
+impl AstarteAggregate for HashMap<String, AstarteType> {
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError> {
+        Ok(self)
+    }
+}
 
 /// Astarte client
 #[derive(Clone)]
@@ -106,6 +118,9 @@ pub enum AstarteError {
 
     #[error("conversion error")]
     Conversion,
+
+    #[error("infallible error")]
+    Infallible(#[from] Infallible),
 }
 
 #[derive(Debug, Clone)]
@@ -811,22 +826,21 @@ impl AstarteDeviceSdk {
     // object types
     // ------------------------------------------------------------------------
 
-    /// helper function to convert from an HashMap of AstarteType to an HashMap of Bson
-    pub fn to_bson_map(data: HashMap<&str, AstarteType>) -> HashMap<&str, Bson> {
-        data.into_iter().map(|f| (f.0, f.1.into())).collect()
-    }
-
     /// Serialize a group of astarte types to a vec of bytes, representing an object
     fn serialize_object<T>(
         data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<u8>, AstarteError>
     where
-        T: serde::Serialize,
+        T: AstarteAggregate,
     {
-        let doc = to_document(&data)?;
-
-        AstarteDeviceSdk::serialize(Bson::Document(doc), timestamp)
+        let iter_d = data
+            .astarte_aggregate()?
+            .into_iter()
+            .map(|(k, v)| (k, v.into()));
+        let doc_d: bson::Document = bson::Document::from_iter(iter_d);
+        let bson_d: bson::Bson = bson::Bson::Document(doc_d);
+        AstarteDeviceSdk::serialize(bson_d, timestamp)
     }
 
     async fn send_object_with_timestamp_impl<T>(
@@ -837,7 +851,7 @@ impl AstarteDeviceSdk {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError>
     where
-        T: serde::Serialize,
+        T: AstarteAggregate,
     {
         let buf = AstarteDeviceSdk::serialize_object(data, timestamp)?;
 
@@ -874,7 +888,7 @@ impl AstarteDeviceSdk {
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), AstarteError>
     where
-        T: serde::Serialize,
+        T: AstarteAggregate,
     {
         self.send_object_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
             .await
@@ -888,7 +902,7 @@ impl AstarteDeviceSdk {
         data: T,
     ) -> Result<(), AstarteError>
     where
-        T: serde::Serialize,
+        T: AstarteAggregate,
     {
         self.send_object_with_timestamp_impl(interface_name, interface_path, data, None)
             .await
@@ -920,48 +934,224 @@ mod utils {
 
 #[cfg(test)]
 mod test {
+    use base64::Engine;
     use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
 
-    use crate::interface::MappingType;
-    use crate::{types::AstarteType, Aggregation, AstarteDeviceSdk};
+    use crate as astarte_device_sdk;
+    use astarte_device_sdk::interface::MappingType;
+    use astarte_device_sdk::AstarteAggregate;
+    use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
+    use astarte_device_sdk_derive::AstarteAggregate;
 
-    fn do_vecs_match(a: &[u8], b: &[u8]) -> bool {
-        let matching = a.iter().zip(b.iter()).filter(|&(a, b)| a == b).count();
-
-        println!("matching {:?}\nwith     {:?}\n", a, b);
-        matching == a.len() && matching == b.len()
+    #[derive(AstarteAggregate)]
+    struct MyAggregate {
+        endpoint01: f64,
+        endpoint02: i32,
+        endpoint03: bool,
+        endpoint04: i64,
+        endpoint05: String,
+        endpoint06: Vec<u8>,
+        endpoint07: chrono::DateTime<chrono::Utc>,
+        endpoint08: Vec<f64>,
+        endpoint09: Vec<i32>,
+        endpoint10: Vec<bool>,
+        endpoint11: Vec<i64>,
+        endpoint12: Vec<String>,
+        endpoint13: Vec<Vec<u8>>,
+        endpoint14: Vec<chrono::DateTime<chrono::Utc>>,
     }
 
     #[test]
-    fn serialize_individual() {
-        assert!(do_vecs_match(
-            &AstarteDeviceSdk::serialize_individual(false, None).unwrap(),
-            &[0x09, 0x00, 0x00, 0x00, 0x08, 0x76, 0x00, 0x00, 0x00]
-        ));
-        assert!(do_vecs_match(
-            &AstarteDeviceSdk::serialize_individual(AstarteType::Double(16.73), None).unwrap(),
-            &[
-                0x10, 0x00, 0x00, 0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30,
-                0x40, 0x00
-            ]
-        ));
-        assert!(do_vecs_match(
-            &AstarteDeviceSdk::serialize_individual(
-                AstarteType::Double(16.73),
-                Some(Utc.timestamp_opt(1537449422, 890000000).unwrap())
-            )
-            .unwrap(),
-            &[
-                0x1b, 0x00, 0x00, 0x00, 0x09, 0x74, 0x00, 0x2a, 0x70, 0x20, 0xf7, 0x65, 0x01, 0x00,
-                0x00, 0x01, 0x76, 0x00, 0x7b, 0x14, 0xae, 0x47, 0xe1, 0xba, 0x30, 0x40, 0x00
-            ]
-        ));
+    fn test_astarte_aggregate_trait() {
+        let my_aggregate = MyAggregate {
+            endpoint01: 4.34,
+            endpoint02: 1,
+            endpoint03: true,
+            endpoint04: 45543543534,
+            endpoint05: "Hello".to_string(),
+            endpoint06: base64::engine::general_purpose::STANDARD
+                .decode("aGVsbG8=")
+                .unwrap(),
+            endpoint07: chrono::offset::Utc::now(),
+            endpoint08: Vec::from([43.5, 10.5, 11.9]),
+            endpoint09: Vec::from([-4, 123, -2222, 30]),
+            endpoint10: Vec::from([true, false]),
+            endpoint11: Vec::from([53267895478, 53267895428, 53267895118]),
+            endpoint12: Vec::from(["Test ".to_string(), "String".to_string()]),
+            endpoint13: Vec::from([
+                base64::engine::general_purpose::STANDARD
+                    .decode("aGVsbG8=")
+                    .unwrap(),
+                base64::engine::general_purpose::STANDARD
+                    .decode("aGVsbG8=")
+                    .unwrap(),
+            ]),
+            endpoint14: Vec::from([chrono::offset::Utc::now(), chrono::offset::Utc::now()]),
+        };
+        let expected_res = HashMap::from([
+            (
+                "endpoint01".to_string(),
+                AstarteType::Double(my_aggregate.endpoint01),
+            ),
+            (
+                "endpoint02".to_string(),
+                AstarteType::Integer(my_aggregate.endpoint02),
+            ),
+            (
+                "endpoint03".to_string(),
+                AstarteType::Boolean(my_aggregate.endpoint03),
+            ),
+            (
+                "endpoint04".to_string(),
+                AstarteType::LongInteger(my_aggregate.endpoint04),
+            ),
+            (
+                "endpoint05".to_string(),
+                AstarteType::String(my_aggregate.endpoint05.clone()),
+            ),
+            (
+                "endpoint06".to_string(),
+                AstarteType::BinaryBlob(my_aggregate.endpoint06.clone()),
+            ),
+            (
+                "endpoint07".to_string(),
+                AstarteType::DateTime(my_aggregate.endpoint07),
+            ),
+            (
+                "endpoint08".to_string(),
+                AstarteType::DoubleArray(my_aggregate.endpoint08.clone()),
+            ),
+            (
+                "endpoint09".to_string(),
+                AstarteType::IntegerArray(my_aggregate.endpoint09.clone()),
+            ),
+            (
+                "endpoint10".to_string(),
+                AstarteType::BooleanArray(my_aggregate.endpoint10.clone()),
+            ),
+            (
+                "endpoint11".to_string(),
+                AstarteType::LongIntegerArray(my_aggregate.endpoint11.clone()),
+            ),
+            (
+                "endpoint12".to_string(),
+                AstarteType::StringArray(my_aggregate.endpoint12.clone()),
+            ),
+            (
+                "endpoint13".to_string(),
+                AstarteType::BinaryBlobArray(my_aggregate.endpoint13.clone()),
+            ),
+            (
+                "endpoint14".to_string(),
+                AstarteType::DateTimeArray(my_aggregate.endpoint14.clone()),
+            ),
+        ]);
+        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+        println!("{:?}", expected_res);
+    }
+
+    #[test]
+    fn test_individual_serialization() {
+        let alltypes: Vec<AstarteType> = vec![
+            AstarteType::Double(4.5),
+            AstarteType::Integer(-4),
+            AstarteType::Boolean(true),
+            AstarteType::LongInteger(45543543534_i64),
+            AstarteType::String("hello".into()),
+            AstarteType::BinaryBlob(b"hello".to_vec()),
+            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteType::BooleanArray(vec![true, false, true, true]),
+            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteType::DateTimeArray(vec![
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
+            ]),
+        ];
+
+        for ty in alltypes {
+            println!("checking {:?}", ty);
+
+            let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
+
+            let ty2 = AstarteDeviceSdk::deserialize(&buf).unwrap();
+
+            if let Aggregation::Individual(data) = ty2 {
+                assert!(ty == data);
+            } else {
+                panic!();
+            }
+        }
+    }
+
+    #[test]
+    fn test_serialize_object() {
+        let alltypes: Vec<AstarteType> = vec![
+            AstarteType::Double(4.5),
+            AstarteType::Integer(-4),
+            AstarteType::Boolean(true),
+            AstarteType::LongInteger(45543543534_i64),
+            AstarteType::String("hello".into()),
+            AstarteType::BinaryBlob(b"hello".to_vec()),
+            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteType::BooleanArray(vec![true, false, true, true]),
+            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteType::DateTimeArray(vec![
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
+            ]),
+        ];
+
+        let allendpoints = vec![
+            "double".to_string(),
+            "integer".to_string(),
+            "boolean".to_string(),
+            "longinteger".to_string(),
+            "string".to_string(),
+            "binaryblob".to_string(),
+            "datetime".to_string(),
+            "doublearray".to_string(),
+            "integerarray".to_string(),
+            "booleanarray".to_string(),
+            "longintegerarray".to_string(),
+            "stringarray".to_string(),
+            "binaryblobarray".to_string(),
+            "datetimearray".to_string(),
+        ];
+
+        let mut data = std::collections::HashMap::new();
+
+        for i in allendpoints.iter().zip(alltypes.iter()) {
+            data.insert(i.0.clone(), i.1.clone());
+        }
+
+        let bytes = AstarteDeviceSdk::serialize_object(data.clone(), None).unwrap();
+
+        let data_processed = AstarteDeviceSdk::deserialize(&bytes).unwrap();
+
+        println!("\nComparing {:?}\nto {:?}", data, data_processed);
+
+        if let Aggregation::Object(data_processed) = data_processed {
+            assert_eq!(data, data_processed);
+        } else {
+            panic!();
+        }
     }
 
     #[test]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let (realm, device, interface, path) = crate::parse_topic(&topic).unwrap();
+        let (realm, device, interface, path) = astarte_device_sdk::parse_topic(&topic).unwrap();
         assert!(realm == "test");
         assert!(device == "u-WraCwtK_G_fjJf63TiAw");
         assert!(interface == "com.interface.test");
@@ -980,7 +1170,7 @@ mod test {
             0x2d, 0x0a, 0x00, 0x2a, 0x02, 0x00, 0xb2, 0x0c, 0x1a, 0xc9,
         ];
 
-        let s = crate::utils::extract_set_properties(&bdata);
+        let s = astarte_device_sdk::utils::extract_set_properties(&bdata);
 
         assert!(s.join(";").as_bytes() == example);
     }
