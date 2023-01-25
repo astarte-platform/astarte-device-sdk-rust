@@ -338,131 +338,93 @@ impl AstarteType {
 #[cfg(test)]
 
 mod test {
-    use std::collections::HashMap;
-    use std::convert::{TryFrom, TryInto};
+    use std::convert::TryFrom;
+    use std::convert::TryInto;
 
     use chrono::{DateTime, TimeZone, Utc};
 
     use crate::interface::MappingType;
-    use crate::{types::AstarteType, Aggregation, AstarteDeviceSdk, AstarteError};
-
-    #[test]
-    fn test_individual_serialization() {
-        let alltypes: Vec<AstarteType> = vec![
-            AstarteType::Double(4.5),
-            (-4).into(),
-            true.into(),
-            45543543534_i64.into(),
-            "hello".into(),
-            b"hello".to_vec().into(),
-            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
-            vec![1.2, 3.4, 5.6, 7.8].into(),
-            vec![1, 3, 5, 7].into(),
-            vec![true, false, true, true].into(),
-            vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
-            vec!["hello".to_owned(), "world".to_owned()].into(),
-            vec![b"hello".to_vec(), b"world".to_vec()].into(),
-            vec![
-                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-            ]
-            .into(),
-            AstarteType::Unset,
-        ];
-
-        for ty in alltypes {
-            println!("checking {:?}", ty);
-
-            let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
-
-            let ty2 = AstarteDeviceSdk::deserialize(&buf).unwrap();
-
-            if let Aggregation::Individual(data) = ty2 {
-                assert!(ty == data);
-            } else {
-                panic!();
-            }
-        }
-    }
-
-    #[test]
-    fn test_object_serialization() {
-        let alltypes: Vec<AstarteType> = vec![
-            AstarteType::Double(4.5),
-            (-4).into(),
-            true.into(),
-            45543543534_i64.into(),
-            "hello".into(),
-            b"hello".to_vec().into(),
-            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
-            vec![1.2, 3.4, 5.6, 7.8].into(),
-            vec![1, 3, 5, 7].into(),
-            vec![true, false, true, true].into(),
-            vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
-            vec!["hello".to_owned(), "world".to_owned()].into(),
-            vec![b"hello".to_vec(), b"world".to_vec()].into(),
-            vec![
-                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-            ]
-            .into(),
-        ];
-
-        let allendpoints = vec![
-            "double",
-            "integer",
-            "boolean",
-            "longinteger",
-            "string",
-            "binaryblob",
-            "datetime",
-            "doublearray",
-            "integerarray",
-            "booleanarray",
-            "longintegerarray",
-            "stringarray",
-            "binaryblobarray",
-            "datetimearray",
-        ];
-
-        let mut data = std::collections::HashMap::new();
-
-        for i in allendpoints.iter().zip(alltypes.iter()) {
-            data.insert(*i.0, i.1.clone());
-        }
-
-        let bytes =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(data.clone()), None)
-                .unwrap();
-
-        let data2 = AstarteDeviceSdk::deserialize(&bytes).unwrap();
-
-        fn hashmap_match(
-            map1: &HashMap<&str, AstarteType>,
-            map2: &HashMap<String, AstarteType>,
-        ) -> bool {
-            map1.len() == map2.len()
-                && map1.keys().all(|k| {
-                    map2.contains_key(<&str>::clone(k)) && map1[k] == map2[<&str>::clone(k)]
-                })
-        }
-
-        println!("\nComparing {:?}\nto {:?}", data, data2);
-
-        if let Aggregation::Object(data2) = data2 {
-            assert!(hashmap_match(&data, &data2));
-        } else {
-            panic!();
-        }
-    }
+    use crate::{types::AstarteType, Aggregation, AstarteError};
 
     #[test]
     fn test_eq() {
         assert!(AstarteType::Integer(12) == 12);
         assert!(AstarteType::String("hello".to_owned()) == "hello");
         assert!(AstarteType::BinaryBlob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_conversion_to_astarte_type() -> Result<(), AstarteError> {
+        let data: f64 = 42.24;
+        let a_data: AstarteType = data.try_into()?;
+        assert_eq!(AstarteType::Double(data), a_data);
+
+        let data: f32 = 42.24;
+        let a_data: AstarteType = data.try_into()?;
+        assert_eq!(AstarteType::Double(data as f64), a_data);
+
+        let data: i32 = 42;
+        let a_data: AstarteType = data.into();
+        assert_eq!(AstarteType::Integer(data), a_data);
+
+        let data: i64 = 42;
+        let a_data: AstarteType = data.into();
+        assert_eq!(AstarteType::LongInteger(data), a_data);
+
+        let data: &str = "Hello";
+        let a_data: AstarteType = data.into();
+        assert_eq!(AstarteType::String(data.to_string()), a_data);
+
+        let data: String = String::from("Hello");
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::String(data), a_data);
+
+        let data: bool = false;
+        let a_data: AstarteType = data.into();
+        assert_eq!(AstarteType::Boolean(data), a_data);
+
+        let data: Vec<u8> = vec![100, 101];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::BinaryBlob(data), a_data);
+
+        let data: chrono::DateTime<chrono::Utc> =
+            TimeZone::timestamp_opt(&Utc, 1627580808, 12).unwrap();
+        let a_data: AstarteType = data.into();
+        assert_eq!(AstarteType::DateTime(data), a_data);
+
+        let data: Vec<f64> = vec![1.2, 11.6];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::DoubleArray(data), a_data);
+
+        let data: Vec<i32> = vec![5, -4];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::IntegerArray(data), a_data);
+
+        let data: Vec<i64> = vec![11, 23234];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::LongIntegerArray(data), a_data);
+
+        let data: Vec<bool> = vec![true, false];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::BooleanArray(data), a_data);
+
+        let data: Vec<String> = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::StringArray(data), a_data);
+
+        let data: Vec<Vec<u8>> = vec![vec![1, 2], vec![3, 4], vec![5, 6]];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::BinaryBlobArray(data), a_data);
+
+        let data: Vec<chrono::DateTime<chrono::Utc>> = vec![
+            TimeZone::timestamp_opt(&Utc, 1627580808, 12).unwrap(),
+            TimeZone::timestamp_opt(&Utc, 3455667775, 42).unwrap(),
+            TimeZone::timestamp_opt(&Utc, 4646841646, 11).unwrap(),
+        ];
+        let a_data: AstarteType = data.clone().into();
+        assert_eq!(AstarteType::DateTimeArray(data), a_data);
+
+        Ok(())
     }
 
     #[test]

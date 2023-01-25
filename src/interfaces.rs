@@ -291,14 +291,13 @@ impl Interfaces {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
-    use std::{collections::HashMap, convert::TryInto, str::FromStr};
+    use std::{collections::HashMap, str::FromStr};
 
     use chrono::{TimeZone, Utc};
 
     use crate::{
-        builder::AstarteOptions, interface::traits::Interface, types::AstarteType, AstarteDeviceSdk,
+        builder::AstarteOptions, interface::traits::Interface, interfaces::Interfaces,
+        types::AstarteType, AstarteDeviceSdk,
     };
 
     #[test]
@@ -404,19 +403,17 @@ mod test {
         options.interface_directory("examples/interfaces/").unwrap();
         let ifa = Interfaces::new(options.interfaces);
 
-        let mut obj: std::collections::HashMap<&str, AstarteType> =
+        let mut obj: std::collections::HashMap<String, AstarteType> =
             std::collections::HashMap::new();
-        obj.insert("latitude", 37.534543.try_into().unwrap());
-        obj.insert("longitude", 45.543.try_into().unwrap());
-        obj.insert("altitude", 650.6.try_into().unwrap());
-        obj.insert("accuracy", 12.0.try_into().unwrap());
-        obj.insert("altitudeAccuracy", 10.0.try_into().unwrap());
-        obj.insert("heading", 237.0.try_into().unwrap());
-        obj.insert("speed", 250.0.try_into().unwrap());
+        obj.insert("latitude".to_string(), AstarteType::Double(37.534543));
+        obj.insert("longitude".to_string(), AstarteType::Double(45.543));
+        obj.insert("altitude".to_string(), AstarteType::Double(650.6));
+        obj.insert("accuracy".to_string(), AstarteType::Double(12.0));
+        obj.insert("altitudeAccuracy".to_string(), AstarteType::Double(10.0));
+        obj.insert("heading".to_string(), AstarteType::Double(237.0));
+        obj.insert("speed".to_string(), AstarteType::Double(250.0));
 
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj.clone()), None)
-                .unwrap();
+        let buf = AstarteDeviceSdk::serialize_object(obj.clone(), None).unwrap();
 
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
@@ -439,9 +436,8 @@ mod test {
 
         // nonexisting object field
         let mut obj2 = obj.clone();
-        obj2.insert("latitudef", 37.534543.try_into().unwrap());
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
+        obj2.insert("latitudef".to_string(), AstarteType::Double(37.534543));
+        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -452,9 +448,8 @@ mod test {
 
         // wrong type
         let mut obj2 = obj.clone();
-        obj2.insert("latitude", AstarteType::Boolean(false));
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
+        obj2.insert("latitude".to_string(), AstarteType::Boolean(false));
+        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -466,8 +461,7 @@ mod test {
         // missing object field
         let mut obj2 = obj.clone();
         obj2.remove("latitude");
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
+        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -478,9 +472,8 @@ mod test {
 
         // invalid float
         let mut obj2 = obj.clone();
-        obj2.insert("latitude", AstarteType::Double(f64::NAN));
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(obj2), None).unwrap();
+        obj2.insert("latitude".to_string(), AstarteType::Double(f64::NAN));
+        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
         ifa.validate_send(
             "org.astarte-platform.genericsensors.Geolocation",
             "/1",
@@ -571,46 +564,40 @@ mod test {
 
         let ifa = Interfaces::new(ifa);
 
-        let inner_data: HashMap<&str, AstarteType> = [
-            ("button", AstarteType::Boolean(false)),
-            ("uptimeSeconds", AstarteType::Integer(324)),
+        let inner_data: HashMap<String, AstarteType> = [
+            ("button".to_string(), AstarteType::Boolean(false)),
+            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
         ]
         .iter()
         .cloned()
         .collect();
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
-                .unwrap();
+        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf).unwrap();
         ifa.validate_receive("com.test.object", "/no", &buf)
             .unwrap_err();
         ifa.validate_receive("com.test.no", "/", &buf).unwrap_err();
 
-        let inner_data: HashMap<&str, AstarteType> = [
-            ("buttonfoo", AstarteType::Boolean(false)),
-            ("uptimeSeconds", AstarteType::Integer(324)),
+        let inner_data: HashMap<String, AstarteType> = [
+            ("buttonfoo".to_string(), AstarteType::Boolean(false)),
+            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
         ]
         .iter()
         .cloned()
         .collect();
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
-                .unwrap();
+        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();
 
-        let inner_data: HashMap<&str, AstarteType> = [
-            ("button", AstarteType::Double(3.3)),
-            ("uptimeSeconds", AstarteType::Integer(324)),
+        let inner_data: HashMap<String, AstarteType> = [
+            ("button".to_string(), AstarteType::Double(3.3)),
+            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
         ]
         .iter()
         .cloned()
         .collect();
-        let buf =
-            AstarteDeviceSdk::serialize_object(AstarteDeviceSdk::to_bson_map(inner_data), None)
-                .unwrap();
+        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
 
         ifa.validate_receive("com.test.object", "/", &buf)
             .unwrap_err();
@@ -906,9 +893,9 @@ mod test {
             .unwrap_err();
 
         // Test receiving an aggregate
-        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
-            ("boolean_endpoint", AstarteType::Boolean(false).into()),
-            ("integer_endpoint", AstarteType::Integer(324).into()),
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
@@ -916,9 +903,9 @@ mod test {
             .unwrap();
 
         // Test receiving an aggregate with wrong type
-        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
-            ("boolean_endpoint", AstarteType::Boolean(false).into()),
-            ("integer_endpoint", AstarteType::Boolean(false).into()),
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Boolean(false)),
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
@@ -926,9 +913,9 @@ mod test {
             .unwrap_err();
 
         // Test receiving an aggregate on an property interface
-        let aggr_data: HashMap<&str, bson::Bson> = HashMap::from([
-            ("boolean_endpoint", AstarteType::Boolean(false).into()),
-            ("integer_endpoint", AstarteType::Integer(324).into()),
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces

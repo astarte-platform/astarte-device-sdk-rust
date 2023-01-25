@@ -1,0 +1,19 @@
+# This file is part of Astarte.
+#
+# Copyright 2023 SECO Mind Srl
+#
+# SPDX-License-Identifier: CC0-1.0
+
+[package]
+name = "astarte-device-sdk-derive"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = {version = "1.0", features = ["extra-traits"]}
+quote = "1.0"

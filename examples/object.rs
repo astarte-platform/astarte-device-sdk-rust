@@ -21,7 +21,8 @@
 use astarte_device_sdk::{builder::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
-use serde::Serialize;
+use astarte_device_sdk::AstarteAggregate;
+use astarte_device_sdk_derive::AstarteAggregate;
 
 #[derive(Debug, StructOpt)]
 struct Cli {
@@ -60,8 +61,7 @@ async fn main() -> Result<(), AstarteError> {
 
     tokio::task::spawn(async move {
         loop {
-            #[derive(Serialize)]
-            #[serde(rename_all = "camelCase")]
+            #[derive(AstarteAggregate)]
             struct Geolocation {
                 latitude: f64,
                 longitude: f64,

@@ -18,6 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::convert::TryInto;
 use std::{collections::HashMap, panic};
 
 use base64::Engine;
@@ -87,15 +88,15 @@ fn get_data() -> HashMap<String, AstarteType> {
     data_map
 }
 
-fn get_data_obj() -> HashMap<String, f64> {
-    let mut data: HashMap<String, f64> = HashMap::new();
-    data.insert("latitude".into(), 1.34);
-    data.insert("longitude".into(), 2.34);
-    data.insert("altitude".into(), 3.34);
-    data.insert("accuracy".into(), 4.34);
-    data.insert("altitudeAccuracy".into(), 5.34);
-    data.insert("heading".into(), 6.34);
-    data.insert("speed".into(), 7.34);
+fn get_data_obj() -> HashMap<String, AstarteType> {
+    let mut data: HashMap<String, AstarteType> = HashMap::new();
+    data.insert("latitude".into(), AstarteType::Double(1.34));
+    data.insert("longitude".into(), AstarteType::Double(2.34));
+    data.insert("altitude".into(), AstarteType::Double(3.34));
+    data.insert("accuracy".into(), AstarteType::Double(4.34));
+    data.insert("altitudeAccuracy".into(), AstarteType::Double(5.34));
+    data.insert("heading".into(), AstarteType::Double(6.34));
+    data.insert("speed".into(), AstarteType::Double(7.34));
 
     data
 }
@@ -341,8 +342,8 @@ fn encode_blob(blob: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(blob)
 }
 
-fn check_json_obj(data: &HashMap<String, f64>, json: String) {
-    fn parse_response_json(json: &str) -> HashMap<String, f64> {
+fn check_json_obj(data: &HashMap<String, AstarteType>, json: String) {
+    fn parse_response_json(json: &str) -> HashMap<String, AstarteType> {
         let mut ret = HashMap::new();
         let v: Value = serde_json::from_str(json).unwrap();
 
@@ -354,7 +355,10 @@ fn check_json_obj(data: &HashMap<String, f64>, json: String) {
                     if let Value::Object(data) = &data[0] {
                         for dat in data {
                             if let Value::Number(dat2) = dat.1 {
-                                ret.insert(dat.0.clone(), dat2.as_f64().unwrap());
+                                ret.insert(
+                                    dat.0.clone(),
+                                    AstarteType::Double(dat2.as_f64().unwrap()),
+                                );
                             }
                         }
                     }
@@ -374,8 +378,10 @@ fn check_json_obj(data: &HashMap<String, f64>, json: String) {
 
         println!("{:?} {:?}", i.1, jtype);
         assert!(compare_json_with_astartetype(
-            &AstarteType::Double(*i.1),
-            &Value::Number(serde_json::Number::from_f64(*jtype).unwrap())
+            i.1,
+            &Value::Number(
+                serde_json::Number::from_f64(jtype.clone().try_into().unwrap()).unwrap()
+            )
         ));
     }
 }
