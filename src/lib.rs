@@ -742,7 +742,7 @@ impl AstarteDeviceSdk {
             let mapping = interfaces
                 .get_mapping(interface_name, interface_path)
                 .ok_or_else(|| {
-                    AstarteError::SendError(format!("Mapping {} doesn't exist", interface_path))
+                    AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
                 })?;
 
             if let crate::interface::Mapping::Properties(_) = mapping {
@@ -1062,7 +1062,7 @@ mod test {
             ),
         ]);
         assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
-        println!("{:?}", expected_res);
+        println!("{expected_res:?}");
     }
 
     #[test]
@@ -1089,7 +1089,7 @@ mod test {
         ];
 
         for ty in alltypes {
-            println!("checking {:?}", ty);
+            println!("checking {ty:?}");
 
             let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
 
@@ -1153,7 +1153,7 @@ mod test {
 
         let data_processed = AstarteDeviceSdk::deserialize(&bytes).unwrap();
 
-        println!("\nComparing {:?}\nto {:?}", data, data_processed);
+        println!("\nComparing {data:?}\nto {data_processed:?}");
 
         if let Aggregation::Object(data_processed) = data_processed {
             assert_eq!(data, data_processed);

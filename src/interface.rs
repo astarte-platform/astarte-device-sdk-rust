@@ -538,7 +538,7 @@ mod tests {
         assert!(deser_interface.is_err());
         assert!(match deser_interface {
             Err(Error::MajorMinor) => true,
-            Err(e) => panic!("expected Error::MajorMinor, got {:?}", e),
+            Err(e) => panic!("expected Error::MajorMinor, got {e:?}"),
             Ok(_) => panic!("Expected Err, got Ok"),
         });
     }

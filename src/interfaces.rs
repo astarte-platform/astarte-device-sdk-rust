@@ -172,8 +172,7 @@ impl Interfaces {
                         self.get_mapping(interface_name, &mapping_path)
                             .ok_or_else(|| {
                                 AstarteError::SendError(format!(
-                                    "Mapping '{}' doesn't exist",
-                                    mapping_path
+                                    "Mapping '{mapping_path}' doesn't exist"
                                 ))
                             })?;
 
@@ -222,7 +221,7 @@ impl Interfaces {
         }
 
         self.interfaces.get(interface_name).ok_or_else(|| {
-            AstarteError::ReceiveError(format!("Interface '{}' does not exists", interface_name))
+            AstarteError::ReceiveError(format!("Interface '{interface_name}' does not exists"))
         })?;
 
         let data = crate::AstarteDeviceSdk::deserialize(bdata)?;

@@ -207,7 +207,7 @@ fn build_mqtt_opts(
         realm, device_id, ..
     } = options;
 
-    let client_id = format!("{}/{}", realm, device_id);
+    let client_id = format!("{realm}/{device_id}");
     let host = broker_url
         .host_str()
         .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;

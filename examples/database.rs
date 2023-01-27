@@ -95,9 +95,9 @@ async fn main() -> Result<(), AstarteError> {
     loop {
         match device.handle_events().await {
             Ok(data) => {
-                println!("incoming: {:?}", data);
+                println!("incoming: {data:?}");
             }
-            Err(err) => log::error!("{:?}", err),
+            Err(err) => log::error!("{err:?}"),
         }
     }
 }
