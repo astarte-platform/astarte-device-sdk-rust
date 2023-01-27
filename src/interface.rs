@@ -242,7 +242,7 @@ impl Interface {
         }
     }
 
-    pub fn mapping(&self, path: &str) -> Option<Mapping> {
+    pub(crate) fn mapping(&self, path: &str) -> Option<Mapping> {
         match &self {
             Self::Datastream(d) => {
                 for mapping in d.mappings.iter() {
@@ -264,21 +264,21 @@ impl Interface {
         None
     }
 
-    pub fn mappings(&self) -> Vec<Mapping> {
+    pub(crate) fn mappings(&self) -> Vec<Mapping> {
         return match &self {
             Self::Datastream(d) => d.mappings.iter().map(Mapping::Datastream).collect(),
             Self::Properties(p) => p.mappings.iter().map(Mapping::Properties).collect(),
         };
     }
 
-    pub fn mappings_len(&self) -> usize {
+    pub(crate) fn mappings_len(&self) -> usize {
         match &self {
             Self::Datastream(d) => d.mappings.len(),
             Self::Properties(p) => p.mappings.len(),
         }
     }
 
-    pub fn get_ownership(&self) -> Ownership {
+    pub(crate) fn get_ownership(&self) -> Ownership {
         match &self {
             Interface::Datastream(iface) => iface.base.ownership,
             Interface::Properties(iface) => iface.base.ownership,
