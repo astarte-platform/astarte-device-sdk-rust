@@ -64,7 +64,7 @@ async fn main() -> Result<(), AstarteError> {
             w.send("org.astarte-platform.test.Everything", "/longinteger", i)
                 .await
                 .unwrap();
-            println!("Sent {}", i);
+            println!("Sent {i}");
 
             i += 11;
 
@@ -75,7 +75,7 @@ async fn main() -> Result<(), AstarteError> {
     loop {
         match device.handle_events().await {
             Ok(data) => {
-                println!("incoming: {:?}", data);
+                println!("incoming: {data:?}");
 
                 if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
                     if data.path == "/1/enable" {

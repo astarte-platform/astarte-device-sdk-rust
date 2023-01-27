@@ -52,5 +52,5 @@ async fn main() {
             .await
             .unwrap();
 
-    println!("{}", credentials_secret);
+    println!("{credentials_secret}");
 }

@@ -159,8 +159,7 @@ async fn main() {
 
         let json = reqwest::Client::new()
             .get(format!(
-                "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.test.Everything",
-                realm, device_id
+                "https://api.autotest.astarte-platform.org/appengine/v1/{realm}/devices/{device_id}/interfaces/org.astarte-platform.test.Everything"
             ))
             .header(
                 "Authorization",
@@ -191,8 +190,7 @@ async fn main() {
 
         let json = reqwest::Client::new()
         .get(format!(
-            "https://api.autotest.astarte-platform.org/appengine/v1/{}/devices/{}/interfaces/org.astarte-platform.genericsensors.Geolocation",
-            realm, device_id
+            "https://api.autotest.astarte-platform.org/appengine/v1/{realm}/devices/{device_id}/interfaces/org.astarte-platform.genericsensors.Geolocation"
         ))
         .header(
             "Authorization",
@@ -205,8 +203,8 @@ async fn main() {
         .await
         .unwrap();
 
-        println!("----------------\n{:?}", data);
-        println!("----------------\n{:?}", json);
+        println!("----------------\n{data:?}");
+        println!("----------------\n{json:?}");
 
         check_json_obj(&data, json);
 
@@ -231,10 +229,10 @@ async fn main() {
     loop {
         match device.handle_events().await {
             Ok(data) => {
-                println!("incoming: {:?}", data);
+                println!("incoming: {data:?}");
             }
             Err(err) => {
-                println!("poll error {:?}", err);
+                println!("poll error {err:?}");
                 std::process::exit(1);
             }
         }
@@ -246,7 +244,7 @@ fn check_json(data: &HashMap<String, AstarteType>, json: String) {
         let mut ret = HashMap::new();
         let v: Value = serde_json::from_str(json).unwrap();
 
-        println!("{:#?}", v);
+        println!("{v:#?}");
 
         if let Value::Object(data) = v {
             if let Value::Object(data) = &data["data"] {
@@ -269,7 +267,7 @@ fn check_json(data: &HashMap<String, AstarteType>, json: String) {
             .get(i.0)
             .unwrap_or_else(|| panic!("Can't find {} in json {:?}", i.0, json));
 
-        println!("{:?} {:?}", atype, jtype);
+        println!("{atype:?} {jtype:?}");
         assert!(compare_json_with_astartetype(atype, jtype));
     }
 }
@@ -347,7 +345,7 @@ fn check_json_obj(data: &HashMap<String, AstarteType>, json: String) {
         let mut ret = HashMap::new();
         let v: Value = serde_json::from_str(json).unwrap();
 
-        println!("{:#?}", v);
+        println!("{v:#?}");
 
         if let Value::Object(data) = v {
             if let Value::Object(data) = &data["data"] {
