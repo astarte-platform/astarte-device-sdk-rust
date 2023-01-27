@@ -90,7 +90,7 @@ impl PartialEq<MappingType> for AstarteType {
     }
 }
 
-// we implement From<T> from all the base types to AstarteType, using this macro
+// we implement From<T> and PartialEq<T> from all the base types to AstarteType, using this macro
 macro_rules! impl_type_conversion_traits {
     ( {$( ($typ:ty, $astartetype:tt) ,)*}) => {
 
@@ -125,7 +125,6 @@ impl_type_conversion_traits!({
     (bool, Boolean),
     (Vec<u8>, BinaryBlob),
     (chrono::DateTime<chrono::Utc>, DateTime),
-    (Vec<f64>, DoubleArray),
     (Vec<i32>, IntegerArray),
     (Vec<i64>, LongIntegerArray),
     (Vec<bool>, BooleanArray),
@@ -135,6 +134,17 @@ impl_type_conversion_traits!({
 });
 
 // we implement float types on the side since they have different requirements
+impl std::convert::TryFrom<f32> for AstarteType {
+    type Error = AstarteError;
+
+    fn try_from(d: f32) -> Result<Self, Self::Error> {
+        if d.is_nan() || d.is_infinite() || d.is_subnormal() {
+            return Err(AstarteError::FloatError);
+        }
+        Ok(AstarteType::Double(d.into()))
+    }
+}
+
 impl std::convert::TryFrom<f64> for AstarteType {
     type Error = AstarteError;
     fn try_from(d: f64) -> Result<Self, Self::Error> {
@@ -145,14 +155,39 @@ impl std::convert::TryFrom<f64> for AstarteType {
     }
 }
 
-impl std::convert::TryFrom<f32> for AstarteType {
-    type Error = AstarteError;
+impl PartialEq<f64> for AstarteType {
+    fn eq(&self, other: &f64) -> bool {
+        if let AstarteType::Double(dself) = self {
+            dself == other
+        } else {
+            false
+        }
+    }
+}
 
-    fn try_from(d: f32) -> Result<Self, Self::Error> {
-        if d.is_nan() || d.is_infinite() || d.is_subnormal() {
+impl std::convert::TryFrom<Vec<f64>> for AstarteType {
+    type Error = AstarteError;
+    fn try_from(d: Vec<f64>) -> Result<Self, Self::Error> {
+        if d.iter()
+            .any(|&x| x.is_nan() || x.is_infinite() || x.is_subnormal())
+        {
             return Err(AstarteError::FloatError);
         }
-        Ok(AstarteType::Double(d.into()))
+        Ok(AstarteType::DoubleArray(d))
+    }
+}
+
+impl PartialEq<Vec<f64>> for AstarteType {
+    fn eq(&self, other: &Vec<f64>) -> bool {
+        if let AstarteType::DoubleArray(dself) = self {
+            if dself.len() == other.len() {
+                dself.iter().zip(other).all(|(&x, &y)| x == y)
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 }
 
@@ -346,9 +381,31 @@ mod test {
 
     #[test]
     fn test_eq() {
-        assert!(AstarteType::Integer(12) == 12);
-        assert!(AstarteType::String("hello".to_owned()) == "hello");
+        assert!(AstarteType::Double(12.21) == 12.21_f64);
+        assert!(AstarteType::Integer(12) == 12_i32);
+        assert!(AstarteType::Boolean(false) == false);
+        assert!(AstarteType::LongInteger(42) == 42_i64);
+        assert!(AstarteType::String("hello".to_string()) == "hello");
         assert!(AstarteType::BinaryBlob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
+        let data: chrono::DateTime<Utc> = TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap();
+        assert!(AstarteType::DateTime(data) == data);
+        let data: Vec<f64> = vec![1.3, 2.6, 3.1, 4.0];
+        assert!(AstarteType::DoubleArray(data.clone()) == data);
+        let data: Vec<i32> = vec![1, 2, 3, 4];
+        assert!(AstarteType::IntegerArray(data.clone()) == data);
+        let data: Vec<bool> = vec![true, false, true, true];
+        assert!(AstarteType::BooleanArray(data.clone()) == data);
+        let data: Vec<i64> = vec![32, 11, 33, 1];
+        assert!(AstarteType::LongIntegerArray(data.clone()) == data);
+        let data: Vec<String> = vec!["Hello".to_string(), " world!".to_string()];
+        assert!(AstarteType::StringArray(data.clone()) == data);
+        let data: Vec<Vec<u8>> = vec![vec![1, 2, 3, 4], vec![4, 4, 1, 4]];
+        assert!(AstarteType::BinaryBlobArray(data.clone()) == data);
+        let data: Vec<chrono::DateTime<Utc>> = vec![
+            TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+            TimeZone::timestamp_opt(&Utc, 1611580808, 0).unwrap(),
+        ];
+        assert!(AstarteType::DateTimeArray(data.clone()) == data);
     }
 
     #[test]
@@ -391,7 +448,7 @@ mod test {
         assert_eq!(AstarteType::DateTime(data), a_data);
 
         let data: Vec<f64> = vec![1.2, 11.6];
-        let a_data: AstarteType = data.clone().into();
+        let a_data: AstarteType = data.clone().try_into().unwrap();
         assert_eq!(AstarteType::DoubleArray(data), a_data);
 
         let data: Vec<i32> = vec![5, -4];

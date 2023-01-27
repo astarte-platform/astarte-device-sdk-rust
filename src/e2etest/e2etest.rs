@@ -37,7 +37,7 @@ fn get_data() -> HashMap<String, AstarteType> {
         "hello".into(),
         b"hello".to_vec().into(),
         TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap().into(),
-        vec![1.2, 3.4, 5.6, 7.8].into(),
+        vec![1.2, 3.4, 5.6, 7.8].try_into().unwrap(),
         vec![1, 3, 5, 7].into(),
         vec![true, false, true, true].into(),
         vec![45543543534_i64, 45543543535_i64, 45543543536_i64].into(),
