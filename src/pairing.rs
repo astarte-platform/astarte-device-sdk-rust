@@ -30,8 +30,8 @@ use serde_json::json;
 use url::ParseError;
 
 use crate::{
-    builder::{AstarteBuilderError, AstarteOptions},
     crypto::Bundle,
+    options::{AstarteOptions, AstarteOptionsError},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -202,7 +202,7 @@ fn build_mqtt_opts(
     certificate_pem: &[Certificate],
     private_key: &PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, AstarteBuilderError> {
+) -> Result<MqttOptions, AstarteOptionsError> {
     let AstarteOptions {
         realm, device_id, ..
     } = options;
@@ -210,10 +210,10 @@ fn build_mqtt_opts(
     let client_id = format!("{realm}/{device_id}");
     let host = broker_url
         .host_str()
-        .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| AstarteOptionsError::ConfigError("bad broker url".into()))?;
     let port = broker_url
         .port()
-        .ok_or_else(|| AstarteBuilderError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| AstarteOptionsError::ConfigError("bad broker url".into()))?;
 
     let mut root_cert_store = rustls::RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
@@ -224,12 +224,12 @@ fn build_mqtt_opts(
         .with_safe_defaults()
         .with_root_certificates(root_cert_store)
         .with_single_cert(certificate_pem.to_owned(), private_key.to_owned())
-        .map_err(|_| AstarteBuilderError::ConfigError("cannot setup client auth".into()))?;
+        .map_err(|_| AstarteOptionsError::ConfigError("cannot setup client auth".into()))?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if options.keepalive.as_secs() < 5 {
-        return Err(AstarteBuilderError::ConfigError(
+        return Err(AstarteOptionsError::ConfigError(
             "Keepalive should be >= 5 secs".into(),
         ));
     }
@@ -270,7 +270,7 @@ fn build_mqtt_opts(
 
 pub async fn get_transport_config(
     opts: &AstarteOptions,
-) -> Result<MqttOptions, AstarteBuilderError> {
+) -> Result<MqttOptions, AstarteOptionsError> {
     let (certificate_pem, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

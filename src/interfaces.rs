@@ -295,14 +295,14 @@ mod test {
     use chrono::{TimeZone, Utc};
 
     use crate::{
-        builder::AstarteOptions, interface::traits::Interface, interfaces::Interfaces,
+        interface::traits::Interface, interfaces::Interfaces, options::AstarteOptions,
         types::AstarteType, AstarteDeviceSdk,
     };
 
     #[test]
     fn test_individual() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options.interface_directory("examples/interfaces/").unwrap();
+        options = options.interface_directory("examples/interfaces/").unwrap();
         let ifa = Interfaces::new(options.interfaces);
 
         let buf = AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
@@ -399,7 +399,7 @@ mod test {
     #[test]
     fn test_object() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options.interface_directory("examples/interfaces/").unwrap();
+        options = options.interface_directory("examples/interfaces/").unwrap();
         let ifa = Interfaces::new(options.interfaces);
 
         let mut obj: std::collections::HashMap<String, AstarteType> =
@@ -485,7 +485,7 @@ mod test {
     #[test]
     fn test_individual_recv() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options.interface_directory("examples/interfaces/").unwrap();
+        options = options.interface_directory("examples/interfaces/").unwrap();
         let ifa = Interfaces::new(options.interfaces);
 
         let boolean_buf =

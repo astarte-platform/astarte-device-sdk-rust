@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_device_sdk::{builder::AstarteOptions, AstarteError};
+use astarte_device_sdk::{options::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
 use astarte_device_sdk::AstarteAggregate;
@@ -52,8 +52,7 @@ async fn main() -> Result<(), AstarteError> {
     } = Cli::from_args();
 
     let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
-        .interface_directory("./examples/interfaces")?
-        .build();
+        .interface_directory("./examples/interfaces")?;
 
     let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await?;
 

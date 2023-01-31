@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_device_sdk::{builder::AstarteOptions, database::AstarteSqliteDatabase, AstarteError};
+use astarte_device_sdk::{database::AstarteSqliteDatabase, options::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -52,8 +52,7 @@ async fn main() -> Result<(), AstarteError> {
 
     let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
         .interface_directory("./examples/interfaces")?
-        .database(db)
-        .build();
+        .database(db);
 
     let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await?;
 

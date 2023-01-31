@@ -37,7 +37,7 @@ use crate::pairing;
 /// Builder for Astarte client
 ///
 /// ```no_run
-/// use astarte_device_sdk::builder::AstarteOptions;
+/// use astarte_device_sdk::options::AstarteOptions;
 ///
 /// #[tokio::main]
 /// async fn main(){
@@ -48,8 +48,7 @@ use crate::pairing;
 ///
 /// let mut sdk_builder = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
 ///                         .interface_directory("path/to/interfaces").unwrap()
-///                         .keepalive(std::time::Duration::from_secs(90))
-///                         .build();
+///                         .keepalive(std::time::Duration::from_secs(90));
 ///
 /// }
 ///
@@ -69,7 +68,7 @@ pub struct AstarteOptions {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum AstarteBuilderError {
+pub enum AstarteOptionsError {
     #[error("private key or CSR creation failed")]
     CryptoGeneration(#[from] ErrorStack),
 
@@ -112,33 +111,27 @@ impl AstarteOptions {
         }
     }
 
-    pub fn database<T: AstarteDatabase + 'static + Sync + Send>(
-        &mut self,
-        database: T,
-    ) -> &mut Self {
+    pub fn database<T: AstarteDatabase + 'static + Sync + Send>(mut self, database: T) -> Self {
         self.database = Some(Arc::new(database));
         self
     }
 
     /// Set time after which client should ping the broker
     /// if there is no other data exchange
-    pub fn keepalive(&mut self, duration: std::time::Duration) -> &mut Self {
+    pub fn keepalive(mut self, duration: std::time::Duration) -> Self {
         self.keepalive = duration;
 
         self
     }
 
-    pub fn ignore_ssl_errors(&mut self) -> &mut Self {
+    pub fn ignore_ssl_errors(mut self) -> Self {
         self.ignore_ssl_errors = true;
 
         self
     }
 
     /// Add an interface from a json file
-    pub fn interface_file<'a>(
-        &'a mut self,
-        file_path: &Path,
-    ) -> Result<&'a mut Self, AstarteBuilderError> {
+    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.name();
         debug!("Added interface {}", name);
@@ -147,10 +140,10 @@ impl AstarteOptions {
     }
 
     /// Add all json interface description inside a specified directory
-    pub fn interface_directory<'a>(
-        &'a mut self,
+    pub fn interface_directory(
+        mut self,
         interfaces_directory: &str,
-    ) -> Result<&'a mut Self, AstarteBuilderError> {
+    ) -> Result<Self, AstarteOptionsError> {
         let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
         let it = interface_files.filter_map(Result::ok).filter(|f| {
             if let Some(ext) = f.path().extension() {
@@ -161,13 +154,9 @@ impl AstarteOptions {
         });
 
         for f in it {
-            self.interface_file(&f.path())?;
+            self = self.interface_file(&f.path())?;
         }
 
         Ok(self)
-    }
-
-    pub fn build(&self) -> Self {
-        self.clone()
     }
 }
