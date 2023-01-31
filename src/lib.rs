@@ -20,21 +20,21 @@
 
 #![doc = include_str!("../README.md")]
 
-pub mod builder;
 mod crypto;
 pub mod database;
 mod interface;
 mod interfaces;
+pub mod options;
 mod pairing;
 pub mod registration;
 pub mod types;
 
 use bson::Bson;
-use builder::AstarteOptions;
 use database::AstarteDatabase;
 use database::StoredProp;
 use itertools::Itertools;
 use log::{debug, error, info, trace};
+use options::AstarteOptions;
 use rumqttc::{AsyncClient, Event};
 use rumqttc::{EventLoop, MqttOptions};
 use std::collections::HashMap;
@@ -118,7 +118,7 @@ pub enum AstarteError {
     DbError(#[from] sqlx::Error),
 
     #[error("builder error")]
-    BuilderError(#[from] builder::AstarteBuilderError),
+    BuilderError(#[from] options::AstarteOptionsError),
 
     #[error(transparent)]
     InterfaceError(#[from] interface::Error),
@@ -328,8 +328,7 @@ impl AstarteDeviceSdk {
     /// ```no_run
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut sdk_options = astarte_device_sdk::builder::AstarteOptions::new("_","_","_","_")
-    ///                           .build();
+    ///     let mut sdk_options = astarte_device_sdk::options::AstarteOptions::new("_","_","_","_");
     ///     let mut d = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     ///
     ///     loop {
@@ -624,8 +623,7 @@ impl AstarteDeviceSdk {
     /// ```no_run
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut sdk_options = astarte_device_sdk::builder::AstarteOptions::new("_","_","_","_")
-    ///                           .build();
+    ///     let mut sdk_options = astarte_device_sdk::options::AstarteOptions::new("_","_","_","_");
     ///     let mut d = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     ///
     ///     d.send("com.test.interface", "/data", 45).await.unwrap();
@@ -650,8 +648,7 @@ impl AstarteDeviceSdk {
     /// async fn main() {
     ///     use chrono::Utc;
     ///     use chrono::TimeZone;
-    ///     let mut sdk_options = astarte_device_sdk::builder::AstarteOptions::new("_","_","_","_")
-    ///                           .build();
+    ///     let mut sdk_options = astarte_device_sdk::options::AstarteOptions::new("_","_","_","_");
     ///     let mut d = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     ///
     ///     d.send_with_timestamp("com.test.interface", "/data", 45, Utc.timestamp(1537449422, 0) ).await.unwrap();

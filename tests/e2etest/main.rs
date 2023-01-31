@@ -34,7 +34,7 @@ use colored::Colorize;
 use serde_json::Value;
 use tokio::{task, time};
 
-use astarte_device_sdk::builder::AstarteOptions;
+use astarte_device_sdk::options::AstarteOptions;
 use astarte_device_sdk::types::AstarteType;
 use astarte_device_sdk::AstarteDeviceSdk;
 
@@ -128,8 +128,7 @@ async fn e2etest_impl() {
     )
     .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
     .unwrap()
-    .ignore_ssl_errors()
-    .build();
+    .ignore_ssl_errors();
 
     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
