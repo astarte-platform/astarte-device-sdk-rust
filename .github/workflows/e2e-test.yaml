@@ -35,11 +35,12 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Install interface
-        run: | 
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/examples/interfaces/*.json --non-interactive
+        run: |
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
           astartectl realm-management interfaces ls
       - name: Register device
         run: |
+          echo "E2E_REALM=test" >> $GITHUB_ENV
           DEVICE_ID=$(astartectl utils device-id generate-random)
           echo "E2E_DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
           CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output -- "$DEVICE_ID")
@@ -47,12 +48,13 @@ jobs:
           echo "RUST_LOG=debug" >> $GITHUB_ENV
           TOKEN=$(astartectl utils gen-jwt appengine)
           echo "E2E_TOKEN=$TOKEN" >> $GITHUB_ENV
-
-      - name: Install toolchain
+          echo "E2E_API_URL=https://api.autotest.astarte-platform.org" >> $GITHUB_ENV
+      - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           override: true
       - name: Run test
-        run: cargo run --bin e2etest
+        run: |
+          cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored
