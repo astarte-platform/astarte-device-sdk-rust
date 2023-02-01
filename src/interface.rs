@@ -43,10 +43,15 @@ pub enum Error {
     MappingNotFound,
 }
 
+/// Astarte interface implementation.
+///
+/// Should be used only through its methods, not instantiated directly.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Interface {
+    #[doc(hidden)]
     Datastream(DatastreamInterface),
+    #[doc(hidden)]
     Properties(PropertiesInterface),
 }
 
@@ -219,6 +224,7 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 }
 
 impl Interface {
+    /// Instantiate a new `Interface` from a file.
     pub fn from_file(path: &Path) -> Result<Self, Error> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -227,6 +233,7 @@ impl Interface {
         Ok(interface)
     }
 
+    /// Getter function for the aggregation type of the interface.
     pub fn aggregation(&self) -> Aggregation {
         match &self {
             Self::Datastream(d) => d.aggregation,
@@ -235,7 +242,7 @@ impl Interface {
         }
     }
 
-    pub fn mapping(&self, path: &str) -> Option<Mapping> {
+    pub(crate) fn mapping(&self, path: &str) -> Option<Mapping> {
         match &self {
             Self::Datastream(d) => {
                 for mapping in d.mappings.iter() {
@@ -257,27 +264,31 @@ impl Interface {
         None
     }
 
-    pub fn mappings(&self) -> Vec<Mapping> {
+    pub(crate) fn mappings(&self) -> Vec<Mapping> {
         return match &self {
             Self::Datastream(d) => d.mappings.iter().map(Mapping::Datastream).collect(),
             Self::Properties(p) => p.mappings.iter().map(Mapping::Properties).collect(),
         };
     }
 
-    pub fn mappings_len(&self) -> usize {
+    pub(crate) fn mappings_len(&self) -> usize {
         match &self {
             Self::Datastream(d) => d.mappings.len(),
             Self::Properties(p) => p.mappings.len(),
         }
     }
 
-    pub fn get_ownership(&self) -> Ownership {
+    pub(crate) fn get_ownership(&self) -> Ownership {
         match &self {
             Interface::Datastream(iface) => iface.base.ownership,
             Interface::Properties(iface) => iface.base.ownership,
         }
     }
 
+    /// Getter function for the the endpoint paths for each property contained in the interface.
+    ///
+    /// Return a vector of touples. Each touple contains the endpoint as a `String` and the
+    /// major version of the interface as a `i32`.
     pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
         if let Interface::Properties(iface) = self {
             let name = iface.base.interface_name.clone();
@@ -294,6 +305,7 @@ impl Interface {
         Vec::new()
     }
 
+    /// Getter function for the interface name.
     pub fn get_name(&self) -> String {
         match &self {
             Interface::Datastream(iface) => iface.base.interface_name.clone(),
@@ -301,6 +313,7 @@ impl Interface {
         }
     }
 
+    /// Getter function for the interface major version.
     pub fn get_version_major(&self) -> i32 {
         match &self {
             Interface::Datastream(iface) => iface.base.version_major,
@@ -308,6 +321,7 @@ impl Interface {
         }
     }
 
+    /// Getter function for the interface minor version.
     pub fn get_version_minor(&self) -> i32 {
         match &self {
             Interface::Datastream(iface) => iface.base.version_minor,

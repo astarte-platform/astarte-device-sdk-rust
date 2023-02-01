@@ -17,6 +17,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+//! Provides static functions for registering a new device to an Astarte Cluster.
 
 use base64::Engine;
 use http::StatusCode;

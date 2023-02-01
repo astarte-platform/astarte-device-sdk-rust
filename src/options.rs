@@ -17,56 +17,27 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
-use log::debug;
-use openssl::error::ErrorStack;
-use pairing::PairingError;
-
+//! Provides functionality to configure an instance of the
+//! [AstarteDeviceSdk][crate::AstarteDeviceSdk].
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use interface::traits::Interface as InterfaceTrait;
-pub use interface::Interface;
+use log::debug;
+use openssl::error::ErrorStack;
+use pairing::PairingError;
 
 use crate::database::AstarteDatabase;
 use crate::interface::{self};
 use crate::pairing;
 
-/// Builder for Astarte client
-///
-/// ```no_run
-/// use astarte_device_sdk::options::AstarteOptions;
-///
-/// #[tokio::main]
-/// async fn main(){
-/// let realm = "test";
-/// let device_id = "xxxxxxxxxxxxxxxxxxxxxxx";
-/// let credentials_secret = "xxxxxxxxxxxxxxxxx/xxxxxxxxxxxxxxxxxxxxxxxxxx";
-/// let pairing_url = "https://api.example.com/pairing";
-///
-/// let mut sdk_builder = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
-///                         .interface_directory("path/to/interfaces").unwrap()
-///                         .keepalive(std::time::Duration::from_secs(90));
-///
-/// }
-///
-///
-/// ```
+use interface::traits::Interface as InterfaceTrait;
+pub use interface::Interface;
 
-#[derive(Clone)]
-pub struct AstarteOptions {
-    pub(crate) realm: String,
-    pub(crate) device_id: String,
-    pub(crate) credentials_secret: String,
-    pub(crate) pairing_url: String,
-    pub(crate) interfaces: HashMap<String, Interface>,
-    pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
-    pub(crate) ignore_ssl_errors: bool,
-    pub(crate) keepalive: std::time::Duration,
-}
-
+/// Astarte options error.
+///
+/// Possible errors used by the Astarte options module.
 #[derive(thiserror::Error, Debug)]
 pub enum AstarteOptionsError {
     #[error("private key or CSR creation failed")]
@@ -97,7 +68,40 @@ pub enum AstarteOptionsError {
     PkiError(#[from] webpki::Error),
 }
 
+/// Structure used to store the configuration options for an instance of
+/// [AstarteDeviceSdk][crate::AstarteDeviceSdk].
+#[derive(Clone)]
+pub struct AstarteOptions {
+    pub(crate) realm: String,
+    pub(crate) device_id: String,
+    pub(crate) credentials_secret: String,
+    pub(crate) pairing_url: String,
+    pub(crate) interfaces: HashMap<String, Interface>,
+    pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
+    pub(crate) ignore_ssl_errors: bool,
+    pub(crate) keepalive: std::time::Duration,
+}
+
 impl AstarteOptions {
+    /// Create a new instance of the astarte options.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::options::AstarteOptions;
+    ///
+    /// #[tokio::main]
+    /// async fn main(){
+    ///     let realm = "realm_name";
+    ///     let device_id = "device_id";
+    ///     let credentials_secret = "device_credentials_secret";
+    ///     let pairing_url = "astarte_cluster_pairing_url";
+    ///
+    ///     let mut sdk_options =
+    ///         AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
+    ///             .interface_directory("path/to/interfaces")
+    ///             .unwrap()
+    ///             .keepalive(std::time::Duration::from_secs(90));
+    /// }
+    /// ```
     pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
         AstarteOptions {
             realm: realm.to_owned(),
@@ -111,26 +115,30 @@ impl AstarteOptions {
         }
     }
 
+    /// Add a database to the astarte options.
     pub fn database<T: AstarteDatabase + 'static + Sync + Send>(mut self, database: T) -> Self {
         self.database = Some(Arc::new(database));
         self
     }
 
-    /// Set time after which client should ping the broker
-    /// if there is no other data exchange
+    /// Configure the keep alive timeout.
+    ///
+    /// The MQTT broker will be pinged when no data exchange has appened
+    /// for the duration of the keep alive timeout.
     pub fn keepalive(mut self, duration: std::time::Duration) -> Self {
         self.keepalive = duration;
 
         self
     }
 
+    /// Ignore TLS/SSL certificate errors.
     pub fn ignore_ssl_errors(mut self) -> Self {
         self.ignore_ssl_errors = true;
 
         self
     }
 
-    /// Add an interface from a json file
+    /// Add a single interface from the provided `.json` file.
     pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.name();
@@ -139,7 +147,7 @@ impl AstarteOptions {
         Ok(self)
     }
 
-    /// Add all json interface description inside a specified directory
+    /// Add all the interfaces from the `.json` files contained in the specified folder.
     pub fn interface_directory(
         mut self,
         interfaces_directory: &str,
