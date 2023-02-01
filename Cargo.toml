@@ -11,11 +11,16 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
+description ="A library that provides communication and pairing primitives to an Astarte Cluster"
+homepage = "https://astarte.cloud/"
+documentation = "https://docs.rs/astarte-device-sdk-rust"
+readme ="README.md"
+keywords = ["sdk", "iot", "astarte"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-astarte-device-sdk-derive = {optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = {version = "0.1.0", optional = true, path = "./astarte-device-sdk-derive" }
 itertools = "0.10"
 http = "0.2"
 openssl = { version = "0.10", features = ["vendored"] }
