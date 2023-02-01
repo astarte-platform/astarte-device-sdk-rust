@@ -117,8 +117,8 @@ pub enum AstarteError {
     #[error("database error")]
     DbError(#[from] sqlx::Error),
 
-    #[error("builder error")]
-    BuilderError(#[from] options::AstarteOptionsError),
+    #[error("options error")]
+    OptionsError(#[from] options::AstarteOptionsError),
 
     #[error(transparent)]
     InterfaceError(#[from] interface::Error),
