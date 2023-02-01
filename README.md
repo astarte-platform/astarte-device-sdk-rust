@@ -8,7 +8,11 @@ SPDX-License-Identifier: Apache-2.0
 
 *Warning: this SDK is experimental, correctness and API stability are currently not guaranteed*
 
-This package allows you to implement an Astarte Device using Rust.
+The Astarte Device SDK for Rust is a ready to use library that provides communication and
+pairing primitives to an Astarte Cluster.
+
+See the [Astarte documentation](https://docs.astarte-platform.org/latest/001-intro_user.html)
+for more information regarding Astarte and the available SDKs.
 
 ## Building
 

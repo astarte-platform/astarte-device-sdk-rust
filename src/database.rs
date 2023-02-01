@@ -17,6 +17,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+//! Provides functionality for instantiating an Astarte sqlite database.
 
 use async_trait::async_trait;
 use std::str::FromStr;
@@ -27,13 +28,16 @@ use sqlx::FromRow;
 
 use crate::{types::AstarteType, AstarteDeviceSdk, AstarteError};
 
-/// Implementation of the [AstarteDatabase] trait for an sqlite database backend
+/// Data structure providing an implementation of a sqlite database.
+///
+/// Can be used by an Astarte device to store permanently properties values.
 #[derive(Clone, Debug)]
 pub struct AstarteSqliteDatabase {
     db_conn: sqlx::Pool<sqlx::Sqlite>,
 }
 
-/// This struct represents a property stored in the database
+/// Data structure used to return stored properties by a database implementing the AstarteDatabase
+/// trait.
 #[derive(FromRow, Debug, PartialEq)]
 pub struct StoredProp {
     pub interface: String,
@@ -42,9 +46,16 @@ pub struct StoredProp {
     pub interface_major: i32,
 }
 
-/// Database backend for the astarte client can be made by implementing this trait
+/// Trait providing compatibility with Astarte devices to databases.
+///
+/// Any database implementing this trait can be used as permanent storage for the properties
+/// of an Astarte device.
+///
+/// This SDK provides an implementation of a sqlite database for which this trait has already
+/// been implemented, see [`AstarteSqliteDatabase`].
 #[async_trait]
 pub trait AstarteDatabase {
+    /// Stores a property within the database.
     async fn store_prop(
         &self,
         interface: &str,
@@ -52,18 +63,19 @@ pub trait AstarteDatabase {
         value: &[u8],
         interface_major: i32,
     ) -> Result<(), AstarteError>;
+    /// Load a property from the database.
     async fn load_prop(
         &self,
         interface: &str,
         path: &str,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, AstarteError>;
+    /// Delete a property from the database.
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), AstarteError>;
-
-    /// Removes all saved properties from the database
+    /// Removes all saved properties from the database.
     async fn clear(&self) -> Result<(), AstarteError>;
-
-    /// Retrieves all property values in the database, together with their interface name, path and major version
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
 }
 
@@ -163,8 +175,20 @@ impl AstarteDatabase for AstarteSqliteDatabase {
 }
 
 impl AstarteSqliteDatabase {
-    /// Creates an sqlite database for the astarte client
-    /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details
+    /// Creates an sqlite database for the Astarte device.
+    ///
+    /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::database::AstarteSqliteDatabase;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let database = AstarteSqliteDatabase::new("path/to/database/file.sqlite")
+    ///         .await
+    ///         .unwrap();
+    /// }
+    /// ```
     pub async fn new(uri: &str) -> Result<Self, crate::options::AstarteOptionsError> {
         let options = SqliteConnectOptions::from_str(uri)?.create_if_missing(true);
 

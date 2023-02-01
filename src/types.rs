@@ -17,6 +17,9 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+//! Provides Astarte specific types to be used by the
+//! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receivedata to/from the Astarte cluster.
+
 use std::convert::TryInto;
 
 use bson::{Binary, Bson};
@@ -25,9 +28,27 @@ use chrono::{DateTime, Utc};
 use crate::interface::MappingType;
 use crate::AstarteError;
 
-/// Types supported by astarte
+/// Types supported by the Astarte device.
 ///
-/// <https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types>
+/// An implementation of the [From] or [TryFrom] trait is provided for the encapsulated base types.
+///
+/// ```
+/// use astarte_device_sdk::types::AstarteType;
+/// use std::convert::TryInto;
+///
+/// let btype: bool = true;
+/// let astype: AstarteType = AstarteType::from(btype);
+/// assert_eq!(AstarteType::Boolean(true), astype);
+/// let btype: bool = astype.try_into().unwrap();
+///
+/// let dtype: f64 = 42.4;
+/// let astype: AstarteType = AstarteType::try_from(dtype).unwrap();
+/// assert_eq!(AstarteType::Double(42.4), astype);
+/// let dtype: f64 = astype.try_into().unwrap();
+/// ```
+///
+/// For more information about the types supported by Astarte see the
+/// [documentation](https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types)
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstarteType {
     Double(f64),
