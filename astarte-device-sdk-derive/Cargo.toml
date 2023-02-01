@@ -12,7 +12,7 @@ license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 description ="Derive macros implementation used by Astarte Device SDK"
 homepage = "https://astarte.cloud/"
-documentation = "https://docs.rs/astarte-device-sdk-rust-derive"
+documentation = "https://docs.rs/astarte-device-sdk-derive"
 readme ="README.md"
 keywords = ["sdk", "iot", "astarte", "derive"]
 
