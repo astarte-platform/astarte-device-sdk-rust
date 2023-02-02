@@ -42,7 +42,7 @@ async-trait = "0.1.51"
 uuid = {version="1.2.2", features = ["v5", "v4"] }
 base64 = "0.21.0"
 webpki = "0.22.0"
-flate2 = "1.0"
+flate2 = "=1.0.24"
 
 [dev-dependencies]
 astarte-device-sdk-derive = {path = "./astarte-device-sdk-derive" }
