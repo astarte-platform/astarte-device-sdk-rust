@@ -59,7 +59,7 @@ pub use interface::Interface;
 ///
 /// The Astarte Device SDK provides a procedural macro that can be used to automatically
 /// generate `AstarteAggregate` implementations for Structs.
-/// To use the procedual macro enable the feature `derive`.
+/// To use the procedural macro enable the feature `derive`.
 pub trait AstarteAggregate {
     /// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
     /// ```
@@ -1049,7 +1049,7 @@ impl AstarteDeviceSdk {
             .await
     }
 
-    /// Send an object datastreamy on an interface.
+    /// Send an object datastream on an interface.
     ///
     /// The usage is the same of
     /// [send_object_with_timestamp()][crate::AstarteDeviceSdk::send_object_with_timestamp],
