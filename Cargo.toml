@@ -23,6 +23,7 @@ keywords = ["sdk", "iot", "astarte"]
 astarte-device-sdk-derive = {version = "0.5.1", optional = true, path = "./astarte-device-sdk-derive" }
 itertools = "0.10"
 http = "0.2"
+openssl-src = "=111.24.0"
 openssl = { version = "0.10", features = ["vendored"] }
 reqwest = { version = "0.11", features = ["json"] }
 rumqttc = "0.19"
