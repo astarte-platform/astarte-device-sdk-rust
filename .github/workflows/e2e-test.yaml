@@ -55,6 +55,8 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - name: Update Cargo.lock
+        run: cargo update
       - name: Run test
         run: |
           cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored
