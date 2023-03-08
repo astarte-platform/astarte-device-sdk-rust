@@ -63,6 +63,9 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
           override: true
+      - name: Update Cargo.lock for stable version
+        if: matrix.toolchain == 'stable'
+        run: cargo update
       - name: Run cargo check
         run: |
           cargo check --all-targets
@@ -87,6 +90,9 @@ jobs:
           override: true
       - name: Add clippy
         run: rustup component add clippy
+      - name: Update Cargo.lock for stable version
+        if: matrix.toolchain == 'stable'
+        run: cargo update
       - name: Run cargo clippy
         run: |
           cargo clippy --all-targets -- -Dwarnings
@@ -114,6 +120,9 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
           override: true
+      - name: Update Cargo.lock for stable version
+        if: matrix.toolchain == 'stable'
+        run: cargo update
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:

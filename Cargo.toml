@@ -20,35 +20,35 @@ keywords = ["sdk", "iot", "astarte"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-astarte-device-sdk-derive = {version = "0.1.0", optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = {version = "=0.1.0", optional = true, path = "./astarte-device-sdk-derive" }
 itertools = "0.10"
 http = "0.2"
 openssl = { version = "0.10", features = ["vendored"] }
 reqwest = { version = "0.11", features = ["json"] }
 rumqttc = "0.19"
-rustls = { version="0.20.2", features = ["dangerous_configuration"]}
-rustls-native-certs = "0.6.1"
-rustls-pemfile = "1.0.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
+rustls = { version="0.20.1", features = ["dangerous_configuration"]}
+rustls-native-certs = "0.6"
+rustls-pemfile = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
 tokio = { version = "1", features = ["full"] }
-url = "2.1"
-bson = { version="2.0", features = ["chrono-0_4"]}
+url = "2.2"
+bson = { version="2", features = ["chrono-0_4"]}
 log = "0.4"
-chrono = "0.4.19"
-sqlx = {version="0.6.2", features = ["sqlite", "macros", "runtime-actix-rustls"] }
-async-trait = "0.1.51"
-uuid = {version="1.2.2", features = ["v5", "v4"] }
-base64 = "0.21.0"
-webpki = "0.22.0"
-flate2 = "1.0"
+chrono = "0.4.15"
+sqlx = {version="0.6", features = ["sqlite", "macros", "runtime-actix-rustls"] }
+async-trait = "0.1"
+uuid = {version="1", features = ["v5", "v4"] }
+base64 = "0.21"
+webpki = "0.22"
+flate2 = "1"
 
 [dev-dependencies]
 astarte-device-sdk-derive = {path = "./astarte-device-sdk-derive" }
 structopt = "0.3"
 env_logger = "0.9"
-colored = "2.0.0"
+colored = "2"
 
 [dev-dependencies.cargo-husky]
 version = "1"
