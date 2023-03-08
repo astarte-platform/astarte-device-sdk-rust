@@ -6,7 +6,7 @@
 
 [package]
 name = "astarte-device-sdk-derive"
-version = "0.1.0"
+version = "0.5.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
