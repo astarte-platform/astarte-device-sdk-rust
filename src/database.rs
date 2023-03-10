@@ -207,6 +207,7 @@ mod test {
     use crate::{database::AstarteSqliteDatabase, database::StoredProp, types::AstarteType};
 
     #[tokio::test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     async fn test_db() {
         let db = AstarteSqliteDatabase::new("/tmp/test.sqlite")
             .await

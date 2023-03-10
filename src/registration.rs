@@ -102,6 +102,7 @@ mod test {
     use super::generate_uuid;
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_uuid() {
         let uuid = uuid::Uuid::parse_str("f79ad91f-c638-4889-ae74-9d001a3b4cf8").unwrap();
         let expected_device_id = "AJInS0w3VpWpuOqkXhgZdA";
@@ -112,6 +113,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_uuid_2() {
         let uuid = uuid::Uuid::parse_str("b068931c-c450-342b-a3f5-b3d276ea4297").unwrap();
         let expected_device_id = "dvt9mLDaWb2vW7bdBJwKCg";
@@ -122,6 +124,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_random_uuid() {
         let deviceid = generate_random_uuid();
 

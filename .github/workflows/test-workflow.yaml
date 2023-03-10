@@ -1,0 +1,104 @@
+# This file is part of Astarte.
+#
+# Copyright 2023 SECO Mind Srl
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+
+name: Unit flow
+
+on:
+  push:
+  # Run on branch/tag creation
+  create:
+  # Run on pull requests
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit_test:
+    name: Unit-tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+        - 1.59.0
+        - stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          override: true
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+      - name: Run cargo test for examples
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --examples
+
+  code_coverage_llvm:
+    name: Code coverage LLVM based
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          default: true
+          toolchain: nightly
+          override: true
+      - name: Install dependencies
+        run: |
+          cargo install cargo-binutils
+          rustup component add llvm-tools-preview
+      - name: Build and run unit tests
+        run: cargo test --features unstable --lib
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: "test_binary.profraw"
+      - name: Store the binary file name
+        run: |
+          BINARY_FILE=$(find ./target/debug/deps -regex './target/debug/deps/astarte_device_sdk-[0-9a-f]*')
+          echo "BINARY_FILE=$BINARY_FILE" >> $GITHUB_ENV
+      - name: Index profiles
+        run: rust-profdata merge -sparse test_binary.profraw -o test_binary.profdata
+      - name: Print coverage report
+        run: |
+          rust-cov report --use-color                        \
+          --ignore-filename-regex='(/.cargo/registry|rustc)' \
+          --instr-profile=test_binary.profdata               \
+          --object $BINARY_FILE
+      - name: Generate lcov file
+        run: |
+          rust-cov export -format='lcov'                     \
+          --ignore-filename-regex='(/.cargo/registry|rustc)' \
+          --instr-profile=test_binary.profdata               \
+          --object $BINARY_FILE >> code_coverage.lcov
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+          files: code_coverage.lcov
+          fail_ci_if_error: true

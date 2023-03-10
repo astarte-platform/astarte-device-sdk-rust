@@ -403,6 +403,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn datastream_interface_deserialization() {
         let interface_json = "
         {
@@ -519,6 +520,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn validation_test() {
         let interface_json = "
         {

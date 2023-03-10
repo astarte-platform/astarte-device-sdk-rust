@@ -300,6 +300,7 @@ mod test {
     };
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_individual() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options = options.interface_directory("examples/interfaces/").unwrap();
@@ -397,6 +398,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_object() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options = options.interface_directory("examples/interfaces/").unwrap();
@@ -483,6 +485,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_individual_recv() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
         options = options.interface_directory("examples/interfaces/").unwrap();
@@ -530,6 +533,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_object_recv() {
         use std::str::FromStr;
 
@@ -603,6 +607,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_get_property() {
         let interface_json = r#"
         {
@@ -727,6 +732,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_get_ownership() {
         let server_owned_interface_json = r#"
         {
@@ -790,12 +796,14 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_validate_float() {
         Interfaces::validate_float(&AstarteType::Double(54.4)).unwrap();
         Interfaces::validate_float(&AstarteType::Integer(12)).unwrap();
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_validate_receive() {
         let prop_intf_json = r#"
         {

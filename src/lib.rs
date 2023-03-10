@@ -18,6 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #![doc = include_str!("../README.md")]
+#![cfg_attr(feature = "unstable", feature(no_coverage))]
 
 mod crypto;
 pub mod database;
@@ -1122,6 +1123,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_astarte_aggregate_trait() {
         let my_aggregate = MyAggregate {
             endpoint01: 4.34,
@@ -1211,6 +1213,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_individual_serialization() {
         let alltypes: Vec<AstarteType> = vec![
             AstarteType::Double(4.5),
@@ -1249,6 +1252,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_serialize_object() {
         let alltypes: Vec<AstarteType> = vec![
             AstarteType::Double(4.5),
@@ -1308,6 +1312,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
         let (realm, device, interface, path) = astarte_device_sdk::parse_topic(&topic).unwrap();
@@ -1318,6 +1323,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_deflate() {
         let example = b"com.example.MyInterface/some/path;org.example.DraftInterface/otherPath";
 
@@ -1335,6 +1341,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_integer_longinteger_compatibility() {
         let integer_buf =
             AstarteDeviceSdk::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
@@ -1346,6 +1353,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_bson_serialization() {
         let og_value: i64 = 3600;
         let buf = AstarteDeviceSdk::serialize_individual(og_value, None).unwrap();

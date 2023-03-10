@@ -26,6 +26,9 @@ on:
   # Run on pull requests
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   fmt:
     name: Check formatting
@@ -47,7 +50,7 @@ jobs:
           cargo fmt --all -- --check
 
   check:
-    name: cargo check
+    name: Check compilation
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -69,10 +72,10 @@ jobs:
       - name: Run cargo check
         run: |
           cargo check --all-targets
-          cargo check --all-features
+          cargo check --features derive
 
   clippy_check:
-    name: cargo clippy
+    name: Check linting
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -96,39 +99,9 @@ jobs:
       - name: Run cargo clippy
         run: |
           cargo clippy --all-targets -- -Dwarnings
-          cargo clippy --all-features -- -Dwarnings
+          cargo clippy --features derive -- -Dwarnings
       - name: Run clippy in derive macros folder
         run: |
           cd ./astarte-device-sdk-derive
           cargo clippy --all-targets -- -Dwarnings
           cargo clippy --all-features -- -Dwarnings
-
-  test:
-    name: cargo test
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        toolchain:
-        - 1.59.0
-        - stable
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.toolchain }}
-          override: true
-      - name: Update Cargo.lock for stable version
-        if: matrix.toolchain == 'stable'
-        run: cargo update
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-      - name: Run cargo test for examples
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --examples

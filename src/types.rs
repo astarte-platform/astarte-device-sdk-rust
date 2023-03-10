@@ -401,6 +401,7 @@ mod test {
     use crate::{types::AstarteType, Aggregation, AstarteError};
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_eq() {
         assert!(AstarteType::Double(12.21) == 12.21_f64);
         assert!(AstarteType::Integer(12) == 12_i32);
@@ -430,6 +431,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_conversion_to_astarte_type() -> Result<(), AstarteError> {
         let data: f64 = 42.24;
         let a_data: AstarteType = data.try_into()?;
@@ -504,6 +506,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_conversion_from_astarte_type() -> Result<(), AstarteError> {
         let data = 42.24;
         let a_data = AstarteType::Double(data);
@@ -569,6 +572,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_eq_astarte_type_with_mapping_type() {
         assert_eq!(AstarteType::Double(0.0), MappingType::Double);
         assert_eq!(AstarteType::Integer(0), MappingType::Double);
@@ -581,6 +585,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_conversion_from_astarte_integer_to_f64() {
         let astarte_type_double = AstarteType::Integer(5);
         let astarte_ind = Aggregation::Individual(astarte_type_double);
@@ -594,6 +599,7 @@ mod test {
     }
 
     #[test]
+    #[cfg_attr(feature = "unstable", no_coverage)]
     fn test_conversion_from_astarte_integer_to_i64() {
         let astarte_type_double = AstarteType::Integer(5);
         let astarte_ind = Aggregation::Individual(astarte_type_double);
