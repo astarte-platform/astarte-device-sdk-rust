@@ -32,6 +32,8 @@ jobs:
       - name: Create Astarte Cluster
         id: astarte
         uses: astarte-platform/astarte-cluster-action@v1
+        with:
+          astarte_version: "1.0.4"
       - name: Checkout sources
         uses: actions/checkout@v2
       - name: Install interface
