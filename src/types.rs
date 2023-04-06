@@ -390,7 +390,6 @@ impl AstarteType {
 }
 
 #[cfg(test)]
-
 mod test {
     use std::convert::TryFrom;
     use std::convert::TryInto;

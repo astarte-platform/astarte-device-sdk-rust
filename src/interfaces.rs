@@ -45,7 +45,7 @@ impl Interfaces {
     }
 
     /// gets mapping from the json description, given the path
-    pub fn get_mapping(
+    pub(crate) fn get_mapping(
         &self,
         interface_name: &str,
         interface_path: &str,
@@ -84,7 +84,7 @@ impl Interfaces {
     }
 
     /// returns ownership if the interface is present in device introspection, None otherwise
-    pub fn get_ownership(&self, interface: &str) -> Option<crate::interface::Ownership> {
+    pub(crate) fn get_ownership(&self, interface: &str) -> Option<crate::interface::Ownership> {
         let iface = self.interfaces.get(interface)?;
         Some(iface.get_ownership())
     }

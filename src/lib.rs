@@ -21,10 +21,10 @@
 
 mod crypto;
 pub mod database;
-mod interface;
+pub mod interface;
 mod interfaces;
 pub mod options;
-mod pairing;
+pub mod pairing;
 pub mod registration;
 pub mod types;
 

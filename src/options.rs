@@ -29,11 +29,11 @@ use openssl::error::ErrorStack;
 use pairing::PairingError;
 
 use crate::database::AstarteDatabase;
-use crate::interface::{self};
+use crate::interface;
 use crate::pairing;
 
 use interface::traits::Interface as InterfaceTrait;
-pub use interface::Interface;
+use interface::Interface;
 
 /// Astarte options error.
 ///
