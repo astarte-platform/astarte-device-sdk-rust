@@ -238,15 +238,6 @@ impl Interface {
         Ok(interface)
     }
 
-    /// Getter function for the aggregation type of the interface.
-    pub(crate) fn aggregation(&self) -> Aggregation {
-        match &self {
-            Self::Datastream(d) => d.aggregation,
-            // Properties are always individual
-            Self::Properties(_) => Aggregation::Individual,
-        }
-    }
-
     pub(crate) fn mapping(&self, path: &str) -> Option<Mapping> {
         match &self {
             Self::Datastream(d) => {
