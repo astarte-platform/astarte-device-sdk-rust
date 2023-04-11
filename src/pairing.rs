@@ -18,6 +18,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Provides the functionalities to pair a device with the Astarte Cluster.
+
 use std::sync::Arc;
 
 use http::StatusCode;
@@ -62,6 +64,7 @@ struct AstarteMqttV1Info {
     broker_url: String,
 }
 
+/// Error returned during pairing.
 #[derive(thiserror::Error, Debug)]
 pub enum PairingError {
     #[error("invalid credentials secret")]
@@ -80,7 +83,7 @@ pub enum PairingError {
     ConfigError(String),
 }
 
-pub async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
+async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -126,7 +129,7 @@ pub async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<Strin
     }
 }
 
-pub async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError> {
+async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -268,7 +271,8 @@ fn build_mqtt_opts(
     Ok(mqtt_opts)
 }
 
-pub async fn get_transport_config(
+/// Returns a MqttOptions struct that can be used to connect to the broker.
+pub(crate) async fn get_transport_config(
     opts: &AstarteOptions,
 ) -> Result<MqttOptions, AstarteOptionsError> {
     let (certificate_pem, private_key) = populate_credentials(opts).await?;

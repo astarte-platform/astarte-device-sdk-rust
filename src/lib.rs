@@ -21,10 +21,10 @@
 
 mod crypto;
 pub mod database;
-mod interface;
+pub mod interface;
 mod interfaces;
 pub mod options;
-mod pairing;
+pub mod pairing;
 pub mod registration;
 pub mod types;
 
@@ -104,8 +104,10 @@ impl AstarteAggregate for HashMap<String, AstarteType> {
 #[allow(unused_imports)]
 #[macro_use]
 extern crate astarte_device_sdk_derive;
+
+/// Derive macro to implement `AstarteAggregate` trait with `feature = ["derive"]`.
 #[cfg(feature = "derive")]
-pub use astarte_device_sdk_derive::*;
+pub use astarte_device_sdk_derive::AstarteAggregate;
 
 /// Astarte device implementation.
 ///
@@ -1101,6 +1103,7 @@ mod test {
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
+    #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
 
     #[derive(AstarteAggregate)]

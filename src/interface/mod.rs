@@ -18,6 +18,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Provides the functionalities to parse and validate an Astarte interface.
+
 pub(crate) mod traits;
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,7 @@ use std::path::Path;
 use traits::Interface as InterfaceTrait;
 use traits::Mapping as MappingTrait;
 
+/// Error for parsing and validating an interface.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("cannot parse interface JSON")]
@@ -68,6 +71,7 @@ pub(crate) struct BaseInterface {
     doc: Option<String>,
 }
 
+#[doc(hidden)]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct DatastreamInterface {
     #[serde(flatten)]
@@ -77,6 +81,7 @@ pub struct DatastreamInterface {
     mappings: Vec<DatastreamMapping>,
 }
 
+#[doc(hidden)]
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct PropertiesInterface {
     #[serde(flatten)]
@@ -86,27 +91,27 @@ pub struct PropertiesInterface {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum InterfaceType {
+pub(crate) enum InterfaceType {
     Datastream,
     Properties,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum Ownership {
+pub(crate) enum Ownership {
     Device,
     Server,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum Aggregation {
+pub(crate) enum Aggregation {
     Individual,
     Object,
 }
 
 #[derive(Debug)]
-pub enum Mapping<'a> {
+pub(crate) enum Mapping<'a> {
     Datastream(&'a DatastreamMapping),
     Properties(&'a PropertiesMapping),
 }
@@ -123,7 +128,7 @@ pub(crate) struct BaseMapping {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct DatastreamMapping {
+pub(crate) struct DatastreamMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -144,7 +149,7 @@ pub struct DatastreamMapping {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct PropertiesMapping {
+pub(crate) struct PropertiesMapping {
     #[serde(flatten)]
     base: BaseMapping,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -155,7 +160,7 @@ pub struct PropertiesMapping {
 // Scalar(InnerType)/Array(InnerType)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
-pub enum MappingType {
+pub(crate) enum MappingType {
     Double,
     Integer,
     Boolean,
@@ -174,7 +179,7 @@ pub enum MappingType {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum Reliability {
+pub(crate) enum Reliability {
     Unreliable,
     Guaranteed,
     Unique,
@@ -182,7 +187,7 @@ pub enum Reliability {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum Retention {
+pub(crate) enum Retention {
     Discard,
     Volatile,
     Stored,
@@ -190,7 +195,7 @@ pub enum Retention {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum DatabaseRetentionPolicy {
+pub(crate) enum DatabaseRetentionPolicy {
     NoTtl,
     UseTtl,
 }
@@ -231,15 +236,6 @@ impl Interface {
         let interface: Interface = serde_json::from_reader(reader)?;
         interface.validate()?;
         Ok(interface)
-    }
-
-    /// Getter function for the aggregation type of the interface.
-    pub fn aggregation(&self) -> Aggregation {
-        match &self {
-            Self::Datastream(d) => d.aggregation,
-            // Properties are always individual
-            Self::Properties(_) => Aggregation::Individual,
-        }
     }
 
     pub(crate) fn mapping(&self, path: &str) -> Option<Mapping> {
