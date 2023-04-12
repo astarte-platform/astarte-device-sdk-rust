@@ -874,4 +874,25 @@ mod test {
             interfaces,
         )
     }
+
+    #[test]
+    fn test_get_instrospection_string() {
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options = options.interface_directory("examples/interfaces/").unwrap();
+        let ifa = Interfaces::new(options.interfaces);
+
+        let expected = [
+            "org.astarte-platform.genericsensors.AvailableSensors:0:1",
+            "org.astarte-platform.genericsensors.Geolocation:1:0",
+            "org.astarte-platform.genericsensors.SamplingRate:1:0",
+            "org.astarte-platform.test.Everything:0:1",
+        ];
+
+        let intro = ifa.get_introspection_string();
+        let mut res: Vec<&str> = intro.split(';').collect();
+
+        res.sort_unstable();
+
+        assert_eq!(res, expected);
+    }
 }
