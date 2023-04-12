@@ -19,8 +19,11 @@
  */
 //! Provides functionality to configure an instance of the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk].
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fmt::Debug;
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -66,6 +69,9 @@ pub enum AstarteOptionsError {
 
     #[error(transparent)]
     PkiError(#[from] webpki::Error),
+
+    #[error(transparent)]
+    ValidationError(#[from] interface::error::ValidationError),
 }
 
 /// Structure used to store the configuration options for an instance of
@@ -142,29 +148,45 @@ impl AstarteOptions {
     pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.name();
+
         debug!("Added interface {}", name);
-        self.interfaces.insert(name.to_owned(), interface);
+
+        let entry = self.interfaces.entry(name.to_owned());
+
+        match entry {
+            Entry::Occupied(mut entry) => {
+                debug!("Interface {} already present, validating new version", name);
+
+                let prev_interface = entry.get();
+
+                interface
+                    .validate_with(prev_interface)
+                    .map_err(AstarteOptionsError::ValidationError)?;
+
+                entry.insert(interface);
+            }
+            Entry::Vacant(entry) => {
+                debug!("Interface {} not present, adding it", name);
+
+                entry.insert(interface);
+            }
+        }
+
         Ok(self)
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
     pub fn interface_directory(
-        mut self,
+        self,
         interfaces_directory: &str,
     ) -> Result<Self, AstarteOptionsError> {
-        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
-        let it = interface_files.filter_map(Result::ok).filter(|f| {
-            if let Some(ext) = f.path().extension() {
-                ext == "json"
-            } else {
-                false
-            }
-        });
+        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?
+            .map(|res| res.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, io::Error>>()?;
 
-        for f in it {
-            self = self.interface_file(&f.path())?;
-        }
-
-        Ok(self)
+        interface_files
+            .iter()
+            .filter(|path| path.is_file() && path.extension() == Some(OsStr::new("json")))
+            .try_fold(self, |acc, path| acc.interface_file(path))
     }
 }

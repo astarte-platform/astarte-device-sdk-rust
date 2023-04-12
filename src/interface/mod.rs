@@ -20,31 +20,20 @@
 
 //! Provides the functionalities to parse and validate an Astarte interface.
 
+pub mod error;
 pub(crate) mod traits;
+pub mod validation;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::BufReader;
 use std::path::Path;
 
 use traits::Interface as InterfaceTrait;
 use traits::Mapping as MappingTrait;
 
-/// Error for parsing and validating an interface.
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("cannot parse interface JSON")]
-    Parse(#[from] serde_json::Error),
-    #[error("cannot read interface file")]
-    Io(#[from] io::Error),
-    #[error("wrong major and minor")]
-    MajorMinor,
-    #[error("interface not found")]
-    InterfaceNotFound,
-    #[error("mapping not found")]
-    MappingNotFound,
-}
+pub use self::error::Error;
 
 /// Astarte interface implementation.
 ///
@@ -302,10 +291,10 @@ impl Interface {
     }
 
     /// Getter function for the interface name.
-    pub fn get_name(&self) -> String {
+    pub fn get_name(&self) -> &str {
         match &self {
-            Interface::Datastream(iface) => iface.base.interface_name.clone(),
-            Interface::Properties(iface) => iface.base.interface_name.clone(),
+            Interface::Datastream(iface) => &iface.base.interface_name,
+            Interface::Properties(iface) => &iface.base.interface_name,
         }
     }
 
@@ -323,14 +312,6 @@ impl Interface {
             Interface::Datastream(iface) => iface.base.version_minor,
             Interface::Properties(iface) => iface.base.version_minor,
         }
-    }
-
-    fn validate(&self) -> Result<(), Error> {
-        // TODO: add additional validation
-        if self.get_version_major() == 0 && self.get_version_minor() == 0 {
-            return Err(Error::MajorMinor);
-        }
-        Ok(())
     }
 }
 
