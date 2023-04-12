@@ -83,10 +83,7 @@ impl Interface {
     /// - Both the versions are valid
     /// - The name of the interface is the same
     /// - The new version is a valid successor of the previous version.
-    pub fn validate_with<'this, 'prev>(
-        &'this self,
-        prev: &'prev Self,
-    ) -> Result<&Self, ValidationError> {
+    pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
         if self == prev {
             return Ok(self);
         }

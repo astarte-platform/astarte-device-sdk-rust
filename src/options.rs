@@ -25,6 +25,7 @@ use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::debug;
@@ -98,6 +99,8 @@ impl Debug for AstarteOptions {
             .field("interfaces", &self.interfaces)
             .field("ignore_ssl_errors", &self.ignore_ssl_errors)
             .field("keepalive", &self.keepalive)
+            // We manually implement Debug for the database, so we can avoid have a trait bound on
+            // [AstarteDatabase] to implement [Display].
             .finish_non_exhaustive()
     }
 }
@@ -159,6 +162,9 @@ impl AstarteOptions {
     }
 
     /// Add a single interface from the provided `.json` file.
+    ///
+    /// It will validate that the interfaces are the same, or a newer version of the interfaces
+    /// with the same name that are already present.
     pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.name();
@@ -189,18 +195,116 @@ impl AstarteOptions {
         Ok(self)
     }
 
+    /// Forces the addition of a single interface from the provided `.json` file.
+    ///
+    /// This method will overwrite any existing interface with the same name. The only validation
+    /// performed is the one performed by the `Interface::from_file` which doesn't check the
+    /// version .
+    pub fn force_interface_file<P: AsRef<Path>>(
+        &mut self,
+        file_path: P,
+    ) -> Result<Option<Interface>, AstarteOptionsError> {
+        let interface = Interface::from_file(file_path.as_ref())?;
+        let name = interface.name();
+
+        debug!("Added interface {}", name);
+
+        let prev_int = self.interfaces.insert(name.to_owned(), interface);
+
+        Ok(prev_int)
+    }
+
     /// Add all the interfaces from the `.json` files contained in the specified folder.
     pub fn interface_directory(
         self,
         interfaces_directory: &str,
     ) -> Result<Self, AstarteOptionsError> {
-        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?
-            .map(|res| res.map(|entry| entry.path()))
-            .collect::<Result<Vec<_>, io::Error>>()?;
-
-        interface_files
+        walk_dir_json(interfaces_directory)?
             .iter()
-            .filter(|path| path.is_file() && path.extension() == Some(OsStr::new("json")))
             .try_fold(self, |acc, path| acc.interface_file(path))
+    }
+
+    /// Forces the addition of all the interfaces from the `.json` files contained in the specified
+    /// folder. It will overwrite any existing interface with the same name.
+    pub fn force_interface_directory<P: AsRef<Path>>(
+        self,
+        interfaces_directory: P,
+    ) -> Result<Self, AstarteOptionsError> {
+        walk_dir_json(interfaces_directory)?
+            .iter()
+            .try_fold(self, |mut acc, path| {
+                acc.force_interface_file(path)?;
+
+                Ok(acc)
+            })
+    }
+}
+
+/// Walks a directory returning an array of json files
+fn walk_dir_json<P: AsRef<Path>>(path: P) -> Result<Vec<PathBuf>, io::Error> {
+    std::fs::read_dir(path)?
+        .map(|res| {
+            res.and_then(|entry| {
+                let path = entry.path();
+                let metadata = entry.metadata()?;
+
+                Ok((path, metadata))
+            })
+        })
+        .filter_map(|res| match res {
+            Ok((path, metadata)) => {
+                if metadata.is_file() && path.extension() == Some(OsStr::new("json")) {
+                    Some(Ok(path))
+                } else {
+                    None
+                }
+            }
+            Err(e) => Some(Err(e)),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod test {
+    use super::AstarteOptions;
+
+    #[test]
+    fn interface_directory() {
+        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
+            .interface_directory("examples/interfaces");
+
+        assert!(
+            res.is_ok(),
+            "Failed to load interfaces from directory: {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn interface_existing_directory() {
+        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
+            .interface_directory("examples/interfaces")
+            .unwrap()
+            .interface_directory("examples/interfaces");
+
+        assert!(
+            res.is_ok(),
+            "Failed to load interfaces from directory: {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn interface_force() {
+        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
+            .interface_directory("examples/interfaces")
+            .unwrap()
+            .force_interface_directory("examples/interfaces");
+
+        assert!(
+            res.is_ok(),
+            "Failed to load interfaces from directory: {:?}",
+            res
+        );
     }
 }
