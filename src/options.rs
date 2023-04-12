@@ -88,6 +88,20 @@ pub struct AstarteOptions {
     pub(crate) keepalive: std::time::Duration,
 }
 
+impl Debug for AstarteOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AstarteOptions")
+            .field("realm", &self.realm)
+            .field("device_id", &self.device_id)
+            .field("credentials_secret", &self.credentials_secret)
+            .field("pairing_url", &self.pairing_url)
+            .field("interfaces", &self.interfaces)
+            .field("ignore_ssl_errors", &self.ignore_ssl_errors)
+            .field("keepalive", &self.keepalive)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AstarteOptions {
     /// Create a new instance of the astarte options.
     ///
