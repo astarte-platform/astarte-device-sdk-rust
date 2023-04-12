@@ -25,6 +25,28 @@ concurrency:
   cancel-in-progress: true
 name: test
 jobs:
+  required:
+    runs-on: ubuntu-latest
+    name: ubuntu / ${{ matrix.toolchain }}
+    strategy:
+      matrix:
+        toolchain: [1.59.0, stable]
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+      - name: Install ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: cargo generate-lockfile
+        if: hashFiles('Cargo.lock') == ''
+        run: cargo generate-lockfile
+      - name: Run cargo test --locked
+        run: cargo test --locked --all-features --all-targets
+      # https://github.com/rust-lang/cargo/issues/6669
+      - name: Run cargo test --doc
+        run: cargo test --locked --all-features --doc
   os-check:
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / stable / vcpkg
