@@ -16,26 +16,27 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-
 name: Build flow
-
+permissions:
+  contents: read
 on:
   push:
+    branches: [main]
   # Run on branch/tag creation
   create:
-  # Run on pull requests
   pull_request:
-
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   fmt:
     name: Check formatting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -59,7 +60,7 @@ jobs:
         - stable
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -83,7 +84,7 @@ jobs:
         - stable
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
