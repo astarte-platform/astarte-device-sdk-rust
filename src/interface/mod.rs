@@ -400,32 +400,32 @@ mod tests {
 
     #[test]
     fn datastream_interface_deserialization() {
-        let interface_json = "
+        let interface_json = r#"
         {
-            \"interface_name\": \"org.astarte-platform.genericsensors.Values\",
-            \"version_major\": 1,
-            \"version_minor\": 0,
-            \"type\": \"datastream\",
-            \"ownership\": \"device\",
-            \"description\": \"Interface description\",
-            \"doc\": \"Interface doc\",
-            \"mappings\": [
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
                 {
-                    \"endpoint\": \"/%{sensor_id}/value\",
-                    \"type\": \"double\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 },
                 {
-                    \"endpoint\": \"/%{sensor_id}/otherValue\",
-                    \"type\": \"longinteger\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 }
             ]
-        }";
+        }"#;
 
         let value_base_mapping = BaseMapping {
             endpoint: "/%{sensor_id}/value".to_owned(),
@@ -516,32 +516,32 @@ mod tests {
 
     #[test]
     fn validation_test() {
-        let interface_json = "
+        let interface_json = r#"
         {
-            \"interface_name\": \"org.astarte-platform.genericsensors.Values\",
-            \"version_major\": 0,
-            \"version_minor\": 0,
-            \"type\": \"datastream\",
-            \"ownership\": \"device\",
-            \"description\": \"Interface description\",
-            \"doc\": \"Interface doc\",
-            \"mappings\": [
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 0,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
                 {
-                    \"endpoint\": \"/%{sensor_id}/value\",
-                    \"type\": \"double\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 },
                 {
-                    \"endpoint\": \"/%{sensor_id}/otherValue\",
-                    \"type\": \"longinteger\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 }
             ]
-        }";
+        }"#;
 
         let deser_interface = Interface::from_str(interface_json);
 

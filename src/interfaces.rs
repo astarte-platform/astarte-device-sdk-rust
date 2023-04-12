@@ -20,6 +20,8 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone, Debug)]
@@ -35,13 +37,10 @@ impl Interfaces {
     pub fn get_introspection_string(&self) -> String {
         use crate::interface::traits::Interface;
 
-        let mut introspection: String = self
-            .interfaces
+        self.interfaces
             .iter()
-            .map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1))
-            .collect();
-        introspection.pop(); // remove last ";"
-        introspection
+            .map(|f| format!("{}:{}:{}", f.0, f.1.version().0, f.1.version().1))
+            .join(";")
     }
 
     /// gets mapping from the json description, given the path
