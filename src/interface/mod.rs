@@ -369,7 +369,6 @@ impl Display for Interface {
 
 #[cfg(test)]
 mod tests {
-    use crate::interface::Error;
     use std::str::FromStr;
 
     use super::traits::Interface as InterfaceTrait;
@@ -493,44 +492,5 @@ mod tests {
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.doc(), Some("Interface doc"));
-    }
-
-    #[test]
-    fn validation_test() {
-        let interface_json = r#"
-        {
-            "interface_name": "org.astarte-platform.genericsensors.Values",
-            "version_major": 0,
-            "version_minor": 0,
-            "type": "datastream",
-            "ownership": "device",
-            "description": "Interface description",
-            "doc": "Interface doc",
-            "mappings": [
-                {
-                    "endpoint": "/%{sensor_id}/value",
-                    "type": "double",
-                    "explicit_timestamp": true,
-                    "description": "Mapping description",
-                    "doc": "Mapping doc"
-                },
-                {
-                    "endpoint": "/%{sensor_id}/otherValue",
-                    "type": "longinteger",
-                    "explicit_timestamp": true,
-                    "description": "Mapping description",
-                    "doc": "Mapping doc"
-                }
-            ]
-        }"#;
-
-        let deser_interface = Interface::from_str(interface_json);
-
-        assert!(deser_interface.is_err());
-        assert!(match deser_interface {
-            Err(Error::MajorMinor) => true,
-            Err(e) => panic!("expected Error::MajorMinor, got {e:?}"),
-            Ok(_) => panic!("Expected Err, got Ok"),
-        });
     }
 }

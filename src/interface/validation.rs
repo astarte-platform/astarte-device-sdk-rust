@@ -110,3 +110,146 @@ impl Interface {
             .map(|()| self)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use crate::{interface::Error, Interface};
+
+    #[test]
+    fn validation_test() {
+        let interface_json = r#"
+        {
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 0,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                },
+                {
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                }
+            ]
+        }"#;
+
+        let deser_interface = Interface::from_str(interface_json);
+
+        assert!(matches!(deser_interface, Err(Error::MajorMinor)));
+    }
+
+    #[test]
+    fn validate_same_interface() {
+        let prev_interface = Interface::from_str(
+            r#"
+        {
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                },
+                {
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                }
+            ]
+        }"#,
+        )
+        .unwrap();
+
+        let new_interface = Interface::from_str(
+            r#"
+        {
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                },
+                {
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
+                }
+            ]
+        }"#,
+        )
+        .unwrap();
+
+        assert!(new_interface.validate_with(&prev_interface).is_ok())
+    }
+
+    #[test]
+    fn validate_version() {
+        let make_interface = |major, minor| {
+            Interface::from_str(&format!(
+                r#"
+        {{
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": {major},
+            "version_minor": {minor},
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": []
+        }}"#
+            ))
+            .unwrap()
+        };
+
+        let interfaces = [
+            (make_interface(1, 0), make_interface(1, 1), true),
+            (make_interface(2, 1), make_interface(1, 1), false),
+            (make_interface(1, 2), make_interface(1, 1), false),
+        ];
+
+        for (prev, new, expected) in interfaces {
+            let res = new.validate_with(&prev);
+            assert_eq!(
+                res.is_ok(),
+                expected,
+                "expected to {}: {:?}",
+                if expected { "pass" } else { "fail" },
+                res
+            );
+        }
+    }
+}
