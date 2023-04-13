@@ -31,6 +31,7 @@ use std::time::Duration;
 use std::{env, panic, process};
 
 use colored::Colorize;
+use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::{task, time};
 
@@ -118,6 +119,14 @@ impl TestCfg {
 
 #[tokio::main]
 async fn e2etest_impl() {
+    // Set custom panic hook to exit in case a subprocess panics.
+    let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // invoke the default handler and exit the process
+        orig_hook(panic_info);
+        process::exit(1);
+    }));
+
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
     let sdk_options = AstarteOptions::new(
@@ -127,8 +136,7 @@ async fn e2etest_impl() {
         &test_cfg.pairing_url,
     )
     .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
-    .unwrap()
-    .ignore_ssl_errors();
+    .unwrap();
 
     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
@@ -613,12 +621,15 @@ async fn http_post_to_intf(
         .body(value_json.clone())
         .send()
         .await
-        .map_err(|e| format!("HTTP POST failure: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
-    if response != value_json {
-        println!("Server response: {response}");
+        .map_err(|e| format!("HTTP POST failure: {e}"))?;
+    if response.status() != StatusCode::OK {
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
+        return Err(format!(
+            "Failure in POST command. Server response: {response_text}"
+        ));
     }
     Ok(())
 }
@@ -647,12 +658,15 @@ async fn http_delete_to_intf(
         )
         .send()
         .await
-        .map_err(|e| format!("HTTP POST failure: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
-    if !response.is_empty() {
-        println!("Server response: {response}");
+        .map_err(|e| format!("HTTP DELETE failure: {e}"))?;
+    if response.status() != StatusCode::NO_CONTENT {
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failure in parsing the HTTP DELETE result: {e}"))?;
+        return Err(format!(
+            "Failure in DELETE command. Server response: {response_text}"
+        ));
     }
     Ok(())
 }
