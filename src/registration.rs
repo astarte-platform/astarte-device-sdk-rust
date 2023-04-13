@@ -20,8 +20,7 @@
 //! Provides static functions for registering a new device to an Astarte Cluster.
 
 use base64::Engine;
-use http::StatusCode;
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;

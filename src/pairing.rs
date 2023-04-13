@@ -22,9 +22,8 @@
 
 use std::sync::Arc;
 
-use http::StatusCode;
 use openssl::error::ErrorStack;
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use rumqttc::MqttOptions;
 use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
