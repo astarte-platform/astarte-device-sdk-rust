@@ -25,6 +25,9 @@ on:
   # Run on pull requests
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   e2e-test:
     runs-on: ubuntu-latest

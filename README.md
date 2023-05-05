@@ -6,12 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Astarte Device SDK Rust &emsp;
 
-[![Build Status]][actions] [![Latest Version]][crates.io]
+[![Build Status]][actions] [![Latest Version]][crates.io] [![Code coverage]][codecov]
 
 [Build Status]: https://img.shields.io/github/actions/workflow/status/astarte-platform/astarte-device-sdk-rust/build-workflow.yaml?branch=master
 [actions]: https://github.com/astarte-platform/astarte-device-sdk-rust/actions/workflows/build-workflow.yaml?query=branch%3Amaster
 [Latest Version]: https://img.shields.io/crates/v/astarte-device-sdk.svg
 [crates.io]: https://crates.io/crates/astarte-device-sdk
+[Code coverage]: https://codecov.io/gh/astarte-platform/astarte-device-sdk-rust/branch/master/graph/badge.svg
+[codecov]: https://codecov.io/gh/astarte-platform/astarte-device-sdk-rust
 
 *Warning: this SDK is experimental, correctness and API stability are currently not guaranteed*
 
