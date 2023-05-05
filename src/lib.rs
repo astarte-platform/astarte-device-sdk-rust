@@ -1103,11 +1103,13 @@ mod test {
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
+    use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
 
     #[derive(AstarteAggregate)]
-    struct MyAggregate {
+    #[astarte_aggregate(rename_all = "lowercase")]
+    struct MyLowerCasedAggregate {
         endpoint01: f64,
         endpoint02: i32,
         endpoint03: bool,
@@ -1125,8 +1127,8 @@ mod test {
     }
 
     #[test]
-    fn test_astarte_aggregate_trait() {
-        let my_aggregate = MyAggregate {
+    fn test_astarte_aggregate_trait_lower_case_attribute() {
+        let my_aggregate = MyLowerCasedAggregate {
             endpoint01: 4.34,
             endpoint02: 1,
             endpoint03: true,
@@ -1211,6 +1213,58 @@ mod test {
         ]);
         assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
         println!("{expected_res:?}");
+    }
+
+    #[derive(AstarteAggregate)]
+    #[astarte_aggregate(rename_all = "UPPERCASE")]
+    struct MyUpperCasedAggregate {
+        first_endpoint: f64,
+        second_endpoint: f64,
+    }
+
+    #[test]
+    fn test_astarte_aggregate_trait_upper_case_attribute() {
+        let my_aggregate = MyUpperCasedAggregate {
+            first_endpoint: 4.34,
+            second_endpoint: 23.0,
+        };
+        let expected_res = HashMap::from([
+            (
+                "FIRST_ENDPOINT".to_string(),
+                AstarteType::Double(my_aggregate.first_endpoint),
+            ),
+            (
+                "SECOND_ENDPOINT".to_string(),
+                AstarteType::Double(my_aggregate.second_endpoint),
+            ),
+        ]);
+        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+    }
+
+    #[derive(AstarteAggregate)]
+    #[astarte_aggregate(rename_all = "PascalCase")]
+    struct MyPascalCasedAggregate {
+        first_endpoint: f64,
+        second_endpoint: f64,
+    }
+
+    #[test]
+    fn test_astarte_aggregate_trait_pascal_case_attribute() {
+        let my_aggregate = MyPascalCasedAggregate {
+            first_endpoint: 4.34,
+            second_endpoint: 23.0,
+        };
+        let expected_res = HashMap::from([
+            (
+                "FirstEndpoint".to_string(),
+                AstarteType::Double(my_aggregate.first_endpoint),
+            ),
+            (
+                "SecondEndpoint".to_string(),
+                AstarteType::Double(my_aggregate.second_endpoint),
+            ),
+        ]);
+        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
     }
 
     #[test]
