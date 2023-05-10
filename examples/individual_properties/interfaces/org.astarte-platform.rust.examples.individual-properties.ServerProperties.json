@@ -1,0 +1,23 @@
+{
+    "interface_name": "org.astarte-platform.rust.examples.individual-properties.ServerProperties",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "properties",
+    "ownership": "server",
+    "description": "Configure sensors sampling rate and enable/disable.",
+    "doc": "This interface allows to set generic sensors sampling rate and enable/disable policies for each sensor",
+    "mappings": [
+        {
+            "endpoint": "/%{sensor_id}/enable",
+            "type": "boolean",
+            "allow_unset": true,
+            "description": "Enable/disable sensor data transmission."
+        },
+        {
+            "endpoint": "/%{sensor_id}/samplingPeriod",
+            "type": "integer",
+            "allow_unset": true,
+            "description": "Sensor sample transmission period."
+        }
+    ]
+}

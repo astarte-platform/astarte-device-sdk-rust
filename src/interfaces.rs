@@ -290,317 +290,12 @@ impl Interfaces {
 
 #[cfg(test)]
 mod test {
+    use chrono::{TimeZone, Utc};
     use std::{collections::HashMap, str::FromStr};
 
-    use chrono::{TimeZone, Utc};
-
     use crate::{
-        interface::traits::Interface, interfaces::Interfaces, options::AstarteOptions,
-        types::AstarteType, AstarteDeviceSdk,
+        interface::traits::Interface, interfaces::Interfaces, types::AstarteType, AstarteDeviceSdk,
     };
-
-    #[test]
-    fn test_individual() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options = options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = Interfaces::new(options.interfaces);
-
-        let buf = AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
-
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/boolean",
-            &buf,
-            &None,
-        )
-        .unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/double",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/booleanarray",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-        ifa.validate_send("org.astarte-platform.test.Everything", "/fake", &buf, &None)
-            .unwrap_err();
-        ifa.validate_send("com.fake.fake", "/fake", &buf, &None)
-            .unwrap_err();
-        ifa.validate_send("com.fake.fake", "/boolean", &buf, &None)
-            .unwrap_err();
-
-        let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
-
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/boolean",
-            &buf,
-            &timestamp,
-        )
-        .unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/double",
-            &buf,
-            &timestamp,
-        )
-        .unwrap_err();
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/booleanarray",
-            &buf,
-            &timestamp,
-        )
-        .unwrap_err();
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/fake",
-            &buf,
-            &timestamp,
-        )
-        .unwrap_err();
-        ifa.validate_send("com.fake.fake", "/fake", &buf, &timestamp)
-            .unwrap_err();
-        ifa.validate_send("com.fake.fake", "/boolean", &buf, &timestamp)
-            .unwrap_err();
-
-        let buf =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Double(f64::NAN), None).unwrap(); // NaN
-
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/double",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-
-        let buf = AstarteDeviceSdk::serialize_individual(
-            AstarteType::DoubleArray(vec![1.0, 2.0, f64::NAN, 4.0]),
-            None,
-        )
-        .unwrap(); // NaN
-
-        ifa.validate_send(
-            "org.astarte-platform.test.Everything",
-            "/double",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-    }
-
-    #[test]
-    fn test_object() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options = options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = Interfaces::new(options.interfaces);
-
-        let mut obj: std::collections::HashMap<String, AstarteType> =
-            std::collections::HashMap::new();
-        obj.insert("latitude".to_string(), AstarteType::Double(37.534543));
-        obj.insert("longitude".to_string(), AstarteType::Double(45.543));
-        obj.insert("altitude".to_string(), AstarteType::Double(650.6));
-        obj.insert("accuracy".to_string(), AstarteType::Double(12.0));
-        obj.insert("altitudeAccuracy".to_string(), AstarteType::Double(10.0));
-        obj.insert("heading".to_string(), AstarteType::Double(237.0));
-        obj.insert("speed".to_string(), AstarteType::Double(250.0));
-
-        let buf = AstarteDeviceSdk::serialize_object(obj.clone(), None).unwrap();
-
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1",
-            &buf,
-            &None,
-        )
-        .unwrap();
-
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1/2/3",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-
-        ifa.validate_send("org.doesnotexists.doesnotexists", "/1/", &buf, &None)
-            .unwrap_err();
-
-        // nonexisting object field
-        let mut obj2 = obj.clone();
-        obj2.insert("latitudef".to_string(), AstarteType::Double(37.534543));
-        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-
-        // wrong type
-        let mut obj2 = obj.clone();
-        obj2.insert("latitude".to_string(), AstarteType::Boolean(false));
-        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-
-        // missing object field
-        let mut obj2 = obj.clone();
-        obj2.remove("latitude");
-        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-
-        // invalid float
-        let mut obj2 = obj.clone();
-        obj2.insert("latitude".to_string(), AstarteType::Double(f64::NAN));
-        let buf = AstarteDeviceSdk::serialize_object(obj2, None).unwrap();
-        ifa.validate_send(
-            "org.astarte-platform.genericsensors.Geolocation",
-            "/1",
-            &buf,
-            &None,
-        )
-        .unwrap_err();
-    }
-
-    #[test]
-    fn test_individual_recv() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options = options.interface_directory("examples/interfaces/").unwrap();
-        let ifa = Interfaces::new(options.interfaces);
-
-        let boolean_buf =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
-        let integer_buf =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
-
-        ifa.validate_receive(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/2/enable",
-            &boolean_buf,
-        )
-        .unwrap();
-
-        ifa.validate_receive(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/2/enable",
-            &integer_buf,
-        )
-        .unwrap_err();
-
-        ifa.validate_receive(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/2/3/4/enable",
-            &boolean_buf,
-        )
-        .unwrap_err();
-
-        ifa.validate_receive(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/nope/enable",
-            &boolean_buf,
-        )
-        .unwrap();
-
-        ifa.validate_receive(
-            "org.astarte-platform.genericsensors.SamplingRate",
-            "/nope/samplingPeriod",
-            &integer_buf,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn test_object_recv() {
-        use std::str::FromStr;
-
-        let interface_json = r#"
-        {
-            "interface_name": "com.test.object",
-            "version_major": 0,
-            "version_minor": 1,
-            "type": "datastream",
-            "ownership": "server",
-            "aggregation": "object",
-            "mappings": [
-                {
-                    "endpoint": "/button",
-                    "type": "boolean",
-                    "explicit_timestamp": true
-                },
-                {
-                    "endpoint": "/uptimeSeconds",
-                    "type": "integer",
-                    "explicit_timestamp": true
-                }
-            ]
-        }
-        "#;
-
-        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
-        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-
-        ifa.insert(deser_interface.name().into(), deser_interface);
-
-        let ifa = Interfaces::new(ifa);
-
-        let inner_data: HashMap<String, AstarteType> = [
-            ("button".to_string(), AstarteType::Boolean(false)),
-            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
-
-        ifa.validate_receive("com.test.object", "/", &buf).unwrap();
-        ifa.validate_receive("com.test.object", "/no", &buf)
-            .unwrap_err();
-        ifa.validate_receive("com.test.no", "/", &buf).unwrap_err();
-
-        let inner_data: HashMap<String, AstarteType> = [
-            ("buttonfoo".to_string(), AstarteType::Boolean(false)),
-            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
-
-        ifa.validate_receive("com.test.object", "/", &buf)
-            .unwrap_err();
-
-        let inner_data: HashMap<String, AstarteType> = [
-            ("button".to_string(), AstarteType::Double(3.3)),
-            ("uptimeSeconds".to_string(), AstarteType::Integer(324)),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-        let buf = AstarteDeviceSdk::serialize_object(inner_data, None).unwrap();
-
-        ifa.validate_receive("com.test.object", "/", &buf)
-            .unwrap_err();
-    }
 
     #[test]
     fn test_get_property() {
@@ -625,14 +320,10 @@ mod test {
             ]
         }
         "#;
-
         let deser_interface = crate::Interface::from_str(interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-
         ifa.insert(deser_interface.name().into(), deser_interface);
-
         let ifa = Interfaces::new(ifa);
-
         assert!(
             ifa.get_property_major("org.astarte-platform.test.test", "/button")
                 .unwrap()
@@ -655,7 +346,6 @@ mod test {
         assert!(ifa
             .get_property_major("org.astarte-platform.test.test", "/")
             .is_none());
-
         let interface_json = r#"
         {
             "interface_name": "org.astarte-platform.genericsensors.SamplingRate",
@@ -683,14 +373,10 @@ mod test {
             ]
         }
         "#;
-
         let deser_interface = crate::Interface::from_str(interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-
         ifa.insert(deser_interface.name().into(), deser_interface);
-
         let ifa = Interfaces::new(ifa);
-
         assert!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
@@ -725,7 +411,6 @@ mod test {
             .get_property_major("org.astarte-platform.genericsensors.SamplingRate", "/")
             .is_none());
     }
-
     #[test]
     fn test_get_ownership() {
         let server_owned_interface_json = r#"
@@ -744,20 +429,15 @@ mod test {
             ]
         }
         "#;
-
         let deser_interface = crate::Interface::from_str(server_owned_interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-
         ifa.insert(deser_interface.name().into(), deser_interface);
-
         let ifa = Interfaces::new(ifa);
-
         assert!(
             ifa.get_ownership("org.astarte-platform.server-owned.test")
                 .unwrap()
                 == crate::interface::Ownership::Server
         );
-
         let device_owned_interface_json = r#"
         {
             "interface_name": "org.astarte-platform.device-owned.test",
@@ -774,14 +454,10 @@ mod test {
             ]
         }
         "#;
-
         let deser_interface = crate::Interface::from_str(device_owned_interface_json).unwrap();
         let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-
         ifa.insert(deser_interface.name().into(), deser_interface);
-
         let ifa = Interfaces::new(ifa);
-
         assert!(
             ifa.get_ownership("org.astarte-platform.device-owned.test")
                 .unwrap()
@@ -791,15 +467,307 @@ mod test {
 
     #[test]
     fn test_validate_float() {
+        Interfaces::validate_float(&AstarteType::Double(f64::NAN)).unwrap_err();
+        Interfaces::validate_float(&AstarteType::DoubleArray(vec![1.0, 2.0, f64::NAN, 4.0]))
+            .unwrap_err();
         Interfaces::validate_float(&AstarteType::Double(54.4)).unwrap();
         Interfaces::validate_float(&AstarteType::Integer(12)).unwrap();
     }
 
     #[test]
-    fn test_validate_receive() {
-        let prop_intf_json = r#"
+    fn test_validate_send_for_aggregate_datastream() {
+        let (_, interface_name, _, _, _, interfaces) = helper_prepare_interfaces();
+
+        let mut aggregate: HashMap<String, AstarteType> = HashMap::new();
+        aggregate.insert(
+            "double_endpoint".to_string(),
+            AstarteType::Double(37.534543),
+        );
+        aggregate.insert("integer_endpoint".to_string(), AstarteType::Integer(45));
+        aggregate.insert("boolean_endpoint".to_string(), AstarteType::Boolean(true));
+        aggregate.insert(
+            "booleanarray_endpoint".to_string(),
+            AstarteType::BooleanArray(vec![true, false, true]),
+        );
+
+        // Test non existant interface
+        interfaces
+            .validate_send("gibberish", "/1", &Vec::new(), &None)
+            .unwrap_err();
+
+        // Test non existant endpoint
+        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        interfaces
+            .validate_send(&interface_name, "/1/25", &aggregate_data, &None)
+            .unwrap_err();
+
+        // Test sending an aggregate (with and without timestamp)
+        let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
+        interfaces
+            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .unwrap();
+        interfaces
+            .validate_send(&interface_name, "/1", &aggregate_data, &timestamp)
+            .unwrap();
+
+        // Test sending an aggregate with an object field with incorrect type
+        aggregate.insert("integer_endpoint".to_string(), AstarteType::Boolean(false));
+        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        interfaces
+            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .unwrap_err();
+        aggregate.insert("integer_endpoint".to_string(), AstarteType::Integer(45));
+
+        // Test sending an aggregate with an non existing object field
+        aggregate.insert("gibberish".to_string(), AstarteType::Boolean(false));
+        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        interfaces
+            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .unwrap_err();
+        aggregate.remove("gibberish");
+
+        // Test sending an aggregate with a missing object field
+        aggregate.remove("integer_endpoint");
+        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        interfaces
+            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .unwrap_err();
+    }
+
+    #[test]
+    fn test_validate_send_for_individual_datastream() {
+        let (interface_name, _, _, _, _, interfaces) = helper_prepare_interfaces();
+
+        // Test non existant interface
+        interfaces
+            .validate_send("gibberish", "/boolean", &Vec::new(), &None)
+            .unwrap_err();
+
+        // Test sending a value on an unexisting endpoint
+        interfaces
+            .validate_send(&interface_name, "/gibberish", &Vec::new(), &None)
+            .unwrap_err();
+
+        // Test sending a value (with and without timestamp)
+        let boolean_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        interfaces
+            .validate_send(&interface_name, "/boolean", &boolean_endpoint_data, &None)
+            .unwrap();
+        let double_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Double(23.2), None).unwrap();
+        let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
+        interfaces
+            .validate_send(
+                &interface_name,
+                "/double",
+                &double_endpoint_data,
+                &timestamp,
+            )
+            .unwrap();
+
+        // Test sending a value of the wrong type
+        interfaces
+            .validate_send(&interface_name, "/double", &boolean_endpoint_data, &None)
+            .unwrap_err();
+        interfaces
+            .validate_send(
+                &interface_name,
+                "/booleanarray",
+                &boolean_endpoint_data,
+                &None,
+            )
+            .unwrap_err();
+    }
+
+    #[test]
+    fn test_validate_receive_for_individual_datastream() {
+        let (_, _, _, _, interface_name, interfaces) = helper_prepare_interfaces();
+
+        // Test non existant interface
+        interfaces
+            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test non existant path
+        interfaces
+            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving a new value
+        let boolean_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "/boolean_endpoint", &boolean_endpoint_data)
+            .unwrap();
+
+        // Test receiving a new value with the wrong type
+        let integer_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "/boolean_endpoint", &integer_endpoint_data)
+            .unwrap_err();
+    }
+
+    #[test]
+    fn test_validate_receive_for_aggregate_datastream() {
+        let (_, _, _, interface_name, _, interfaces) = helper_prepare_interfaces();
+
+        // Test non existant interface
+        interfaces
+            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test non existant path
+        interfaces
+            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test non existant path for aggregate
+        interfaces
+            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving an aggregate
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "", &aggr_data)
+            .unwrap();
+
+        // Test receiving an aggregate with wrong type
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Boolean(false)),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "", &aggr_data)
+            .unwrap_err();
+    }
+
+    #[test]
+    fn test_validate_receive_for_individual_property() {
+        let (_, _, interface_name, _, _, interfaces) = helper_prepare_interfaces();
+
+        // Test non existant interface
+        interfaces
+            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test non existant path
+        interfaces
+            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving a set property
+        let boolean_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "/boolean_endpoint", &boolean_endpoint_data)
+            .unwrap();
+
+        // Test receiving an unset property
+        interfaces
+            .validate_receive(&interface_name, "/boolean_endpoint", &Vec::new())
+            .unwrap();
+
+        // Test receiving an unset property for a property that can't be unset
+        interfaces
+            .validate_receive(&interface_name, "/integer_endpoint", &Vec::new())
+            .unwrap_err();
+
+        // Test receiving a set property with the wrong type
+        let integer_endpoint_data =
+            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "/boolean_endpoint", &integer_endpoint_data)
+            .unwrap_err();
+
+        // Test receiving an aggregate on an property interface
+        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
+            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
+            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
+        ]);
+        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        interfaces
+            .validate_receive(&interface_name, "", &aggr_data)
+            .unwrap_err();
+    }
+
+    fn helper_prepare_interfaces() -> (String, String, String, String, String, Interfaces) {
+        let device_datastream_interface_json = r#"
         {
-            "interface_name": "org.astarte-platform.test.test",
+            "interface_name": "test.device.datastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "ownership": "device",
+            "mappings": [
+                {
+                    "endpoint": "/boolean",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/booleanarray",
+                    "type": "booleanarray",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/double",
+                    "type": "double",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+        let device_datastream_interface =
+            crate::Interface::from_str(device_datastream_interface_json).unwrap();
+        let device_datastream_interface_name = device_datastream_interface.name().to_string();
+
+        let device_aggregate_interface_json = r#"
+        {
+            "interface_name": "test.device.object",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/double_endpoint",
+                    "type": "double",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/integer_endpoint",
+                    "type": "integer",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/boolean_endpoint",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/booleanarray_endpoint",
+                    "type": "booleanarray",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+        let device_aggregate_interface =
+            crate::Interface::from_str(device_aggregate_interface_json).unwrap();
+        let device_aggregate_interface_name = device_aggregate_interface.name().to_string();
+
+        let server_property_interface_json = r#"
+        {
+            "interface_name": "test.server.property",
             "version_major": 0,
             "version_minor": 1,
             "type": "properties",
@@ -820,11 +788,13 @@ mod test {
             ]
         }
         "#;
-        let prop_intf = crate::Interface::from_str(prop_intf_json).unwrap();
-        let prop_intf_name = prop_intf.name().to_string();
-        let aggr_intf_json = r#"
+        let server_property_interface =
+            crate::Interface::from_str(server_property_interface_json).unwrap();
+        let server_property_interface_name = server_property_interface.name().to_string();
+
+        let server_aggregate_interface_json = r#"
         {
-            "interface_name": "com.test.object",
+            "interface_name": "test.server.object",
             "version_major": 0,
             "version_minor": 1,
             "type": "datastream",
@@ -844,81 +814,65 @@ mod test {
             ]
         }
         "#;
+        let server_aggregate_interface =
+            crate::Interface::from_str(server_aggregate_interface_json).unwrap();
+        let server_aggregate_interface_name = server_aggregate_interface.name().to_string();
 
-        let aggr_intf = crate::Interface::from_str(aggr_intf_json).unwrap();
-        let aggr_intf_name = aggr_intf.name().to_string();
+        let server_datastream_interface_json = r#"
+        {
+            "interface_name": "test.server.datastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "ownership": "server",
+            "mappings": [
+                {
+                    "endpoint": "/boolean_endpoint",
+                    "type": "boolean",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/double_endpoint",
+                    "type": "double",
+                    "explicit_timestamp": true
+                }
+            ]
+        }
+        "#;
+        let server_datastream_interface =
+            crate::Interface::from_str(server_datastream_interface_json).unwrap();
+        let server_datastream_interface_name = server_datastream_interface.name().to_string();
+
         let interfaces = Interfaces::new(HashMap::from([
-            (prop_intf_name.clone(), prop_intf),
-            (aggr_intf_name.clone(), aggr_intf),
+            (
+                device_datastream_interface_name.clone(),
+                device_datastream_interface,
+            ),
+            (
+                device_aggregate_interface_name.clone(),
+                device_aggregate_interface,
+            ),
+            (
+                server_property_interface_name.clone(),
+                server_property_interface,
+            ),
+            (
+                server_aggregate_interface_name.clone(),
+                server_aggregate_interface,
+            ),
+            (
+                server_datastream_interface_name.clone(),
+                server_datastream_interface,
+            ),
         ]));
 
-        // Test non existant interface
-        interfaces
-            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
-            .unwrap_err();
-
-        // Test non existant path for property
-        interfaces
-            .validate_receive(&prop_intf_name, "/gibberish", &Vec::new())
-            .unwrap_err();
-
-        // Test receiving a set property
-        let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
-        interfaces
-            .validate_receive(&prop_intf_name, "/boolean_endpoint", &boolean_endpoint_data)
-            .unwrap();
-
-        // Test receiving an unset property
-        interfaces
-            .validate_receive(&prop_intf_name, "/boolean_endpoint", &Vec::new())
-            .unwrap();
-
-        // Test receiving an unset property for a property that can't be unset
-        interfaces
-            .validate_receive(&prop_intf_name, "/integer_endpoint", &Vec::new())
-            .unwrap_err();
-
-        // Test receiving a set property with the wrong type
-        let integer_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
-        interfaces
-            .validate_receive(&prop_intf_name, "/boolean_endpoint", &integer_endpoint_data)
-            .unwrap_err();
-
-        // Test non existant path for aggregate
-        interfaces
-            .validate_receive(&aggr_intf_name, "/gibberish", &Vec::new())
-            .unwrap_err();
-
-        // Test receiving an aggregate
-        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
-            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
-            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
-        ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
-        interfaces
-            .validate_receive(&aggr_intf_name, "", &aggr_data)
-            .unwrap();
-
-        // Test receiving an aggregate with wrong type
-        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
-            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
-            ("integer_endpoint".to_string(), AstarteType::Boolean(false)),
-        ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
-        interfaces
-            .validate_receive(&aggr_intf_name, "", &aggr_data)
-            .unwrap_err();
-
-        // Test receiving an aggregate on an property interface
-        let aggr_data: HashMap<String, AstarteType> = HashMap::from([
-            ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
-            ("integer_endpoint".to_string(), AstarteType::Integer(324)),
-        ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
-        interfaces
-            .validate_receive(&prop_intf_name, "", &aggr_data)
-            .unwrap_err();
+        (
+            device_datastream_interface_name,
+            device_aggregate_interface_name,
+            server_property_interface_name,
+            server_aggregate_interface_name,
+            server_datastream_interface_name,
+            interfaces,
+        )
     }
 }
