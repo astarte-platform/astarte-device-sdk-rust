@@ -19,6 +19,7 @@
  */
 
 use astarte_device_sdk::{options::AstarteOptions, AstarteAggregate, AstarteError};
+#[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
 
 use serde::{Deserialize, Serialize};
