@@ -4,3 +4,6 @@
 
 /target
 /astarte-device-sdk-derive/target
+
+# Databases used for the examples
+astarte-example-db.*

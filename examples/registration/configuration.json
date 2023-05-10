@@ -1,0 +1,6 @@
+{
+    "realm": "Realm name",
+    "device_id": "Device ID",
+    "pairing_token": "Pairing token",
+    "pairing_url": "Pairing URL"
+}

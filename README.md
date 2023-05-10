@@ -93,11 +93,4 @@ cargo build
 
 ## Examples
 
-You can execute one of the examples using the following command (seen for the *simple* example).
-```sh
-cargo run --example simple -- \
-    --credentials-secret <credentials-secret>
-    --device-id <device-id>
-    --pairing-url <pairing-url>
-    --realm <realm>
-```
+Check out how to start with the SDK using one of the [included examples](./examples/README.md).

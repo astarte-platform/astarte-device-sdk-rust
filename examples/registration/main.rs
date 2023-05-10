@@ -17,22 +17,13 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+use serde::{Deserialize, Serialize};
 
-use structopt::StructOpt;
-
-#[derive(Debug, StructOpt)]
-struct Cli {
-    // Realm name
-    #[structopt(short, long)]
+#[derive(Serialize, Deserialize, Debug)]
+struct Config {
     realm: String,
-    // Device id
-    #[structopt(short, long)]
     device_id: String,
-    // Token
-    #[structopt(short, long)]
-    token: String,
-    // Pairing URL
-    #[structopt(short, long)]
+    pairing_token: String,
     pairing_url: String,
 }
 
@@ -40,17 +31,23 @@ struct Cli {
 async fn main() {
     env_logger::init();
 
-    let Cli {
-        realm,
-        device_id,
-        token,
-        pairing_url,
-    } = Cli::from_args();
+    // Load configuration
+    let file = std::fs::read_to_string("./examples/registration/configuration.json").unwrap();
+    let cfg: Config = serde_json::from_str(&file).unwrap();
 
-    let credentials_secret =
-        astarte_device_sdk::registration::register_device(&token, &pairing_url, &realm, &device_id)
-            .await
-            .unwrap();
+    println!(
+        "Attempting to register the device with the ID: {}",
+        cfg.device_id
+    );
 
-    println!("{credentials_secret}");
+    let credentials_secret = astarte_device_sdk::registration::register_device(
+        &cfg.pairing_token,
+        &cfg.pairing_url,
+        &cfg.realm,
+        &cfg.device_id,
+    )
+    .await
+    .unwrap();
+
+    println!("Device registered, received credentials secret is: {credentials_secret}");
 }

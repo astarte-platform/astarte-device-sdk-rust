@@ -1,0 +1,19 @@
+{
+    "interface_name": "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "datastream",
+    "ownership": "device",
+    "mappings": [
+        {
+            "endpoint": "/endpoint1",
+            "type": "longinteger",
+            "explicit_timestamp": true
+        },
+        {
+            "endpoint": "/endpoint2",
+            "type": "double",
+            "explicit_timestamp": true
+        }
+    ]
+}
