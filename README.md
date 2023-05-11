@@ -34,46 +34,48 @@ use astarte_device_sdk::{
 };
 
 async fn run_astarte_device() -> Result<(), AstarteError> {
-    
+
     let realm = "realm_name";
     let device_id = "device_id";
     let credentials_secret = "device_credentials_secret";
     let pairing_url = "astarte_cluster_pairing_url";
 
     // Initializing an instance of a device can be performed as shown in the following three steps.
-    
+
     // 1. (optional) Initialize a database to store the properties
     let db = AstarteSqliteDatabase::new("sqlite::memory:").await?;
-    
+
     // 2. Initialize device options (the ".database(db)" is not needed if 1 was skipped)
     let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
         .interface_directory("./examples/interfaces")?
         .database(db);
-    
+
     // 3. Create the device instance
     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
-    
+
     // Publishing new values can be performed using the send and send_object functions.
-    
+
     // Send individual datastream or set individual property
     let data: i32 = 12;
     device.send("interface.name", "/endpoint/path", data).await.unwrap();
-    
+
     // Send aggregated object datastream
     use astarte_device_sdk::AstarteAggregate;
-    use astarte_device_sdk_derive::AstarteAggregate; 
-    
+    // If the derive feature is not enabled
+    #[cfg(not(feature = "derive"))]
+    use astarte_device_sdk_derive::AstarteAggregate;
+
     #[derive(Debug, AstarteAggregate)]
     struct MyAggObj {
         endpoint1: f64,
         endpoint2: i32
     }
-    
+
     let data = MyAggObj {endpoint1: 1.34, endpoint2: 22};
     device.send_object("interface.name", "/common/endpoint/path", data).await.unwrap();
-    
+
     // Polling for new data can be performed using the function handle_events.
-    
+
     // Receive a server publish
     loop {
         match device.handle_events().await {

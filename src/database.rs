@@ -208,9 +208,11 @@ mod test {
 
     #[tokio::test]
     async fn test_db() {
-        let db = AstarteSqliteDatabase::new("/tmp/test.sqlite")
-            .await
-            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let path = db_path.as_path().to_str().unwrap();
+
+        let db = AstarteSqliteDatabase::new(path).await.unwrap();
 
         let ty = AstarteType::Integer(23);
         let ser = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();

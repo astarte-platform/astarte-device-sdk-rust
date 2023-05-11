@@ -769,7 +769,7 @@ impl AstarteDeviceSdk {
     ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     ///
     ///     let value: i32 = 42;
-    ///     let timestamp = Utc.timestamp(1537449422, 0);
+    ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
     ///     device.send_with_timestamp("my.interface.name", "/endpoint/path", value, timestamp)
     ///         .await
     ///         .unwrap();
@@ -1013,6 +1013,7 @@ impl AstarteDeviceSdk {
     ///
     /// ```no_run
     /// # use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions, AstarteAggregate};
+    /// #[cfg(not(feature = "derive"))]
     /// use astarte_device_sdk_derive::AstarteAggregate;
     /// use chrono::{TimeZone, Utc};
     ///
@@ -1031,7 +1032,7 @@ impl AstarteDeviceSdk {
     ///         endpoint1: 1.34,
     ///         endpoint2: false
     ///     };
-    ///     let timestamp = Utc.timestamp(1537449422, 0);
+    ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
     ///     device.send_object_with_timestamp("my.interface.name", "/endpoint/path", data, timestamp)
     ///         .await
     ///         .unwrap();
