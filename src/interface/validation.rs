@@ -19,30 +19,56 @@
 
 use std::{cmp::Ordering, fmt::Display};
 
+use log::info;
+
 use super::{
     error::{Error, ValidationError, VersionChangeError},
     Interface,
 };
 
 /// A change in version of an interface.
+///
+/// This structure is used to validate that the new version of an interface is a valid successor of
+/// the previous version. The version cannot decrease, and they cannot be the same (not really a
+/// version change).
+///
+/// This validates only the version change, not the interface itself. For that, see [`Interface::validate_with`].
 #[derive(Debug, Clone, Copy)]
 pub struct VersionChange {
-    pub next_major: i32,
-    pub next_minor: i32,
-    pub prev_major: i32,
-    pub prev_minor: i32,
+    next_major: i32,
+    next_minor: i32,
+    prev_major: i32,
+    prev_minor: i32,
 }
 
 impl VersionChange {
-    pub fn new(next: &Interface, prev: &Interface) -> Self {
-        Self {
+    /// Create a new version change from a new and previous interfaces.
+    pub fn try_new(next: &Interface, prev: &Interface) -> Result<Self, VersionChangeError> {
+        let change = Self {
             next_major: next.get_version_minor(),
             next_minor: next.get_version_minor(),
             prev_major: prev.get_version_major(),
             prev_minor: prev.get_version_minor(),
-        }
+        };
+
+        change.validate()?;
+
+        Ok(change)
     }
 
+    /// Returns the previous version
+    pub fn previous(&self) -> (i32, i32) {
+        (self.prev_major, self.prev_minor)
+    }
+
+    /// Returns the next version
+    pub fn next(&self) -> (i32, i32) {
+        (self.next_major, self.next_minor)
+    }
+
+    /// Private method for a version change validation.
+    ///
+    /// Validate if the version change is valid.
     pub fn validate(&self) -> Result<(), VersionChangeError> {
         let majior = self.next_major.cmp(&self.prev_major);
         let minor = self.next_minor.cmp(&self.prev_minor);
@@ -60,7 +86,7 @@ impl Display for VersionChange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "next: {}.{} prev: {}.{}",
+            "{}.{} -> {}.{}",
             self.next_major, self.next_minor, self.prev_major, self.prev_minor
         )
     }
@@ -84,14 +110,16 @@ impl Interface {
     /// - The name of the interface is the same
     /// - The new version is a valid successor of the previous version.
     pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
+        // Check that both the interfaces are valid
+        self.validate().map_err(ValidationError::InvalidNew)?;
+        prev.validate().map_err(ValidationError::InvalidPrev)?;
+
+        // If the interfaces are the same, they are valid
         if self == prev {
             return Ok(self);
         }
 
-        self.validate().map_err(ValidationError::InvalidNew)?;
-
-        prev.validate().map_err(ValidationError::InvalidPrev)?;
-
+        // Check if the wrong interface was passed
         let name = self.get_name();
         let prev_name = prev.get_name();
         if name != prev_name {
@@ -101,10 +129,14 @@ impl Interface {
             });
         }
 
-        VersionChange::new(self, prev)
-            .validate()
+        // Validate the new interface version
+        VersionChange::try_new(self, prev)
             .map_err(ValidationError::Version)
-            .map(|()| self)
+            .map(|change| {
+                info!("Interface {} version changed: {}", name, change);
+
+                self
+            })
     }
 }
 

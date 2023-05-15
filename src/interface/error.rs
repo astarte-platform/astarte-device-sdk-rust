@@ -36,18 +36,23 @@ pub enum Error {
     MappingNotFound,
 }
 
+/// Error for an interface validation.
 #[derive(thiserror::Error, Debug)]
 pub enum ValidationError {
+    /// The new version is not a valid interface.
     #[error("the new version is invalid: {0}")]
     InvalidNew(Error),
     #[error("the previous version is invalid: {0}")]
+    /// The previous version is not a valid interface.
     InvalidPrev(Error),
+    /// The name of the interface was changed.
     #[error(
         r#"this version has a different name than the previous version
     name: {name}
     prev_name: {prev_name}"#
     )]
     NameMismatch { name: String, prev_name: String },
+    /// Invalid version change.
     #[error("invalid version: {0}")]
     Version(VersionChangeError),
 }
@@ -55,10 +60,13 @@ pub enum ValidationError {
 /// Error for changing the version of an interface.
 #[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum VersionChangeError {
+    /// The major version cannot be decreased.
     #[error("the major version decreased: {0}")]
     MajorDecresed(VersionChange),
+    /// The minor version cannot be decreased.
     #[error("the minor version decreased: {0}")]
     MinorDecresed(VersionChange),
+    // The interface is different but the version did not change.
     #[error("the version did not change: {0}")]
     SameVersion(VersionChange),
 }
