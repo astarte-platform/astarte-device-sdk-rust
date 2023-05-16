@@ -271,7 +271,7 @@ mod test {
     #[test]
     fn interface_directory() {
         let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
-            .interface_directory("examples/interfaces");
+            .interface_directory("examples/individual_datastream/interfaces");
 
         assert!(
             res.is_ok(),
@@ -283,9 +283,9 @@ mod test {
     #[test]
     fn interface_existing_directory() {
         let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
-            .interface_directory("examples/interfaces")
+            .interface_directory("examples/individual_datastream/interfaces")
             .unwrap()
-            .interface_directory("examples/interfaces");
+            .interface_directory("examples/individual_datastream/interfaces");
 
         assert!(
             res.is_ok(),
@@ -297,9 +297,9 @@ mod test {
     #[test]
     fn interface_force() {
         let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
-            .interface_directory("examples/interfaces")
+            .interface_directory("examples/individual_datastream/interfaces")
             .unwrap()
-            .force_interface_directory("examples/interfaces");
+            .force_interface_directory("examples/individual_datastream/interfaces");
 
         assert!(
             res.is_ok(),

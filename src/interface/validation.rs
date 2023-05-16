@@ -23,6 +23,7 @@ use log::info;
 
 use super::{
     error::{Error, ValidationError, VersionChangeError},
+    traits::Interface as InterfaceTrait,
     Interface,
 };
 
@@ -96,7 +97,7 @@ impl Interface {
     /// Validate if an interface is valid
     pub fn validate(&self) -> Result<(), Error> {
         // TODO: add additional validation
-        if self.get_version_major() == 0 && self.get_version_minor() == 0 {
+        if self.version() == (0, 0) {
             return Err(Error::MajorMinor);
         }
         Ok(())

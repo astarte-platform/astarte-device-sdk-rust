@@ -293,7 +293,8 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interface::traits::Interface, interfaces::Interfaces, types::AstarteType, AstarteDeviceSdk,
+        interface::traits::Interface, interfaces::Interfaces, options::AstarteOptions,
+        types::AstarteType, AstarteDeviceSdk,
     };
 
     #[test]
@@ -878,14 +879,15 @@ mod test {
     #[test]
     fn test_get_instrospection_string() {
         let mut options = AstarteOptions::new("test", "test", "test", "test");
-        options = options.interface_directory("examples/interfaces/").unwrap();
+        options = options
+            .interface_directory("examples/individual_datastream/interfaces")
+            .expect("Failed to set interface directory");
+
         let ifa = Interfaces::new(options.interfaces);
 
         let expected = [
-            "org.astarte-platform.genericsensors.AvailableSensors:0:1",
-            "org.astarte-platform.genericsensors.Geolocation:1:0",
-            "org.astarte-platform.genericsensors.SamplingRate:1:0",
-            "org.astarte-platform.test.Everything:0:1",
+            "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream:0:1",
+            "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1",
         ];
 
         let intro = ifa.get_introspection_string();
