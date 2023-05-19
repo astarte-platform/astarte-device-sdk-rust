@@ -18,103 +18,184 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use itertools::Itertools;
+use log::debug;
 
-use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
+use crate::{
+    interface::{error::ValidationError, mapping::path::MappingPath, Mapping, Ownership},
+    types::AstarteType,
+    Aggregation, AstarteError, Interface,
+};
 
-#[derive(Clone, Debug)]
-pub struct Interfaces {
-    pub interfaces: HashMap<String, Interface>,
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Interfaces {
+    interfaces: HashMap<String, Interface>,
+}
+
+/// Validates that a float is a valid Astarte float
+fn validate_float(d: &f64) -> Result<(), AstarteError> {
+    if d.is_infinite() || d.is_nan() || d.is_subnormal() {
+        Err(AstarteError::SendError(
+            "You are sending the wrong type for this mapping".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 impl Interfaces {
-    pub fn new(interfaces: HashMap<String, Interface>) -> Self {
-        Interfaces { interfaces }
+    pub(crate) fn new() -> Self {
+        Self::default()
     }
 
-    pub fn get_introspection_string(&self) -> String {
-        use crate::interface::traits::Interface;
+    #[cfg(test)]
+    pub(crate) fn from<I>(interfaces: I) -> Result<Self, ValidationError>
+    where
+        I: IntoIterator<Item = Interface>,
+    {
+        let mut ints = Self {
+            interfaces: HashMap::new(),
+        };
 
+        for interface in interfaces {
+            ints.add(interface)?;
+        }
+
+        Ok(ints)
+    }
+
+    /// Inserts and interface and returns the previous one if present.
+    ///
+    /// ## Error
+    ///
+    /// If the interface is already present and is not a valid new version, returns a
+    /// [`ValidationError`].
+    pub(crate) fn add(
+        &mut self,
+        interface: Interface,
+    ) -> Result<Option<Interface>, ValidationError> {
+        let entry = self
+            .interfaces
+            .entry(interface.interface_name().to_string());
+
+        let prev = match entry {
+            Entry::Occupied(mut entry) => {
+                debug!(
+                    "Interface {} already present, validating new version",
+                    interface.interface_name()
+                );
+
+                let prev_interface = entry.get();
+
+                interface.validate_with(prev_interface)?;
+
+                Some(entry.insert(interface))
+            }
+            Entry::Vacant(entry) => {
+                debug!("Interface {} not present, adding it", entry.key());
+
+                entry.insert(interface);
+
+                None
+            }
+        };
+
+        Ok(prev)
+    }
+
+    pub(crate) fn remove(&mut self, interface_name: &str) -> Option<Interface> {
+        self.interfaces.remove(interface_name)
+    }
+
+    pub(crate) fn get_introspection_string(&self) -> String {
         self.interfaces
             .iter()
-            .map(|f| format!("{}:{}:{}", f.0, f.1.version().0, f.1.version().1))
+            .map(|(name, interface)| {
+                format!(
+                    "{}:{}:{}",
+                    name,
+                    interface.version_major(),
+                    interface.version_minor()
+                )
+            })
             .join(";")
     }
 
-    /// gets mapping from the json description, given the path
-    pub(crate) fn get_mapping(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-    ) -> Option<crate::interface::Mapping> {
-        self.interfaces
-            .iter()
-            .find(|i| i.0 == interface_name)
-            .and_then(|f| f.1.mapping(interface_path))
+    pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
+        self.interfaces.get(interface_name)
     }
 
-    pub fn get_mqtt_reliability(&self, interface_name: &str, interface_path: &str) -> rumqttc::QoS {
-        use rumqttc::QoS;
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<&Interface> {
+        self.interfaces.get(interface_name).and_then(|interface| {
+            if !interface.is_property() {
+                None
+            } else {
+                Some(interface)
+            }
+        })
+    }
 
-        let mapping = self.get_mapping(interface_name, interface_path);
+    /// Gets mapping from the json description, given the path
+    pub(crate) fn get_mapping<'a: 's, 's>(
+        &'s self,
+        interface_name: &str,
+        interface_path: &MappingPath<'a>,
+    ) -> Option<Mapping> {
+        self.interfaces
+            .get(interface_name)
+            .and_then(|interface| interface.mapping(interface_path))
+    }
 
-        let reliability = match mapping {
-            Some(crate::interface::Mapping::Datastream(m)) => m.reliability,
-            _ => Default::default(),
-        };
+    /// Get a property mapping
+    pub(crate) fn get_propertiy_mapping<'a: 's, 's>(
+        &'s self,
+        interface: &str,
+        path: &MappingPath<'a>,
+    ) -> Option<Mapping> {
+        self.get_property(interface)
+            .and_then(|interface| interface.mapping(path))
+    }
 
-        match reliability {
-            crate::interface::Reliability::Unreliable => QoS::AtMostOnce,
-            crate::interface::Reliability::Guaranteed => QoS::AtLeastOnce,
-            crate::interface::Reliability::Unique => QoS::ExactlyOnce,
-        }
+    pub(crate) fn get_mqtt_reliability(
+        &self,
+        interface_name: &str,
+        interface_path: &MappingPath,
+    ) -> rumqttc::QoS {
+        self.get_mapping(interface_name, interface_path)
+            .map(|mapping| mapping.reliability())
+            .unwrap_or_default()
+            .into()
     }
 
     /// returns major version if the property exists, None otherwise
-    pub fn get_property_major(&self, interface: &str, path: &str) -> Option<i32> {
-        use crate::interface::traits::Interface;
+    pub fn get_property_major(&self, interface: &str, path: &MappingPath) -> Option<i32> {
+        let interface = self.get(interface)?;
 
-        let iface = self.interfaces.get(interface)?;
-        iface.mapping(path)?;
+        if !interface.contains(path) || !interface.is_property() {
+            return None;
+        }
 
-        Some(iface.version().0)
+        Some(interface.version_major())
     }
 
     /// returns ownership if the interface is present in device introspection, None otherwise
-    pub(crate) fn get_ownership(&self, interface: &str) -> Option<crate::interface::Ownership> {
-        let iface = self.interfaces.get(interface)?;
-        Some(iface.get_ownership())
+    pub(crate) fn get_ownership(&self, interface: &str) -> Option<Ownership> {
+        self.interfaces
+            .get(interface)
+            .map(|interface| interface.ownership())
     }
 
-    pub fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
-        fn validate_float(d: &f64) -> Result<(), AstarteError> {
-            let error = Err(AstarteError::SendError(
-                "You are sending the wrong type for this mapping".into(),
-            ));
-
-            if d.is_infinite() || d.is_nan() || d.is_subnormal() {
-                error
-            } else {
-                Ok(())
-            }
-        }
-
+    pub(crate) fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
         match data {
-            AstarteType::Double(d) => validate_float(d)?,
-            AstarteType::DoubleArray(d) => {
-                for n in d {
-                    validate_float(n)?
-                }
-            }
-            _ => {}
-        };
-
-        Ok(())
+            AstarteType::Double(d) => validate_float(d),
+            AstarteType::DoubleArray(d) => d.iter().try_for_each(validate_float),
+            _ => Ok(()),
+        }
     }
 
-    pub fn validate_send(
+    pub(crate) fn validate_send(
         &self,
         interface_name: &str,
         interface_path: &str,
@@ -129,9 +210,9 @@ impl Interfaces {
             .ok_or_else(|| AstarteError::SendError("Interface does not exists".into()))?;
 
         match data_deserialized {
-            crate::Aggregation::Individual(individual) => {
-                let mapping = self
-                    .get_mapping(interface_name, interface_path)
+            Aggregation::Individual(individual) => {
+                let mapping = interface
+                    .mapping(&interface_path.try_into()?)
                     .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
                 if individual != AstarteType::Unset && individual != mapping.mapping_type() {
@@ -144,57 +225,39 @@ impl Interfaces {
 
                 Interfaces::validate_float(&individual)?;
 
-                match mapping {
-                    crate::interface::Mapping::Datastream(map) => {
-                        if !map.explicit_timestamp && timestamp.is_some() {
-                            return Err(AstarteError::SendError(
-                                "Do not send timestamp to a mapping without explicit timestamp"
-                                    .into(),
-                            ));
-                        }
-                    }
-                    crate::interface::Mapping::Properties(map) => {
-                        if data.is_empty() && !map.allow_unset {
-                            return Err(AstarteError::SendError(
-                                "Do not unset a mapping without allow_unset".into(),
-                            ));
-                        }
-                    }
+                if !mapping.explicit_timestamp() && timestamp.is_some() {
+                    return Err(AstarteError::SendError(
+                        "Do not send timestamp to a mapping without explicit timestamp".into(),
+                    ));
+                }
+
+                if !mapping.allow_unset() && data.is_empty() {
+                    return Err(AstarteError::SendError(
+                        "Do not unset a mapping without allow_unset".into(),
+                    ));
                 }
             }
-            crate::Aggregation::Object(object) => {
-                for obj in &object {
-                    Interfaces::validate_float(obj.1)?;
-                    let mapping_path = format!("{}/{}", interface_path, obj.0);
+            Aggregation::Object(object) => {
+                for (obj_key, obj_value) in &object {
+                    Interfaces::validate_float(obj_value)?;
+                    let object_path = format!("{}/{}", interface_path, obj_key);
 
-                    let mapping =
-                        self.get_mapping(interface_name, &mapping_path)
-                            .ok_or_else(|| {
-                                AstarteError::SendError(format!(
-                                    "Mapping '{mapping_path}' doesn't exist"
-                                ))
-                            })?;
+                    let mapping_path = MappingPath::try_from(object_path.as_str())?;
 
-                    if *obj.1 != mapping.mapping_type() {
+                    let mapping = interface.mapping(&mapping_path).ok_or_else(|| {
+                        AstarteError::SendError(format!("Mapping '{mapping_path}' doesn't exist"))
+                    })?;
+
+                    if *obj_value != mapping.mapping_type() {
                         return Err(AstarteError::SendError(
-                            format!("You are sending the wrong type for this object mapping: got {:?}, expected {:?}", *obj.1, mapping.mapping_type()),
+                            format!("You are sending the wrong type for this object mapping: got {:?}, expected {}", obj_value, mapping.mapping_type()),
                         ));
                     }
 
-                    match mapping {
-                        crate::interface::Mapping::Datastream(map) => {
-                            if !map.explicit_timestamp && timestamp.is_some() {
-                                return Err(AstarteError::SendError(
-                                    "Do not send timestamp to a mapping without explicit timestamp"
-                                        .into(),
-                                ));
-                            }
-                        }
-                        crate::interface::Mapping::Properties(_) => {
-                            return Err(AstarteError::SendError(
-                                "Can't send object to properties".into(),
-                            ));
-                        }
+                    if !mapping.explicit_timestamp() && timestamp.is_some() {
+                        return Err(AstarteError::SendError(
+                            "Do not send timestamp to a mapping without explicit timestamp".into(),
+                        ));
                     }
                 }
 
@@ -209,41 +272,35 @@ impl Interfaces {
         Ok(())
     }
 
-    pub fn validate_receive(
+    pub(crate) fn validate_receive(
         &self,
         interface_name: &str,
-        interface_path: &str,
+        path: &MappingPath,
         bdata: &[u8],
     ) -> Result<(), AstarteError> {
         if interface_name == "control" {
             return Ok(());
         }
 
-        self.interfaces.get(interface_name).ok_or_else(|| {
+        let interface = self.interfaces.get(interface_name).ok_or_else(|| {
             AstarteError::ReceiveError(format!("Interface '{interface_name}' does not exists"))
         })?;
 
         let data = crate::AstarteDeviceSdk::deserialize(bdata)?;
 
         match data {
-            crate::Aggregation::Individual(individual) => {
-                let mapping = self
-                    .get_mapping(interface_name, interface_path)
-                    .ok_or_else(|| {
-                        AstarteError::ReceiveError(format!(
-                            "Mapping '{interface_path}' doesn't exist",
-                        ))
-                    })?;
+            Aggregation::Individual(individual) => {
+                let mapping = interface.mapping(path).ok_or_else(|| {
+                    AstarteError::ReceiveError(format!("Mapping '{path}' doesn't exist",))
+                })?;
 
-                if let crate::interface::Mapping::Properties(map) = mapping {
-                    if individual == AstarteType::Unset {
-                        if !map.allow_unset {
-                            return Err(AstarteError::ReceiveError(
-                                "Do not unset a mapping without allow_unset".into(),
-                            ));
-                        } else {
-                            return Ok(());
-                        }
+                if individual == AstarteType::Unset {
+                    if !mapping.allow_unset() {
+                        return Err(AstarteError::ReceiveError(
+                            "Do not unset a mapping without allow_unset".into(),
+                        ));
+                    } else {
+                        return Ok(());
                     }
                 }
 
@@ -255,28 +312,22 @@ impl Interfaces {
 
                 Interfaces::validate_float(&individual)?;
             }
-            crate::Aggregation::Object(object) => {
-                for obj in &object {
-                    Interfaces::validate_float(obj.1)?;
+            Aggregation::Object(object) => {
+                for (name, value) in &object {
+                    Interfaces::validate_float(value)?;
 
-                    let mapping_path = format!("{}/{}", interface_path, obj.0);
-                    let mapping =
-                        self.get_mapping(interface_name, &mapping_path)
-                            .ok_or_else(|| {
-                                AstarteError::ReceiveError(format!(
-                                    "Mapping '{mapping_path}' doesn't exist",
-                                ))
-                            })?;
+                    let mapping_path = format!("{}/{}", path, name);
+                    let mapping = interface
+                        .mapping(&mapping_path.as_str().try_into()?)
+                        .ok_or_else(|| {
+                            AstarteError::ReceiveError(format!(
+                                "Mapping '{mapping_path}' doesn't exist",
+                            ))
+                        })?;
 
-                    if *obj.1 != mapping.mapping_type() {
+                    if *value != mapping.mapping_type() {
                         return Err(AstarteError::ReceiveError(
                             "You are receiving the wrong type for this object mapping".into(),
-                        ));
-                    }
-
-                    if let crate::interface::Mapping::Properties(_) = mapping {
-                        return Err(AstarteError::ReceiveError(
-                            "Can't receive object aggregation from properties interface".into(),
                         ));
                     }
                 }
@@ -284,6 +335,10 @@ impl Interfaces {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
+        self.interfaces.values()
     }
 }
 
@@ -293,9 +348,16 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interface::traits::Interface, interfaces::Interfaces, options::AstarteOptions,
-        types::AstarteType, AstarteDeviceSdk,
+        interfaces::Interfaces, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
+        Interface,
     };
+
+    /// Helper macro to create a `MappingPath` from a string literal.
+    macro_rules! m {
+        ($mapping:expr) => {
+            &$crate::MappingPath::try_from($mapping).expect("failed to create mapping path")
+        };
+    }
 
     #[test]
     fn test_get_property() {
@@ -320,34 +382,34 @@ mod test {
             ]
         }
         "#;
-        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
-        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-        ifa.insert(deser_interface.name().into(), deser_interface);
-        let ifa = Interfaces::new(ifa);
+        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let mut ifa = Interfaces::default();
+        ifa.add(deser_interface).expect("valid interface");
+
         assert!(
-            ifa.get_property_major("org.astarte-platform.test.test", "/button")
+            ifa.get_property_major("org.astarte-platform.test.test", m!("/button"))
                 .unwrap()
                 == 12
         );
         assert!(
-            ifa.get_property_major("org.astarte-platform.test.test", "/uptimeSeconds")
+            ifa.get_property_major("org.astarte-platform.test.test", m!("/uptimeSeconds"))
                 .unwrap()
                 == 12
         );
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", "/button/foo")
+            .get_property_major("org.astarte-platform.test.test", m!("/button/foo"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", "/buttonfoo")
+            .get_property_major("org.astarte-platform.test.test", m!("/buttonfoo"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", "/foo/button")
+            .get_property_major("org.astarte-platform.test.test", m!("/foo/button"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", "/")
+            .get_property_major("org.astarte-platform.test.test", m!("/obj"))
             .is_none());
-        let interface_json = r#"
-        {
+
+        let interface_json = r#"{
             "interface_name": "org.astarte-platform.genericsensors.SamplingRate",
             "version_major": 12,
             "version_minor": 0,
@@ -371,44 +433,47 @@ mod test {
                     "doc": ""
                 }
             ]
-        }
-        "#;
-        let deser_interface = crate::Interface::from_str(interface_json).unwrap();
-        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-        ifa.insert(deser_interface.name().into(), deser_interface);
-        let ifa = Interfaces::new(ifa);
-        assert!(
+        }"#;
+
+        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let mut ifa = Interfaces::default();
+        ifa.add(deser_interface).expect("valid interface");
+
+        assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                "/1/enable"
+                m!("/1/enable")
             )
-            .unwrap()
-                == 12
+            .unwrap(),
+            12
         );
-        assert!(
+        assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                "/999999/enable"
+                m!("/999999/enable")
             )
-            .unwrap()
-                == 12
+            .unwrap(),
+            12
         );
-        assert!(
+        assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                "/foobar/enable"
+                m!("/foobar/enable")
             )
-            .unwrap()
-                == 12
+            .unwrap(),
+            12
         );
         assert!(ifa
             .get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                "/foo/bar/enable"
+                m!("/foo/bar/enable")
             )
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.genericsensors.SamplingRate", "/")
+            .get_property_major(
+                "org.astarte-platform.genericsensors.SamplingRate",
+                m!("/obj")
+            )
             .is_none());
     }
     #[test]
@@ -429,15 +494,17 @@ mod test {
             ]
         }
         "#;
-        let deser_interface = crate::Interface::from_str(server_owned_interface_json).unwrap();
-        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-        ifa.insert(deser_interface.name().into(), deser_interface);
-        let ifa = Interfaces::new(ifa);
-        assert!(
+
+        let deser_interface = Interface::from_str(server_owned_interface_json).unwrap();
+        let mut ifa = Interfaces::default();
+        ifa.add(deser_interface).expect("valid interface");
+
+        assert_eq!(
             ifa.get_ownership("org.astarte-platform.server-owned.test")
-                .unwrap()
-                == crate::interface::Ownership::Server
+                .unwrap(),
+            crate::interface::Ownership::Server
         );
+
         let device_owned_interface_json = r#"
         {
             "interface_name": "org.astarte-platform.device-owned.test",
@@ -454,14 +521,14 @@ mod test {
             ]
         }
         "#;
-        let deser_interface = crate::Interface::from_str(device_owned_interface_json).unwrap();
-        let mut ifa: HashMap<String, crate::Interface> = HashMap::new();
-        ifa.insert(deser_interface.name().into(), deser_interface);
-        let ifa = Interfaces::new(ifa);
-        assert!(
+        let deser_interface = Interface::from_str(device_owned_interface_json).unwrap();
+        let mut ifa = Interfaces::default();
+        ifa.add(deser_interface).expect("valid interface");
+
+        assert_eq!(
             ifa.get_ownership("org.astarte-platform.device-owned.test")
-                .unwrap()
-                == crate::interface::Ownership::Device
+                .unwrap(),
+            crate::interface::Ownership::Device
         );
     }
 
@@ -586,26 +653,34 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .validate_receive("gibberish", m!("/boolean_endpoint"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test receiving a new value
         let boolean_endpoint_data =
             AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "/boolean_endpoint", &boolean_endpoint_data)
+            .validate_receive(
+                &interface_name,
+                m!("/boolean_endpoint"),
+                &boolean_endpoint_data,
+            )
             .unwrap();
 
         // Test receiving a new value with the wrong type
         let integer_endpoint_data =
             AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "/boolean_endpoint", &integer_endpoint_data)
+            .validate_receive(
+                &interface_name,
+                m!("/boolean_endpoint"),
+                &integer_endpoint_data,
+            )
             .unwrap_err();
     }
 
@@ -615,17 +690,17 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .validate_receive("gibberish", m!("/boolean_endpoint"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path for aggregate
         interfaces
-            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test receiving an aggregate
@@ -635,7 +710,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "", &aggr_data)
+            .validate_receive(&interface_name, m!("/obj"), &aggr_data)
             .unwrap();
 
         // Test receiving an aggregate with wrong type
@@ -645,7 +720,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "", &aggr_data)
+            .validate_receive(&interface_name, m!("/foo"), &aggr_data)
             .unwrap_err();
     }
 
@@ -655,36 +730,44 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
+            .validate_receive("gibberish", m!("/boolean_endpoint"), &[])
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, "/gibberish", &Vec::new())
+            .validate_receive(&interface_name, m!("/gibberish"), &[])
             .unwrap_err();
 
         // Test receiving a set property
         let boolean_endpoint_data =
             AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "/boolean_endpoint", &boolean_endpoint_data)
+            .validate_receive(
+                &interface_name,
+                m!("/boolean_endpoint"),
+                &boolean_endpoint_data,
+            )
             .unwrap();
 
         // Test receiving an unset property
         interfaces
-            .validate_receive(&interface_name, "/boolean_endpoint", &Vec::new())
+            .validate_receive(&interface_name, m!("/boolean_endpoint"), &[])
             .unwrap();
 
         // Test receiving an unset property for a property that can't be unset
         interfaces
-            .validate_receive(&interface_name, "/integer_endpoint", &Vec::new())
+            .validate_receive(&interface_name, m!("/integer_endpoint"), &[])
             .unwrap_err();
 
         // Test receiving a set property with the wrong type
         let integer_endpoint_data =
             AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "/boolean_endpoint", &integer_endpoint_data)
+            .validate_receive(
+                &interface_name,
+                m!("/boolean_endpoint"),
+                &integer_endpoint_data,
+            )
             .unwrap_err();
 
         // Test receiving an aggregate on an property interface
@@ -694,7 +777,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, "", &aggr_data)
+            .validate_receive(&interface_name, m!("/obj"), &aggr_data)
             .unwrap_err();
     }
 
@@ -726,8 +809,9 @@ mod test {
         }
         "#;
         let device_datastream_interface =
-            crate::Interface::from_str(device_datastream_interface_json).unwrap();
-        let device_datastream_interface_name = device_datastream_interface.name().to_string();
+            Interface::from_str(device_datastream_interface_json).unwrap();
+        let device_datastream_interface_name =
+            device_datastream_interface.interface_name().to_string();
 
         let device_aggregate_interface_json = r#"
         {
@@ -762,8 +846,9 @@ mod test {
         }
         "#;
         let device_aggregate_interface =
-            crate::Interface::from_str(device_aggregate_interface_json).unwrap();
-        let device_aggregate_interface_name = device_aggregate_interface.name().to_string();
+            Interface::from_str(device_aggregate_interface_json).unwrap();
+        let device_aggregate_interface_name =
+            device_aggregate_interface.interface_name().to_string();
 
         let server_property_interface_json = r#"
         {
@@ -789,8 +874,8 @@ mod test {
         }
         "#;
         let server_property_interface =
-            crate::Interface::from_str(server_property_interface_json).unwrap();
-        let server_property_interface_name = server_property_interface.name().to_string();
+            Interface::from_str(server_property_interface_json).unwrap();
+        let server_property_interface_name = server_property_interface.interface_name().to_string();
 
         let server_aggregate_interface_json = r#"
         {
@@ -802,12 +887,12 @@ mod test {
             "aggregation": "object",
             "mappings": [
                 {
-                    "endpoint": "/boolean_endpoint",
+                    "endpoint": "/obj/boolean_endpoint",
                     "type": "boolean",
                     "explicit_timestamp": true
                 },
                 {
-                    "endpoint": "/integer_endpoint",
+                    "endpoint": "/obj/integer_endpoint",
                     "type": "integer",
                     "explicit_timestamp": true
                 }
@@ -815,8 +900,9 @@ mod test {
         }
         "#;
         let server_aggregate_interface =
-            crate::Interface::from_str(server_aggregate_interface_json).unwrap();
-        let server_aggregate_interface_name = server_aggregate_interface.name().to_string();
+            Interface::from_str(server_aggregate_interface_json).unwrap();
+        let server_aggregate_interface_name =
+            server_aggregate_interface.interface_name().to_string();
 
         let server_datastream_interface_json = r#"
         {
@@ -840,31 +926,18 @@ mod test {
         }
         "#;
         let server_datastream_interface =
-            crate::Interface::from_str(server_datastream_interface_json).unwrap();
-        let server_datastream_interface_name = server_datastream_interface.name().to_string();
+            Interface::from_str(server_datastream_interface_json).unwrap();
+        let server_datastream_interface_name =
+            server_datastream_interface.interface_name().to_string();
 
-        let interfaces = Interfaces::new(HashMap::from([
-            (
-                device_datastream_interface_name.clone(),
-                device_datastream_interface,
-            ),
-            (
-                device_aggregate_interface_name.clone(),
-                device_aggregate_interface,
-            ),
-            (
-                server_property_interface_name.clone(),
-                server_property_interface,
-            ),
-            (
-                server_aggregate_interface_name.clone(),
-                server_aggregate_interface,
-            ),
-            (
-                server_datastream_interface_name.clone(),
-                server_datastream_interface,
-            ),
-        ]));
+        let interfaces = Interfaces::from([
+            device_datastream_interface,
+            device_aggregate_interface,
+            server_property_interface,
+            server_aggregate_interface,
+            server_datastream_interface,
+        ])
+        .expect("valid interfaces");
 
         (
             device_datastream_interface_name,
@@ -883,7 +956,7 @@ mod test {
             .interface_directory("examples/individual_datastream/interfaces")
             .expect("Failed to set interface directory");
 
-        let ifa = Interfaces::new(options.interfaces);
+        let ifa = options.interfaces;
 
         let expected = [
             "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream:0:1",

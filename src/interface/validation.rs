@@ -19,13 +19,7 @@
 
 use std::{cmp::Ordering, fmt::Display};
 
-use log::info;
-
-use super::{
-    error::{Error, ValidationError, VersionChangeError},
-    traits::Interface as InterfaceTrait,
-    Interface,
-};
+use super::{error::VersionChangeError, Interface};
 
 /// A change in version of an interface.
 ///
@@ -46,15 +40,13 @@ impl VersionChange {
     /// Create a new version change from a new and previous interfaces.
     pub fn try_new(next: &Interface, prev: &Interface) -> Result<Self, VersionChangeError> {
         let change = Self {
-            next_major: next.get_version_minor(),
-            next_minor: next.get_version_minor(),
-            prev_major: prev.get_version_major(),
-            prev_minor: prev.get_version_minor(),
+            next_major: next.version_major(),
+            next_minor: next.version_minor(),
+            prev_major: prev.version_major(),
+            prev_minor: prev.version_minor(),
         };
 
-        change.validate()?;
-
-        Ok(change)
+        change.validate()
     }
 
     /// Returns the previous version
@@ -70,15 +62,15 @@ impl VersionChange {
     /// Private method for a version change validation.
     ///
     /// Validate if the version change is valid.
-    pub fn validate(&self) -> Result<(), VersionChangeError> {
-        let majior = self.next_major.cmp(&self.prev_major);
+    pub fn validate(self) -> Result<Self, VersionChangeError> {
+        let major = self.next_major.cmp(&self.prev_major);
         let minor = self.next_minor.cmp(&self.prev_minor);
 
-        match (majior, minor) {
-            (Ordering::Less, _) => Err(VersionChangeError::MajorDecresed(*self)),
-            (Ordering::Equal, Ordering::Less) => Err(VersionChangeError::MinorDecresed(*self)),
-            (Ordering::Equal, Ordering::Equal) => Err(VersionChangeError::SameVersion(*self)),
-            _ => Ok(()),
+        match (major, minor) {
+            (Ordering::Less, _) => Err(VersionChangeError::MajorDecresed(self)),
+            (Ordering::Equal, Ordering::Less) => Err(VersionChangeError::MinorDecresed(self)),
+            (Ordering::Equal, Ordering::Equal) => Err(VersionChangeError::SameVersion(self)),
+            _ => Ok(self),
         }
     }
 }
@@ -93,62 +85,15 @@ impl Display for VersionChange {
     }
 }
 
-impl Interface {
-    /// Validate if an interface is valid
-    pub fn validate(&self) -> Result<(), Error> {
-        // TODO: add additional validation
-        if self.version() == (0, 0) {
-            return Err(Error::MajorMinor);
-        }
-        Ok(())
-    }
-
-    /// Validate if an interface is given the previous version `prev`.
-    ///
-    /// It will check whether:
-    ///
-    /// - Both the versions are valid
-    /// - The name of the interface is the same
-    /// - The new version is a valid successor of the previous version.
-    pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
-        // Check that both the interfaces are valid
-        self.validate().map_err(ValidationError::InvalidNew)?;
-        prev.validate().map_err(ValidationError::InvalidPrev)?;
-
-        // If the interfaces are the same, they are valid
-        if self == prev {
-            return Ok(self);
-        }
-
-        // Check if the wrong interface was passed
-        let name = self.get_name();
-        let prev_name = prev.get_name();
-        if name != prev_name {
-            return Err(ValidationError::NameMismatch {
-                name: name.into(),
-                prev_name: prev_name.into(),
-            });
-        }
-
-        // Validate the new interface version
-        VersionChange::try_new(self, prev)
-            .map_err(ValidationError::Version)
-            .map(|change| {
-                info!("Interface {} version changed: {}", name, change);
-
-                self
-            })
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
 
-    use crate::{interface::Error, Interface};
+    use crate::Interface;
 
     #[test]
     fn validation_test() {
+        // Both major and minor are 0
         let interface_json = r#"
         {
             "interface_name": "org.astarte-platform.genericsensors.Values",
@@ -178,7 +123,7 @@ mod test {
 
         let deser_interface = Interface::from_str(interface_json);
 
-        assert!(matches!(deser_interface, Err(Error::MajorMinor)));
+        assert!(deser_interface.is_err());
     }
 
     #[test]
@@ -250,8 +195,7 @@ mod test {
     fn validate_version() {
         let make_interface = |major, minor| {
             Interface::from_str(&format!(
-                r#"
-        {{
+                r#"{{
             "interface_name": "org.astarte-platform.genericsensors.Values",
             "version_major": {major},
             "version_minor": {minor},
@@ -259,7 +203,12 @@ mod test {
             "ownership": "device",
             "description": "Interface description",
             "doc": "Interface doc",
-            "mappings": []
+            "mappings": [{{
+                "endpoint": "/value",
+                "type": "double",
+                "description": "Mapping description",
+                "doc": "Mapping doc"
+            }}]
         }}"#
             ))
             .unwrap()
@@ -269,10 +218,13 @@ mod test {
             (make_interface(1, 0), make_interface(1, 1), true),
             (make_interface(2, 1), make_interface(1, 1), false),
             (make_interface(1, 2), make_interface(1, 1), false),
+            // Same interface
+            (make_interface(1, 1), make_interface(1, 1), true),
         ];
 
         for (prev, new, expected) in interfaces {
             let res = new.validate_with(&prev);
+
             assert_eq!(
                 res.is_ok(),
                 expected,
