@@ -702,18 +702,6 @@ mod tests {
             explicit_timestamp: true,
         };
 
-        // TODO: compatibility
-        // assert!(value_mapping.is_compatible("/foo/value"));
-        // assert!(value_mapping.is_compatible("/bar/value"));
-        // assert!(!value_mapping.is_compatible("/value"));
-        // assert!(!value_mapping.is_compatible("/foo/bar/value"));
-        // assert!(!value_mapping.is_compatible("/foo/value/bar"));
-        // assert!(other_value_mapping.is_compatible("/foo/otherValue"));
-        // assert!(other_value_mapping.is_compatible("/bar/otherValue"));
-        // assert!(!other_value_mapping.is_compatible("/otherValue"));
-        // assert!(!other_value_mapping.is_compatible("/foo/bar/otherValue"));
-        // assert!(!other_value_mapping.is_compatible("/foo/value/otherValue"));
-
         let interface_name = "org.astarte-platform.genericsensors.Values".to_owned();
         let version_major = 1;
         let version_minor = 0;

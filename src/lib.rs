@@ -26,9 +26,11 @@ mod interfaces;
 pub mod options;
 pub mod pairing;
 pub mod registration;
+mod topic;
 pub mod types;
 
 // Re-export rumqttc since we return its types in some methods
+use crate::topic::{parse_topic, TopicError};
 pub use chrono;
 use interface::error::ValidationError;
 pub use rumqttc;
@@ -211,73 +213,6 @@ pub struct AstarteDeviceDataEvent {
     pub path: String,
     /// Payload of the event
     pub data: Aggregation,
-}
-
-/// Error returned when parsing a topic.
-///
-/// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum TopicError {
-    #[error("topic is empty")]
-    Empty,
-    #[error(
-        "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
-    )]
-    Malformed(String),
-}
-
-impl TopicError {
-    pub fn topic(&self) -> &str {
-        match self {
-            TopicError::Empty => "",
-            TopicError::Malformed(topic) => topic,
-        }
-    }
-}
-
-fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath<'_>), AstarteError> {
-    if topic.is_empty() {
-        return Err(TopicError::Empty.into());
-    }
-
-    let mut parts = topic.splitn(3, '/');
-
-    let realm = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("realm: {}", realm);
-
-    let device = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("device: {}", device);
-
-    let rest = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("rest: {}", rest);
-
-    let idx = rest
-        .find('/')
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("slash idx: {}", idx);
-
-    let (interface, path) = rest.split_at(idx);
-
-    trace!("interface: {}", interface);
-    trace!("path: {}", path);
-
-    if interface.is_empty() || path.is_empty() {
-        return Err(TopicError::Malformed(topic.to_string()).into());
-    }
-
-    let path = MappingPath::try_from(path)?;
-
-    Ok((realm, device, interface, path))
 }
 
 impl AstarteDeviceSdk {
@@ -1446,16 +1381,6 @@ mod test {
         } else {
             panic!();
         }
-    }
-
-    #[test]
-    fn test_parse_topic() {
-        let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let (realm, device, interface, path) = astarte_device_sdk::parse_topic(&topic).unwrap();
-        assert_eq!(realm, "test");
-        assert_eq!(device, "u-WraCwtK_G_fjJf63TiAw");
-        assert_eq!(interface, "com.interface.test");
-        assert_eq!(path, "/led/red");
     }
 
     #[test]
