@@ -616,17 +616,16 @@ mod tests {
 
     use crate::{
         interface::{
-            mapping::{BaseMapping, DatastreamIndividualMapping},
-            DatabaseRetention, DatastreamIndividual, InterfaceIml, MappingMap, MappingType,
-            Ownership, Reliability, Retention,
+            def::{DatabaseRetentionPolicyDef, RetentionDef},
+            mapping::{path::MappingPath, BaseMapping, DatastreamIndividualMapping},
+            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceIml, InterfaceType,
+            Mapping, MappingMap, MappingType, Ownership, Reliability, Retention,
         },
         Interface,
     };
 
-    #[test]
-    fn datastream_interface_deserialization() {
-        let interface_json = r#"
-        {
+    // The mappings are sorted alphabetically by endpoint, so we can confront them
+    const INTERFACE_JSON: &str = r#"{
             "interface_name": "org.astarte-platform.genericsensors.Values",
             "version_major": 1,
             "version_minor": 0,
@@ -636,15 +635,15 @@ mod tests {
             "doc": "Interface doc",
             "mappings": [
                 {
-                    "endpoint": "/%{sensor_id}/value",
-                    "type": "double",
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
                 },
                 {
-                    "endpoint": "/%{sensor_id}/otherValue",
-                    "type": "longinteger",
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
@@ -652,17 +651,42 @@ mod tests {
             ]
         }"#;
 
+    // The mappings are sorted alphabetically by endpoint, so we can confront them
+    const PROPERTIES_JSON: &str = r#"{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/aaaa",
+                    "type": "longinteger",
+                    "allow_unset": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/bbbb",
+                    "type": "double",
+                    "allow_unset": false
+                }
+            ]
+        }"#;
+
+    #[test]
+    fn datastream_interface_deserialization() {
         let value_mapping = DatastreamIndividualMapping {
             mapping: BaseMapping {
                 endpoint: "/%{sensor_id}/value".try_into().unwrap(),
                 mapping_type: MappingType::Double,
                 description: Some("Mapping description".to_string()),
-                doc: Some("Mapping doc".to_owned()),
+                doc: Some("Mapping doc".to_string()),
             },
             reliability: Reliability::default(),
             retention: Retention::default(),
             database_retention: DatabaseRetention::default(),
-            explicit_timestam: true,
+            explicit_timestamp: true,
         };
 
         let other_value_mapping = DatastreamIndividualMapping {
@@ -670,12 +694,12 @@ mod tests {
                 endpoint: "/%{sensor_id}/otherValue".try_into().unwrap(),
                 mapping_type: MappingType::LongInteger,
                 description: Some("Mapping description".to_string()),
-                doc: Some("Mapping doc".to_owned()),
+                doc: Some("Mapping doc".to_string()),
             },
             reliability: Reliability::default(),
             retention: Retention::default(),
             database_retention: DatabaseRetention::default(),
-            explicit_timestam: true,
+            explicit_timestamp: true,
         };
 
         // TODO: compatibility
@@ -714,9 +738,98 @@ mod tests {
             inner: InterfaceIml::DatastreamIndividual(datastream_individual),
         };
 
-        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let deser_interface = Interface::from_str(INTERFACE_JSON).unwrap();
 
         assert_eq!(interface, deser_interface);
+    }
+
+    #[test]
+    fn must_have_one_mapping() {
+        let json = r#"{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": []
+        }"#;
+
+        let interface = Interface::from_str(json);
+
+        assert!(interface.is_err());
+        // This is hacky but serde doesn't provide a way to check the error
+        let err = format!("{:?}", interface.unwrap_err());
+        assert!(err.contains("no mappings"), "Unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_properties() {
+        let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
+
+        let properties = interface.properties();
+
+        assert!(properties.is_some(), "Properties interface not found");
+
+        let properties = properties.unwrap();
+
+        let paths = interface.get_properties_paths();
+
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], ("/%{sensor_id}/aaaa".to_string(), 1));
+        assert_eq!(paths[1], ("/%{sensor_id}/bbbb".to_string(), 1));
+
+        let path = MappingPath::try_from("/1/aaaa").unwrap();
+
+        let f = properties.get(&path).unwrap();
+
+        assert_eq!(f.mapping_type(), MappingType::LongInteger);
+        assert!(f.allow_unset);
+    }
+
+    #[test]
+    fn test_iter_mappings() {
+        let value_mapping = Mapping {
+            endpoint: "/%{sensor_id}/value",
+            mapping_type: MappingType::Double,
+            description: Some("Mapping description"),
+            doc: Some("Mapping doc"),
+            reliability: Reliability::default(),
+            retention: RetentionDef::default(),
+            database_retention_policy: DatabaseRetentionPolicyDef::default(),
+            database_retention_ttl: None,
+            allow_unset: false,
+            expiry: 0,
+            explicit_timestamp: true,
+        };
+
+        let other_value_mapping = Mapping {
+            endpoint: "/%{sensor_id}/otherValue",
+            mapping_type: MappingType::LongInteger,
+            description: Some("Mapping description"),
+            doc: Some("Mapping doc"),
+            reliability: Reliability::default(),
+            retention: RetentionDef::default(),
+            database_retention_policy: DatabaseRetentionPolicyDef::default(),
+            database_retention_ttl: None,
+            allow_unset: false,
+            expiry: 0,
+            explicit_timestamp: true,
+        };
+
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
+
+        let mut mappings_iter = interface.iter_mappings();
+
+        assert_eq!(mappings_iter.len(), 2);
+        assert_eq!(mappings_iter.next(), Some(other_value_mapping));
+        assert_eq!(mappings_iter.next(), Some(value_mapping));
+    }
+
+    #[test]
+    fn methods_test() {
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
 
         assert_eq!(
             interface.interface_name(),
@@ -726,6 +839,22 @@ mod tests {
         assert_eq!(interface.version_minor(), 0);
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
+        assert_eq!(interface.aggregation(), Aggregation::Individual);
+        assert_eq!(interface.interface_type(), InterfaceType::Datastream);
         assert_eq!(interface.doc(), Some("Interface doc"));
+        assert!(interface.properties().is_none());
+    }
+
+    #[test]
+    fn serialize_and_deserialize() {
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
+        let serialized = serde_json::to_string(&interface).unwrap();
+        let deserialized: Interface = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(interface, deserialized);
+
+        let value = serde_json::Value::from_str(&serialized).unwrap();
+        let expected = serde_json::Value::from_str(INTERFACE_JSON).unwrap();
+        assert_eq!(value, expected);
     }
 }

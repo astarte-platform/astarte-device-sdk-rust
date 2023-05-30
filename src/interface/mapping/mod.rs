@@ -32,7 +32,7 @@ pub(crate) struct DatastreamIndividualMapping {
     pub(super) reliability: Reliability,
     pub(super) retention: Retention,
     pub(super) database_retention: DatabaseRetention,
-    pub(super) explicit_timestam: bool,
+    pub(super) explicit_timestamp: bool,
 }
 
 impl PartialOrd for DatastreamIndividualMapping {
@@ -52,7 +52,7 @@ impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<'a> {
         let mut mapping = Mapping::from(&value.mapping);
 
         mapping.reliability = value.reliability;
-        mapping.explicit_timestamp = value.explicit_timestam;
+        mapping.explicit_timestamp = value.explicit_timestamp;
 
         value.retention.apply(&mut mapping);
         value.database_retention.apply(&mut mapping);
@@ -72,7 +72,7 @@ impl TryFrom<&Mapping<'_>> for DatastreamIndividualMapping {
             reliability: value.reliability(),
             retention: value.retention(),
             database_retention: value.database_retention(),
-            explicit_timestam: value.explicit_timestamp(),
+            explicit_timestamp: value.explicit_timestamp(),
         })
     }
 }
@@ -99,8 +99,8 @@ impl Deref for DatastreamIndividualMapping {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct PropertiesMapping {
-    mapping: BaseMapping,
-    allow_unset: bool,
+    pub(super) mapping: BaseMapping,
+    pub(super) allow_unset: bool,
 }
 
 impl PartialOrd for PropertiesMapping {

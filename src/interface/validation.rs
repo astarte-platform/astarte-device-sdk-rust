@@ -80,7 +80,7 @@ impl Display for VersionChange {
         write!(
             f,
             "{}.{} -> {}.{}",
-            self.next_major, self.next_minor, self.prev_major, self.prev_minor
+            self.prev_major, self.prev_minor, self.next_major, self.next_minor
         )
     }
 }
@@ -90,6 +90,23 @@ mod test {
     use std::str::FromStr;
 
     use crate::Interface;
+
+    #[test]
+    fn version_change() {
+        let prev = make_interface(1, 2);
+        let next = make_interface(2, 2);
+
+        let change = super::VersionChange::try_new(&next, &prev);
+
+        assert!(change.is_ok());
+
+        let change = change.unwrap();
+
+        assert_eq!(change.previous(), (1, 2));
+        assert_eq!(change.next(), (2, 2));
+
+        assert_eq!(change.to_string(), "1.2 -> 2.2");
+    }
 
     #[test]
     fn validation_test() {
@@ -193,27 +210,6 @@ mod test {
 
     #[test]
     fn validate_version() {
-        let make_interface = |major, minor| {
-            Interface::from_str(&format!(
-                r#"{{
-            "interface_name": "org.astarte-platform.genericsensors.Values",
-            "version_major": {major},
-            "version_minor": {minor},
-            "type": "datastream",
-            "ownership": "device",
-            "description": "Interface description",
-            "doc": "Interface doc",
-            "mappings": [{{
-                "endpoint": "/value",
-                "type": "double",
-                "description": "Mapping description",
-                "doc": "Mapping doc"
-            }}]
-        }}"#
-            ))
-            .unwrap()
-        };
-
         let interfaces = [
             (make_interface(1, 0), make_interface(1, 1), true),
             (make_interface(2, 1), make_interface(1, 1), false),
@@ -233,5 +229,26 @@ mod test {
                 res
             );
         }
+    }
+
+    fn make_interface(major: i32, minor: i32) -> Interface {
+        Interface::from_str(&format!(
+            r#"{{
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": {major},
+            "version_minor": {minor},
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [{{
+                "endpoint": "/value",
+                "type": "double",
+                "description": "Mapping description",
+                "doc": "Mapping doc"
+            }}]
+        }}"#
+        ))
+        .unwrap()
     }
 }
