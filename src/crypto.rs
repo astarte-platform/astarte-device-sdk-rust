@@ -27,7 +27,11 @@ use openssl::{
     x509::{X509NameBuilder, X509ReqBuilder},
 };
 
-pub struct Bundle(pub Vec<u8>, pub Vec<u8>);
+/// A bundle containing a private key and a CSR.
+pub struct Bundle {
+    pub private_key: Vec<u8>,
+    pub csr: Vec<u8>,
+}
 
 impl Bundle {
     pub fn new(cn: &str) -> Result<Bundle, ErrorStack> {
@@ -46,8 +50,32 @@ impl Bundle {
         req_builder.sign(&pkey, MessageDigest::sha512())?;
         let pkey_bytes = pkey.private_key_to_pem_pkcs8()?;
 
-        let req_bytes = req_builder.build().to_pem()?;
+        let csr_bytes = req_builder.build().to_pem()?;
 
-        Ok(Bundle(pkey_bytes, req_bytes))
+        Ok(Bundle {
+            private_key: pkey_bytes,
+            csr: csr_bytes,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bundle() {
+        let bundle = Bundle::new("test").unwrap();
+        assert!(!bundle.private_key.is_empty());
+        assert!(!bundle.csr.is_empty());
+
+        let pkey = PKey::private_key_from_pem(&bundle.private_key).unwrap();
+        let csr = openssl::x509::X509Req::from_pem(&bundle.csr).unwrap();
+
+        assert!(csr.verify(&pkey).unwrap());
+
+        let subject_name = csr.subject_name();
+        let cn = subject_name.entries_by_nid(Nid::COMMONNAME).next().unwrap();
+        assert_eq!(cn.data().as_slice(), b"test");
     }
 }
