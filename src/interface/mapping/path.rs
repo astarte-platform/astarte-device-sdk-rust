@@ -180,6 +180,14 @@ mod tests {
 
     use super::*;
 
+    /// Helper macro to create a `MappingPath` from a string literal.
+    #[macro_export]
+    macro_rules! m {
+        ($mapping:expr) => {
+            &$crate::MappingPath::try_from($mapping).expect("failed to create mapping path")
+        };
+    }
+
     #[test]
     fn endpoint_equals_to_mapping() {
         let expected = MappingPath::Endpoint(Endpoint {
@@ -200,5 +208,22 @@ mod tests {
         let path = MappingPath::try_from("/").unwrap_err();
 
         assert_eq!(path, Error::EmptyLevel("/".into()));
+    }
+
+    #[test]
+    fn test_compatible() {
+        let endpoint = MappingPath::Endpoint(Endpoint {
+            path: "/%{sensor_id}/value".into(),
+            levels: vec![
+                Level::Parameter(Cow::from("sensor_id")),
+                Level::Simple(Cow::from("value")),
+            ],
+        });
+
+        assert!(endpoint.cmp(m!("/foo/value")).is_eq());
+        assert!(endpoint.cmp(m!("/bar/value")).is_eq());
+        assert!(endpoint.cmp(m!("/value")).is_ne());
+        assert!(endpoint.cmp(m!("/foo/bar/value")).is_ne());
+        assert!(endpoint.cmp(m!("/foo/value/bar")).is_ne());
     }
 }

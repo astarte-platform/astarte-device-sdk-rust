@@ -348,16 +348,9 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interfaces::Interfaces, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
+        interfaces::Interfaces, m, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
         Interface,
     };
-
-    /// Helper macro to create a `MappingPath` from a string literal.
-    macro_rules! m {
-        ($mapping:expr) => {
-            &$crate::MappingPath::try_from($mapping).expect("failed to create mapping path")
-        };
-    }
 
     #[test]
     fn test_get_property() {
