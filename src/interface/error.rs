@@ -53,12 +53,6 @@ pub enum Error {
 /// Error for an interface validation.
 #[derive(thiserror::Error, Debug)]
 pub enum ValidationError {
-    /// The new version is not a valid interface.
-    #[error("the new version is invalid: {0}")]
-    InvalidNew(Error),
-    #[error("the previous version is invalid: {0}")]
-    /// The previous version is not a valid interface.
-    InvalidPrev(Error),
     /// The name of the interface was changed.
     #[error(
         r#"this version has a different name than the previous version

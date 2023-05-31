@@ -229,10 +229,6 @@ impl Interface {
     /// - The name of the interface is the same
     /// - The new version is a valid successor of the previous version.
     pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
-        // Check that both the interfaces are valid
-        self.validate().map_err(ValidationError::InvalidNew)?;
-        prev.validate().map_err(ValidationError::InvalidPrev)?;
-
         // If the interfaces are the same, they are valid
         if self == prev {
             return Ok(self);
