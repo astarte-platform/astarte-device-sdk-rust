@@ -564,7 +564,7 @@ impl AstarteDeviceSdk {
                 self.client_id(),
                 rumqttc::QoS::ExactlyOnce,
                 false,
-                introspection.clone(),
+                introspection,
             )
             .await?;
         Ok(())
@@ -1122,15 +1122,33 @@ mod utils {
 mod test {
     use base64::Engine;
     use chrono::{TimeZone, Utc};
+    use rumqttc::{Event, MqttOptions};
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, RwLock};
 
     use crate as astarte_device_sdk;
+    use crate::interfaces::Interfaces;
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
     use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
+
+    use super::{AsyncClient, EventLoop};
+
+    fn mock_astarte(client: AsyncClient, eventloop: EventLoop) -> AstarteDeviceSdk {
+        AstarteDeviceSdk {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            mqtt_options: MqttOptions::new("device_id", "localhost", 1883),
+            client,
+            database: None,
+            interfaces: Arc::new(RwLock::new(Interfaces::new())),
+            eventloop: Arc::new(Mutex::new(eventloop)),
+        }
+    }
 
     #[derive(AstarteAggregate)]
     #[astarte_aggregate(rename_all = "lowercase")]
@@ -1432,5 +1450,50 @@ mod test {
         } else {
             panic!("Deserialization in not individual");
         }
+    }
+
+    #[tokio::test]
+    async fn wait_for_connack() {
+        let mut eventloope = EventLoop::default();
+
+        eventloope.expect_poll().once().returning(|| {
+            Ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                rumqttc::ConnAck {
+                    session_present: false,
+                    code: rumqttc::ConnectReturnCode::Success,
+                },
+            )))
+        });
+
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_subscribe()
+            .once()
+            .returning(|_: String, _| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .returning(|topic, _, _, _| {
+                // Client id
+                assert_eq!(topic, "realm/device_id");
+
+                Ok(())
+            });
+
+        client
+            .expect_publish::<String, &str>()
+            .returning(|topic, _, _, payload| {
+                // empty cache
+                assert_eq!(topic, "realm/device_id/control/emptyCache");
+
+                assert_eq!(payload, "1");
+
+                Ok(())
+            });
+
+        let mut astarte = mock_astarte(client, eventloope);
+
+        astarte.wait_for_connack().await.unwrap();
     }
 }
