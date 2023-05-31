@@ -23,6 +23,8 @@ pub mod crypto;
 pub mod database;
 pub mod interface;
 mod interfaces;
+#[cfg(test)]
+mod mock;
 pub mod options;
 pub mod pairing;
 pub mod registration;
@@ -35,13 +37,17 @@ pub use chrono;
 use interface::error::ValidationError;
 pub use rumqttc;
 
+#[cfg(test)]
+use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
+#[cfg(not(test))]
+use rumqttc::{AsyncClient, EventLoop};
+
 use bson::Bson;
 use database::AstarteDatabase;
 use database::StoredProp;
 use log::{debug, error, info, trace};
 use options::AstarteOptions;
-use rumqttc::{AsyncClient, Event};
-use rumqttc::{EventLoop, MqttOptions};
+use rumqttc::{Event, MqttOptions};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
