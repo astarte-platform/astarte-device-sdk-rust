@@ -1121,6 +1121,7 @@ mod utils {
 mod test {
     use base64::Engine;
     use chrono::{TimeZone, Utc};
+    use mockall::predicate;
     use rumqttc::{Event, MqttOptions};
     use std::collections::HashMap;
     use std::str::FromStr;
@@ -1509,5 +1510,62 @@ mod test {
         let mut astarte = mock_astarte(client, eventloope, interfaces);
 
         astarte.wait_for_connack().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_interface() {
+        let eventloope = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::always()
+            )
+            .returning(|_, _| { Ok(()) });
+
+        client
+            .expect_publish::<String, String>()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(
+                    "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1"
+                        .to_string(),
+                ),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
+            .returning(|_| Ok(()));
+
+        let interface = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+
+        let astarte = mock_astarte(client, eventloope, []);
+
+        astarte.add_interface_from_str(interface).await.unwrap();
+
+        astarte
+            .remove_interface(
+                "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream",
+            )
+            .await
+            .unwrap();
     }
 }
