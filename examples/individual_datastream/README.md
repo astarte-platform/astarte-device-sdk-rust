@@ -33,7 +33,7 @@ astartectl appengine --appengine-url http://localhost:4002/ --realm-key <REALM>_
     org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream <ENDPOINT> -c 1
 ```
 Where `<REALM>` is your realm's name, `<DEVICE_ID>` is the device ID from which the data has
-been received and `<ENDPOINT>` is the endpoint we want do observe.
+been received and `<ENDPOINT>` is the endpoint we want to observe.
 
 This will print the latest published data from the device that has been stored in the Astarte Cloud
 instance.
