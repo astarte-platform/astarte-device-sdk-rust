@@ -31,22 +31,19 @@ pub mod registration;
 mod topic;
 pub mod types;
 
-// Re-export rumqttc since we return its types in some methods
-use crate::topic::{parse_topic, TopicError};
-pub use chrono;
-use interface::error::ValidationError;
-pub use rumqttc;
-
 #[cfg(test)]
 use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
 use rumqttc::{AsyncClient, EventLoop};
 
+// Re-export rumqttc since we return its types in some methods
 use bson::Bson;
+pub use chrono;
 use database::AstarteDatabase;
 use database::StoredProp;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use options::AstarteOptions;
+pub use rumqttc;
 use rumqttc::{Event, MqttOptions};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -59,6 +56,8 @@ use std::sync::Arc;
 use types::AstarteType;
 
 use crate::interface::mapping::path::{Error as MappingError, MappingPath};
+use crate::topic::{parse_topic, TopicError};
+use interface::error::ValidationError;
 pub use interface::Interface;
 
 /// A **trait** required by all data to be sent using
@@ -316,7 +315,7 @@ impl AstarteDeviceSdk {
         iface: &Interface,
     ) -> Result<(), AstarteError> {
         if iface.ownership() != interface::Ownership::Server {
-            log::warn!("Unable to subscribe to {} as it is not server owned", iface);
+            warn!("Unable to subscribe to {} as it is not server owned", iface);
         } else {
             self.client
                 .subscribe(
@@ -333,7 +332,7 @@ impl AstarteDeviceSdk {
         iface: &Interface,
     ) -> Result<(), AstarteError> {
         if iface.ownership() != interface::Ownership::Server {
-            log::warn!(
+            warn!(
                 "Unable to unsubscribe to {} as it is not server owned",
                 iface
             );
@@ -1124,11 +1123,12 @@ mod test {
     use chrono::{TimeZone, Utc};
     use rumqttc::{Event, MqttOptions};
     use std::collections::HashMap;
+    use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
-    use crate as astarte_device_sdk;
     use crate::interfaces::Interfaces;
+    use crate::{self as astarte_device_sdk, Interface};
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
@@ -1138,14 +1138,17 @@ mod test {
 
     use super::{AsyncClient, EventLoop};
 
-    fn mock_astarte(client: AsyncClient, eventloop: EventLoop) -> AstarteDeviceSdk {
+    fn mock_astarte<I>(client: AsyncClient, eventloop: EventLoop, interfaces: I) -> AstarteDeviceSdk
+    where
+        I: IntoIterator<Item = Interface>,
+    {
         AstarteDeviceSdk {
             realm: "realm".to_string(),
             device_id: "device_id".to_string(),
             mqtt_options: MqttOptions::new("device_id", "localhost", 1883),
             client,
             database: None,
-            interfaces: Arc::new(RwLock::new(Interfaces::new())),
+            interfaces: Arc::new(RwLock::new(Interfaces::from(interfaces).unwrap())),
             eventloop: Arc::new(Mutex::new(eventloop)),
         }
     }
@@ -1492,7 +1495,18 @@ mod test {
                 Ok(())
             });
 
-        let mut astarte = mock_astarte(client, eventloope);
+        client.expect_subscribe::<String>().returning(|topic, _qos| {
+            assert_eq!(topic, "realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#");
+
+            Ok(())
+        });
+
+        let interfaces = [
+            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
+            Interface::from_str(include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json")).unwrap()
+        ];
+
+        let mut astarte = mock_astarte(client, eventloope, interfaces);
 
         astarte.wait_for_connack().await.unwrap();
     }
