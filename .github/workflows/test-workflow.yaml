@@ -36,7 +36,7 @@ jobs:
     strategy:
       matrix:
         toolchain:
-        - 1.59.0
+        - 1.66.1
         - stable
     steps:
       - name: Checkout sources
