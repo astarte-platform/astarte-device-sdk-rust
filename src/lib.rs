@@ -150,7 +150,10 @@ pub enum AstarteError {
     ConnectionError(#[from] rumqttc::ConnectionError),
 
     #[error("malformed input from Astarte backend")]
-    DeserializationError,
+    DeserializationError(#[from] bson::de::Error),
+
+    #[error("malformed input from Astarte backend, missinv value 'v' in document: {0}")]
+    DeserializationMissingValue(bson::Document),
 
     #[error("error converting from Bson to AstarteType ({0})")]
     FromBsonError(String),
@@ -439,10 +442,11 @@ impl AstarteDeviceSdk {
                         rumqttc::Packet::Publish(publish) => {
                             let (_, _, interface, path) = parse_topic(&publish.topic)?;
 
-                            let bdata = publish.payload.to_vec();
+                            // It can be borrowed as a &[u8]
+                            let bdata = publish.payload;
 
                             if interface == "control" && path == "/consumer/properties" {
-                                self.purge_properties(bdata).await?;
+                                self.purge_properties(&bdata).await?;
                                 continue;
                             }
 
@@ -522,11 +526,11 @@ impl AstarteDeviceSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn purge_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), AstarteError> {
         if let Some(db) = &self.database {
             let stored_props = db.load_all_props().await?;
 
-            let paths = utils::extract_set_properties(&bdata);
+            let paths = utils::extract_set_properties(bdata);
 
             for stored_prop in stored_props {
                 if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
@@ -650,15 +654,14 @@ impl AstarteDeviceSdk {
             return Ok(Vec::new());
         }
 
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
+        let doc = match timestamp {
+            Some(timestamp) => bson::doc! {
                "t": timestamp,
                "v": data
-            }
-        } else {
-            bson::doc! {
+            },
+            None => bson::doc! {
                "v": data,
-            }
+            },
         };
 
         let mut buf = Vec::new();
@@ -671,29 +674,30 @@ impl AstarteDeviceSdk {
         if bdata.is_empty() {
             return Ok(Aggregation::Individual(AstarteType::Unset));
         }
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
-            trace!("{:?}", deserialized);
-            if let Some(v) = deserialized.get("v") {
-                if let Bson::Document(doc) = v {
-                    let strings = doc.iter().map(|f| f.0.clone());
 
-                    let data = doc.iter().map(|f| f.1.clone().try_into());
-                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
-                    let data = data?;
+        let mut document: bson::Document = bson::from_slice(bdata)?;
 
-                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+        trace!("{:?}", document);
 
-                    Ok(Aggregation::Object(hmap))
-                } else if let Ok(v) = v.clone().try_into() {
-                    Ok(Aggregation::Individual(v))
-                } else {
-                    Err(AstarteError::DeserializationError)
-                }
-            } else {
-                Err(AstarteError::DeserializationError)
+        // Take the value without cloning
+        let value = document
+            .remove("v")
+            .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+
+        match value {
+            Bson::Document(doc) => {
+                let hmap = doc
+                    .into_iter()
+                    .map(|(name, value)| AstarteType::try_from(value).map(|v| (name, v)))
+                    .collect::<Result<HashMap<String, AstarteType>, AstarteError>>()?;
+
+                Ok(Aggregation::Object(hmap))
             }
-        } else {
-            Err(AstarteError::DeserializationError)
+            _ => {
+                let individual = AstarteType::try_from(value)?;
+
+                Ok(Aggregation::Individual(individual))
+            }
         }
     }
 
@@ -1567,5 +1571,75 @@ mod test {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_handle_event() {
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::function(|buf: &Vec<u8>| {
+                    let doc= bson::Document::from_reader(buf.as_slice()).unwrap();
+
+                    let value = doc.get("v").unwrap().as_str().unwrap();
+
+                    value == "name number 1"
+                }),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        let mut eventloope = EventLoop::default();
+
+        let data = bson::doc! {
+            "v": true
+        };
+
+        eventloope.expect_poll().returning(move || {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
+                    rumqttc::QoS::AtLeastOnce,
+                    bson::to_vec(&data).unwrap()
+                ),
+            )))
+        });
+
+        let mut astarte = mock_astarte(client, eventloope, [
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json")).unwrap(),
+        ]);
+
+        astarte
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                "name number 1".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let event = astarte.handle_events().await;
+
+        assert!(
+            event.is_ok(),
+            "Error handling event {:?}",
+            event.unwrap_err()
+        );
+
+        let event = event.unwrap();
+
+        assert_eq!("/1/enable", event.path);
+
+        match event.data {
+            Aggregation::Individual(AstarteType::Boolean(val)) => {
+                assert!(val);
+            }
+            _ => panic!("Wrong data type {:?}", event.data),
+        }
     }
 }
