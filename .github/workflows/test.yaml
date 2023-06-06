@@ -30,7 +30,7 @@ jobs:
     name: ubuntu / ${{ matrix.toolchain }}
     strategy:
       matrix:
-        toolchain: [1.59.0, stable]
+        toolchain: [1.66.1, stable]
     steps:
       - uses: actions/checkout@v3
         with:
