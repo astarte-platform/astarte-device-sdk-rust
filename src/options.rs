@@ -94,7 +94,7 @@ impl Debug for AstarteOptions {
         f.debug_struct("AstarteOptions")
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
-            .field("credentials_secret", &self.credentials_secret)
+            .field("credentials_secret", &"REDACTED")
             .field("pairing_url", &self.pairing_url)
             .field("interfaces", &self.interfaces)
             .field("ignore_ssl_errors", &self.ignore_ssl_errors)
