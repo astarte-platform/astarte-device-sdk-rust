@@ -27,9 +27,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::debug;
-use openssl::error::ErrorStack;
 use pairing::PairingError;
 
+use crate::crypto::Error as CryptoError;
 use crate::database::AstarteDatabase;
 use crate::interface;
 use crate::interfaces::Interfaces;
@@ -43,7 +43,7 @@ use interface::Interface;
 #[derive(thiserror::Error, Debug)]
 pub enum AstarteOptionsError {
     #[error("private key or CSR creation failed")]
-    CryptoGeneration(#[from] ErrorStack),
+    CryptoGeneration(#[from] CryptoError),
 
     #[error("device must have at least an interface")]
     MissingInterfaces,
