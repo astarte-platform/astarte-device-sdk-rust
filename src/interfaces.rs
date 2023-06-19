@@ -588,7 +588,7 @@ mod test {
 
         // Test sending an aggregate with a missing object field
         aggregate.remove("integer_endpoint");
-        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate, None).unwrap();
         interfaces
             .validate_send(&interface_name, "/1", &aggregate_data, &None)
             .unwrap_err();
@@ -610,12 +610,12 @@ mod test {
 
         // Test sending a value (with and without timestamp)
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_send(&interface_name, "/boolean", &boolean_endpoint_data, &None)
             .unwrap();
         let double_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Double(23.2), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Double(23.2), None).unwrap();
         let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
         interfaces
             .validate_send(
@@ -656,7 +656,7 @@ mod test {
 
         // Test receiving a new value
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -667,7 +667,7 @@ mod test {
 
         // Test receiving a new value with the wrong type
         let integer_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Integer(23), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -733,7 +733,7 @@ mod test {
 
         // Test receiving a set property
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -754,7 +754,7 @@ mod test {
 
         // Test receiving a set property with the wrong type
         let integer_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+            AstarteDeviceSdk::serialize_individual(&AstarteType::Integer(23), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,

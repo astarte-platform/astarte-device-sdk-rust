@@ -829,7 +829,7 @@ impl AstarteDeviceSdk {
 
         let data = data.try_into().map_err(|_| AstarteError::Conversion)?;
 
-        let buf = AstarteDeviceSdk::serialize_individual(data.clone(), timestamp)?;
+        let buf = AstarteDeviceSdk::serialize_individual(&data, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -939,7 +939,7 @@ impl AstarteDeviceSdk {
                 interface::Error::MappingNotFound,
             ))?;
 
-        let bin = AstarteDeviceSdk::serialize_individual(data, None)?;
+        let bin = AstarteDeviceSdk::serialize_individual(&data, None)?;
 
         db.store_prop(interface_name, interface_path, &bin, interface_major)
             .await?;
@@ -975,14 +975,10 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    fn serialize_individual<D>(
-        data: D,
+    fn serialize_individual(
+        data: &AstarteType,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
+    ) -> Result<Vec<u8>, AstarteError> {
         AstarteDeviceSdk::serialize(data.into(), timestamp)
     }
 
@@ -990,20 +986,16 @@ impl AstarteDeviceSdk {
     // object types
     // ------------------------------------------------------------------------
 
-    fn serialize_object<T>(
-        data: T,
+    fn serialize_object(
+        data: HashMap<String, AstarteType>,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
-    where
-        T: AstarteAggregate,
-    {
-        let iter_d = data
-            .astarte_aggregate()?
-            .into_iter()
-            .map(|(k, v)| (k, v.into()));
-        let doc_d: bson::Document = bson::Document::from_iter(iter_d);
-        let bson_d: bson::Bson = bson::Bson::Document(doc_d);
-        AstarteDeviceSdk::serialize(bson_d, timestamp)
+    ) -> Result<Vec<u8>, AstarteError> {
+        let iter = data.into_iter().map(|(k, v)| (k, bson::Bson::from(v)));
+
+        let doc: bson::Document = bson::Document::from_iter(iter);
+        let bson: bson::Bson = bson::Bson::Document(doc);
+
+        AstarteDeviceSdk::serialize(bson, timestamp)
     }
 
     async fn send_object_with_timestamp_impl<T>(
@@ -1016,7 +1008,8 @@ impl AstarteDeviceSdk {
     where
         T: AstarteAggregate,
     {
-        let buf = AstarteDeviceSdk::serialize_object(data, timestamp)?;
+        let aggregate = data.astarte_aggregate()?;
+        let buf = AstarteDeviceSdk::serialize_object(aggregate, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -1351,7 +1344,7 @@ mod test {
         for ty in alltypes {
             println!("checking {ty:?}");
 
-            let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
+            let buf = AstarteDeviceSdk::serialize_individual(&ty, None).unwrap();
 
             let ty2 = AstarteDeviceSdk::deserialize(&buf).unwrap();
 
@@ -1452,8 +1445,8 @@ mod test {
 
     #[test]
     fn test_bson_serialization() {
-        let og_value: i64 = 3600;
-        let buf = AstarteDeviceSdk::serialize_individual(og_value, None).unwrap();
+        let og_value = AstarteType::LongInteger(3600);
+        let buf = AstarteDeviceSdk::serialize_individual(&og_value, None).unwrap();
         if let Aggregation::Individual(astarte_type) = AstarteDeviceSdk::deserialize(&buf).unwrap()
         {
             assert_eq!(astarte_type, AstarteType::LongInteger(3600));
@@ -1667,12 +1660,12 @@ mod test {
         let mut client = AsyncClient::default();
 
         let buf = AstarteDeviceSdk::serialize_individual(
-            AstarteType::String(String::from("name number 1")),
+            &AstarteType::String(String::from("name number 1")),
             None,
         )
         .unwrap();
 
-        let unset = AstarteDeviceSdk::serialize_individual(AstarteType::Unset, None).unwrap();
+        let unset = AstarteDeviceSdk::serialize_individual(&AstarteType::Unset, None).unwrap();
 
         client
             .expect_publish::<String, Vec<u8>>()

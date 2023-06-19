@@ -215,7 +215,7 @@ mod test {
         let db = AstarteSqliteDatabase::new(path).await.unwrap();
 
         let ty = AstarteType::Integer(23);
-        let ser = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
+        let ser = AstarteDeviceSdk::serialize_individual(&ty, None).unwrap();
 
         db.clear().await.unwrap();
 
