@@ -195,25 +195,6 @@ impl AstarteOptions {
         Ok(self)
     }
 
-    /// Forces the addition of a single interface from the provided `.json` file.
-    ///
-    /// This method will overwrite any existing interface with the same name. The only validation
-    /// performed is the one performed by the `Interface::from_file` which doesn't check the
-    /// version .
-    pub fn force_interface_file<P: AsRef<Path>>(
-        &mut self,
-        file_path: P,
-    ) -> Result<Option<Interface>, AstarteOptionsError> {
-        let interface = Interface::from_file(file_path.as_ref())?;
-        let name = interface.name();
-
-        debug!("Added interface {}", name);
-
-        let prev_int = self.interfaces.insert(name.to_owned(), interface);
-
-        Ok(prev_int)
-    }
-
     /// Add all the interfaces from the `.json` files contained in the specified folder.
     pub fn interface_directory(
         self,
@@ -222,21 +203,6 @@ impl AstarteOptions {
         walk_dir_json(interfaces_directory)?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
-    }
-
-    /// Forces the addition of all the interfaces from the `.json` files contained in the specified
-    /// folder. It will overwrite any existing interface with the same name.
-    pub fn force_interface_directory<P: AsRef<Path>>(
-        self,
-        interfaces_directory: P,
-    ) -> Result<Self, AstarteOptionsError> {
-        walk_dir_json(interfaces_directory)?
-            .iter()
-            .try_fold(self, |mut acc, path| {
-                acc.force_interface_file(path)?;
-
-                Ok(acc)
-            })
     }
 }
 
@@ -286,20 +252,6 @@ mod test {
             .interface_directory("examples/individual_datastream/interfaces")
             .unwrap()
             .interface_directory("examples/individual_datastream/interfaces");
-
-        assert!(
-            res.is_ok(),
-            "Failed to load interfaces from directory: {:?}",
-            res
-        );
-    }
-
-    #[test]
-    fn interface_force() {
-        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
-            .interface_directory("examples/individual_datastream/interfaces")
-            .unwrap()
-            .force_interface_directory("examples/individual_datastream/interfaces");
 
         assert!(
             res.is_ok(),
