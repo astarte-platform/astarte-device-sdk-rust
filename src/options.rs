@@ -19,9 +19,13 @@
  */
 //! Provides functionality to configure an instance of the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk].
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fmt::Debug;
+use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::debug;
@@ -66,6 +70,9 @@ pub enum AstarteOptionsError {
 
     #[error(transparent)]
     PkiError(#[from] webpki::Error),
+
+    #[error(transparent)]
+    ValidationError(#[from] interface::error::ValidationError),
 }
 
 /// Structure used to store the configuration options for an instance of
@@ -80,6 +87,22 @@ pub struct AstarteOptions {
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
+}
+
+impl Debug for AstarteOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AstarteOptions")
+            .field("realm", &self.realm)
+            .field("device_id", &self.device_id)
+            .field("credentials_secret", &"REDACTED")
+            .field("pairing_url", &self.pairing_url)
+            .field("interfaces", &self.interfaces)
+            .field("ignore_ssl_errors", &self.ignore_ssl_errors)
+            .field("keepalive", &self.keepalive)
+            // We manually implement Debug for the database, so we can avoid have a trait bound on
+            // [AstarteDatabase] to implement [Display].
+            .finish_non_exhaustive()
+    }
 }
 
 impl AstarteOptions {
@@ -139,32 +162,101 @@ impl AstarteOptions {
     }
 
     /// Add a single interface from the provided `.json` file.
+    ///
+    /// It will validate that the interfaces are the same, or a newer version of the interfaces
+    /// with the same name that are already present.
     pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.name();
+
         debug!("Added interface {}", name);
-        self.interfaces.insert(name.to_owned(), interface);
+
+        let entry = self.interfaces.entry(name.to_owned());
+
+        match entry {
+            Entry::Occupied(mut entry) => {
+                debug!("Interface {} already present, validating new version", name);
+
+                let prev_interface = entry.get();
+
+                interface
+                    .validate_with(prev_interface)
+                    .map_err(AstarteOptionsError::ValidationError)?;
+
+                entry.insert(interface);
+            }
+            Entry::Vacant(entry) => {
+                debug!("Interface {} not present, adding it", name);
+
+                entry.insert(interface);
+            }
+        }
+
         Ok(self)
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
     pub fn interface_directory(
-        mut self,
+        self,
         interfaces_directory: &str,
     ) -> Result<Self, AstarteOptionsError> {
-        let interface_files = std::fs::read_dir(Path::new(interfaces_directory))?;
-        let it = interface_files.filter_map(Result::ok).filter(|f| {
-            if let Some(ext) = f.path().extension() {
-                ext == "json"
-            } else {
-                false
+        walk_dir_json(interfaces_directory)?
+            .iter()
+            .try_fold(self, |acc, path| acc.interface_file(path))
+    }
+}
+
+/// Walks a directory returning an array of json files
+fn walk_dir_json<P: AsRef<Path>>(path: P) -> Result<Vec<PathBuf>, io::Error> {
+    std::fs::read_dir(path)?
+        .map(|res| {
+            res.and_then(|entry| {
+                let path = entry.path();
+                let metadata = entry.metadata()?;
+
+                Ok((path, metadata))
+            })
+        })
+        .filter_map(|res| match res {
+            Ok((path, metadata)) => {
+                if metadata.is_file() && path.extension() == Some(OsStr::new("json")) {
+                    Some(Ok(path))
+                } else {
+                    None
+                }
             }
-        });
+            Err(e) => Some(Err(e)),
+        })
+        .collect()
+}
 
-        for f in it {
-            self = self.interface_file(&f.path())?;
-        }
+#[cfg(test)]
+mod test {
+    use super::AstarteOptions;
 
-        Ok(self)
+    #[test]
+    fn interface_directory() {
+        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
+            .interface_directory("examples/individual_datastream/interfaces");
+
+        assert!(
+            res.is_ok(),
+            "Failed to load interfaces from directory: {:?}",
+            res
+        );
+    }
+
+    #[test]
+    fn interface_existing_directory() {
+        let res = AstarteOptions::new("realm", "device_id", "credentials_secret", "pairing_url")
+            .interface_directory("examples/individual_datastream/interfaces")
+            .unwrap()
+            .interface_directory("examples/individual_datastream/interfaces");
+
+        assert!(
+            res.is_ok(),
+            "Failed to load interfaces from directory: {:?}",
+            res
+        );
     }
 }

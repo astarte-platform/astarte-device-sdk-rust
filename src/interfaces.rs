@@ -20,6 +20,8 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone, Debug)]
@@ -35,13 +37,10 @@ impl Interfaces {
     pub fn get_introspection_string(&self) -> String {
         use crate::interface::traits::Interface;
 
-        let mut introspection: String = self
-            .interfaces
+        self.interfaces
             .iter()
-            .map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1))
-            .collect();
-        introspection.pop(); // remove last ";"
-        introspection
+            .map(|f| format!("{}:{}:{}", f.0, f.1.version().0, f.1.version().1))
+            .join(";")
     }
 
     /// gets mapping from the json description, given the path
@@ -294,7 +293,8 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interface::traits::Interface, interfaces::Interfaces, types::AstarteType, AstarteDeviceSdk,
+        interface::traits::Interface, interfaces::Interfaces, options::AstarteOptions,
+        types::AstarteType, AstarteDeviceSdk,
     };
 
     #[test]
@@ -874,5 +874,27 @@ mod test {
             server_datastream_interface_name,
             interfaces,
         )
+    }
+
+    #[test]
+    fn test_get_instrospection_string() {
+        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        options = options
+            .interface_directory("examples/individual_datastream/interfaces")
+            .expect("Failed to set interface directory");
+
+        let ifa = Interfaces::new(options.interfaces);
+
+        let expected = [
+            "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream:0:1",
+            "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1",
+        ];
+
+        let intro = ifa.get_introspection_string();
+        let mut res: Vec<&str> = intro.split(';').collect();
+
+        res.sort_unstable();
+
+        assert_eq!(res, expected);
     }
 }

@@ -20,31 +20,20 @@
 
 //! Provides the functionalities to parse and validate an Astarte interface.
 
+pub mod error;
 pub(crate) mod traits;
+pub mod validation;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::BufReader;
 use std::path::Path;
 
 use traits::Interface as InterfaceTrait;
 use traits::Mapping as MappingTrait;
 
-/// Error for parsing and validating an interface.
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("cannot parse interface JSON")]
-    Parse(#[from] serde_json::Error),
-    #[error("cannot read interface file")]
-    Io(#[from] io::Error),
-    #[error("wrong major and minor")]
-    MajorMinor,
-    #[error("interface not found")]
-    InterfaceNotFound,
-    #[error("mapping not found")]
-    MappingNotFound,
-}
+pub use self::error::Error;
 
 /// Astarte interface implementation.
 ///
@@ -302,10 +291,10 @@ impl Interface {
     }
 
     /// Getter function for the interface name.
-    pub fn get_name(&self) -> String {
+    pub fn get_name(&self) -> &str {
         match &self {
-            Interface::Datastream(iface) => iface.base.interface_name.clone(),
-            Interface::Properties(iface) => iface.base.interface_name.clone(),
+            Interface::Datastream(iface) => &iface.base.interface_name,
+            Interface::Properties(iface) => &iface.base.interface_name,
         }
     }
 
@@ -323,14 +312,6 @@ impl Interface {
             Interface::Datastream(iface) => iface.base.version_minor,
             Interface::Properties(iface) => iface.base.version_minor,
         }
-    }
-
-    fn validate(&self) -> Result<(), Error> {
-        // TODO: add additional validation
-        if self.get_version_major() == 0 && self.get_version_minor() == 0 {
-            return Err(Error::MajorMinor);
-        }
-        Ok(())
     }
 }
 
@@ -388,7 +369,6 @@ impl Display for Interface {
 
 #[cfg(test)]
 mod tests {
-    use crate::interface::Error;
     use std::str::FromStr;
 
     use super::traits::Interface as InterfaceTrait;
@@ -400,32 +380,32 @@ mod tests {
 
     #[test]
     fn datastream_interface_deserialization() {
-        let interface_json = "
+        let interface_json = r#"
         {
-            \"interface_name\": \"org.astarte-platform.genericsensors.Values\",
-            \"version_major\": 1,
-            \"version_minor\": 0,
-            \"type\": \"datastream\",
-            \"ownership\": \"device\",
-            \"description\": \"Interface description\",
-            \"doc\": \"Interface doc\",
-            \"mappings\": [
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
                 {
-                    \"endpoint\": \"/%{sensor_id}/value\",
-                    \"type\": \"double\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 },
                 {
-                    \"endpoint\": \"/%{sensor_id}/otherValue\",
-                    \"type\": \"longinteger\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true,
+                    "description": "Mapping description",
+                    "doc": "Mapping doc"
                 }
             ]
-        }";
+        }"#;
 
         let value_base_mapping = BaseMapping {
             endpoint: "/%{sensor_id}/value".to_owned(),
@@ -512,44 +492,5 @@ mod tests {
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.doc(), Some("Interface doc"));
-    }
-
-    #[test]
-    fn validation_test() {
-        let interface_json = "
-        {
-            \"interface_name\": \"org.astarte-platform.genericsensors.Values\",
-            \"version_major\": 0,
-            \"version_minor\": 0,
-            \"type\": \"datastream\",
-            \"ownership\": \"device\",
-            \"description\": \"Interface description\",
-            \"doc\": \"Interface doc\",
-            \"mappings\": [
-                {
-                    \"endpoint\": \"/%{sensor_id}/value\",
-                    \"type\": \"double\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
-                },
-                {
-                    \"endpoint\": \"/%{sensor_id}/otherValue\",
-                    \"type\": \"longinteger\",
-                    \"explicit_timestamp\": true,
-                    \"description\": \"Mapping description\",
-                    \"doc\": \"Mapping doc\"
-                }
-            ]
-        }";
-
-        let deser_interface = Interface::from_str(interface_json);
-
-        assert!(deser_interface.is_err());
-        assert!(match deser_interface {
-            Err(Error::MajorMinor) => true,
-            Err(e) => panic!("expected Error::MajorMinor, got {e:?}"),
-            Ok(_) => panic!("Expected Err, got Ok"),
-        });
     }
 }
