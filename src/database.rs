@@ -19,14 +19,15 @@
  */
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use async_trait::async_trait;
 use std::str::FromStr;
 
+use async_trait::async_trait;
 use log::{debug, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::FromRow;
 
-use crate::{types::AstarteType, AstarteDeviceSdk, AstarteError};
+use crate::utils;
+use crate::{types::AstarteType, AstarteError};
 
 /// Data structure providing an implementation of a sqlite database.
 ///
@@ -134,7 +135,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
                 return Ok(None);
             }
 
-            let data = AstarteDeviceSdk::deserialize(&res.0)?;
+            let data = utils::deserialize(&res.0)?;
 
             match data {
                 crate::Aggregation::Individual(data) => Ok(Some(data)),
@@ -203,7 +204,7 @@ impl AstarteSqliteDatabase {
 #[cfg(test)]
 mod test {
     use crate::database::AstarteDatabase;
-    use crate::AstarteDeviceSdk;
+    use crate::utils;
     use crate::{database::AstarteSqliteDatabase, database::StoredProp, types::AstarteType};
 
     #[tokio::test]
@@ -215,7 +216,7 @@ mod test {
         let db = AstarteSqliteDatabase::new(path).await.unwrap();
 
         let ty = AstarteType::Integer(23);
-        let ser = AstarteDeviceSdk::serialize_individual(&ty, None).unwrap();
+        let ser = utils::serialize_individual(&ty, None).unwrap();
 
         db.clear().await.unwrap();
 
