@@ -24,12 +24,12 @@ use std::fmt::Debug;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use log::debug;
 use pairing::PairingError;
 
 use crate::crypto::Error as CryptoError;
+use crate::database::memory::MemoryStore;
 use crate::database::AstarteDatabase;
 use crate::interface;
 use crate::interfaces::Interfaces;
@@ -76,18 +76,18 @@ pub enum AstarteOptionsError {
 /// Structure used to store the configuration options for an instance of
 /// [AstarteDeviceSdk][crate::AstarteDeviceSdk].
 #[derive(Clone)]
-pub struct AstarteOptions {
+pub struct AstarteOptions<DB> {
     pub(crate) realm: String,
     pub(crate) device_id: String,
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
     pub(crate) interfaces: Interfaces,
-    pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
+    pub(crate) database: DB,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
 }
 
-impl Debug for AstarteOptions {
+impl<DB> Debug for AstarteOptions<DB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("realm", &self.realm)
@@ -103,7 +103,7 @@ impl Debug for AstarteOptions {
     }
 }
 
-impl AstarteOptions {
+impl AstarteOptions<MemoryStore> {
     /// Create a new instance of the astarte options.
     ///
     /// ```no_run
@@ -124,22 +124,35 @@ impl AstarteOptions {
     /// }
     /// ```
     pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
-        AstarteOptions {
+        Self {
             realm: realm.to_owned(),
             device_id: device_id.to_owned(),
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
             interfaces: Interfaces::new(),
-            database: None,
+            database: MemoryStore::new(),
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
         }
     }
+}
 
+impl<DB> AstarteOptions<DB> {
     /// Add a database to the astarte options.
-    pub fn database<T: AstarteDatabase + 'static + Sync + Send>(mut self, database: T) -> Self {
-        self.database = Some(Arc::new(database));
-        self
+    pub fn database<T>(self, database: T) -> AstarteOptions<T>
+    where
+        T: AstarteDatabase,
+    {
+        AstarteOptions {
+            realm: self.realm,
+            device_id: self.device_id,
+            credentials_secret: self.credentials_secret,
+            pairing_url: self.pairing_url,
+            interfaces: self.interfaces,
+            database,
+            ignore_ssl_errors: self.ignore_ssl_errors,
+            keepalive: self.keepalive,
+        }
     }
 
     /// Configure the keep alive timeout.

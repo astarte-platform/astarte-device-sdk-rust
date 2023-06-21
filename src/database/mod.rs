@@ -23,6 +23,7 @@ use async_trait::async_trait;
 pub use self::sqlite::SqliteStore;
 use crate::{types::AstarteType, AstarteError};
 
+pub mod memory;
 pub mod sqlite;
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase

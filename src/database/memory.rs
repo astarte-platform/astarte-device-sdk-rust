@@ -1,0 +1,185 @@
+// This file is part of Astarte.
+//
+// Copyright 2023 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! In memory store for the properties.
+
+use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+
+use async_trait::async_trait;
+use log::error;
+use tokio::sync::RwLock;
+
+use super::{AstarteDatabase, StoredProp};
+use crate::{types::AstarteType, AstarteError};
+
+/// Data structure providing an implementation of an in memory Key Value Store.
+///
+/// Can be used by an Astarte device to store variables while the device is running.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryStore {
+    // Tore the properties in memory
+    store: Arc<RwLock<HashMap<Key, Value>>>,
+}
+
+impl MemoryStore {
+    /// Creates an in memory Key Value Store for the Astarte device.
+    pub fn new() -> Self {
+        MemoryStore {
+            store: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl AstarteDatabase for MemoryStore {
+    async fn store_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        value: &AstarteType,
+        interface_major: i32,
+    ) -> Result<(), AstarteError> {
+        let key = Key::new(interface, path);
+
+        let mut store = self.store.write().await;
+
+        store
+            .entry(key)
+            .and_modify(|val| {
+                val.value = value.clone();
+                val.interface_major = interface_major;
+            })
+            .or_insert_with(|| Value {
+                value: value.clone(),
+                interface_major,
+            });
+
+        Ok(())
+    }
+
+    async fn load_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, AstarteError> {
+        let key = Key::new(interface, path);
+
+        // We need to drop the lock before calling delete_prop
+        let opt_val = {
+            let store = self.store.read().await;
+
+            store.get(&key).cloned()
+        };
+
+        match opt_val {
+            Some(value) if value.interface_major != interface_major => {
+                error!(
+                    "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
+                    interface, path, value.interface_major, interface_major
+                );
+
+                self.delete_prop(interface, path).await?;
+
+                Ok(None)
+            }
+            Some(value) => Ok(Some(value.value)),
+            None => Ok(None),
+        }
+    }
+
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), AstarteError> {
+        let key = Key::new(interface, path);
+
+        let mut store = self.store.write().await;
+
+        store.remove(&key);
+
+        Ok(())
+    }
+
+    async fn clear(&self) -> Result<(), AstarteError> {
+        let mut store = self.store.write().await;
+
+        store.clear();
+
+        Ok(())
+    }
+
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+        let store = self.store.read().await;
+
+        let props = store
+            .iter()
+            .map(|(key, value)| StoredProp {
+                interface: key.interface.clone(),
+                path: key.path.clone(),
+                value: value.value.clone(),
+                interface_major: value.interface_major,
+            })
+            .collect();
+
+        Ok(props)
+    }
+}
+
+/// Key for the in memory store, this let us customize the hash and equality, and use (&str, &str)
+/// to access the store.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct Key {
+    interface: String,
+    path: String,
+}
+
+impl Key {
+    /// Creates a new Key
+    fn new(interface: &str, path: &str) -> Self {
+        // NOTE: I cannot find a good way to not allocate those string, since the HashMap needs to
+        //       own the key
+        Key {
+            interface: interface.to_string(),
+            path: path.to_string(),
+        }
+    }
+}
+
+impl Display for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.interface, self.path)
+    }
+}
+
+/// Value for the memory store
+#[derive(Debug, Clone)]
+struct Value {
+    value: AstarteType,
+    interface_major: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+
+    #[tokio::test]
+    async fn test_db_sqlite() {
+        let db = MemoryStore::new();
+
+        test_db(db).await;
+    }
+}

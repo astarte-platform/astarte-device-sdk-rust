@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
     database::SqliteStore, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
-    AstarteError,
+    AstarteDeviceSdkSqlite, AstarteError,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,7 +34,10 @@ struct Config {
 }
 
 // Getter function for the property "name" of a sensor.
-async fn get_name_for_sensor(device: &AstarteDeviceSdk, sensor_n: i32) -> Result<String, String> {
+async fn get_name_for_sensor(
+    device: &AstarteDeviceSdkSqlite,
+    sensor_n: i32,
+) -> Result<String, String> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     let path = format!("/{sensor_n}/name");
 

@@ -37,7 +37,7 @@ use tokio::{task, time};
 
 use astarte_device_sdk::options::AstarteOptions;
 use astarte_device_sdk::types::AstarteType;
-use astarte_device_sdk::AstarteDeviceSdk;
+use astarte_device_sdk::{AstarteDeviceSdk, AstarteDeviceSdkMemory};
 
 mod mock_data_aggregate;
 mod mock_data_datastream;
@@ -229,7 +229,7 @@ async fn e2etest_impl() {
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_datastream_device_to_server(
-    device: &AstarteDeviceSdk,
+    device: &AstarteDeviceSdkMemory,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataDatastream::init();
@@ -318,7 +318,7 @@ async fn test_datastream_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_aggregate_device_to_server(
-    device: &AstarteDeviceSdk,
+    device: &AstarteDeviceSdkMemory,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataAggregate::init();
@@ -414,7 +414,7 @@ async fn test_aggregate_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_property_device_to_server(
-    device: &AstarteDeviceSdk,
+    device: &AstarteDeviceSdkMemory,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataProperty::init();
