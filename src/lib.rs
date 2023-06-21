@@ -240,24 +240,24 @@ impl AstarteDeviceSdk {
     ///     .unwrap()
     ///     .ignore_ssl_errors();
     ///
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: &AstarteOptions) -> Result<AstarteDeviceSdk, AstarteError> {
-        let mqtt_options = pairing::get_transport_config(opts).await?;
+    pub async fn new(opts: AstarteOptions) -> Result<AstarteDeviceSdk, AstarteError> {
+        let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
 
         let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
 
         let mut device = AstarteDeviceSdk {
-            realm: opts.realm.to_owned(),
-            device_id: opts.device_id.to_owned(),
+            realm: opts.realm,
+            device_id: opts.device_id,
             mqtt_options,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces.clone())),
-            database: opts.database.clone(),
+            interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces)),
+            database: opts.database,
         };
 
         device.wait_for_connack().await?;
@@ -418,7 +418,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     loop {
     ///         match device.handle_events().await {
@@ -626,7 +626,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     device
     ///         .unset("my.interface.name", "/endpoint/path",)
@@ -670,7 +670,7 @@ impl AstarteDeviceSdk {
     ///         .await
     ///         .unwrap();
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_").database(database);
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .get_property("my.interface.name", "/endpoint/path",)
@@ -744,7 +744,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let value: i32 = 42;
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
@@ -980,7 +980,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,

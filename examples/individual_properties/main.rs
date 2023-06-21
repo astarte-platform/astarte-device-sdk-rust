@@ -77,7 +77,7 @@ async fn main() -> Result<(), AstarteError> {
     .ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let mut device = AstarteDeviceSdk::new(&sdk_options).await?;
+    let mut device = AstarteDeviceSdk::new(sdk_options).await?;
     println!("Connection to Astarte established.");
 
     // Create an thread to transmit
