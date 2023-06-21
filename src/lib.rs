@@ -25,6 +25,7 @@ pub mod interface;
 mod interfaces;
 #[cfg(test)]
 mod mock;
+pub(crate) mod mqtt;
 pub mod options;
 pub mod pairing;
 pub mod registration;
@@ -55,6 +56,7 @@ use crate::database::{AstarteDatabase, StoredProp};
 use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::{Error as MappingError, MappingPath};
 use crate::interface::Ownership;
+use crate::mqtt::Payload;
 use crate::options::AstarteOptions;
 use crate::topic::{parse_topic, TopicError};
 use crate::types::AstarteType;
@@ -498,8 +500,10 @@ impl AstarteDeviceSdk {
                 .await
                 .get_property_major(interface, path)
             {
+                let data = utils::deserialize_individual(bdata)?;
+
                 database
-                    .store_prop(interface, path.as_str(), bdata, major_version)
+                    .store_prop(interface, path.as_str(), &data, major_version)
                     .await?;
 
                 // database selftest / sanity check for debug builds
@@ -603,8 +607,10 @@ impl AstarteDeviceSdk {
                     prop.interface, prop.path
                 );
 
+                let payload = Payload::from(prop.value).to_vec()?;
+
                 self.client
-                    .publish(topic, rumqttc::QoS::ExactlyOnce, false, prop.value)
+                    .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
                     .await?;
             }
         }
@@ -654,13 +660,13 @@ impl AstarteDeviceSdk {
     ///
     /// ```no_run
     /// use astarte_device_sdk::{
-    ///     AstarteDeviceSdk, database::AstarteSqliteDatabase, options::AstarteOptions,
+    ///     AstarteDeviceSdk, database::sqlite::SqliteStore, options::AstarteOptions,
     ///     types::AstarteType
     /// };
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let database = AstarteSqliteDatabase::new("path/to/database/file.sqlite")
+    ///     let database = SqliteStore::new("path/to/database/file.sqlite")
     ///         .await
     ///         .unwrap();
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_").database(database);
@@ -885,9 +891,7 @@ impl AstarteDeviceSdk {
                 interface::Error::MappingNotFound,
             ))?;
 
-        let bin = utils::serialize_individual(&data, None)?;
-
-        db.store_prop(interface_name, interface_path, &bin, interface_major)
+        db.store_prop(interface_name, interface_path, &data, interface_major)
             .await?;
 
         debug!("Stored new property in database");

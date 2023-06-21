@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::AstarteSqliteDatabase, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
+    database::SqliteStore, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
     AstarteError,
 };
 
@@ -63,9 +63,7 @@ async fn main() -> Result<(), AstarteError> {
     let cfg: Config = serde_json::from_str(&file).unwrap();
 
     // Open the database, create it if it does not exists
-    let db =
-        AstarteSqliteDatabase::new("./examples/individual_properties/astarte-example-db.sqlite")
-            .await?;
+    let db = SqliteStore::new("./examples/individual_properties/astarte-example-db.sqlite").await?;
 
     // Create Astarte Options
     let sdk_options = AstarteOptions::new(
@@ -79,7 +77,7 @@ async fn main() -> Result<(), AstarteError> {
     .ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let mut device = astarte_device_sdk::AstarteDeviceSdk::new(&sdk_options).await?;
+    let mut device = AstarteDeviceSdk::new(&sdk_options).await?;
     println!("Connection to Astarte established.");
 
     // Create an thread to transmit

@@ -68,6 +68,25 @@ pub fn serialize(
     Ok(buf)
 }
 
+pub fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, AstarteError> {
+    if bdata.is_empty() {
+        trace!("empty document");
+
+        return Ok(AstarteType::Unset);
+    }
+
+    let mut document: bson::Document = bson::from_slice(bdata)?;
+
+    trace!("{:?}", document);
+
+    // Take the value without cloning
+    let value = document
+        .remove("v")
+        .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+
+    AstarteType::try_from(value)
+}
+
 pub fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
     if bdata.is_empty() {
         return Ok(Aggregation::Individual(AstarteType::Unset));
