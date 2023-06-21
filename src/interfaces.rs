@@ -18,7 +18,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    borrow::Borrow,
+    collections::{hash_map::Entry, HashMap},
+    ops::Deref,
+};
 
 use itertools::Itertools;
 use log::debug;
@@ -28,6 +32,27 @@ use crate::{
     types::AstarteType,
     utils, Aggregation, AstarteError, Interface,
 };
+
+/// Struct to hold a reference to an interface, which is a property.
+///
+/// This type can be use to guaranty that the interface is a property when accessed from the
+/// [`Interfaces`] struct with the [get_property](`Interfaces::get_property`) method.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PropertyRef<'a>(&'a Interface);
+
+impl<'a> Borrow<Interface> for PropertyRef<'a> {
+    fn borrow(&self) -> &Interface {
+        self.0
+    }
+}
+
+impl<'a> Deref for PropertyRef<'a> {
+    type Target = Interface;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -127,12 +152,12 @@ impl Interfaces {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<&Interface> {
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
         self.interfaces.get(interface_name).and_then(|interface| {
             if !interface.is_property() {
                 None
             } else {
-                Some(interface)
+                Some(PropertyRef(interface))
             }
         })
     }
@@ -146,16 +171,6 @@ impl Interfaces {
         self.interfaces
             .get(interface_name)
             .and_then(|interface| interface.mapping(interface_path))
-    }
-
-    /// Get a property mapping
-    pub(crate) fn get_propertiy_mapping<'a: 's, 's>(
-        &'s self,
-        interface: &str,
-        path: &MappingPath<'a>,
-    ) -> Option<Mapping> {
-        self.get_property(interface)
-            .and_then(|interface| interface.mapping(path))
     }
 
     pub(crate) fn get_mqtt_reliability(

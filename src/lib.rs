@@ -56,6 +56,7 @@ use crate::database::{AstarteDatabase, StoredProp};
 use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::{Error as MappingError, MappingPath};
 use crate::interface::Ownership;
+use crate::interfaces::PropertyRef;
 use crate::mqtt::Payload;
 use crate::options::AstarteOptions;
 use crate::topic::{parse_topic, TopicError};
@@ -465,8 +466,9 @@ where
 
                             debug!("Incoming publish = {} {:?}", publish.topic, bdata);
 
-                            self.store_property_in_database(interface, &path, &bdata)
-                                .await?;
+                            let data = utils::deserialize(&bdata)?;
+
+                            self.handle_payload(interface, &path, &data).await?;
 
                             if cfg!(debug_assertions) {
                                 self.interfaces
@@ -474,8 +476,6 @@ where
                                     .await
                                     .validate_receive(interface, &path, &bdata)?;
                             }
-
-                            let data = utils::deserialize(&bdata)?;
 
                             return Ok(AstarteDeviceDataEvent {
                                 interface: interface.to_string(),
@@ -491,51 +491,69 @@ where
         }
     }
 
-    async fn store_property_in_database<'a>(
+    /// Handles a payload received from the broker.
+    async fn handle_payload<'a>(
         &self,
         interface: &str,
         path: &MappingPath<'a>,
-        bdata: &[u8],
+        payload: &Aggregation,
     ) -> Result<(), AstarteError> {
-        let magior_version = self
-            .interfaces
-            .read()
-            .await
-            .get_property_major(interface, path);
+        match payload {
+            Aggregation::Object(_) => Ok(()),
+            Aggregation::Individual(ref data) => {
+                let r_interfaces = self.interfaces.read().await;
+                let interface = r_interfaces
+                    .get_property(interface)
+                    .filter(|interface| interface.mapping(path).is_some());
 
-        // if it's a property
-        let major_version = match magior_version {
-            Some(major_version) => major_version,
-            None => return Ok(()),
-        };
+                if let Some(property) = interface {
+                    self.store_property_in_database(property, path, data)
+                        .await?;
+                }
 
-        let data = utils::deserialize_individual(bdata)?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Store the property in the database.
+    async fn store_property_in_database<'a>(
+        &self,
+        interface: PropertyRef<'a>,
+        path: &MappingPath<'a>,
+        data: &AstarteType,
+    ) -> Result<(), AstarteError> {
+        debug_assert!(interface.is_property());
+        debug_assert!(interface.mapping(path).is_some());
+
+        let interface_name = interface.interface_name();
+        let major_version = interface.version_major();
 
         self.database
-            .store_prop(interface, path.as_str(), &data, major_version)
+            .store_prop(
+                interface.interface_name(),
+                path.as_str(),
+                data,
+                major_version,
+            )
             .await?;
 
         // database self-test / sanity check for debug builds
         if cfg!(debug_assertions) {
-            let original = utils::deserialize(bdata)?;
-            if let Aggregation::Individual(data) = original {
-                let stored_prop = self
-                    .database
-                    .load_prop(interface, path.as_str(), major_version)
-                    .await
-                    .expect("load_prop failed")
-                    .expect("property wasn't correctly saved in the database");
+            let stored_prop = self
+                .database
+                .load_prop(interface_name, path.as_str(), major_version)
+                .await
+                .expect("load_prop failed")
+                .expect("property wasn't correctly saved in the database");
 
-                assert!(data == stored_prop);
-                let prop = self
-                    .property(interface, path)
-                    .await?
-                    .expect("property wasn't correctly saved in the database");
-                assert!(data == prop);
-                trace!("database test ok");
-            } else {
-                panic!("This should be impossible, can't have object properties");
-            }
+            assert_eq!(*data, stored_prop);
+            let prop = self
+                .property(interface_name, path)
+                .await?
+                .expect("property wasn't correctly saved in the database");
+            assert_eq!(*data, prop);
+            trace!("database test ok");
         }
 
         Ok(())
@@ -839,11 +857,15 @@ where
 
         let interfaces = self.interfaces.read().await;
 
-        interfaces
-            .get_propertiy_mapping(interface_name, &interface_path.try_into()?)
-            .ok_or_else(|| {
-                AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
-            })?;
+        // Check the property exists
+        let prop = interfaces.get_property(interface_name).ok_or_else(|| {
+            AstarteError::SendError(format!("Property {interface_name} doesn't exist"))
+        })?;
+        // Check the mapping exists
+        let mapping = MappingPath::try_from(interface_path)?;
+        prop.mapping(&mapping).ok_or_else(|| {
+            AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
+        })?;
 
         // Check if already in db
         let is_present = self
