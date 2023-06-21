@@ -20,10 +20,11 @@
 //! Provides Astarte specific types to be used by the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receivedata to/from the Astarte cluster.
 
-use std::convert::TryInto;
+use std::convert::TryFrom;
 
 use bson::{Binary, Bson};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::interface::MappingType;
 use crate::AstarteError;
@@ -49,7 +50,8 @@ use crate::AstarteError;
 ///
 /// For more information about the types supported by Astarte see the
 /// [documentation](https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "Bson", into = "Bson")]
 pub enum AstarteType {
     Double(f64),
     Integer(i32),
@@ -57,7 +59,7 @@ pub enum AstarteType {
     LongInteger(i64),
     String(String),
     BinaryBlob(Vec<u8>),
-    DateTime(chrono::DateTime<chrono::Utc>),
+    DateTime(DateTime<Utc>),
 
     DoubleArray(Vec<f64>),
     IntegerArray(Vec<i32>),
@@ -65,7 +67,7 @@ pub enum AstarteType {
     LongIntegerArray(Vec<i64>),
     StringArray(Vec<String>),
     BinaryBlobArray(Vec<Vec<u8>>),
-    DateTimeArray(Vec<chrono::DateTime<chrono::Utc>>),
+    DateTimeArray(Vec<DateTime<Utc>>),
 
     Unset,
 }
@@ -155,7 +157,7 @@ impl_type_conversion_traits!({
 });
 
 // we implement float types on the side since they have different requirements
-impl std::convert::TryFrom<f32> for AstarteType {
+impl TryFrom<f32> for AstarteType {
     type Error = AstarteError;
 
     fn try_from(d: f32) -> Result<Self, Self::Error> {
@@ -166,7 +168,7 @@ impl std::convert::TryFrom<f32> for AstarteType {
     }
 }
 
-impl std::convert::TryFrom<f64> for AstarteType {
+impl TryFrom<f64> for AstarteType {
     type Error = AstarteError;
     fn try_from(d: f64) -> Result<Self, Self::Error> {
         if d.is_nan() || d.is_infinite() || d.is_subnormal() {
@@ -186,7 +188,7 @@ impl PartialEq<f64> for AstarteType {
     }
 }
 
-impl std::convert::TryFrom<Vec<f64>> for AstarteType {
+impl TryFrom<Vec<f64>> for AstarteType {
     type Error = AstarteError;
     fn try_from(d: Vec<f64>) -> Result<Self, Self::Error> {
         if d.iter()
@@ -231,7 +233,7 @@ macro_rules! impl_reverse_type_conversion_traits {
     }
 }
 
-impl std::convert::TryFrom<AstarteType> for f64 {
+impl TryFrom<AstarteType> for f64 {
     type Error = AstarteError;
     fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
         if let AstarteType::Double(val) = var {
@@ -244,7 +246,7 @@ impl std::convert::TryFrom<AstarteType> for f64 {
     }
 }
 
-impl std::convert::TryFrom<AstarteType> for i64 {
+impl TryFrom<AstarteType> for i64 {
     type Error = AstarteError;
     fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
         if let AstarteType::LongInteger(val) = var {
@@ -291,9 +293,9 @@ impl From<AstarteType> for Bson {
             AstarteType::LongIntegerArray(d) => d.iter().collect(),
             AstarteType::StringArray(d) => d.iter().collect(),
             AstarteType::BinaryBlobArray(d) => d
-                .iter()
-                .map(|d| Binary {
-                    bytes: d.clone(),
+                .into_iter()
+                .map(|bytes| Binary {
+                    bytes,
                     subtype: bson::spec::BinarySubtype::Generic,
                 })
                 .collect(),
@@ -349,7 +351,7 @@ macro_rules! from_bson_array {
     }};
 }
 
-impl std::convert::TryFrom<Bson> for AstarteType {
+impl TryFrom<Bson> for AstarteType {
     type Error = AstarteError;
 
     fn try_from(d: Bson) -> Result<Self, Self::Error> {
@@ -384,8 +386,7 @@ impl std::convert::TryFrom<Bson> for AstarteType {
 
 impl AstarteType {
     pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, AstarteError> {
-        let vec = d.iter().map(|f| f.clone().try_into());
-        vec.collect()
+        d.into_iter().map(AstarteType::try_from).collect()
     }
 }
 
