@@ -54,6 +54,7 @@ use std::sync::Arc;
 use crate::database::{AstarteDatabase, StoredProp};
 use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::{Error as MappingError, MappingPath};
+use crate::interface::Ownership;
 use crate::options::AstarteOptions;
 use crate::topic::{parse_topic, TopicError};
 use crate::types::AstarteType;
@@ -585,28 +586,26 @@ impl AstarteDeviceSdk {
             let interfaces = self.interfaces.read().await;
             let device_owned_properties: Vec<StoredProp> = properties
                 .into_iter()
-                .filter(|prop| {
-                    interfaces.get_ownership(&prop.interface)
-                        == Some(crate::interface::Ownership::Device)
+                .filter(|prop| match interfaces.get_property(&prop.interface) {
+                    Some(interface) => {
+                        interface.ownership() == Ownership::Device
+                            && interface.version_major() == prop.interface_major
+                    }
+                    None => false,
                 })
                 .collect();
+
             for prop in device_owned_properties {
                 let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
-                if let Some(version_major) = self.interfaces.read().await.get_property_major(
-                    &prop.interface,
-                    &MappingPath::try_from(prop.path.as_str())?,
-                ) {
-                    // ..and only if they are up-to-date
-                    if version_major == prop.interface_major {
-                        debug!(
-                            "sending device-owned property = {}{}",
-                            prop.interface, prop.path
-                        );
-                        self.client
-                            .publish(topic, rumqttc::QoS::ExactlyOnce, false, prop.value)
-                            .await?;
-                    }
-                }
+
+                debug!(
+                    "sending device-owned property = {}{}",
+                    prop.interface, prop.path
+                );
+
+                self.client
+                    .publish(topic, rumqttc::QoS::ExactlyOnce, false, prop.value)
+                    .await?;
             }
         }
 
