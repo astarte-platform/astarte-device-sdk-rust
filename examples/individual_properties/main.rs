@@ -18,11 +18,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::error::Error;
+
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::SqliteStore, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
-    AstarteDeviceSdkSqlite, AstarteError,
+    database::SqliteStore, error::AstarteError, options::AstarteOptions, types::AstarteType,
+    AstarteDeviceSdk, AstarteDeviceSdkSqlite,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -57,7 +59,7 @@ async fn get_name_for_sensor(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), AstarteError> {
+async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::init();
 
     // Load configuration

@@ -21,6 +21,7 @@
 
 pub mod crypto;
 pub mod database;
+pub mod error;
 pub mod interface;
 mod interfaces;
 #[cfg(test)]
@@ -33,33 +34,33 @@ mod topic;
 pub mod types;
 pub(crate) mod utils;
 
-#[cfg(test)]
-use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
-#[cfg(not(test))]
-use rumqttc::{AsyncClient, EventLoop};
-
 // Re-export rumqttc since we return its types in some methods
 pub use chrono;
 pub use rumqttc;
 
-use log::{debug, error, info, trace, warn};
-use rumqttc::{Event, MqttOptions};
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::database::{AstarteDatabase, StoredProp};
-use crate::interface::error::ValidationError;
-use crate::interface::mapping::path::{Error as MappingError, MappingPath};
+use log::{debug, error, info, trace, warn};
+use rumqttc::{Event, MqttOptions};
+
+#[cfg(test)]
+use crate::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
+#[cfg(not(test))]
+use rumqttc::{AsyncClient, EventLoop};
+
+use crate::database::{AstarteDatabase, Error as DatabaseError, StoredProp};
+use crate::error::AstarteError;
+use crate::interface::mapping::path::MappingPath;
 use crate::interface::Ownership;
 use crate::interfaces::PropertyRef;
 use crate::mqtt::Payload;
 use crate::options::AstarteOptions;
-use crate::topic::{parse_topic, TopicError};
+use crate::topic::parse_topic;
 use crate::types::AstarteType;
 
 // Re-exported for compatibility
@@ -82,7 +83,7 @@ pub trait AstarteAggregate {
     /// use std::collections::HashMap;
     /// use std::convert::TryInto;
     ///
-    /// use astarte_device_sdk::{types::AstarteType, AstarteError, AstarteAggregate};
+    /// use astarte_device_sdk::{types::AstarteType, error::AstarteError, AstarteAggregate};
     ///
     /// struct Person {
     ///     name: String,
@@ -141,72 +142,6 @@ pub struct AstarteDeviceSdk<DB> {
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
     database: DB,
-}
-
-/// Astarte error.
-///
-/// Possible errors returned by functions of the Astarte device SDK.
-#[derive(thiserror::Error, Debug)]
-pub enum AstarteError {
-    #[error("bson serialize error")]
-    BsonSerError(#[from] bson::ser::Error),
-
-    #[error("bson client error")]
-    BsonClientError(#[from] rumqttc::ClientError),
-
-    #[error("mqtt connection error")]
-    ConnectionError(#[from] rumqttc::ConnectionError),
-
-    #[error("malformed input from Astarte backend")]
-    DeserializationError(#[from] bson::de::Error),
-
-    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
-    DeserializationMissingValue(bson::Document),
-
-    #[error("error converting from Bson to AstarteType ({0})")]
-    FromBsonError(String),
-
-    #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
-    FromBsonArrayError,
-
-    #[error("forbidden floating point number")]
-    FloatError,
-
-    #[error("send error ({0})")]
-    SendError(String),
-
-    #[error("receive error ({0})")]
-    ReceiveError(String),
-
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
-
-    #[error("options error")]
-    OptionsError(#[from] options::AstarteOptionsError),
-
-    #[error(transparent)]
-    InterfaceError(#[from] interface::Error),
-
-    #[error("generic error ({0})")]
-    Reported(String),
-
-    #[error("generic error")]
-    Unreported,
-
-    #[error("conversion error")]
-    Conversion,
-
-    #[error("infallible error")]
-    Infallible(#[from] Infallible),
-
-    #[error("invalid topic {}",.0.topic())]
-    InvalidTopic(#[from] TopicError),
-
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
-
-    #[error("invalid interface added")]
-    InvalidInterface(#[from] ValidationError),
 }
 
 /// Payload format for an Astarte device event data.
@@ -530,13 +465,14 @@ where
         let major_version = interface.version_major();
 
         self.database
-            .store_prop(
+            .store_prop_impl(
                 interface.interface_name(),
                 path.as_str(),
                 data,
                 major_version,
             )
-            .await?;
+            .await
+            .map_err(|err| AstarteError::from(DatabaseError::<DB>::Store(err)))?;
 
         // database self-test / sanity check for debug builds
         if cfg!(debug_assertions) {
@@ -727,11 +663,11 @@ where
             .get_property_major(interface, path);
 
         match major {
-            Some(major) => {
-                self.database
-                    .load_prop(interface, path.as_str(), major)
-                    .await
-            }
+            Some(major) => self
+                .database
+                .load_prop(interface, path.as_str(), major)
+                .await
+                .map_err(AstarteError::from),
             None => Ok(None),
         }
     }

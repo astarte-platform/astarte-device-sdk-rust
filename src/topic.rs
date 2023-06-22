@@ -20,13 +20,13 @@
 
 use log::trace;
 
-use crate::{interface::mapping::path::MappingPath, AstarteError};
+use crate::{error::AstarteError, interface::mapping::path::MappingPath};
 
 /// Error returned when parsing a topic.
 ///
 /// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum TopicError {
+pub enum Error {
     #[error("topic is empty")]
     Empty,
     #[error(
@@ -35,11 +35,11 @@ pub enum TopicError {
     Malformed(String),
 }
 
-impl TopicError {
+impl Error {
     pub fn topic(&self) -> &str {
         match self {
-            TopicError::Empty => "",
-            TopicError::Malformed(topic) => topic,
+            Error::Empty => "",
+            Error::Malformed(topic) => topic,
         }
     }
 }
@@ -48,32 +48,32 @@ pub(crate) fn parse_topic(
     topic: &str,
 ) -> Result<(&str, &str, &str, MappingPath<'_>), AstarteError> {
     if topic.is_empty() {
-        return Err(TopicError::Empty.into());
+        return Err(Error::Empty.into());
     }
 
     let mut parts = topic.splitn(3, '/');
 
     let realm = parts
         .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+        .ok_or_else(|| Error::Malformed(topic.to_string()))?;
 
     trace!("realm: {}", realm);
 
     let device = parts
         .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+        .ok_or_else(|| Error::Malformed(topic.to_string()))?;
 
     trace!("device: {}", device);
 
     let rest = parts
         .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+        .ok_or_else(|| Error::Malformed(topic.to_string()))?;
 
     trace!("rest: {}", rest);
 
     let idx = rest
         .find('/')
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+        .ok_or_else(|| Error::Malformed(topic.to_string()))?;
 
     trace!("slash idx: {}", idx);
 
@@ -83,7 +83,7 @@ pub(crate) fn parse_topic(
     trace!("path: {}", path);
 
     if interface.is_empty() || path.is_empty() {
-        return Err(TopicError::Malformed(topic.to_string()).into());
+        return Err(Error::Malformed(topic.to_string()).into());
     }
 
     let path = MappingPath::try_from(path)?;
@@ -111,7 +111,7 @@ mod tests {
         let topic = "".to_owned();
         let err = parse_topic(&topic).unwrap_err();
 
-        assert!(matches!(err, AstarteError::InvalidTopic(TopicError::Empty)));
+        assert!(matches!(err, AstarteError::InvalidTopic(Error::Empty)));
     }
 
     #[test]
@@ -121,7 +121,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            AstarteError::InvalidTopic(TopicError::Malformed(_))
+            AstarteError::InvalidTopic(Error::Malformed(_))
         ));
     }
 }

@@ -18,13 +18,96 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
+use std::{error::Error as StdError, fmt::Debug};
+
 use async_trait::async_trait;
 
 pub use self::sqlite::SqliteStore;
-use crate::{types::AstarteType, AstarteError};
+use crate::types::AstarteType;
 
 pub mod memory;
 pub mod sqlite;
+
+/// Trait providing compatibility with Astarte devices to databases.
+///
+/// Any database implementing this trait can be used as permanent storage for the properties
+/// of an Astarte device.
+///
+/// This SDK provides an implementation of a sqlite database for which this trait has already
+/// been implemented, see [`AstarteSqliteDatabase`].
+#[async_trait]
+pub trait AstarteDatabase: Debug + Sync
+where
+    Self::Err: StdError,
+{
+    type Err;
+
+    /// Stores a property within the database.
+    async fn store_prop_impl(
+        &self,
+        interface: &str,
+        path: &str,
+        value: &AstarteType,
+        interface_major: i32,
+    ) -> Result<(), Self::Err>;
+    /// Load a property from the database.
+    async fn load_prop_impl(
+        &self,
+        interface: &str,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, Self::Err>;
+    /// Delete a property from the database.
+    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
+    /// Removes all saved properties from the database.
+    async fn clear_impl(&self) -> Result<(), Self::Err>;
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, Self::Err>;
+
+    /// Stores a property within the database.
+    async fn store_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        value: &AstarteType,
+        interface_major: i32,
+    ) -> Result<(), Error<Self>> {
+        self.store_prop_impl(interface, path, value, interface_major)
+            .await
+            .map_err(Error::Store)
+    }
+
+    /// Load a property from the database.
+    async fn load_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, Error<Self>> {
+        self.load_prop_impl(interface, path, interface_major)
+            .await
+            .map_err(Error::<Self>::Load)
+    }
+
+    /// Delete a property from the database.
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Error<Self>> {
+        self.delete_prop_impl(interface, path)
+            .await
+            .map_err(Error::Delete)
+    }
+
+    /// Removes all saved properties from the database.
+    async fn clear(&self) -> Result<(), Error<Self>> {
+        self.clear_impl().await.map_err(Error::Clear)
+    }
+
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<Self>> {
+        self.load_all_props_impl().await.map_err(Error::LoadAll)
+    }
+}
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
 /// trait.
@@ -36,44 +119,29 @@ pub struct StoredProp {
     pub interface_major: i32,
 }
 
-/// Trait providing compatibility with Astarte devices to databases.
-///
-/// Any database implementing this trait can be used as permanent storage for the properties
-/// of an Astarte device.
-///
-/// This SDK provides an implementation of a sqlite database for which this trait has already
-/// been implemented, see [`AstarteSqliteDatabase`].
-#[async_trait]
-pub trait AstarteDatabase {
-    /// Stores a property within the database.
-    async fn store_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), AstarteError>;
-    /// Load a property from the database.
-    async fn load_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        interface_major: i32,
-    ) -> Result<Option<AstarteType>, AstarteError>;
-    /// Delete a property from the database.
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), AstarteError>;
-    /// Removes all saved properties from the database.
-    async fn clear(&self) -> Result<(), AstarteError>;
-    /// Retrieves all property values in the database, together with their interface name, path
-    /// and major version.
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
+/// Error type returned by the [`AstarteDatabase`] trait.
+#[derive(Debug, thiserror::Error)]
+pub enum Error<D>
+where
+    D: AstarteDatabase + ?Sized + 'static,
+{
+    #[error("could not store property")]
+    Store(#[source] D::Err),
+    #[error("could not load property")]
+    Load(#[source] D::Err),
+    #[error("could not delete property")]
+    Delete(#[source] D::Err),
+    #[error("could not clear database")]
+    Clear(#[source] D::Err),
+    #[error("could not load all properties")]
+    LoadAll(#[source] D::Err),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    pub(crate) async fn test_db(db: impl AstarteDatabase) {
+    pub(crate) async fn test_db(db: impl AstarteDatabase + Sync) {
         let ty = AstarteType::Integer(23);
 
         db.clear().await.unwrap();

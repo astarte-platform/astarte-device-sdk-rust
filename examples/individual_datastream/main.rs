@@ -21,7 +21,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use astarte_device_sdk::{options::AstarteOptions, AstarteError};
+use astarte_device_sdk::{error::AstarteError, options::AstarteOptions};
 
 #[derive(Deserialize)]
 struct Config {

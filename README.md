@@ -26,14 +26,15 @@ for more information regarding Astarte and the available SDKs.
 ## Basic usage
 
 ```rust
+use std::error::Error;
+
 use astarte_device_sdk::{
     database::sqlite::SqliteStore,
     options::AstarteOptions,
     AstarteDeviceSdk,
-    AstarteError
 };
 
-async fn run_astarte_device() -> Result<(), AstarteError> {
+async fn run_astarte_device() -> Result<(), Box<dyn Error>> {
 
     let realm = "realm_name";
     let device_id = "device_id";
