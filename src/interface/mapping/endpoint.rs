@@ -38,7 +38,7 @@ use log::{debug, info, trace};
 /// - Two endpoints are equal if they have the same path
 /// - The path must start with a slash (`/`)
 /// - The minimum length is 2 character
-/// - It cannot contai the `+` and `#` characters
+/// - It cannot contain the `+` and `#` characters
 /// - A parameter cannot contain the `/` character
 ///
 /// For more information see [Astarte - Docs](https://docs.astarte-platform.org/astarte/latest/030-interface.html#limitations)
@@ -84,7 +84,7 @@ impl<'a> Endpoint<'a> {
             let ordering = match element {
                 EitherOrBoth::Left(_) => Ordering::Greater,
                 EitherOrBoth::Right(_) => Ordering::Less,
-                EitherOrBoth::Both(lvl, o_lvl) => lvl.cmp_level(o_lvl),
+                EitherOrBoth::Both(lvl, o_lvl) => lvl.cmp_str(o_lvl),
             };
 
             if ordering != Ordering::Equal {
@@ -95,35 +95,13 @@ impl<'a> Endpoint<'a> {
         Ordering::Equal
     }
 
-    // Returns the levels of an endpoint
+    // Returns the number of levels in an endpoint
     pub(crate) fn len(&self) -> usize {
         self.levels.len()
     }
 
-    #[cfg(test)]
-    pub(crate) fn eq_strict(&self, other: &Self) -> bool {
-        if self.path != other.path {
-            return false;
-        }
-
-        if self.levels.len() != other.levels.len() {
-            return false;
-        }
-
-        for (level, other_level) in self.levels.iter().zip(other.levels.iter()) {
-            match (level, other_level) {
-                (Level::Simple(a), Level::Simple(b))
-                | (Level::Parameter(a), Level::Parameter(b))
-                    if a == b => {}
-                _ => return false,
-            }
-        }
-
-        true
-    }
-
     /// Check that two endpoints are compatible with the same object.
-    pub(crate) fn is_same_object(&self, endpoint: &Endpoint) -> bool {
+    pub(crate) fn eq_till_last(&self, endpoint: &Endpoint) -> bool {
         if self.len() != endpoint.len() {
             return false;
         }
@@ -204,7 +182,7 @@ impl<'a> Level<'a> {
         }
     }
 
-    pub(crate) fn cmp_level(&self, other: &str) -> Ordering {
+    pub(crate) fn cmp_str(&self, other: &str) -> Ordering {
         match self {
             Self::Simple(level) => level.as_ref().cmp(other),
             Self::Parameter(_) => Ordering::Equal,
@@ -247,11 +225,11 @@ impl<'a> Ord for Level<'a> {
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum Error {
-    #[error("enpoint must start with a slash, got intesad: {0}")]
+    #[error("endpoint must start with a slash, got instead: {0}")]
     Prefix(String),
-    #[error("enpoint must contain at least a level: {0}")]
+    #[error("endpoint must contain at least a level: {0}")]
     Empty(String),
-    #[error("enpoint contains invalid level: {input}")]
+    #[error("endpoint contains invalid level: {input}")]
     Level {
         input: String,
         #[source]
@@ -286,7 +264,7 @@ pub enum LevelError {
 /// # We don't allow ending the endpoint with a '/'
 /// level: (parameter | simple ) ('/' | EOF)
 ///
-/// # A parameter is and escaped level
+/// # A parameter is an escaped simple level
 /// parameter: '%{' simple '}
 ///
 /// simple: simple_part+
@@ -400,6 +378,29 @@ fn parse_parameter(input: &str) -> Result<Option<&str>, LevelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl<'a> Endpoint<'a> {
+        pub(crate) fn eq_strict(&self, other: &Self) -> bool {
+            if self.path != other.path {
+                return false;
+            }
+
+            if self.levels.len() != other.levels.len() {
+                return false;
+            }
+
+            for (level, other_level) in self.levels.iter().zip(other.levels.iter()) {
+                match (level, other_level) {
+                    (Level::Simple(a), Level::Simple(b))
+                    | (Level::Parameter(a), Level::Parameter(b))
+                        if a == b => {}
+                    _ => return false,
+                }
+            }
+
+            true
+        }
+    }
 
     #[test]
     fn test_parse_parameter() {

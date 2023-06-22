@@ -66,7 +66,7 @@ impl Interfaces {
         Ok(ints)
     }
 
-    /// Inserts and interface and returns the previous one if present.
+    /// Inserts an interface and returns the previous one if present.
     ///
     /// ## Error
     ///

@@ -113,8 +113,9 @@ impl Interface {
     /// Returns the interface type.
     pub fn interface_type(&self) -> InterfaceType {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(_) => InterfaceType::Datastream,
-            InterfaceIml::DatastreamObject(_) => InterfaceType::Datastream,
+            InterfaceIml::DatastreamIndividual(_) | InterfaceIml::DatastreamObject(_) => {
+                InterfaceType::Datastream
+            }
             InterfaceIml::Properties(_) => InterfaceType::Properties,
         }
     }
@@ -127,9 +128,10 @@ impl Interface {
     /// Returns the interface aggregation.
     pub fn aggregation(&self) -> Aggregation {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(_) => Aggregation::Individual,
+            InterfaceIml::Properties(_) | InterfaceIml::DatastreamIndividual(_) => {
+                Aggregation::Individual
+            }
             InterfaceIml::DatastreamObject(_) => Aggregation::Object,
-            InterfaceIml::Properties(_) => Aggregation::Individual,
         }
     }
 
@@ -414,7 +416,7 @@ impl DatastreamObject {
         // Check if the first element exists
         if let Some((_, entry)) = self.mappings.iter().next() {
             // Check that the mapping has the same endpoint as the other mappings
-            if !entry.endpoint().is_same_object(mapping.endpoint()) {
+            if !entry.endpoint().eq_till_last(mapping.endpoint()) {
                 return Err(Error::InconsistentEndpoints);
             }
         }

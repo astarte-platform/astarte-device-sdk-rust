@@ -50,7 +50,7 @@ fn is_zero(value: &i32) -> bool {
     *value == 0
 }
 
-/// The structures is a direct mapping of the JSON schema, they are then transformed in our
+/// The structure is a direct mapping of the JSON schema, they are then transformed in our
 /// internal representation of [Interface](crate::interface::Interface) when de-serializing using
 /// [`TryFrom`].
 ///
@@ -78,8 +78,17 @@ pub(super) struct InterfaceDef<'a> {
     pub(super) mappings: Vec<Mapping<'a>>,
 }
 
-/// This is the serialized representation of a mapping, it should be used for serialization and
-/// deserialization only. For the internal representation of a mapping see [`super::Mapping`].
+/// Represents, the JSON of a mapping. It includes all the fields available for a mapping, but it
+/// it is validated when built with the [`TryFrom`]. It uniforms the different types of mappings
+/// like [`super::mapping::DatastreamIndividualMapping`], [`DatastreamObject`] mappings and
+/// [`super::mapping::PropertiesMapping`] in a single struct.
+///
+/// Since it's a 1:1 representation of the JSON it is used for serialization and deserialization,
+/// and then is converted to the internal representation of the mapping with the [`TryFrom`] and
+/// [`From`] traits of the [`InterfaceDef`].
+//
+/// You can find the specification here
+/// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Mapping<'a> {
     pub(super) endpoint: &'a str,
@@ -276,7 +285,7 @@ pub enum Ownership {
     Server,
 }
 
-/// Ownership of an interface.
+/// Aggregation of interface's mappings.
 ///
 /// See [Interface Schema](https://docs.astarte-platform.org/latest/040-interface_schema.html#reference-astarte-interface-schema)
 /// for more information.
