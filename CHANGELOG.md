@@ -1,17 +1,21 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.0] - Unreleased
 ### Added
 - Support for different case conventions on `AstarteAggregate` derive macro
   ([#126](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/126)).
+- Add support for in-memory `MemoryStore` properties if no database is provided
+- Make `AstarteDeviceSdk` generic over the store type
+- Provide type aliases for `AstarteDeviceSdk` with `MemoryStore` and `SqliteStore`
 
 ### Changed
 - Expose `pairing::PairingError` to public visibility.
 - Bump `MSRV` to 1.66.1.
+- Renamed the `AstarteSqliteDatabase` into `SqliteStore`
 
 ## [0.5.1] - 2023-02-06
 ### Fixed
