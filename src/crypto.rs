@@ -18,8 +18,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Crypto module to generate the CSR to authenticate the device to the Astarte.
+
 use std::str::FromStr;
 
+#[cfg(feature = "openssl")]
+use openssl::{
+    ec::{EcGroup, EcKey},
+    hash::MessageDigest,
+    nid::Nid,
+    pkey::PKey,
+    x509::{X509NameBuilder, X509ReqBuilder},
+};
 use p384::{
     ecdsa::{DerSignature, SigningKey},
     pkcs8::{EncodePrivateKey, LineEnding},
@@ -53,22 +63,18 @@ pub enum Error {
     Utf8(#[from] std::string::FromUtf8Error),
 }
 
-#[cfg(windows)]
-const LINE_ENDING: LineEnding = LineEnding::CRLF;
-
-#[cfg(not(windows))]
-const LINE_ENDING: LineEnding = LineEnding::LF;
-
 /// Generate a Certificate and CSR bundle in PEM format.
 #[derive(Debug)]
-pub struct Bundle {
+pub(crate) struct Bundle {
     pub private_key: PrivateKey,
     /// PEM encoded CSR
     pub csr: String,
 }
 
 impl Bundle {
-    pub fn new(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+    pub(crate) fn new(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+        // This is written this way so when all features are enable, the generate_key function is
+        // not marked as unused. The if will be optimized out by the compiler in release.
         if cfg!(feature = "openssl") {
             #[cfg(feature = "openssl")]
             return Self::openssl_key(realm, device_id);
@@ -77,7 +83,7 @@ impl Bundle {
         Self::generate_key(realm, device_id)
     }
 
-    pub fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
         // The realm/device_id for the certificate
         let subject = Name::from_str(&format!("CN={}/{}", realm, device_id))?;
 
@@ -89,7 +95,8 @@ impl Bundle {
 
         let csr = RequestBuilder::new(subject, &signer)?
             .build::<DerSignature>()?
-            .to_pem(LINE_ENDING)?;
+            // Platform dependant line ending
+            .to_pem(LineEnding::default())?;
 
         // The private_key is held into a Zeroing wrapper as a security measure so that the key is
         // note kept in memory. We nee to extract the key from the wrapper to use it normally.
@@ -101,15 +108,7 @@ impl Bundle {
     }
 
     #[cfg(feature = "openssl")]
-    pub fn openssl_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
-        use openssl::{
-            ec::{EcGroup, EcKey},
-            hash::MessageDigest,
-            nid::Nid,
-            pkey::PKey,
-            x509::{X509NameBuilder, X509ReqBuilder},
-        };
-
+    pub(crate) fn openssl_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
         let group = EcGroup::from_curve_name(Nid::SECP384R1)?;
         let ec_key = EcKey::generate(&group)?;
 
@@ -136,9 +135,11 @@ impl Bundle {
 
 #[cfg(test)]
 mod tests {
+    use ecdsa::SigningKey;
     use p384::{
         ecdsa::{signature::Verifier, Signature, VerifyingKey},
         pkcs8::DecodePrivateKey,
+        SecretKey,
     };
     use x509_cert::{
         der::{DecodePem, Encode},
