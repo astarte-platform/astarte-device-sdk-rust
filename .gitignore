@@ -7,3 +7,5 @@
 
 # Databases used for the examples
 astarte-example-db.*
+
+/.pre-commit-config.yaml
