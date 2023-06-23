@@ -33,7 +33,7 @@ use crate::{
     Interface,
 };
 
-use super::{DatabaseRetention, Error, InterfaceIml, Retention};
+use super::{DatabaseRetention, Error, InterfaceType, Retention};
 
 /// Utility to skip default value
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -67,7 +67,7 @@ pub(super) struct InterfaceDef<'a> {
     pub(super) version_major: i32,
     pub(super) version_minor: i32,
     #[serde(rename = "type")]
-    pub(super) interface_type: InterfaceType,
+    pub(super) interface_type: InterfaceTypeDef,
     pub(super) ownership: Ownership,
     #[serde(default, skip_serializing_if = "is_default")]
     pub(super) aggregation: Aggregation,
@@ -236,15 +236,15 @@ impl<'a> TryFrom<InterfaceDef<'a>> for Interface {
 
     fn try_from(def: InterfaceDef<'a>) -> Result<Self, Self::Error> {
         let inner = match def.interface_type {
-            InterfaceType::Datastream => match def.aggregation {
+            InterfaceTypeDef::Datastream => match def.aggregation {
                 Aggregation::Individual => {
-                    InterfaceIml::DatastreamIndividual(DatastreamIndividual::try_from(&def)?)
+                    InterfaceType::DatastreamIndividual(DatastreamIndividual::try_from(&def)?)
                 }
                 Aggregation::Object => {
-                    InterfaceIml::DatastreamObject(DatastreamObject::try_from(&def)?)
+                    InterfaceType::DatastreamObject(DatastreamObject::try_from(&def)?)
                 }
             },
-            InterfaceType::Properties => InterfaceIml::Properties(Properties::try_from(&def)?),
+            InterfaceTypeDef::Properties => InterfaceType::Properties(Properties::try_from(&def)?),
         };
 
         let interface = Interface {
@@ -269,7 +269,7 @@ impl<'a> TryFrom<InterfaceDef<'a>> for Interface {
 /// for more information.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
-pub enum InterfaceType {
+pub enum InterfaceTypeDef {
     Datastream,
     Properties,
 }

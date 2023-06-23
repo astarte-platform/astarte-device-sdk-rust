@@ -35,7 +35,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 pub(crate) use self::def::{
-    Aggregation, InterfaceType, Mapping, MappingType, Ownership, Reliability,
+    Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
 pub use self::error::Error;
 use self::{
@@ -79,7 +79,7 @@ pub struct Interface {
     ownership: Ownership,
     description: Option<String>,
     doc: Option<String>,
-    inner: InterfaceIml,
+    inner: InterfaceType,
 }
 
 impl Interface {
@@ -111,12 +111,12 @@ impl Interface {
     }
 
     /// Returns the interface type.
-    pub fn interface_type(&self) -> InterfaceType {
+    pub fn interface_type(&self) -> InterfaceTypeDef {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(_) | InterfaceIml::DatastreamObject(_) => {
-                InterfaceType::Datastream
+            InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => {
+                InterfaceTypeDef::Datastream
             }
-            InterfaceIml::Properties(_) => InterfaceType::Properties,
+            InterfaceType::Properties(_) => InterfaceTypeDef::Properties,
         }
     }
 
@@ -128,10 +128,10 @@ impl Interface {
     /// Returns the interface aggregation.
     pub fn aggregation(&self) -> Aggregation {
         match &self.inner {
-            InterfaceIml::Properties(_) | InterfaceIml::DatastreamIndividual(_) => {
+            InterfaceType::Properties(_) | InterfaceType::DatastreamIndividual(_) => {
                 Aggregation::Individual
             }
-            InterfaceIml::DatastreamObject(_) => Aggregation::Object,
+            InterfaceType::DatastreamObject(_) => Aggregation::Object,
         }
     }
 
@@ -149,32 +149,32 @@ impl Interface {
 
     pub(crate) fn properties(&self) -> Option<&Properties> {
         match &self.inner {
-            InterfaceIml::Properties(properties) => Some(properties),
+            InterfaceType::Properties(properties) => Some(properties),
             _ => None,
         }
     }
 
     pub(crate) fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(individual) => individual.mapping(path),
-            InterfaceIml::DatastreamObject(object) => object.mapping(path),
-            InterfaceIml::Properties(properties) => properties.mapping(path),
+            InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
+            InterfaceType::DatastreamObject(object) => object.mapping(path),
+            InterfaceType::Properties(properties) => properties.mapping(path),
         }
     }
 
     pub(crate) fn contains(&self, path: &MappingPath<'_>) -> bool {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(individual) => individual.contains(path),
-            InterfaceIml::DatastreamObject(object) => object.contains(path),
-            InterfaceIml::Properties(properties) => properties.contains(path),
+            InterfaceType::DatastreamIndividual(individual) => individual.contains(path),
+            InterfaceType::DatastreamObject(object) => object.contains(path),
+            InterfaceType::Properties(properties) => properties.contains(path),
         }
     }
 
     pub fn mappings_len(&self) -> usize {
         match &self.inner {
-            InterfaceIml::DatastreamIndividual(datastream) => datastream.mappings.len(),
-            InterfaceIml::DatastreamObject(datastream) => datastream.mappings.len(),
-            InterfaceIml::Properties(properties) => properties.mappings.len(),
+            InterfaceType::DatastreamIndividual(datastream) => datastream.mappings.len(),
+            InterfaceType::DatastreamObject(datastream) => datastream.mappings.len(),
+            InterfaceType::Properties(properties) => properties.mappings.len(),
         }
     }
 
@@ -188,7 +188,7 @@ impl Interface {
     }
 
     pub fn is_property(&self) -> bool {
-        matches!(self.inner, InterfaceIml::Properties(_))
+        matches!(self.inner, InterfaceType::Properties(_))
     }
 
     /// Getter function for the interface name.
@@ -287,7 +287,7 @@ impl Display for Interface {
 /// This is not a direct representation of only the mapping to permit extensibility of specific
 /// properties present only in some aggregations.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum InterfaceIml {
+pub(crate) enum InterfaceType {
     DatastreamIndividual(DatastreamIndividual),
     DatastreamObject(DatastreamObject),
     Properties(Properties),
@@ -616,7 +616,7 @@ mod tests {
         interface::{
             def::{DatabaseRetentionPolicyDef, RetentionDef},
             mapping::{path::MappingPath, BaseMapping, DatastreamIndividualMapping},
-            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceIml, InterfaceType,
+            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
             Mapping, MappingMap, MappingType, Ownership, Reliability, Retention,
         },
         Interface,
@@ -721,7 +721,7 @@ mod tests {
             ownership,
             description,
             doc,
-            inner: InterfaceIml::DatastreamIndividual(datastream_individual),
+            inner: InterfaceType::DatastreamIndividual(datastream_individual),
         };
 
         let deser_interface = Interface::from_str(INTERFACE_JSON).unwrap();
@@ -826,7 +826,7 @@ mod tests {
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.aggregation(), Aggregation::Individual);
-        assert_eq!(interface.interface_type(), InterfaceType::Datastream);
+        assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
         assert_eq!(interface.doc(), Some("Interface doc"));
         assert!(interface.properties().is_none());
     }

@@ -20,7 +20,7 @@
 
 use std::{collections::btree_map::Values, iter::FusedIterator};
 
-use crate::interface::{DatastreamObject, InterfaceIml, Mapping, MappingMap, MappingPath};
+use crate::interface::{DatastreamObject, InterfaceType, Mapping, MappingMap, MappingPath};
 
 use super::{BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
 
@@ -33,13 +33,13 @@ pub(crate) enum MappingIter<'a> {
 }
 
 impl<'a> MappingIter<'a> {
-    pub(crate) fn new(interface: &'a InterfaceIml) -> Self {
+    pub(crate) fn new(interface: &'a InterfaceType) -> Self {
         match interface {
-            InterfaceIml::DatastreamIndividual(individual) => {
+            InterfaceType::DatastreamIndividual(individual) => {
                 Self::Individual(individual.iter_mappings())
             }
-            InterfaceIml::DatastreamObject(object) => Self::Object(object.iter_mappings()),
-            InterfaceIml::Properties(properties) => Self::Properties(properties.iter_mappings()),
+            InterfaceType::DatastreamObject(object) => Self::Object(object.iter_mappings()),
+            InterfaceType::Properties(properties) => Self::Properties(properties.iter_mappings()),
         }
     }
 }
