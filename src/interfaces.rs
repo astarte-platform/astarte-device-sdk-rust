@@ -348,8 +348,8 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interfaces::Interfaces, m, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
-        Interface,
+        interfaces::Interfaces, mapping, options::AstarteOptions, types::AstarteType,
+        AstarteDeviceSdk, Interface,
     };
 
     #[test]
@@ -380,26 +380,26 @@ mod test {
         ifa.add(deser_interface).expect("valid interface");
 
         assert!(
-            ifa.get_property_major("org.astarte-platform.test.test", m!("/button"))
+            ifa.get_property_major("org.astarte-platform.test.test", mapping!("/button"))
                 .unwrap()
                 == 12
         );
         assert!(
-            ifa.get_property_major("org.astarte-platform.test.test", m!("/uptimeSeconds"))
+            ifa.get_property_major("org.astarte-platform.test.test", mapping!("/uptimeSeconds"))
                 .unwrap()
                 == 12
         );
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", m!("/button/foo"))
+            .get_property_major("org.astarte-platform.test.test", mapping!("/button/foo"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", m!("/buttonfoo"))
+            .get_property_major("org.astarte-platform.test.test", mapping!("/buttonfoo"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", m!("/foo/button"))
+            .get_property_major("org.astarte-platform.test.test", mapping!("/foo/button"))
             .is_none());
         assert!(ifa
-            .get_property_major("org.astarte-platform.test.test", m!("/obj"))
+            .get_property_major("org.astarte-platform.test.test", mapping!("/obj"))
             .is_none());
 
         let interface_json = r#"{
@@ -435,7 +435,7 @@ mod test {
         assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                m!("/1/enable")
+                mapping!("/1/enable")
             )
             .unwrap(),
             12
@@ -443,7 +443,7 @@ mod test {
         assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                m!("/999999/enable")
+                mapping!("/999999/enable")
             )
             .unwrap(),
             12
@@ -451,7 +451,7 @@ mod test {
         assert_eq!(
             ifa.get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                m!("/foobar/enable")
+                mapping!("/foobar/enable")
             )
             .unwrap(),
             12
@@ -459,13 +459,13 @@ mod test {
         assert!(ifa
             .get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                m!("/foo/bar/enable")
+                mapping!("/foo/bar/enable")
             )
             .is_none());
         assert!(ifa
             .get_property_major(
                 "org.astarte-platform.genericsensors.SamplingRate",
-                m!("/obj")
+                mapping!("/obj")
             )
             .is_none());
     }
@@ -646,12 +646,12 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", m!("/boolean_endpoint"), &Vec::new())
+            .validate_receive("gibberish", mapping!("/boolean_endpoint"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
+            .validate_receive(&interface_name, mapping!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test receiving a new value
@@ -660,7 +660,7 @@ mod test {
         interfaces
             .validate_receive(
                 &interface_name,
-                m!("/boolean_endpoint"),
+                mapping!("/boolean_endpoint"),
                 &boolean_endpoint_data,
             )
             .unwrap();
@@ -671,7 +671,7 @@ mod test {
         interfaces
             .validate_receive(
                 &interface_name,
-                m!("/boolean_endpoint"),
+                mapping!("/boolean_endpoint"),
                 &integer_endpoint_data,
             )
             .unwrap_err();
@@ -683,17 +683,17 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", m!("/boolean_endpoint"), &Vec::new())
+            .validate_receive("gibberish", mapping!("/boolean_endpoint"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
+            .validate_receive(&interface_name, mapping!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test non existant path for aggregate
         interfaces
-            .validate_receive(&interface_name, m!("/gibberish"), &Vec::new())
+            .validate_receive(&interface_name, mapping!("/gibberish"), &Vec::new())
             .unwrap_err();
 
         // Test receiving an aggregate
@@ -703,7 +703,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, m!("/obj"), &aggr_data)
+            .validate_receive(&interface_name, mapping!("/obj"), &aggr_data)
             .unwrap();
 
         // Test receiving an aggregate with wrong type
@@ -713,7 +713,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, m!("/foo"), &aggr_data)
+            .validate_receive(&interface_name, mapping!("/foo"), &aggr_data)
             .unwrap_err();
     }
 
@@ -723,12 +723,12 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_receive("gibberish", m!("/boolean_endpoint"), &[])
+            .validate_receive("gibberish", mapping!("/boolean_endpoint"), &[])
             .unwrap_err();
 
         // Test non existant path
         interfaces
-            .validate_receive(&interface_name, m!("/gibberish"), &[])
+            .validate_receive(&interface_name, mapping!("/gibberish"), &[])
             .unwrap_err();
 
         // Test receiving a set property
@@ -737,19 +737,19 @@ mod test {
         interfaces
             .validate_receive(
                 &interface_name,
-                m!("/boolean_endpoint"),
+                mapping!("/boolean_endpoint"),
                 &boolean_endpoint_data,
             )
             .unwrap();
 
         // Test receiving an unset property
         interfaces
-            .validate_receive(&interface_name, m!("/boolean_endpoint"), &[])
+            .validate_receive(&interface_name, mapping!("/boolean_endpoint"), &[])
             .unwrap();
 
         // Test receiving an unset property for a property that can't be unset
         interfaces
-            .validate_receive(&interface_name, m!("/integer_endpoint"), &[])
+            .validate_receive(&interface_name, mapping!("/integer_endpoint"), &[])
             .unwrap_err();
 
         // Test receiving a set property with the wrong type
@@ -758,7 +758,7 @@ mod test {
         interfaces
             .validate_receive(
                 &interface_name,
-                m!("/boolean_endpoint"),
+                mapping!("/boolean_endpoint"),
                 &integer_endpoint_data,
             )
             .unwrap_err();
@@ -770,7 +770,7 @@ mod test {
         ]);
         let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
         interfaces
-            .validate_receive(&interface_name, m!("/obj"), &aggr_data)
+            .validate_receive(&interface_name, mapping!("/obj"), &aggr_data)
             .unwrap_err();
     }
 

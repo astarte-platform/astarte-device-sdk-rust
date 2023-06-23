@@ -130,7 +130,7 @@ impl PartialEq<&str> for MappingPath<'_> {
 pub enum Error {
     #[error("path missing prefix: {0}")]
     Prefix(String),
-    #[error("path should have at leas one level")]
+    #[error("path should have at least one level")]
     Empty,
     #[error("path has an empty level: {0}")]
     EmptyLevel(String),
@@ -182,7 +182,7 @@ mod tests {
 
     /// Helper macro to create a `MappingPath` from a string literal.
     #[macro_export]
-    macro_rules! m {
+    macro_rules! mapping {
         ($mapping:expr) => {
             &$crate::MappingPath::try_from($mapping).expect("failed to create mapping path")
         };
@@ -220,10 +220,10 @@ mod tests {
             ],
         });
 
-        assert!(endpoint.cmp(m!("/foo/value")).is_eq());
-        assert!(endpoint.cmp(m!("/bar/value")).is_eq());
-        assert!(endpoint.cmp(m!("/value")).is_ne());
-        assert!(endpoint.cmp(m!("/foo/bar/value")).is_ne());
-        assert!(endpoint.cmp(m!("/foo/value/bar")).is_ne());
+        assert!(endpoint.cmp(mapping!("/foo/value")).is_eq());
+        assert!(endpoint.cmp(mapping!("/bar/value")).is_eq());
+        assert!(endpoint.cmp(mapping!("/value")).is_ne());
+        assert!(endpoint.cmp(mapping!("/foo/bar/value")).is_ne());
+        assert!(endpoint.cmp(mapping!("/foo/value/bar")).is_ne());
     }
 }
