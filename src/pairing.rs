@@ -174,13 +174,13 @@ async fn populate_credentials(
 ) -> Result<(Vec<Certificate>, PrivateKey), PairingError> {
     let cn = format!("{}/{}", opts.realm, opts.device_id);
 
-    let Bundle(pkey_bytes, csr_bytes) = Bundle::new(&cn)?;
+    let Bundle { private_key, csr } = Bundle::new(&cn)?;
 
-    let private_key = rustls_pemfile::pkcs8_private_keys(&mut pkey_bytes.as_slice())
+    let private_key = rustls_pemfile::pkcs8_private_keys(&mut private_key.as_slice())
         .map_err(|_| PairingError::ConfigError("failed pkcs8 key extraction".into()))?
         .remove(0);
 
-    let csr = String::from_utf8(csr_bytes)
+    let csr = String::from_utf8(csr)
         .map_err(|_| PairingError::ConfigError("bad csr bytes format".into()))?;
 
     let cert_pem = fetch_credentials(opts, &csr).await?;

@@ -20,184 +20,555 @@
 
 //! Provides the functionalities to parse and validate an Astarte interface.
 
+pub mod def;
 pub mod error;
-pub(crate) mod traits;
-pub mod validation;
+pub(crate) mod mapping;
+pub(crate) mod validation;
 
+use log::info;
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
-use std::fs::File;
-use std::io::BufReader;
+
+use std::collections::BTreeMap;
+use std::fmt::Display;
+use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
-use traits::Interface as InterfaceTrait;
-use traits::Mapping as MappingTrait;
-
+pub(crate) use self::def::{
+    Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
+};
 pub use self::error::Error;
+use self::{
+    def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
+    error::ValidationError,
+    mapping::{
+        iter::{IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter},
+        path::MappingPath,
+        BaseMapping, DatastreamIndividualMapping, PropertiesMapping,
+    },
+    validation::VersionChange,
+};
+
+/// Mapping between the endpoint and the path
+///
+/// The mappings are stored in a BTree so we can implement a custom compare of the endpoint which
+/// will make a placeholder equal to any level. The [HashSet](std::collections::HashSet) would not
+/// work since we cannot hash the placeholder to the same value as a simple level.
+///
+/// For example, if we have the following mappings:
+///
+/// - `/a/b/c`
+/// - `/a/%{p}/c`
+///
+/// They should be considered the same endpoint, but we cannot hash those to the same HashSet key,
+/// so we use a [`BTreeMap`] and implement a custom [`Ord`] for the [`MappingPath`]. Which is an enum to
+/// compare the parsed endpoint with parameters and the mapping path of a topic received from MQTT.
+///
+/// A mappings can be accessed by passing the endpoint to the [`Interface::mapping`] method.
+pub(crate) type MappingMap<'a, T> = BTreeMap<MappingPath<'a>, T>;
 
 /// Astarte interface implementation.
 ///
 /// Should be used only through its methods, not instantiated directly.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum Interface {
-    #[doc(hidden)]
-    Datastream(DatastreamInterface),
-    #[doc(hidden)]
-    Properties(PropertiesInterface),
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) struct BaseInterface {
+#[derive(Deserialize, Debug, PartialEq, Clone)]
+#[serde(try_from = "InterfaceDef")]
+pub struct Interface {
     interface_name: String,
     version_major: i32,
     version_minor: i32,
     ownership: Ownership,
-    #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     doc: Option<String>,
+    inner: InterfaceType,
 }
 
-#[doc(hidden)]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct DatastreamInterface {
-    #[serde(flatten)]
-    base: BaseInterface,
-    #[serde(default, skip_serializing_if = "is_default")]
-    aggregation: Aggregation,
-    mappings: Vec<DatastreamMapping>,
-}
+impl Interface {
+    /// Instantiate a new `Interface` from a file.
+    pub fn from_file(path: &Path) -> Result<Self, Error> {
+        let file = fs::read_to_string(path)?;
 
-#[doc(hidden)]
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub struct PropertiesInterface {
-    #[serde(flatten)]
-    base: BaseInterface,
-    mappings: Vec<PropertiesMapping>,
-}
+        Self::from_str(&file)
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum InterfaceType {
-    Datastream,
-    Properties,
-}
+    /// Returns the interface name.
+    pub fn interface_name(&self) -> &str {
+        &self.interface_name
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Ownership {
-    Device,
-    Server,
-}
+    /// Returns the interface major version.
+    pub fn version_major(&self) -> i32 {
+        self.version_major
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Aggregation {
-    Individual,
-    Object,
-}
+    /// Returns the interface minor version.
+    pub fn version_minor(&self) -> i32 {
+        self.version_minor
+    }
 
-#[derive(Debug)]
-pub(crate) enum Mapping<'a> {
-    Datastream(&'a DatastreamMapping),
-    Properties(&'a PropertiesMapping),
-}
+    /// Returns the interface version.
+    fn version(&self) -> (i32, i32) {
+        (self.version_major, self.version_minor)
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub(crate) struct BaseMapping {
-    endpoint: String,
-    #[serde(rename = "type")]
-    mapping_type: MappingType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    doc: Option<String>,
-}
+    /// Returns the interface type.
+    pub fn interface_type(&self) -> InterfaceTypeDef {
+        match &self.inner {
+            InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => {
+                InterfaceTypeDef::Datastream
+            }
+            InterfaceType::Properties(_) => InterfaceTypeDef::Properties,
+        }
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub(crate) struct DatastreamMapping {
-    #[serde(flatten)]
-    base: BaseMapping,
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub reliability: Reliability,
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub retention: Retention,
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub explicit_timestamp: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expiry: Option<u32>,
-    // TODO: merge database_retention_policy and database_retention_ttl in a
-    // single type (adjacently tagged enum works ok except when there's no
-    // database_retention_policy key in JSON)
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub database_retention_policy: DatabaseRetentionPolicy,
-    #[serde(default)]
-    pub database_retention_ttl: Option<u32>,
-}
+    /// Returns the interface ownership.
+    pub fn ownership(&self) -> Ownership {
+        self.ownership
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-pub(crate) struct PropertiesMapping {
-    #[serde(flatten)]
-    base: BaseMapping,
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub allow_unset: bool,
-}
+    /// Returns the interface aggregation.
+    pub fn aggregation(&self) -> Aggregation {
+        match &self.inner {
+            InterfaceType::Properties(_) | InterfaceType::DatastreamIndividual(_) => {
+                Aggregation::Individual
+            }
+            InterfaceType::DatastreamObject(_) => Aggregation::Object,
+        }
+    }
 
-// TODO: investigate pro/cons of tagged enum like
-// Scalar(InnerType)/Array(InnerType)
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum MappingType {
-    Double,
-    Integer,
-    Boolean,
-    LongInteger,
-    String,
-    BinaryBlob,
-    DateTime,
-    DoubleArray,
-    IntegerArray,
-    BooleanArray,
-    LongIntegerArray,
-    StringArray,
-    BinaryBlobArray,
-    DateTimeArray,
-}
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Reliability {
-    Unreliable,
-    Guaranteed,
-    Unique,
-}
+    pub fn doc(&self) -> Option<&str> {
+        self.doc.as_deref()
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Retention {
-    Discard,
-    Volatile,
-    Stored,
-}
+    pub(crate) fn iter_mappings(&self) -> MappingIter {
+        MappingIter::new(&self.inner)
+    }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum DatabaseRetentionPolicy {
-    NoTtl,
-    UseTtl,
-}
+    pub(crate) fn properties(&self) -> Option<&Properties> {
+        match &self.inner {
+            InterfaceType::Properties(properties) => Some(properties),
+            _ => None,
+        }
+    }
 
-impl Default for Aggregation {
-    fn default() -> Self {
-        Self::Individual
+    pub(crate) fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
+        match &self.inner {
+            InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
+            InterfaceType::DatastreamObject(object) => object.mapping(path),
+            InterfaceType::Properties(properties) => properties.mapping(path),
+        }
+    }
+
+    pub(crate) fn contains(&self, path: &MappingPath<'_>) -> bool {
+        match &self.inner {
+            InterfaceType::DatastreamIndividual(individual) => individual.contains(path),
+            InterfaceType::DatastreamObject(object) => object.contains(path),
+            InterfaceType::Properties(properties) => properties.contains(path),
+        }
+    }
+
+    pub fn mappings_len(&self) -> usize {
+        match &self.inner {
+            InterfaceType::DatastreamIndividual(datastream) => datastream.mappings.len(),
+            InterfaceType::DatastreamObject(datastream) => datastream.mappings.len(),
+            InterfaceType::Properties(properties) => properties.mappings.len(),
+        }
+    }
+
+    /// Getter function for the endpoint paths for each property contained in the interface.
+    ///
+    /// Return a vector of tuples. Each tuple contains the endpoint as a String and the major version of the interface as a i32.
+    pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
+        self.iter_mappings()
+            .map(|mapping| (mapping.endpoint().to_string(), self.version_major()))
+            .collect()
+    }
+
+    pub fn is_property(&self) -> bool {
+        matches!(self.inner, InterfaceType::Properties(_))
+    }
+
+    /// Getter function for the interface name.
+    #[deprecated = "Use `interface_name` instead, and manualy convert it to `String` if needed"]
+    pub fn get_name(&self) -> String {
+        self.interface_name.clone()
+    }
+
+    #[deprecated = "Renamed to `version_major`"]
+    /// Getter function for the interface major version.
+    pub fn get_version_major(&self) -> i32 {
+        self.version_major()
+    }
+
+    #[deprecated = "Renamed to `version_minor`"]
+    /// Getter function for the interface minor version.
+    pub fn get_version_minor(&self) -> i32 {
+        self.version_minor()
+    }
+
+    /// Validate if an interface is valid
+    pub fn validate(&self) -> Result<(), Error> {
+        // TODO: add additional validation
+        if self.version() == (0, 0) {
+            return Err(Error::MajorMinor);
+        }
+
+        if self.mappings_len() == 0 {
+            return Err(Error::EmptyMappings);
+        }
+
+        Ok(())
+    }
+
+    /// Validate if an interface is given the previous version `prev`.
+    ///
+    /// It will check whether:
+    ///
+    /// - Both the versions are valid
+    /// - The name of the interface is the same
+    /// - The new version is a valid successor of the previous version.
+    pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
+        // If the interfaces are the same, they are valid
+        if self == prev {
+            return Ok(self);
+        }
+
+        // Check if the wrong interface was passed
+        let name = self.interface_name();
+        let prev_name = prev.interface_name();
+        if name != prev_name {
+            return Err(ValidationError::NameMismatch {
+                name: name.to_string(),
+                prev_name: prev_name.to_string(),
+            });
+        }
+
+        // Validate the new interface version
+        VersionChange::try_new(self, prev)
+            .map_err(ValidationError::Version)
+            .map(|change| {
+                info!("Interface {} version changed: {}", name, change);
+
+                self
+            })
     }
 }
 
-impl Default for Reliability {
-    fn default() -> Self {
-        Self::Unreliable
+impl Serialize for Interface {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let interface_def = InterfaceDef::from(self);
+
+        interface_def.serialize(serializer)
+    }
+}
+
+impl FromStr for Interface {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s).map_err(Self::Err::from)
+    }
+}
+
+impl Display for Interface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.interface_name, self.version_major, self.version_minor
+        )
+    }
+}
+
+/// Enum of all the types of interfaces
+/// This is not a direct representation of only the mapping to permit extensibility of specific
+/// properties present only in some aggregations.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) enum InterfaceType {
+    DatastreamIndividual(DatastreamIndividual),
+    DatastreamObject(DatastreamObject),
+    Properties(Properties),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) struct DatastreamIndividual {
+    mappings: MappingMap<'static, DatastreamIndividualMapping>,
+}
+
+impl DatastreamIndividual {
+    pub fn iter_mappings(&self) -> IndividualMappingIter {
+        IndividualMappingIter::new(&self.mappings)
+    }
+
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+        let individual = DatastreamIndividualMapping::try_from(mapping)?;
+
+        self.add(individual)
+    }
+
+    pub fn add(&mut self, mapping: DatastreamIndividualMapping) -> Result<(), Error> {
+        let path = mapping.endpoint().clone().into_owned().into();
+
+        if let Some(existing) = self.mappings.get(&path) {
+            return Err(Error::DuplicateMapping {
+                endpoint: existing.endpoint().to_string(),
+                duplicate: mapping.endpoint().to_string(),
+            });
+        }
+
+        self.mappings.insert(path, mapping);
+
+        Ok(())
+    }
+
+    pub fn get<'a: 's, 's>(
+        &'s self,
+        path: &MappingPath<'a>,
+    ) -> Option<&'s DatastreamIndividualMapping> {
+        self.mappings.get(path)
+    }
+
+    pub fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
+        self.get(path).map(Mapping::from)
+    }
+
+    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
+        self.mappings.contains_key(path)
+    }
+}
+
+impl TryFrom<&InterfaceDef<'_>> for DatastreamIndividual {
+    type Error = Error;
+
+    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+        let mut individual = Self {
+            mappings: BTreeMap::new(),
+        };
+
+        for mapping in value.mappings.iter() {
+            individual.add_mapping(mapping)?;
+        }
+
+        Ok(individual)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) struct DatastreamObject {
+    reliability: Reliability,
+    explicit_timestamp: bool,
+    retention: Retention,
+    database_retention: DatabaseRetention,
+    mappings: MappingMap<'static, BaseMapping>,
+}
+
+impl DatastreamObject {
+    pub(crate) fn apply<'a>(&self, base_mapping: &'a BaseMapping) -> Mapping<'a> {
+        let mut mapping = Mapping::from(base_mapping);
+
+        mapping.reliability = self.reliability;
+        mapping.explicit_timestamp = self.explicit_timestamp;
+
+        self.retention.apply(&mut mapping);
+        self.database_retention.apply(&mut mapping);
+
+        mapping
+    }
+
+    pub fn iter_mappings(&self) -> ObjectMappingIter {
+        ObjectMappingIter::new(self)
+    }
+
+    /// Check if the mapping is compatible with the interface
+    pub fn is_compatible(&self, mapping: &Mapping) -> bool {
+        mapping.reliability() == self.reliability
+            && mapping.explicit_timestamp() == self.explicit_timestamp
+            && mapping.retention() == self.retention
+            && mapping.database_retention() == self.database_retention
+    }
+
+    /// Add a mapping to the interface.
+    ///
+    /// Since the interface is an object, the mapping must be compatible with the interface. It
+    /// needs to have the same length and prefix as the other mapping.
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+        if !self.is_compatible(mapping) {
+            return Err(Error::InconsistentMapping);
+        }
+
+        let mapping = BaseMapping::try_from(mapping)?;
+
+        self.add(mapping)
+    }
+
+    pub fn add(&mut self, mapping: BaseMapping) -> Result<(), Error> {
+        // Check that the mapping has at least two components
+        // https://docs.astarte-platform.org/astarte/latest/030-interface.html#endpoints-and-aggregation
+        if mapping.endpoint().len() < 2 {
+            return Err(Error::ObjectEndpointTooShort(
+                mapping.endpoint().to_string(),
+            ));
+        }
+
+        // Check if the first element exists
+        if let Some((_, entry)) = self.mappings.iter().next() {
+            // Check that the mapping has the same endpoint as the other mappings
+            if !entry.endpoint().eq_till_last(mapping.endpoint()) {
+                return Err(Error::InconsistentEndpoints);
+            }
+        }
+
+        let path = MappingPath::from(mapping.endpoint().clone_owned());
+
+        // Check that the mapping is not already present
+        if let Some(existing) = self.mappings.get(&path) {
+            return Err(Error::DuplicateMapping {
+                endpoint: existing.endpoint().to_string(),
+                duplicate: mapping.endpoint().to_string(),
+            });
+        }
+
+        self.mappings.insert(path, mapping);
+
+        Ok(())
+    }
+
+    pub fn get<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<&'s BaseMapping> {
+        self.mappings.get(path)
+    }
+
+    pub fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping> {
+        self.get(path).map(|base| self.apply(base))
+    }
+
+    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
+        self.mappings.contains_key(path)
+    }
+}
+
+impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
+    type Error = Error;
+
+    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+        let mut mappings_iter = value.mappings.iter();
+        let mut mappings_set = BTreeMap::new();
+
+        let first = mappings_iter.next().ok_or(Error::EmptyMappings)?;
+        let first_base = BaseMapping::try_from(first)?;
+
+        let path = first_base.endpoint().clone_owned().into();
+        mappings_set.insert(path, first_base);
+
+        // We create the object from the first mapping and then insert the others, checking if
+        // compatible
+        let mut object = Self {
+            reliability: first.reliability(),
+            explicit_timestamp: first.explicit_timestamp(),
+            retention: first.retention(),
+            database_retention: first.database_retention(),
+            mappings: mappings_set,
+        };
+
+        for mapping in mappings_iter {
+            object.add_mapping(mapping)?;
+        }
+
+        Ok(object)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) struct Properties {
+    mappings: MappingMap<'static, PropertiesMapping>,
+}
+
+impl Properties {
+    pub fn iter_mappings(&self) -> PropertiesMappingIter {
+        PropertiesMappingIter::new(&self.mappings)
+    }
+
+    pub fn get<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<&'s PropertiesMapping> {
+        self.mappings.get(path)
+    }
+
+    pub fn mapping<'a: 's, 's>(&'s self, endpoint: &MappingPath<'a>) -> Option<Mapping<'s>> {
+        self.get(endpoint).map(Mapping::from)
+    }
+
+    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
+        self.mappings.contains_key(path)
+    }
+
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+        let property = PropertiesMapping::try_from(mapping)?;
+
+        self.add(property)
+    }
+
+    pub fn add(&mut self, mapping: PropertiesMapping) -> Result<(), Error> {
+        let path = mapping.endpoint().clone_owned().into();
+
+        if let Some(existing) = self.mappings.get(&path) {
+            return Err(Error::DuplicateMapping {
+                endpoint: existing.endpoint().to_string(),
+                duplicate: mapping.endpoint().to_string(),
+            });
+        }
+
+        self.mappings.insert(path, mapping);
+
+        Ok(())
+    }
+}
+
+impl TryFrom<&InterfaceDef<'_>> for Properties {
+    type Error = Error;
+
+    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+        let mut properties = Self {
+            mappings: BTreeMap::new(),
+        };
+
+        for mapping in value.mappings.iter() {
+            properties.add_mapping(mapping)?;
+        }
+
+        Ok(properties)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) enum Retention {
+    Discard,
+    Volatile {
+        /// Expiration in seconds
+        expiry: i32,
+    },
+    Stored {
+        /// Expiration in seconds
+        expiry: i32,
+    },
+}
+
+impl Retention {
+    pub(self) fn apply(&self, mapping: &mut Mapping) {
+        match self {
+            Retention::Discard => {
+                mapping.retention = RetentionDef::Discard;
+                mapping.expiry = 0;
+            }
+            Retention::Volatile { expiry } => {
+                mapping.retention = RetentionDef::Volatile;
+                mapping.expiry = *expiry;
+            }
+            Retention::Stored { expiry } => {
+                mapping.retention = RetentionDef::Stored;
+                mapping.expiry = *expiry;
+            }
+        }
     }
 }
 
@@ -207,163 +578,33 @@ impl Default for Retention {
     }
 }
 
-impl Default for DatabaseRetentionPolicy {
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) enum DatabaseRetention {
+    NoTtl,
+    UseTtl {
+        /// Time to live in seconds
+        ttl: i32,
+    },
+}
+
+impl DatabaseRetention {
+    pub(self) fn apply(&self, mapping: &mut Mapping) {
+        match self {
+            DatabaseRetention::NoTtl => {
+                mapping.database_retention_policy = DatabaseRetentionPolicyDef::NoTtl;
+                mapping.database_retention_ttl = None;
+            }
+            DatabaseRetention::UseTtl { ttl } => {
+                mapping.database_retention_policy = DatabaseRetentionPolicyDef::UseTtl;
+                mapping.database_retention_ttl = Some(*ttl);
+            }
+        }
+    }
+}
+
+impl Default for DatabaseRetention {
     fn default() -> Self {
         Self::NoTtl
-    }
-}
-
-fn is_default<T: Default + PartialEq>(t: &T) -> bool {
-    t == &T::default()
-}
-
-impl Interface {
-    /// Instantiate a new `Interface` from a file.
-    pub fn from_file(path: &Path) -> Result<Self, Error> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let interface: Interface = serde_json::from_reader(reader)?;
-        interface.validate()?;
-        Ok(interface)
-    }
-
-    pub(crate) fn mapping(&self, path: &str) -> Option<Mapping> {
-        match &self {
-            Self::Datastream(d) => {
-                for mapping in d.mappings.iter() {
-                    if mapping.is_compatible(path) {
-                        return Some(Mapping::Datastream(mapping));
-                    }
-                }
-            }
-            // Properties are always individual
-            Self::Properties(p) => {
-                for mapping in p.mappings.iter() {
-                    if mapping.is_compatible(path) {
-                        return Some(Mapping::Properties(mapping));
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    pub(crate) fn mappings(&self) -> Vec<Mapping> {
-        return match &self {
-            Self::Datastream(d) => d.mappings.iter().map(Mapping::Datastream).collect(),
-            Self::Properties(p) => p.mappings.iter().map(Mapping::Properties).collect(),
-        };
-    }
-
-    pub(crate) fn mappings_len(&self) -> usize {
-        match &self {
-            Self::Datastream(d) => d.mappings.len(),
-            Self::Properties(p) => p.mappings.len(),
-        }
-    }
-
-    pub(crate) fn get_ownership(&self) -> Ownership {
-        match &self {
-            Interface::Datastream(iface) => iface.base.ownership,
-            Interface::Properties(iface) => iface.base.ownership,
-        }
-    }
-
-    /// Getter function for the the endpoint paths for each property contained in the interface.
-    ///
-    /// Return a vector of touples. Each touple contains the endpoint as a `String` and the
-    /// major version of the interface as a `i32`.
-    pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
-        if let Interface::Properties(iface) = self {
-            let name = iface.base.interface_name.clone();
-
-            let mappings = iface
-                .mappings
-                .iter()
-                .map(|f| (name.clone() + &f.base.endpoint, iface.base.version_major))
-                .collect();
-
-            return mappings;
-        }
-
-        Vec::new()
-    }
-
-    /// Getter function for the interface name.
-    pub fn get_name(&self) -> &str {
-        match &self {
-            Interface::Datastream(iface) => &iface.base.interface_name,
-            Interface::Properties(iface) => &iface.base.interface_name,
-        }
-    }
-
-    /// Getter function for the interface major version.
-    pub fn get_version_major(&self) -> i32 {
-        match &self {
-            Interface::Datastream(iface) => iface.base.version_major,
-            Interface::Properties(iface) => iface.base.version_major,
-        }
-    }
-
-    /// Getter function for the interface minor version.
-    pub fn get_version_minor(&self) -> i32 {
-        match &self {
-            Interface::Datastream(iface) => iface.base.version_minor,
-            Interface::Properties(iface) => iface.base.version_minor,
-        }
-    }
-}
-
-impl std::str::FromStr for Interface {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Error> {
-        let interface: Interface = serde_json::from_str(s)?;
-        interface.validate()?;
-        Ok(interface)
-    }
-}
-
-impl InterfaceTrait for Interface {
-    fn base_interface(&self) -> &BaseInterface {
-        match &self {
-            Self::Datastream(d) => &d.base,
-            Self::Properties(p) => &p.base,
-        }
-    }
-}
-
-impl MappingTrait for Mapping<'_> {
-    fn base_mapping(&self) -> &BaseMapping {
-        match &self {
-            Self::Datastream(d) => &d.base,
-            Self::Properties(d) => &d.base,
-        }
-    }
-}
-
-impl MappingTrait for DatastreamMapping {
-    fn base_mapping(&self) -> &BaseMapping {
-        &self.base
-    }
-}
-
-impl MappingTrait for PropertiesMapping {
-    fn base_mapping(&self) -> &BaseMapping {
-        &self.base
-    }
-}
-
-impl Display for Interface {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}:{}",
-            self.get_name(),
-            self.get_version_major(),
-            self.get_version_minor()
-        )
     }
 }
 
@@ -371,17 +612,18 @@ impl Display for Interface {
 mod tests {
     use std::str::FromStr;
 
-    use super::traits::Interface as InterfaceTrait;
-    use super::traits::Mapping as MappingTrait;
-    use super::{
-        Aggregation, BaseInterface, BaseMapping, DatabaseRetentionPolicy, DatastreamInterface,
-        DatastreamMapping, Interface, MappingType, Ownership, Reliability, Retention,
+    use crate::{
+        interface::{
+            def::{DatabaseRetentionPolicyDef, RetentionDef},
+            mapping::{path::MappingPath, BaseMapping, DatastreamIndividualMapping},
+            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
+            Mapping, MappingMap, MappingType, Ownership, Reliability, Retention,
+        },
+        Interface,
     };
 
-    #[test]
-    fn datastream_interface_deserialization() {
-        let interface_json = r#"
-        {
+    // The mappings are sorted alphabetically by endpoint, so we can confront them
+    const INTERFACE_JSON: &str = r#"{
             "interface_name": "org.astarte-platform.genericsensors.Values",
             "version_major": 1,
             "version_minor": 0,
@@ -391,15 +633,15 @@ mod tests {
             "doc": "Interface doc",
             "mappings": [
                 {
-                    "endpoint": "/%{sensor_id}/value",
-                    "type": "double",
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
                 },
                 {
-                    "endpoint": "/%{sensor_id}/otherValue",
-                    "type": "longinteger",
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
@@ -407,54 +649,56 @@ mod tests {
             ]
         }"#;
 
-        let value_base_mapping = BaseMapping {
-            endpoint: "/%{sensor_id}/value".to_owned(),
-            mapping_type: MappingType::Double,
-            description: Some("Mapping description".to_owned()),
-            doc: Some("Mapping doc".to_owned()),
-        };
+    // The mappings are sorted alphabetically by endpoint, so we can confront them
+    const PROPERTIES_JSON: &str = r#"{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/aaaa",
+                    "type": "longinteger",
+                    "allow_unset": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/bbbb",
+                    "type": "double",
+                    "allow_unset": false
+                }
+            ]
+        }"#;
 
-        let other_value_base_mapping = BaseMapping {
-            endpoint: "/%{sensor_id}/otherValue".to_owned(),
-            mapping_type: MappingType::LongInteger,
-            description: Some("Mapping description".to_owned()),
-            doc: Some("Mapping doc".to_owned()),
-        };
-
-        let value_mapping = DatastreamMapping {
-            base: value_base_mapping,
+    #[test]
+    fn datastream_interface_deserialization() {
+        let value_mapping = DatastreamIndividualMapping {
+            mapping: BaseMapping {
+                endpoint: "/%{sensor_id}/value".try_into().unwrap(),
+                mapping_type: MappingType::Double,
+                description: Some("Mapping description".to_string()),
+                doc: Some("Mapping doc".to_string()),
+            },
+            reliability: Reliability::default(),
+            retention: Retention::default(),
+            database_retention: DatabaseRetention::default(),
             explicit_timestamp: true,
-            database_retention_policy: DatabaseRetentionPolicy::NoTtl,
-            database_retention_ttl: None,
-            expiry: None,
-            retention: Retention::Discard,
-            reliability: Reliability::Unreliable,
         };
 
-        let other_value_mapping = DatastreamMapping {
-            base: other_value_base_mapping,
+        let other_value_mapping = DatastreamIndividualMapping {
+            mapping: BaseMapping {
+                endpoint: "/%{sensor_id}/otherValue".try_into().unwrap(),
+                mapping_type: MappingType::LongInteger,
+                description: Some("Mapping description".to_string()),
+                doc: Some("Mapping doc".to_string()),
+            },
+            reliability: Reliability::default(),
+            retention: Retention::default(),
+            database_retention: DatabaseRetention::default(),
             explicit_timestamp: true,
-            database_retention_policy: DatabaseRetentionPolicy::NoTtl,
-            database_retention_ttl: None,
-            expiry: None,
-            retention: Retention::Discard,
-            reliability: Reliability::Unreliable,
         };
-
-        assert!(value_mapping.is_compatible("/foo/value"));
-        assert!(value_mapping.is_compatible("/bar/value"));
-        assert!(!value_mapping.is_compatible("/value"));
-        assert!(!value_mapping.is_compatible("/foo/bar/value"));
-        assert!(!value_mapping.is_compatible("/foo/value/bar"));
-        assert!(other_value_mapping.is_compatible("/foo/otherValue"));
-        assert!(other_value_mapping.is_compatible("/bar/otherValue"));
-        assert!(!other_value_mapping.is_compatible("/otherValue"));
-        assert!(!other_value_mapping.is_compatible("/foo/bar/otherValue"));
-        assert!(!other_value_mapping.is_compatible("/foo/value/otherValue"));
-        assert_eq!(value_mapping.endpoint(), "/%{sensor_id}/value");
-        assert_eq!(value_mapping.mapping_type(), MappingType::Double);
-        assert_eq!(value_mapping.description(), Some("Mapping description"));
-        assert_eq!(value_mapping.doc(), Some("Mapping doc"));
 
         let interface_name = "org.astarte-platform.genericsensors.Values".to_owned();
         let version_major = 1;
@@ -463,34 +707,140 @@ mod tests {
         let description = Some("Interface description".to_owned());
         let doc = Some("Interface doc".to_owned());
 
-        let base_interface = BaseInterface {
+        let mut datastream_individual = DatastreamIndividual {
+            mappings: MappingMap::new(),
+        };
+
+        datastream_individual.add(value_mapping).unwrap();
+        datastream_individual.add(other_value_mapping).unwrap();
+
+        let interface = Interface {
             interface_name,
             version_major,
             version_minor,
             ownership,
             description,
             doc,
+            inner: InterfaceType::DatastreamIndividual(datastream_individual),
         };
 
-        let datastream_interface = DatastreamInterface {
-            base: base_interface,
-            aggregation: Aggregation::Individual,
-            mappings: vec![value_mapping, other_value_mapping],
-        };
-
-        let interface = Interface::Datastream(datastream_interface);
-
-        let deser_interface = Interface::from_str(interface_json).unwrap();
+        let deser_interface = Interface::from_str(INTERFACE_JSON).unwrap();
 
         assert_eq!(interface, deser_interface);
+    }
+
+    #[test]
+    fn must_have_one_mapping() {
+        let json = r#"{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Interface description",
+            "doc": "Interface doc",
+            "mappings": []
+        }"#;
+
+        let interface = Interface::from_str(json);
+
+        assert!(interface.is_err());
+        // This is hacky but serde doesn't provide a way to check the error
+        let err = format!("{:?}", interface.unwrap_err());
+        assert!(err.contains("no mappings"), "Unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_properties() {
+        let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
+
+        let properties = interface.properties();
+
+        assert!(properties.is_some(), "Properties interface not found");
+
+        let properties = properties.unwrap();
+
+        let paths = interface.get_properties_paths();
+
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], ("/%{sensor_id}/aaaa".to_string(), 1));
+        assert_eq!(paths[1], ("/%{sensor_id}/bbbb".to_string(), 1));
+
+        let path = MappingPath::try_from("/1/aaaa").unwrap();
+
+        let f = properties.get(&path).unwrap();
+
+        assert_eq!(f.mapping_type(), MappingType::LongInteger);
+        assert!(f.allow_unset);
+    }
+
+    #[test]
+    fn test_iter_mappings() {
+        let value_mapping = Mapping {
+            endpoint: "/%{sensor_id}/value",
+            mapping_type: MappingType::Double,
+            description: Some("Mapping description"),
+            doc: Some("Mapping doc"),
+            reliability: Reliability::default(),
+            retention: RetentionDef::default(),
+            database_retention_policy: DatabaseRetentionPolicyDef::default(),
+            database_retention_ttl: None,
+            allow_unset: false,
+            expiry: 0,
+            explicit_timestamp: true,
+        };
+
+        let other_value_mapping = Mapping {
+            endpoint: "/%{sensor_id}/otherValue",
+            mapping_type: MappingType::LongInteger,
+            description: Some("Mapping description"),
+            doc: Some("Mapping doc"),
+            reliability: Reliability::default(),
+            retention: RetentionDef::default(),
+            database_retention_policy: DatabaseRetentionPolicyDef::default(),
+            database_retention_ttl: None,
+            allow_unset: false,
+            expiry: 0,
+            explicit_timestamp: true,
+        };
+
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
+
+        let mut mappings_iter = interface.iter_mappings();
+
+        assert_eq!(mappings_iter.len(), 2);
+        assert_eq!(mappings_iter.next(), Some(other_value_mapping));
+        assert_eq!(mappings_iter.next(), Some(value_mapping));
+    }
+
+    #[test]
+    fn methods_test() {
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
 
         assert_eq!(
-            interface.name(),
+            interface.interface_name(),
             "org.astarte-platform.genericsensors.Values"
         );
-        assert_eq!(interface.version(), (1, 0));
+        assert_eq!(interface.version_major(), 1);
+        assert_eq!(interface.version_minor(), 0);
         assert_eq!(interface.ownership(), Ownership::Device);
         assert_eq!(interface.description(), Some("Interface description"));
+        assert_eq!(interface.aggregation(), Aggregation::Individual);
+        assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
         assert_eq!(interface.doc(), Some("Interface doc"));
+        assert!(interface.properties().is_none());
+    }
+
+    #[test]
+    fn serialize_and_deserialize() {
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
+        let serialized = serde_json::to_string(&interface).unwrap();
+        let deserialized: Interface = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(interface, deserialized);
+
+        let value = serde_json::Value::from_str(&serialized).unwrap();
+        let expected = serde_json::Value::from_str(INTERFACE_JSON).unwrap();
+        assert_eq!(value, expected);
     }
 }

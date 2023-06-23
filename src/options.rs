@@ -19,8 +19,6 @@
  */
 //! Provides functionality to configure an instance of the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk].
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::io;
@@ -34,9 +32,9 @@ use pairing::PairingError;
 
 use crate::database::AstarteDatabase;
 use crate::interface;
+use crate::interfaces::Interfaces;
 use crate::pairing;
 
-use interface::traits::Interface as InterfaceTrait;
 use interface::Interface;
 
 /// Astarte options error.
@@ -83,7 +81,7 @@ pub struct AstarteOptions {
     pub(crate) device_id: String,
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
-    pub(crate) interfaces: HashMap<String, Interface>,
+    pub(crate) interfaces: Interfaces,
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
@@ -131,7 +129,7 @@ impl AstarteOptions {
             device_id: device_id.to_owned(),
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
-            interfaces: HashMap::new(),
+            interfaces: Interfaces::new(),
             database: None,
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
@@ -167,30 +165,11 @@ impl AstarteOptions {
     /// with the same name that are already present.
     pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
         let interface = Interface::from_file(file_path)?;
-        let name = interface.name();
+        let name = interface.interface_name();
 
         debug!("Added interface {}", name);
 
-        let entry = self.interfaces.entry(name.to_owned());
-
-        match entry {
-            Entry::Occupied(mut entry) => {
-                debug!("Interface {} already present, validating new version", name);
-
-                let prev_interface = entry.get();
-
-                interface
-                    .validate_with(prev_interface)
-                    .map_err(AstarteOptionsError::ValidationError)?;
-
-                entry.insert(interface);
-            }
-            Entry::Vacant(entry) => {
-                debug!("Interface {} not present, adding it", name);
-
-                entry.insert(interface);
-            }
-        }
+        self.interfaces.add(interface)?;
 
         Ok(self)
     }

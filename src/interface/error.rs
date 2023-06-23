@@ -19,7 +19,7 @@
 
 use std::io;
 
-use super::validation::VersionChange;
+use super::{mapping::endpoint::Error as EndpointError, validation::VersionChange};
 
 /// Error for parsing and validating an interface.
 #[derive(thiserror::Error, Debug)]
@@ -34,17 +34,25 @@ pub enum Error {
     InterfaceNotFound,
     #[error("mapping not found")]
     MappingNotFound,
+    #[error("Database retention policy set to `use_ttl` but the TTL was not specified")]
+    MissingTtl,
+    #[error("invalid endpoint")]
+    InvalidEndpoint(#[from] EndpointError),
+    #[error("interface with no mappings")]
+    EmptyMappings,
+    #[error("object with inconsistent mappings")]
+    InconsistentMapping,
+    #[error("object with inconsistent endpoints")]
+    InconsistentEndpoints,
+    #[error("duplicate endpoint mapping '{endpoint}' and '{duplicate}'")]
+    DuplicateMapping { endpoint: String, duplicate: String },
+    #[error("object endpoint should have at least 2 levels: '{0}'")]
+    ObjectEndpointTooShort(String),
 }
 
 /// Error for an interface validation.
 #[derive(thiserror::Error, Debug)]
 pub enum ValidationError {
-    /// The new version is not a valid interface.
-    #[error("the new version is invalid: {0}")]
-    InvalidNew(Error),
-    #[error("the previous version is invalid: {0}")]
-    /// The previous version is not a valid interface.
-    InvalidPrev(Error),
     /// The name of the interface was changed.
     #[error(
         r#"this version has a different name than the previous version
