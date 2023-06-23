@@ -35,8 +35,9 @@ pub mod sqlite;
 ///
 /// This SDK provides an implementation of a sqlite database for which this trait has already
 /// been implemented, see [`AstarteSqliteDatabase`].
+// NOTE: the 'static bound is required for the MSRV, in other version the error is not present
 #[async_trait]
-pub trait AstarteDatabase: Debug + Sync
+pub trait AstarteDatabase: Debug + Sync + 'static
 where
     Self::Err: StdError,
 {
@@ -141,7 +142,10 @@ where
 mod tests {
     use super::*;
 
-    pub(crate) async fn test_db(db: impl AstarteDatabase + Sync) {
+    pub(crate) async fn test_db<D>(db: D)
+    where
+        D: AstarteDatabase,
+    {
         let ty = AstarteType::Integer(23);
 
         db.clear().await.unwrap();
