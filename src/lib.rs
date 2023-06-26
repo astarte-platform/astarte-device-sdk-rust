@@ -345,9 +345,11 @@ where
             .write()
             .await
             .remove(interface_name)
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::InterfaceNotFound,
-            ))
+            .ok_or_else(|| {
+                AstarteError::InterfaceError(interface::Error::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })
+            })
     }
 
     /// Poll updates from mqtt, can be placed in a loop to receive data.
@@ -601,16 +603,16 @@ where
     ) -> Result<(), AstarteError> {
         trace!("unsetting {} {}", interface_name, interface_path);
 
+        let path = MappingPath::try_from(interface_path)?;
+
         if cfg!(debug_assertions) {
-            self.interfaces.read().await.validate_send(
-                interface_name,
-                interface_path,
-                &[],
-                &None,
-            )?;
+            self.interfaces
+                .read()
+                .await
+                .validate_send(interface_name, &path, &[], &None)?;
         }
 
-        self.send_with_timestamp_impl(interface_name, interface_path, AstarteType::Unset, None)
+        self.send_with_timestamp_impl(interface_name, &path, AstarteType::Unset, None)
             .await?;
 
         Ok(())
@@ -690,7 +692,9 @@ where
     where
         D: TryInto<AstarteType>,
     {
-        self.send_with_timestamp_impl(interface_name, interface_path, data, None)
+        let path = MappingPath::try_from(interface_path)?;
+
+        self.send_with_timestamp_impl(interface_name, &path, data, None)
             .await
     }
 
@@ -722,14 +726,16 @@ where
     where
         D: TryInto<AstarteType>,
     {
-        self.send_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
+        let mapping = MappingPath::try_from(interface_path)?;
+
+        self.send_with_timestamp_impl(interface_name, &mapping, data, Some(timestamp))
             .await
     }
 
-    async fn send_with_timestamp_impl<D>(
+    async fn send_with_timestamp_impl<'a, D>(
         &self,
         interface_name: &str,
-        interface_path: &str,
+        interface_path: &MappingPath<'a>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError>
@@ -751,96 +757,84 @@ where
             )?;
         }
 
-        if self
-            .check_property_on_send(interface_name, interface_path, data.clone())
-            .await?
-        {
-            debug!("property was already sent, no need to send it again");
-            return Ok(());
+        let interfaces = self.interfaces.read().await;
+        let opt_property = interfaces.get_property(interface_name);
+        if let Some(property) = opt_property {
+            let stored = self
+                .check_property_already_stored(property, interface_path, &data)
+                .await?;
+
+            if stored {
+                debug!("property was already sent, no need to send it again");
+                return Ok(());
+            }
         }
 
         self.client
             .publish(
-                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path,
+                self.client_id() + "/" + interface_name.trim_matches('/') + interface_path.as_str(),
                 self.interfaces
                     .read()
                     .await
-                    .get_mqtt_reliability(interface_name, &interface_path.try_into()?),
+                    .get_mqtt_reliability(interface_name, interface_path),
                 false,
                 buf,
             )
             .await?;
 
         // we store the property in the database after it has been successfully sent
-        self.store_property_on_send(interface_name, interface_path, &data)
-            .await?;
+        if let Some(property) = opt_property {
+            self.store_property_on_send(property, interface_path, &data)
+                .await?;
+        }
 
         Ok(())
     }
 
     /// Check if a property is already stored in the database with the same value.
     /// Useful to prevent sending a property twice with the same value.
-    async fn check_property_on_send<D>(
+    async fn check_property_already_stored<'a>(
         &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-    ) -> Result<bool, AstarteError>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
-
-        let interfaces = self.interfaces.read().await;
-
-        // Check the property exists
-        let prop = interfaces.get_property(interface_name).ok_or_else(|| {
-            AstarteError::SendError(format!("Property {interface_name} doesn't exist"))
-        })?;
+        interface: PropertyRef<'a>,
+        interface_path: &MappingPath<'a>,
+        data: &AstarteType,
+    ) -> Result<bool, AstarteError> {
         // Check the mapping exists
-        let mapping = MappingPath::try_from(interface_path)?;
-        prop.mapping(&mapping).ok_or_else(|| {
+        interface.mapping(interface_path).ok_or_else(|| {
             AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
         })?;
 
         // Check if already in db
-        let is_present = self
+        let stored = self
             .database
-            .load_prop(interface_name, interface_path, 0)
-            .await?
-            .map(|db_data| db_data == data)
-            .unwrap_or(false);
+            .load_prop(interface.interface_name(), interface_path.as_str(), 0)
+            .await?;
 
-        Ok(is_present)
+        match stored {
+            Some(value) => Ok(value.eq(data)),
+            None => Ok(false),
+        }
     }
 
-    async fn store_property_on_send(
+    async fn store_property_on_send<'a>(
         &self,
-        interface_name: &str,
-        interface_path: &str,
+        property: PropertyRef<'a>,
+        interface_path: &MappingPath<'a>,
         data: &AstarteType,
     ) -> Result<(), AstarteError> {
-        let interfaces = self.interfaces.read().await;
-
-        let interface = interfaces
-            .get(interface_name)
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::InterfaceNotFound,
-            ))?;
-
-        let interface_major = interface.version_major();
-
-        let path = MappingPath::try_from(interface_path)?;
-
-        interface
-            .properties()
-            .and_then(|properties| properties.mapping(&path))
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::MappingNotFound,
-            ))?;
+        property.mapping(interface_path).ok_or_else(|| {
+            AstarteError::InterfaceError(interface::Error::MappingNotFound {
+                path: interface_path.to_string(),
+            })
+        })?;
 
         self.database
-            .store_prop(interface_name, interface_path, data, interface_major)
+            .store_prop(
+                property.interface_name(),
+                interface_path.as_str(),
+                data,
+                property.version_major(),
+            )
             .await?;
 
         debug!("Stored new property in database");
@@ -870,10 +864,10 @@ where
     // object types
     // ------------------------------------------------------------------------
 
-    async fn send_object_with_timestamp_impl<T>(
+    async fn send_object_with_timestamp_impl<'a, T>(
         &self,
         interface_name: &str,
-        interface_path: &str,
+        interface_path: &MappingPath<'a>,
         data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError>
@@ -892,12 +886,13 @@ where
             )?;
         }
 
-        let topic = self.client_id() + "/" + interface_name.trim_matches('/') + interface_path;
+        let topic =
+            self.client_id() + "/" + interface_name.trim_matches('/') + interface_path.as_str();
         let qos = self
             .interfaces
             .read()
             .await
-            .get_mqtt_reliability(interface_name, &interface_path.try_into()?);
+            .get_mqtt_reliability(interface_name, interface_path);
 
         self.client.publish(topic, qos, false, buf).await?;
 
@@ -943,7 +938,8 @@ where
     where
         T: AstarteAggregate,
     {
-        self.send_object_with_timestamp_impl(interface_name, interface_path, data, Some(timestamp))
+        let path = MappingPath::try_from(interface_path)?;
+        self.send_object_with_timestamp_impl(interface_name, &path, data, Some(timestamp))
             .await
     }
 
@@ -961,7 +957,9 @@ where
     where
         T: AstarteAggregate,
     {
-        self.send_object_with_timestamp_impl(interface_name, interface_path, data, None)
+        let path = MappingPath::try_from(interface_path)?;
+
+        self.send_object_with_timestamp_impl(interface_name, &path, data, None)
             .await
     }
 }

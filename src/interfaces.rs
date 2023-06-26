@@ -206,7 +206,7 @@ impl Interfaces {
     pub(crate) fn validate_send(
         &self,
         interface_name: &str,
-        interface_path: &str,
+        interface_path: &MappingPath<'_>,
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError> {
@@ -220,7 +220,7 @@ impl Interfaces {
         match data_deserialized {
             Aggregation::Individual(individual) => {
                 let mapping = interface
-                    .mapping(&interface_path.try_into()?)
+                    .mapping(interface_path)
                     .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
 
                 if individual != AstarteType::Unset && individual != mapping.mapping_type() {
@@ -505,29 +505,29 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_send("gibberish", "/1", &Vec::new(), &None)
+            .validate_send("gibberish", mapping!("/1"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test non existant endpoint
         let aggregate_data = utils::serialize_object(aggregate.clone(), None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1/25", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1/25"), &aggregate_data, &None)
             .unwrap_err();
 
         // Test sending an aggregate (with and without timestamp)
         let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &timestamp)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &timestamp)
             .unwrap();
 
         // Test sending an aggregate with an object field with incorrect type
         aggregate.insert("integer_endpoint".to_string(), AstarteType::Boolean(false));
         let aggregate_data = utils::serialize_object(aggregate.clone(), None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
         aggregate.insert("integer_endpoint".to_string(), AstarteType::Integer(45));
 
@@ -535,7 +535,7 @@ mod test {
         aggregate.insert("gibberish".to_string(), AstarteType::Boolean(false));
         let aggregate_data = utils::serialize_object(aggregate.clone(), None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
         aggregate.remove("gibberish");
 
@@ -543,7 +543,7 @@ mod test {
         aggregate.remove("integer_endpoint");
         let aggregate_data = utils::serialize_object(aggregate, None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
     }
 
@@ -553,19 +553,24 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_send("gibberish", "/boolean", &Vec::new(), &None)
+            .validate_send("gibberish", mapping!("/boolean"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test sending a value on an unexisting endpoint
         interfaces
-            .validate_send(&interface_name, "/gibberish", &Vec::new(), &None)
+            .validate_send(&interface_name, mapping!("/gibberish"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test sending a value (with and without timestamp)
         let boolean_endpoint_data =
             utils::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/boolean", &boolean_endpoint_data, &None)
+            .validate_send(
+                &interface_name,
+                mapping!("/boolean"),
+                &boolean_endpoint_data,
+                &None,
+            )
             .unwrap();
         let double_endpoint_data =
             utils::serialize_individual(&AstarteType::Double(23.2), None).unwrap();
@@ -573,7 +578,7 @@ mod test {
         interfaces
             .validate_send(
                 &interface_name,
-                "/double",
+                mapping!("/double"),
                 &double_endpoint_data,
                 &timestamp,
             )
@@ -581,12 +586,17 @@ mod test {
 
         // Test sending a value of the wrong type
         interfaces
-            .validate_send(&interface_name, "/double", &boolean_endpoint_data, &None)
+            .validate_send(
+                &interface_name,
+                mapping!("/double"),
+                &boolean_endpoint_data,
+                &None,
+            )
             .unwrap_err();
         interfaces
             .validate_send(
                 &interface_name,
-                "/booleanarray",
+                mapping!("/booleanarray"),
                 &boolean_endpoint_data,
                 &None,
             )

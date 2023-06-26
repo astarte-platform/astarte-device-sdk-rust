@@ -30,10 +30,10 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("wrong major and minor")]
     MajorMinor,
-    #[error("interface not found")]
-    InterfaceNotFound,
-    #[error("mapping not found")]
-    MappingNotFound,
+    #[error("couldn't fine interface '{name}'")]
+    InterfaceNotFound { name: String },
+    #[error("couldn't find the mapping '{path}' in the interface")]
+    MappingNotFound { path: String },
     #[error("Database retention policy set to `use_ttl` but the TTL was not specified")]
     MissingTtl,
     #[error("invalid endpoint")]

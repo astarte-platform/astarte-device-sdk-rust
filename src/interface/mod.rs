@@ -147,13 +147,6 @@ impl Interface {
         MappingIter::new(&self.inner)
     }
 
-    pub(crate) fn properties(&self) -> Option<&Properties> {
-        match &self.inner {
-            InterfaceType::Properties(properties) => Some(properties),
-            _ => None,
-        }
-    }
-
     pub(crate) fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
         match &self.inner {
             InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
@@ -615,7 +608,7 @@ mod tests {
     use crate::{
         interface::{
             def::{DatabaseRetentionPolicyDef, RetentionDef},
-            mapping::{path::MappingPath, BaseMapping, DatastreamIndividualMapping},
+            mapping::{BaseMapping, DatastreamIndividualMapping},
             Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
             Mapping, MappingMap, MappingType, Ownership, Reliability, Retention,
         },
@@ -645,29 +638,6 @@ mod tests {
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
-                }
-            ]
-        }"#;
-
-    // The mappings are sorted alphabetically by endpoint, so we can confront them
-    const PROPERTIES_JSON: &str = r#"{
-            "interface_name": "org.astarte-platform.genericproperties.Values",
-            "version_major": 1,
-            "version_minor": 0,
-            "type": "properties",
-            "ownership": "server",
-            "description": "Interface description",
-            "doc": "Interface doc",
-            "mappings": [
-                {
-                    "endpoint": "/%{sensor_id}/aaaa",
-                    "type": "longinteger",
-                    "allow_unset": true
-                },
-                {
-                    "endpoint": "/%{sensor_id}/bbbb",
-                    "type": "double",
-                    "allow_unset": false
                 }
             ]
         }"#;
@@ -751,30 +721,6 @@ mod tests {
     }
 
     #[test]
-    fn test_properties() {
-        let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
-
-        let properties = interface.properties();
-
-        assert!(properties.is_some(), "Properties interface not found");
-
-        let properties = properties.unwrap();
-
-        let paths = interface.get_properties_paths();
-
-        assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0], ("/%{sensor_id}/aaaa".to_string(), 1));
-        assert_eq!(paths[1], ("/%{sensor_id}/bbbb".to_string(), 1));
-
-        let path = MappingPath::try_from("/1/aaaa").unwrap();
-
-        let f = properties.get(&path).unwrap();
-
-        assert_eq!(f.mapping_type(), MappingType::LongInteger);
-        assert!(f.allow_unset);
-    }
-
-    #[test]
     fn test_iter_mappings() {
         let value_mapping = Mapping {
             endpoint: "/%{sensor_id}/value",
@@ -828,7 +774,6 @@ mod tests {
         assert_eq!(interface.aggregation(), Aggregation::Individual);
         assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
         assert_eq!(interface.doc(), Some("Interface doc"));
-        assert!(interface.properties().is_none());
     }
 
     #[test]
