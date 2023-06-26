@@ -152,7 +152,7 @@ pub enum AstarteError {
     #[error("malformed input from Astarte backend")]
     DeserializationError(#[from] bson::de::Error),
 
-    #[error("malformed input from Astarte backend, missinv value 'v' in document: {0}")]
+    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
     DeserializationMissingValue(bson::Document),
 
     #[error("error converting from Bson to AstarteType ({0})")]
@@ -1143,7 +1143,11 @@ mod test {
 
     use super::{AsyncClient, EventLoop};
 
-    fn mock_astarte<I>(client: AsyncClient, eventloop: EventLoop, interfaces: I) -> AstarteDeviceSdk
+    fn mock_astarte_device<I>(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        interfaces: I,
+    ) -> AstarteDeviceSdk
     where
         I: IntoIterator<Item = Interface>,
     {
@@ -1461,7 +1465,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn wait_for_connack() {
+    async fn test_wait_for_connack() {
         let mut eventloope = EventLoop::default();
 
         eventloope.expect_poll().once().returning(|| {
@@ -1511,7 +1515,7 @@ mod test {
             Interface::from_str(include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json")).unwrap()
         ];
 
-        let mut astarte = mock_astarte(client, eventloope, interfaces);
+        let mut astarte = mock_astarte_device(client, eventloope, interfaces);
 
         astarte.wait_for_connack().await.unwrap();
     }
@@ -1561,7 +1565,7 @@ mod test {
 
         let interface = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
 
-        let astarte = mock_astarte(client, eventloope, []);
+        let astarte = mock_astarte_device(client, eventloope, []);
 
         astarte.add_interface_from_str(interface).await.unwrap();
 
@@ -1609,7 +1613,7 @@ mod test {
             )))
         });
 
-        let mut astarte = mock_astarte(client, eventloope, [
+        let mut astarte = mock_astarte_device(client, eventloope, [
             Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
             Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json")).unwrap(),
         ]);

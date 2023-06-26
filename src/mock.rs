@@ -23,7 +23,6 @@ use rumqttc::{ClientError, ConnectionError, Event, MqttOptions, QoS};
 
 mock!(
     pub AsyncClient {
-        // NOTE: This is mocked for compatibility, but it will be hard to test
         pub fn new(options: MqttOptions, cap: usize) -> (MockAsyncClient, MockEventLoop);
         pub async fn subscribe<S: Into<String> + 'static>(&self, topic: S, qos: QoS) -> Result<(), ClientError>;
         pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<(), ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
