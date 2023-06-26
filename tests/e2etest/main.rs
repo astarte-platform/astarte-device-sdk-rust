@@ -78,7 +78,7 @@ impl TestCfg {
         let credentials_secret =
             env::var("E2E_CREDENTIALS_SECRET").map_err(|msg| msg.to_string())?;
         let api_url = env::var("E2E_API_URL").map_err(|msg| msg.to_string())?;
-        let pairing_url = format!("{api_url}/pairing");
+        let pairing_url = env::var("E2E_PAIRING_URL").map_err(|msg| msg.to_string())?;
 
         let interfaces_fld = env::current_dir()
             .map_err(|msg| msg.to_string())?
@@ -129,7 +129,7 @@ async fn e2etest_impl() {
 
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
-    let sdk_options = AstarteOptions::new(
+    let mut sdk_options = AstarteOptions::new(
         &test_cfg.realm,
         &test_cfg.device_id,
         &test_cfg.credentials_secret,
@@ -137,6 +137,11 @@ async fn e2etest_impl() {
     )
     .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
     .unwrap();
+
+    // Ignore SSL for local testing
+    if env::var("E2E_IGNORE_SSL").is_ok() {
+        sdk_options = sdk_options.ignore_ssl_errors();
+    }
 
     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
