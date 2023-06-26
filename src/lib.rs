@@ -19,7 +19,7 @@
  */
 #![doc = include_str!("../README.md")]
 
-mod crypto;
+pub mod crypto;
 pub mod database;
 pub mod interface;
 mod interfaces;

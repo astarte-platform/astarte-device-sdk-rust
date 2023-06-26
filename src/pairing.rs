@@ -22,7 +22,6 @@
 
 use std::sync::Arc;
 
-use openssl::error::ErrorStack;
 use reqwest::{StatusCode, Url};
 use rumqttc::MqttOptions;
 use rustls::{Certificate, PrivateKey};
@@ -31,7 +30,7 @@ use serde_json::json;
 use url::ParseError;
 
 use crate::{
-    crypto::Bundle,
+    crypto::{Bundle, Error as CryptoError},
     options::{AstarteOptions, AstarteOptionsError},
 };
 
@@ -67,7 +66,7 @@ struct AstarteMqttV1Info {
 #[derive(thiserror::Error, Debug)]
 pub enum PairingError {
     #[error("invalid credentials secret")]
-    InvalidCredentials,
+    InvalidCredentials(#[source] std::io::Error),
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
     #[error("error while sending or receiving request")]
@@ -77,7 +76,7 @@ pub enum PairingError {
     #[error("API returned an error code")]
     ApiError(StatusCode, String),
     #[error("crypto error")]
-    Crypto(#[from] ErrorStack),
+    Crypto(#[from] CryptoError),
     #[error("configuration error")]
     ConfigError(String),
 }
@@ -172,25 +171,16 @@ async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError>
 async fn populate_credentials(
     opts: &AstarteOptions,
 ) -> Result<(Vec<Certificate>, PrivateKey), PairingError> {
-    let cn = format!("{}/{}", opts.realm, opts.device_id);
+    let Bundle { private_key, csr } = Bundle::new(&opts.realm, &opts.device_id)?;
 
-    let Bundle { private_key, csr } = Bundle::new(&cn)?;
-
-    let private_key = rustls_pemfile::pkcs8_private_keys(&mut private_key.as_slice())
-        .map_err(|_| PairingError::ConfigError("failed pkcs8 key extraction".into()))?
-        .remove(0);
-
-    let csr = String::from_utf8(csr)
-        .map_err(|_| PairingError::ConfigError("bad csr bytes format".into()))?;
-
-    let cert_pem = fetch_credentials(opts, &csr).await?;
-    let mut cert_pem_bytes = cert_pem.as_bytes();
-    let certs = rustls_pemfile::certs(&mut cert_pem_bytes)
-        .map_err(|_| PairingError::InvalidCredentials)?
-        .iter()
-        .map(|c| Certificate(c.clone()))
+    let certificate = fetch_credentials(opts, &csr).await?;
+    let certs = rustls_pemfile::certs(&mut certificate.as_bytes())
+        .map_err(PairingError::InvalidCredentials)?
+        .into_iter()
+        .map(Certificate)
         .collect();
-    Ok((certs, PrivateKey(private_key)))
+
+    Ok((certs, private_key))
 }
 
 async fn populate_broker_url(opts: &AstarteOptions) -> Result<Url, PairingError> {
@@ -201,8 +191,8 @@ async fn populate_broker_url(opts: &AstarteOptions) -> Result<Url, PairingError>
 
 fn build_mqtt_opts(
     options: &AstarteOptions,
-    certificate_pem: &[Certificate],
-    private_key: &PrivateKey,
+    certificate: Vec<Certificate>,
+    private_key: PrivateKey,
     broker_url: &Url,
 ) -> Result<MqttOptions, AstarteOptionsError> {
     let AstarteOptions {
@@ -225,8 +215,10 @@ fn build_mqtt_opts(
     let mut tls_client_config = rumqttc::tokio_rustls::rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_cert_store)
-        .with_single_cert(certificate_pem.to_owned(), private_key.to_owned())
-        .map_err(|_| AstarteOptionsError::ConfigError("cannot setup client auth".into()))?;
+        .with_single_cert(certificate, private_key)
+        .map_err(|err| {
+            AstarteOptionsError::ConfigError(format!("cannot setup client auth: {}", err))
+        })?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
@@ -274,11 +266,11 @@ fn build_mqtt_opts(
 pub(crate) async fn get_transport_config(
     opts: &AstarteOptions,
 ) -> Result<MqttOptions, AstarteOptionsError> {
-    let (certificate_pem, private_key) = populate_credentials(opts).await?;
+    let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;
 
-    let mqtt_opts = build_mqtt_opts(opts, &certificate_pem, &private_key, &broker_url)?;
+    let mqtt_opts = build_mqtt_opts(opts, certificate, private_key, &broker_url)?;
 
     Ok(mqtt_opts)
 }
