@@ -21,7 +21,9 @@ permissions:
   contents: read
 on:
   push:
-    branches: [main]
+    branches:
+      - master
+      - release-*
   # Run on branch/tag creation
   create:
   pull_request:
@@ -56,8 +58,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
-        - 1.66.1
-        - stable
+          - 1.66.1
+          - stable
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
@@ -80,8 +82,8 @@ jobs:
     strategy:
       matrix:
         toolchain:
-        - 1.66.1
-        - stable
+          - 1.66.1
+          - stable
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3

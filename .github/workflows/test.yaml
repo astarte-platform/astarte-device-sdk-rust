@@ -14,16 +14,20 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
+name: test
 permissions:
   contents: read
 on:
   push:
-    branches: [main]
+    branches:
+      - master
+      - release-*
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-name: test
+env:
+  CARGO_TERM_COLOR: always
 jobs:
   required:
     runs-on: ubuntu-latest
@@ -69,3 +73,24 @@ jobs:
         run: cargo generate-lockfile
       - name: cargo test
         run: cargo test --locked --all-features --all-targets
+  code_coverage_tarpauline:
+    name: Code coverage tarpauline based
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v3
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Run cargo-tarpaulin with xml output
+        run: cargo tarpaulin --engine llvm --ignore-tests --lib --out Xml -- --test-threads 1
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+          fail_ci_if_error: true
