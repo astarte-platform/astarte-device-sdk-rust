@@ -21,7 +21,9 @@ permissions:
   contents: read
 on:
   push:
-    branches: [main]
+    branches:
+      - master
+      - release-*
   # Run on branch/tag creation
   create:
   pull_request:

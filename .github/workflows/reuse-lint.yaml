@@ -2,22 +2,24 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
+name: REUSE Compliance Check
 permissions:
   contents: read
 on:
   push:
-    branches: [main]
+    branches:
+      - master
+      - release-*
   # Run on branch/tag creation
   create:
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-name: REUSE Compliance Check
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: REUSE Compliance Check
-      uses: fsfe/reuse-action@v1
+      - uses: actions/checkout@v3
+      - name: REUSE Compliance Check
+        uses: fsfe/reuse-action@v1
