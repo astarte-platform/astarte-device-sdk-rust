@@ -85,7 +85,7 @@ dependencies = [
  "rand_core",
  "reqwest",
  "rumqttc",
- "rustls 0.20.8",
+ "rustls 0.21.1",
  "rustls-native-certs",
  "rustls-pemfile",
  "serde",
