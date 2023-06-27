@@ -1661,4 +1661,57 @@ mod test {
             _ => panic!("Wrong data type {:?}", event.data),
         }
     }
+
+    #[tokio::test]
+    async fn test_unset_property() {
+        let mut client = AsyncClient::default();
+
+        let buf = AstarteDeviceSdk::serialize_individual(
+            AstarteType::String(String::from("name number 1")),
+            None,
+        )
+        .unwrap();
+
+        let unset = AstarteDeviceSdk::serialize_individual(AstarteType::Unset, None).unwrap();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(buf),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()), predicate::always(), predicate::always(), predicate::eq(unset))
+            .returning(|_, _, _, _| Ok(()));
+
+        let eventloope = EventLoop::default();
+
+        let astarte = mock_astarte_device(client, eventloope, [
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
+        ]);
+
+        astarte
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                "name number 1".to_string(),
+            )
+            .await
+            .unwrap();
+
+        astarte
+            .unset(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .unwrap()
+    }
 }
