@@ -39,7 +39,7 @@ rustls = { version = "0.20.8", features = ["dangerous_configuration"] }
 rustls-native-certs = "0.6.3"
 rustls-pemfile = "1.0.2"
 serde = { version = "1.0.164", features = ["derive"] }
-serde_json = "1.0.97"
+serde_json = "1.0.99"
 sqlx = { version = "0.6.3", features = ["sqlite", "macros", "runtime-tokio-rustls"] }
 thiserror = "1.0.40"
 tokio = { version = "1.28.2", features = ["parking_lot", "macros"] }
