@@ -23,25 +23,28 @@ pub mod crypto;
 pub mod database;
 pub mod interface;
 mod interfaces;
+#[cfg(test)]
+mod mock;
 pub mod options;
 pub mod pairing;
 pub mod registration;
 mod topic;
 pub mod types;
 
-// Re-export rumqttc since we return its types in some methods
-use crate::topic::{parse_topic, TopicError};
-pub use chrono;
-use interface::error::ValidationError;
-pub use rumqttc;
+#[cfg(test)]
+use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
+#[cfg(not(test))]
+use rumqttc::{AsyncClient, EventLoop};
 
+// Re-export rumqttc since we return its types in some methods
 use bson::Bson;
+pub use chrono;
 use database::AstarteDatabase;
 use database::StoredProp;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use options::AstarteOptions;
-use rumqttc::{AsyncClient, Event};
-use rumqttc::{EventLoop, MqttOptions};
+pub use rumqttc;
+use rumqttc::{Event, MqttOptions};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
@@ -53,6 +56,8 @@ use std::sync::Arc;
 use types::AstarteType;
 
 use crate::interface::mapping::path::{Error as MappingError, MappingPath};
+use crate::topic::{parse_topic, TopicError};
+use interface::error::ValidationError;
 pub use interface::Interface;
 
 /// A **trait** required by all data to be sent using
@@ -145,7 +150,10 @@ pub enum AstarteError {
     ConnectionError(#[from] rumqttc::ConnectionError),
 
     #[error("malformed input from Astarte backend")]
-    DeserializationError,
+    DeserializationError(#[from] bson::de::Error),
+
+    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
+    DeserializationMissingValue(bson::Document),
 
     #[error("error converting from Bson to AstarteType ({0})")]
     FromBsonError(String),
@@ -194,7 +202,7 @@ pub enum AstarteError {
 }
 
 /// Payload format for an Astarte device event data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Aggregation {
     /// Individual data, can be both from a datastream or property.
     Individual(AstarteType),
@@ -310,7 +318,7 @@ impl AstarteDeviceSdk {
         iface: &Interface,
     ) -> Result<(), AstarteError> {
         if iface.ownership() != interface::Ownership::Server {
-            log::warn!("Unable to subscribe to {} as it is not server owned", iface);
+            warn!("Unable to subscribe to {} as it is not server owned", iface);
         } else {
             self.client
                 .subscribe(
@@ -327,7 +335,7 @@ impl AstarteDeviceSdk {
         iface: &Interface,
     ) -> Result<(), AstarteError> {
         if iface.ownership() != interface::Ownership::Server {
-            log::warn!(
+            warn!(
                 "Unable to unsubscribe to {} as it is not server owned",
                 iface
             );
@@ -434,10 +442,14 @@ impl AstarteDeviceSdk {
                         rumqttc::Packet::Publish(publish) => {
                             let (_, _, interface, path) = parse_topic(&publish.topic)?;
 
-                            let bdata = publish.payload.to_vec();
+                            // It can be borrowed as a &[u8]
+                            let bdata = publish.payload;
 
                             if interface == "control" && path == "/consumer/properties" {
-                                self.purge_properties(bdata).await?;
+                                debug!("Purging properties");
+
+                                self.purge_properties(&bdata).await?;
+
                                 continue;
                             }
 
@@ -517,11 +529,11 @@ impl AstarteDeviceSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn purge_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), AstarteError> {
         if let Some(db) = &self.database {
             let stored_props = db.load_all_props().await?;
 
-            let paths = utils::extract_set_properties(&bdata);
+            let paths = utils::extract_set_properties(bdata);
 
             for stored_prop in stored_props {
                 if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
@@ -558,7 +570,7 @@ impl AstarteDeviceSdk {
                 self.client_id(),
                 rumqttc::QoS::ExactlyOnce,
                 false,
-                introspection.clone(),
+                introspection,
             )
             .await?;
         Ok(())
@@ -645,15 +657,14 @@ impl AstarteDeviceSdk {
             return Ok(Vec::new());
         }
 
-        let doc = if let Some(timestamp) = timestamp {
-            bson::doc! {
+        let doc = match timestamp {
+            Some(timestamp) => bson::doc! {
                "t": timestamp,
                "v": data
-            }
-        } else {
-            bson::doc! {
+            },
+            None => bson::doc! {
                "v": data,
-            }
+            },
         };
 
         let mut buf = Vec::new();
@@ -666,29 +677,30 @@ impl AstarteDeviceSdk {
         if bdata.is_empty() {
             return Ok(Aggregation::Individual(AstarteType::Unset));
         }
-        if let Ok(deserialized) = bson::Document::from_reader(&mut std::io::Cursor::new(bdata)) {
-            trace!("{:?}", deserialized);
-            if let Some(v) = deserialized.get("v") {
-                if let Bson::Document(doc) = v {
-                    let strings = doc.iter().map(|f| f.0.clone());
 
-                    let data = doc.iter().map(|f| f.1.clone().try_into());
-                    let data: Result<Vec<AstarteType>, AstarteError> = data.collect();
-                    let data = data?;
+        let mut document: bson::Document = bson::from_slice(bdata)?;
 
-                    let hmap: HashMap<String, AstarteType> = strings.zip(data).collect();
+        trace!("{:?}", document);
 
-                    Ok(Aggregation::Object(hmap))
-                } else if let Ok(v) = v.clone().try_into() {
-                    Ok(Aggregation::Individual(v))
-                } else {
-                    Err(AstarteError::DeserializationError)
-                }
-            } else {
-                Err(AstarteError::DeserializationError)
+        // Take the value without cloning
+        let value = document
+            .remove("v")
+            .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+
+        match value {
+            Bson::Document(doc) => {
+                let hmap = doc
+                    .into_iter()
+                    .map(|(name, value)| AstarteType::try_from(value).map(|v| (name, v)))
+                    .collect::<Result<HashMap<String, AstarteType>, AstarteError>>()?;
+
+                Ok(Aggregation::Object(hmap))
             }
-        } else {
-            Err(AstarteError::DeserializationError)
+            _ => {
+                let individual = AstarteType::try_from(value)?;
+
+                Ok(Aggregation::Individual(individual))
+            }
         }
     }
 
@@ -1116,15 +1128,42 @@ mod utils {
 mod test {
     use base64::Engine;
     use chrono::{TimeZone, Utc};
+    use mockall::predicate;
+    use rumqttc::{Event, MqttOptions};
     use std::collections::HashMap;
+    use std::str::FromStr;
+    use std::sync::Arc;
+    use tokio::sync::{Mutex, RwLock};
 
-    use crate as astarte_device_sdk;
+    use crate::interfaces::Interfaces;
+    use crate::{self as astarte_device_sdk, Interface};
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
     use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
+
+    use super::{AsyncClient, EventLoop};
+
+    fn mock_astarte_device<I>(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        interfaces: I,
+    ) -> AstarteDeviceSdk
+    where
+        I: IntoIterator<Item = Interface>,
+    {
+        AstarteDeviceSdk {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            mqtt_options: MqttOptions::new("device_id", "localhost", 1883),
+            client,
+            database: None,
+            interfaces: Arc::new(RwLock::new(Interfaces::from(interfaces).unwrap())),
+            eventloop: Arc::new(Mutex::new(eventloop)),
+        }
+    }
 
     #[derive(AstarteAggregate)]
     #[astarte_aggregate(rename_all = "lowercase")]
@@ -1426,5 +1465,312 @@ mod test {
         } else {
             panic!("Deserialization in not individual");
         }
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_connack() {
+        let mut eventloope = EventLoop::default();
+
+        eventloope.expect_poll().once().returning(|| {
+            Ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                rumqttc::ConnAck {
+                    session_present: false,
+                    code: rumqttc::ConnectReturnCode::Success,
+                },
+            )))
+        });
+
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_subscribe()
+            .once()
+            .returning(|_: String, _| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .returning(|topic, _, _, _| {
+                // Client id
+                assert_eq!(topic, "realm/device_id");
+
+                Ok(())
+            });
+
+        client
+            .expect_publish::<String, &str>()
+            .returning(|topic, _, _, payload| {
+                // empty cache
+                assert_eq!(topic, "realm/device_id/control/emptyCache");
+
+                assert_eq!(payload, "1");
+
+                Ok(())
+            });
+
+        client.expect_subscribe::<String>().returning(|topic, _qos| {
+            assert_eq!(topic, "realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#");
+
+            Ok(())
+        });
+
+        let interfaces = [
+            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
+            Interface::from_str(include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json")).unwrap()
+        ];
+
+        let mut astarte = mock_astarte_device(client, eventloope, interfaces);
+
+        astarte.wait_for_connack().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_interface() {
+        let eventloope = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::always()
+            )
+            .returning(|_, _| { Ok(()) });
+
+        client
+            .expect_publish::<String, String>()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(
+                    "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1"
+                        .to_string(),
+                ),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
+            .returning(|_| Ok(()));
+
+        let interface = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+
+        let astarte = mock_astarte_device(client, eventloope, []);
+
+        astarte.add_interface_from_str(interface).await.unwrap();
+
+        astarte
+            .remove_interface(
+                "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream",
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_handle_event() {
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::function(|buf: &Vec<u8>| {
+                    let doc= bson::Document::from_reader(buf.as_slice()).unwrap();
+
+                    let value = doc.get("v").unwrap().as_str().unwrap();
+
+                    value == "name number 1"
+                }),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        let mut eventloope = EventLoop::default();
+
+        let data = bson::doc! {
+            "v": true
+        };
+
+        // Purge properties
+        eventloope.expect_poll().once().returning(|| {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/control/consumer/properties",
+                    rumqttc::QoS::AtLeastOnce,
+                    vec![],
+                ),
+            )))
+        });
+
+        // Send properties
+        eventloope.expect_poll().returning(move || {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
+                    rumqttc::QoS::AtLeastOnce,
+                    bson::to_vec(&data).unwrap()
+                ),
+            )))
+        });
+
+        let mut astarte = mock_astarte_device(client, eventloope, [
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json")).unwrap(),
+        ]);
+
+        astarte
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                "name number 1".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let event = astarte.handle_events().await;
+
+        assert!(
+            event.is_ok(),
+            "Error handling event {:?}",
+            event.unwrap_err()
+        );
+
+        let event = event.unwrap();
+
+        assert_eq!("/1/enable", event.path);
+
+        match event.data {
+            Aggregation::Individual(AstarteType::Boolean(val)) => {
+                assert!(val);
+            }
+            _ => panic!("Wrong data type {:?}", event.data),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unset_property() {
+        let mut client = AsyncClient::default();
+
+        let buf = AstarteDeviceSdk::serialize_individual(
+            AstarteType::String(String::from("name number 1")),
+            None,
+        )
+        .unwrap();
+
+        let unset = AstarteDeviceSdk::serialize_individual(AstarteType::Unset, None).unwrap();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(buf),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()), predicate::always(), predicate::always(), predicate::eq(unset))
+            .returning(|_, _, _, _| Ok(()));
+
+        let eventloope = EventLoop::default();
+
+        let astarte = mock_astarte_device(client, eventloope, [
+            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
+        ]);
+
+        astarte
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                "name number 1".to_string(),
+            )
+            .await
+            .unwrap();
+
+        astarte
+            .unset(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_receive_object() {
+        let client = AsyncClient::default();
+
+        let mut eventloope = EventLoop::default();
+
+        let data = bson::doc! {
+            "v": {
+                "endpoint1": 4.2,
+                "endpoint2": "obj",
+                "endpoint3": [true],
+            }
+        };
+
+        // Send object
+        eventloope.expect_poll().returning(move || {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1",
+                    rumqttc::QoS::AtLeastOnce,
+                    bson::to_vec(&data).unwrap()
+                ),
+            )))
+        });
+
+        let mut astarte = mock_astarte_device(client, eventloope, [
+            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
+        ]);
+
+        let event = astarte.handle_events().await;
+
+        assert!(
+            event.is_ok(),
+            "Error handling event {:?}",
+            event.unwrap_err()
+        );
+
+        let event = event.unwrap();
+
+        let mut obj = HashMap::new();
+        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+        obj.insert(
+            "endpoint2".to_string(),
+            AstarteType::String("obj".to_string()),
+        );
+        obj.insert(
+            "endpoint3".to_string(),
+            AstarteType::BooleanArray(vec![true]),
+        );
+        let expected = Aggregation::Object(obj);
+
+        assert_eq!(
+            "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            event.interface
+        );
+        assert_eq!("/1", event.path);
+        assert_eq!(expected, event.data);
     }
 }

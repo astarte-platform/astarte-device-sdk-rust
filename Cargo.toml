@@ -52,6 +52,7 @@ x509-cert = { version = "0.2.3", features = ["builder"] }
 astarte-device-sdk-derive = { path = "./astarte-device-sdk-derive" }
 colored = "2.0.0"
 env_logger = "0.10.0"
+mockall = "0.11.4"
 structopt = "0.3.26"
 tempfile = "3.6.0"
 

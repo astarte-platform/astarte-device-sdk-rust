@@ -9,6 +9,7 @@
     "mappings": [
         {
             "endpoint": "/%{sensor_id}/name",
+            "allow_unset": true,
             "type": "string",
             "description": "Sensor name.",
             "doc": "An arbitrary sensor name."
