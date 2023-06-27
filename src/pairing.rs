@@ -31,7 +31,7 @@ use url::ParseError;
 
 use crate::{
     crypto::{Bundle, Error as CryptoError},
-    options::{AstarteOptions, AstarteOptionsError},
+    options::{AstarteOptions, Error as OptionsError},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -63,6 +63,7 @@ struct AstarteMqttV1Info {
 }
 
 /// Error returned during pairing.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum PairingError {
     #[error("invalid credentials secret")]
@@ -197,7 +198,7 @@ fn build_mqtt_opts<DB>(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, AstarteOptionsError> {
+) -> Result<MqttOptions, OptionsError> {
     let AstarteOptions {
         realm, device_id, ..
     } = options;
@@ -205,10 +206,10 @@ fn build_mqtt_opts<DB>(
     let client_id = format!("{realm}/{device_id}");
     let host = broker_url
         .host_str()
-        .ok_or_else(|| AstarteOptionsError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| OptionsError::ConfigError("bad broker url".into()))?;
     let port = broker_url
         .port()
-        .ok_or_else(|| AstarteOptionsError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| OptionsError::ConfigError("bad broker url".into()))?;
 
     let mut root_cert_store = rustls::RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
@@ -219,14 +220,12 @@ fn build_mqtt_opts<DB>(
         .with_safe_defaults()
         .with_root_certificates(root_cert_store)
         .with_single_cert(certificate, private_key)
-        .map_err(|err| {
-            AstarteOptionsError::ConfigError(format!("cannot setup client auth: {}", err))
-        })?;
+        .map_err(|err| OptionsError::ConfigError(format!("cannot setup client auth: {}", err)))?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if options.keepalive.as_secs() < 5 {
-        return Err(AstarteOptionsError::ConfigError(
+        return Err(OptionsError::ConfigError(
             "Keepalive should be >= 5 secs".into(),
         ));
     }
@@ -268,7 +267,7 @@ fn build_mqtt_opts<DB>(
 /// Returns a MqttOptions struct that can be used to connect to the broker.
 pub(crate) async fn get_transport_config<DB>(
     opts: &AstarteOptions<DB>,
-) -> Result<MqttOptions, AstarteOptionsError> {
+) -> Result<MqttOptions, OptionsError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

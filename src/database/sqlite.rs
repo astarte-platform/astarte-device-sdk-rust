@@ -25,12 +25,13 @@ use log::{debug, error, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use super::{AstarteDatabase, StoredProp};
-use crate::{mqtt::Payload, types::AstarteType, utils, AstarteError};
+use crate::{mqtt::Payload, types::AstarteType, utils, Error as AstarteError};
 
 #[deprecated = "Use SqliteStore instead"]
 pub type AstarteSqliteDatabase = SqliteStore;
 
 /// Error returned by the [`SqliteStore`]
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("could not parse the database uri: {uri}")]
@@ -48,7 +49,7 @@ pub enum Error {
     #[error("could not decode property from bson")]
     Decode(#[from] bson::de::Error),
 
-    // TODO: refactor errors
+    // TODO: refactor errors to be more specific
     #[error(transparent)]
     AstarteError(#[from] AstarteError),
 }

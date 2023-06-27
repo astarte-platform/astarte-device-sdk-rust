@@ -26,14 +26,15 @@ use crate::database::Error as DatabaseError;
 use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::Error as MappingError;
 use crate::interface::Error as InterfaceError;
-use crate::options::AstarteOptionsError;
+use crate::options::Error as OptionsError;
 use crate::topic::Error as TopicError;
 
 /// Astarte error.
 ///
 /// Possible errors returned by functions of the Astarte device SDK.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum AstarteError {
+pub enum Error {
     #[error("bson serialize error")]
     BsonSerError(#[from] bson::ser::Error),
 
@@ -68,7 +69,7 @@ pub enum AstarteError {
     DbError(#[from] sqlx::Error),
 
     #[error("options error")]
-    OptionsError(#[from] AstarteOptionsError),
+    OptionsError(#[from] OptionsError),
 
     #[error(transparent)]
     InterfaceError(#[from] InterfaceError),
@@ -99,11 +100,11 @@ pub enum AstarteError {
     Database(#[from] Box<dyn StdError>),
 }
 
-impl<D> From<DatabaseError<D>> for AstarteError
+impl<D> From<DatabaseError<D>> for Error
 where
     D: AstarteDatabase,
 {
     fn from(err: DatabaseError<D>) -> Self {
-        AstarteError::Database(Box::new(err))
+        Error::Database(Box::new(err))
     }
 }

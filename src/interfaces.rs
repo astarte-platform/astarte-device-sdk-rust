@@ -30,7 +30,7 @@ use log::debug;
 use crate::{
     interface::{error::ValidationError, mapping::path::MappingPath, Mapping},
     types::AstarteType,
-    utils, Aggregation, AstarteError, Interface,
+    utils, Aggregation, Error, Interface,
 };
 
 /// Struct to hold a reference to an interface, which is a property.
@@ -60,9 +60,9 @@ pub(crate) struct Interfaces {
 }
 
 /// Validates that a float is a valid Astarte float
-fn validate_float(d: &f64) -> Result<(), AstarteError> {
+fn validate_float(d: &f64) -> Result<(), Error> {
     if d.is_infinite() || d.is_nan() || d.is_subnormal() {
-        Err(AstarteError::SendError(
+        Err(Error::SendError(
             "You are sending the wrong type for this mapping".into(),
         ))
     } else {
@@ -195,7 +195,7 @@ impl Interfaces {
         Some(interface.version_major())
     }
 
-    pub(crate) fn validate_float(data: &AstarteType) -> Result<(), AstarteError> {
+    pub(crate) fn validate_float(data: &AstarteType) -> Result<(), Error> {
         match data {
             AstarteType::Double(d) => validate_float(d),
             AstarteType::DoubleArray(d) => d.iter().try_for_each(validate_float),
@@ -209,22 +209,22 @@ impl Interfaces {
         interface_path: &MappingPath<'_>,
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         let data_deserialized = utils::deserialize(data)?;
 
         let interface = self
             .interfaces
             .get(interface_name)
-            .ok_or_else(|| AstarteError::SendError("Interface does not exists".into()))?;
+            .ok_or_else(|| Error::SendError("Interface does not exists".into()))?;
 
         match data_deserialized {
             Aggregation::Individual(individual) => {
                 let mapping = interface
                     .mapping(interface_path)
-                    .ok_or_else(|| AstarteError::SendError("Mapping doesn't exist".into()))?;
+                    .ok_or_else(|| Error::SendError("Mapping doesn't exist".into()))?;
 
                 if individual != AstarteType::Unset && individual != mapping.mapping_type() {
-                    return Err(AstarteError::SendError(format!(
+                    return Err(Error::SendError(format!(
                         "You are sending the wrong type for this mapping: got {:?}, expected {:?}",
                         individual,
                         mapping.mapping_type()
@@ -234,13 +234,13 @@ impl Interfaces {
                 Interfaces::validate_float(&individual)?;
 
                 if !mapping.explicit_timestamp() && timestamp.is_some() {
-                    return Err(AstarteError::SendError(
+                    return Err(Error::SendError(
                         "Do not send timestamp to a mapping without explicit timestamp".into(),
                     ));
                 }
 
                 if !mapping.allow_unset() && data.is_empty() {
-                    return Err(AstarteError::SendError(
+                    return Err(Error::SendError(
                         "Do not unset a mapping without allow_unset".into(),
                     ));
                 }
@@ -253,24 +253,24 @@ impl Interfaces {
                     let mapping_path = MappingPath::try_from(object_path.as_str())?;
 
                     let mapping = interface.mapping(&mapping_path).ok_or_else(|| {
-                        AstarteError::SendError(format!("Mapping '{mapping_path}' doesn't exist"))
+                        Error::SendError(format!("Mapping '{mapping_path}' doesn't exist"))
                     })?;
 
                     if *obj_value != mapping.mapping_type() {
-                        return Err(AstarteError::SendError(
+                        return Err(Error::SendError(
                             format!("You are sending the wrong type for this object mapping: got {:?}, expected {}", obj_value, mapping.mapping_type()),
                         ));
                     }
 
                     if !mapping.explicit_timestamp() && timestamp.is_some() {
-                        return Err(AstarteError::SendError(
+                        return Err(Error::SendError(
                             "Do not send timestamp to a mapping without explicit timestamp".into(),
                         ));
                     }
                 }
 
                 if object.len() < interface.mappings_len() {
-                    return Err(AstarteError::SendError(
+                    return Err(Error::SendError(
                         "You are missing some mappings from the object".into(),
                     ));
                 }
@@ -285,13 +285,13 @@ impl Interfaces {
         interface_name: &str,
         path: &MappingPath,
         bdata: &[u8],
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         if interface_name == "control" {
             return Ok(());
         }
 
         let interface = self.interfaces.get(interface_name).ok_or_else(|| {
-            AstarteError::ReceiveError(format!("Interface '{interface_name}' does not exists"))
+            Error::ReceiveError(format!("Interface '{interface_name}' does not exists"))
         })?;
 
         let data = utils::deserialize(bdata)?;
@@ -299,12 +299,12 @@ impl Interfaces {
         match data {
             Aggregation::Individual(individual) => {
                 let mapping = interface.mapping(path).ok_or_else(|| {
-                    AstarteError::ReceiveError(format!("Mapping '{path}' doesn't exist",))
+                    Error::ReceiveError(format!("Mapping '{path}' doesn't exist",))
                 })?;
 
                 if individual == AstarteType::Unset {
                     if !mapping.allow_unset() {
-                        return Err(AstarteError::ReceiveError(
+                        return Err(Error::ReceiveError(
                             "Do not unset a mapping without allow_unset".into(),
                         ));
                     } else {
@@ -313,7 +313,7 @@ impl Interfaces {
                 }
 
                 if individual != mapping.mapping_type() {
-                    return Err(AstarteError::ReceiveError(
+                    return Err(Error::ReceiveError(
                         "You are receiving the wrong type for this mapping".into(),
                     ));
                 }
@@ -328,13 +328,11 @@ impl Interfaces {
                     let mapping = interface
                         .mapping(&mapping_path.as_str().try_into()?)
                         .ok_or_else(|| {
-                            AstarteError::ReceiveError(format!(
-                                "Mapping '{mapping_path}' doesn't exist",
-                            ))
+                            Error::ReceiveError(format!("Mapping '{mapping_path}' doesn't exist",))
                         })?;
 
                     if *value != mapping.mapping_type() {
-                        return Err(AstarteError::ReceiveError(
+                        return Err(Error::ReceiveError(
                             "You are receiving the wrong type for this object mapping".into(),
                         ));
                     }

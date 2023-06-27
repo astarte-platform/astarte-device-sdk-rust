@@ -23,7 +23,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{types::AstarteType, AstarteError};
+use crate::{types::AstarteType, Error};
 
 /// The payload of an MQTT message.
 ///
@@ -39,7 +39,7 @@ pub struct Payload {
 }
 
 impl Payload {
-    pub fn to_vec(&self) -> Result<Vec<u8>, AstarteError> {
+    pub fn to_vec(&self) -> Result<Vec<u8>, Error> {
         let res = bson::to_vec(self)?;
 
         Ok(res)

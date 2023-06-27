@@ -223,6 +223,8 @@ impl<'a> Ord for Level<'a> {
     }
 }
 
+/// Error returned while parsing an endpoint.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum Error {
     #[error("endpoint must start with a slash, got instead: {0}")]
@@ -247,6 +249,8 @@ impl Error {
     }
 }
 
+/// Error returned while parsing a level.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum LevelError {
     #[error("levels must not be empty")]

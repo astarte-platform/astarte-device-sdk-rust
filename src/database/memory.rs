@@ -25,7 +25,7 @@ use log::error;
 use tokio::sync::RwLock;
 
 use super::{AstarteDatabase, StoredProp};
-use crate::{types::AstarteType, AstarteError};
+use crate::{types::AstarteType, Error};
 
 /// Data structure providing an implementation of an in memory Key Value Store.
 ///
@@ -48,7 +48,7 @@ impl MemoryStore {
 #[async_trait]
 impl AstarteDatabase for MemoryStore {
     // TODO: refactor error
-    type Err = AstarteError;
+    type Err = Error;
 
     async fn store_prop_impl(
         &self,
@@ -56,7 +56,7 @@ impl AstarteDatabase for MemoryStore {
         path: &str,
         value: &AstarteType,
         interface_major: i32,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         let key = Key::new(interface, path);
 
         let mut store = self.store.write().await;
@@ -80,7 +80,7 @@ impl AstarteDatabase for MemoryStore {
         interface: &str,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let key = Key::new(interface, path);
 
         // We need to drop the lock before calling delete_prop
@@ -106,7 +106,7 @@ impl AstarteDatabase for MemoryStore {
         }
     }
 
-    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), AstarteError> {
+    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), Error> {
         let key = Key::new(interface, path);
 
         let mut store = self.store.write().await;
@@ -116,7 +116,7 @@ impl AstarteDatabase for MemoryStore {
         Ok(())
     }
 
-    async fn clear_impl(&self) -> Result<(), AstarteError> {
+    async fn clear_impl(&self) -> Result<(), Error> {
         let mut store = self.store.write().await;
 
         store.clear();
@@ -124,7 +124,7 @@ impl AstarteDatabase for MemoryStore {
         Ok(())
     }
 
-    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, AstarteError> {
+    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, Error> {
         let store = self.store.read().await;
 
         let props = store

@@ -21,7 +21,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use astarte_device_sdk::{error::AstarteError, options::AstarteOptions};
+use astarte_device_sdk::{error::Error, options::AstarteOptions};
 
 #[derive(Deserialize)]
 struct Config {
@@ -32,7 +32,7 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), AstarteError> {
+async fn main() -> Result<(), Error> {
     env_logger::init();
     let now = SystemTime::now();
 
@@ -98,7 +98,7 @@ async fn main() -> Result<(), AstarteError> {
                         .next()
                         .and_then(|id| id.parse::<u16>().ok())
                         .ok_or_else(|| {
-                            AstarteError::ReceiveError("Incorrect error received.".to_string())
+                            Error::ReceiveError("Incorrect error received.".to_string())
                         })?;
 
                     match iter.next() {

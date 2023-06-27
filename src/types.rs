@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::interface::MappingType;
-use crate::AstarteError;
+use crate::Error;
 
 /// Types supported by the Astarte device.
 ///
@@ -158,21 +158,21 @@ impl_type_conversion_traits!({
 
 // we implement float types on the side since they have different requirements
 impl TryFrom<f32> for AstarteType {
-    type Error = AstarteError;
+    type Error = Error;
 
     fn try_from(d: f32) -> Result<Self, Self::Error> {
         if d.is_nan() || d.is_infinite() || d.is_subnormal() {
-            return Err(AstarteError::FloatError);
+            return Err(Error::FloatError);
         }
         Ok(AstarteType::Double(d.into()))
     }
 }
 
 impl TryFrom<f64> for AstarteType {
-    type Error = AstarteError;
+    type Error = Error;
     fn try_from(d: f64) -> Result<Self, Self::Error> {
         if d.is_nan() || d.is_infinite() || d.is_subnormal() {
-            return Err(AstarteError::FloatError);
+            return Err(Error::FloatError);
         }
         Ok(AstarteType::Double(d))
     }
@@ -189,12 +189,12 @@ impl PartialEq<f64> for AstarteType {
 }
 
 impl TryFrom<Vec<f64>> for AstarteType {
-    type Error = AstarteError;
+    type Error = Error;
     fn try_from(d: Vec<f64>) -> Result<Self, Self::Error> {
         if d.iter()
             .any(|&x| x.is_nan() || x.is_infinite() || x.is_subnormal())
         {
-            return Err(AstarteError::FloatError);
+            return Err(Error::FloatError);
         }
         Ok(AstarteType::DoubleArray(d))
     }
@@ -219,13 +219,13 @@ macro_rules! impl_reverse_type_conversion_traits {
     ($(($astartetype:tt, $typ:ty),)*) => {
         $(
             impl std::convert::TryFrom<AstarteType> for $typ {
-                type Error = AstarteError;
+                type Error = $crate::error::Error;
 
                 fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
                     if let AstarteType::$astartetype(val) = var {
                         Ok(val)
                     } else {
-                        Err(AstarteError::Conversion)
+                        Err(Self::Error::Conversion)
                     }
                 }
             }
@@ -234,27 +234,27 @@ macro_rules! impl_reverse_type_conversion_traits {
 }
 
 impl TryFrom<AstarteType> for f64 {
-    type Error = AstarteError;
+    type Error = Error;
     fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
         if let AstarteType::Double(val) = var {
             Ok(val)
         } else if let AstarteType::Integer(val) = var {
             Ok(val.into())
         } else {
-            Err(AstarteError::Conversion)
+            Err(Error::Conversion)
         }
     }
 }
 
 impl TryFrom<AstarteType> for i64 {
-    type Error = AstarteError;
+    type Error = Error;
     fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
         if let AstarteType::LongInteger(val) = var {
             Ok(val)
         } else if let AstarteType::Integer(val) = var {
             Ok(val.into())
         } else {
-            Err(AstarteError::Conversion)
+            Err(Error::Conversion)
         }
     }
 }
@@ -313,11 +313,11 @@ macro_rules! from_bson_array {
             if let Bson::Binary(val) = x {
                 Ok(val.bytes.clone())
             } else {
-                Err(AstarteError::FromBsonArrayError)
+                Err($crate::error::Error::FromBsonArrayError)
             }
         });
 
-        let ret: Result<Vec<$typ>, AstarteError> = ret.collect();
+        let ret: Result<Vec<$typ>, $crate::error::Error> = ret.collect();
         Ok(AstarteType::$astartetype(ret?))
     }};
 
@@ -327,11 +327,11 @@ macro_rules! from_bson_array {
             if let Bson::DateTime(val) = x {
                 Ok(val.clone())
             } else {
-                Err(AstarteError::FromBsonArrayError)
+                Err($crate::error::Error::FromBsonArrayError)
             }
         });
 
-        let ret: Result<Vec<bson::DateTime>, AstarteError> = ret.collect();
+        let ret: Result<Vec<bson::DateTime>, $crate::error::Error> = ret.collect();
         let ret: Vec<$typ> = ret?.iter().map(|f| f.to_chrono()).collect();
 
         Ok(AstarteType::$astartetype(ret))
@@ -342,17 +342,17 @@ macro_rules! from_bson_array {
             if let Bson::$bsontype(val) = x {
                 Ok(val.clone())
             } else {
-                Err(AstarteError::FromBsonArrayError)
+                Err($crate::error::Error::FromBsonArrayError)
             }
         });
 
-        let ret: Result<Vec<$typ>, AstarteError> = ret.collect();
+        let ret: Result<Vec<$typ>, $crate::error::Error> = ret.collect();
         Ok(AstarteType::$astartetype(ret?))
     }};
 }
 
 impl TryFrom<Bson> for AstarteType {
-    type Error = AstarteError;
+    type Error = Error;
 
     fn try_from(d: Bson) -> Result<Self, Self::Error> {
         match d {
@@ -368,7 +368,7 @@ impl TryFrom<Bson> for AstarteType {
                 }
                 Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
                 Bson::Binary(_) => from_bson_array!(arr, BinaryBlobArray, Binary, Vec<u8>),
-                _ => Err(AstarteError::FromBsonError(format!(
+                _ => Err(Error::FromBsonError(format!(
                     "Can't convert array {arr:?} to astarte"
                 ))),
             },
@@ -377,7 +377,7 @@ impl TryFrom<Bson> for AstarteType {
             Bson::Int64(d) => Ok(AstarteType::LongInteger(d)),
             Bson::Binary(d) => Ok(AstarteType::BinaryBlob(d.bytes)),
             Bson::DateTime(d) => Ok(AstarteType::DateTime(d.into())),
-            _ => Err(AstarteError::FromBsonError(format!(
+            _ => Err(Error::FromBsonError(format!(
                 "Can't convert {d:?} to astarte"
             ))),
         }
@@ -385,7 +385,7 @@ impl TryFrom<Bson> for AstarteType {
 }
 
 impl AstarteType {
-    pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, AstarteError> {
+    pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, Error> {
         d.into_iter().map(AstarteType::try_from).collect()
     }
 }
@@ -398,7 +398,7 @@ mod test {
     use chrono::{DateTime, TimeZone, Utc};
 
     use crate::interface::MappingType;
-    use crate::{types::AstarteType, Aggregation, AstarteError};
+    use crate::{types::AstarteType, Aggregation, Error};
 
     #[test]
     fn test_eq() {
@@ -430,7 +430,7 @@ mod test {
     }
 
     #[test]
-    fn test_conversion_to_astarte_type() -> Result<(), AstarteError> {
+    fn test_conversion_to_astarte_type() -> Result<(), Error> {
         let data: f64 = 42.24;
         let a_data: AstarteType = data.try_into()?;
         assert_eq!(AstarteType::Double(data), a_data);
@@ -504,7 +504,7 @@ mod test {
     }
 
     #[test]
-    fn test_conversion_from_astarte_type() -> Result<(), AstarteError> {
+    fn test_conversion_from_astarte_type() -> Result<(), Error> {
         let data = 42.24;
         let a_data = AstarteType::Double(data);
         assert_eq!(f64::try_from(a_data)?, data);

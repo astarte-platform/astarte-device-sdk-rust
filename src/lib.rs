@@ -54,7 +54,7 @@ use crate::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 use rumqttc::{AsyncClient, EventLoop};
 
 use crate::database::{AstarteDatabase, Error as DatabaseError, StoredProp};
-use crate::error::AstarteError;
+use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::Ownership;
 use crate::interfaces::PropertyRef;
@@ -83,7 +83,7 @@ pub trait AstarteAggregate {
     /// use std::collections::HashMap;
     /// use std::convert::TryInto;
     ///
-    /// use astarte_device_sdk::{types::AstarteType, error::AstarteError, AstarteAggregate};
+    /// use astarte_device_sdk::{types::AstarteType, error::Error, AstarteAggregate};
     ///
     /// struct Person {
     ///     name: String,
@@ -93,7 +93,7 @@ pub trait AstarteAggregate {
     ///
     /// // This is what #[derive(AstarteAggregate)] would generate.
     /// impl AstarteAggregate for Person {
-    ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError>
+    ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>
     ///     {
     ///         let mut r = HashMap::new();
     ///         r.insert("name".to_string(), self.name.try_into()?);
@@ -103,11 +103,11 @@ pub trait AstarteAggregate {
     ///     }
     /// }
     /// ```
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError>;
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>;
 }
 
 impl AstarteAggregate for HashMap<String, AstarteType> {
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError> {
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error> {
         Ok(self)
     }
 }
@@ -185,7 +185,7 @@ where
     ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: AstarteOptions<DB>) -> Result<AstarteDeviceSdk<DB>, AstarteError> {
+    pub async fn new(opts: AstarteOptions<DB>) -> Result<AstarteDeviceSdk<DB>, Error> {
         let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
@@ -207,7 +207,7 @@ where
         Ok(device)
     }
 
-    async fn wait_for_connack(&mut self) -> Result<(), AstarteError> {
+    async fn wait_for_connack(&mut self) -> Result<(), Error> {
         loop {
             // keep consuming and processing packets until we have data for the user
             match self.eventloop.lock().await.poll().await? {
@@ -227,7 +227,7 @@ where
         }
     }
 
-    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), AstarteError> {
+    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), Error> {
         if !p.session_present {
             self.subscribe().await?;
             self.send_introspection().await?;
@@ -239,7 +239,7 @@ where
         Ok(())
     }
 
-    async fn subscribe(&self) -> Result<(), AstarteError> {
+    async fn subscribe(&self) -> Result<(), Error> {
         let ifaces = &self.interfaces.read().await;
         let server_owned_ifaces = ifaces
             .iter_interfaces()
@@ -259,10 +259,7 @@ where
         Ok(())
     }
 
-    async fn subscribe_server_owned_interface(
-        &self,
-        iface: &Interface,
-    ) -> Result<(), AstarteError> {
+    async fn subscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
         if iface.ownership() != interface::Ownership::Server {
             warn!("Unable to subscribe to {} as it is not server owned", iface);
         } else {
@@ -276,10 +273,7 @@ where
         Ok(())
     }
 
-    async fn unsubscribe_server_owned_interface(
-        &self,
-        iface: &Interface,
-    ) -> Result<(), AstarteError> {
+    async fn unsubscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
         if iface.ownership() != interface::Ownership::Server {
             warn!(
                 "Unable to unsubscribe to {} as it is not server owned",
@@ -294,7 +288,7 @@ where
     }
 
     /// Add a new interface from the provided file.
-    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), AstarteError> {
+    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), Error> {
         let path = Path::new(file_path);
         let interface = Interface::from_file(path)?;
         self.add_interface(interface).await
@@ -302,13 +296,13 @@ where
 
     /// Add a new interface from a string. The string should contain a valid json formatted
     /// interface.
-    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), AstarteError> {
+    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
         let interface: Interface = Interface::from_str(json_str)?;
         self.add_interface(interface).await
     }
 
     /// Add a new [`Interface`] to the device interfaces.
-    pub async fn add_interface(&self, interface: Interface) -> Result<(), AstarteError> {
+    pub async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
         if interface.ownership() == interface::Ownership::Server {
             self.subscribe_server_owned_interface(&interface).await?;
         }
@@ -317,17 +311,14 @@ where
         Ok(())
     }
 
-    async fn add_interface_to_introspection(
-        &self,
-        interface: Interface,
-    ) -> Result<(), AstarteError> {
+    async fn add_interface_to_introspection(&self, interface: Interface) -> Result<(), Error> {
         self.interfaces.write().await.add(interface)?;
 
         Ok(())
     }
 
     /// Remove the interface with the name specified as argument.
-    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), AstarteError> {
+    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
         let interface = self.remove_interface_from_map(interface_name).await?;
         self.remove_properties_from_store(interface_name).await?;
         self.send_introspection().await?;
@@ -337,16 +328,13 @@ where
         Ok(())
     }
 
-    async fn remove_interface_from_map(
-        &self,
-        interface_name: &str,
-    ) -> Result<Interface, AstarteError> {
+    async fn remove_interface_from_map(&self, interface_name: &str) -> Result<Interface, Error> {
         self.interfaces
             .write()
             .await
             .remove(interface_name)
             .ok_or_else(|| {
-                AstarteError::InterfaceError(interface::Error::InterfaceNotFound {
+                Error::InterfaceError(interface::Error::InterfaceNotFound {
                     name: interface_name.to_string(),
                 })
             })
@@ -376,7 +364,7 @@ where
     ///     }
     /// }
     /// ```
-    pub async fn handle_events(&mut self) -> Result<AstarteDeviceDataEvent, AstarteError> {
+    pub async fn handle_events(&mut self) -> Result<AstarteDeviceDataEvent, Error> {
         loop {
             // keep consuming and processing packets until we have data for the user
             match self.eventloop.lock().await.poll().await? {
@@ -434,7 +422,7 @@ where
         interface: &str,
         path: &MappingPath<'a>,
         payload: &Aggregation,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         match payload {
             Aggregation::Object(_) => Ok(()),
             Aggregation::Individual(ref data) => {
@@ -459,7 +447,7 @@ where
         interface: PropertyRef<'a>,
         path: &MappingPath<'a>,
         data: &AstarteType,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         debug_assert!(interface.is_property());
         debug_assert!(interface.mapping(path).is_some());
 
@@ -474,7 +462,7 @@ where
                 major_version,
             )
             .await
-            .map_err(|err| AstarteError::from(DatabaseError::<DB>::Store(err)))?;
+            .map_err(|err| Error::from(DatabaseError::<DB>::Store(err)))?;
 
         // database self-test / sanity check for debug builds
         if cfg!(debug_assertions) {
@@ -501,7 +489,7 @@ where
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), AstarteError> {
+    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         let stored_props = self.database.load_all_props().await?;
 
         let paths = utils::extract_set_properties(bdata);
@@ -519,7 +507,7 @@ where
         Ok(())
     }
 
-    async fn send_emptycache(&self) -> Result<(), AstarteError> {
+    async fn send_emptycache(&self) -> Result<(), Error> {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
@@ -530,7 +518,7 @@ where
         Ok(())
     }
 
-    async fn send_introspection(&self) -> Result<(), AstarteError> {
+    async fn send_introspection(&self) -> Result<(), Error> {
         let interfaces = self.interfaces.read().await;
         let introspection = interfaces.get_introspection_string();
 
@@ -547,7 +535,7 @@ where
         Ok(())
     }
 
-    async fn send_device_owned_properties(&self) -> Result<(), AstarteError> {
+    async fn send_device_owned_properties(&self) -> Result<(), Error> {
         let properties = self.database.load_all_props().await?;
         // publish only device-owned properties...
         let interfaces = self.interfaces.read().await;
@@ -596,11 +584,7 @@ where
     ///         .unwrap();
     /// }
     /// ```
-    pub async fn unset(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-    ) -> Result<(), AstarteError> {
+    pub async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error> {
         trace!("unsetting {} {}", interface_name, interface_path);
 
         let path = MappingPath::try_from(interface_path)?;
@@ -644,7 +628,7 @@ where
         &self,
         interface: &str,
         path: &str,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let path_mappings = MappingPath::try_from(path)?;
 
         self.property(interface, &path_mappings).await
@@ -657,7 +641,7 @@ where
         &self,
         interface: &str,
         path: &MappingPath<'a>,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let major = self
             .interfaces
             .read()
@@ -669,7 +653,7 @@ where
                 .database
                 .load_prop(interface, path.as_str(), major)
                 .await
-                .map_err(AstarteError::from),
+                .map_err(Error::from),
             None => Ok(None),
         }
     }
@@ -688,7 +672,7 @@ where
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -722,7 +706,7 @@ where
         interface_path: &str,
         data: D,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -738,13 +722,13 @@ where
         interface_path: &MappingPath<'a>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
         debug!("sending {} {}", interface_name, interface_path);
 
-        let data = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        let data = data.try_into().map_err(|_| Error::Conversion)?;
 
         let buf = utils::serialize_individual(&data, timestamp)?;
 
@@ -798,11 +782,11 @@ where
         interface: PropertyRef<'a>,
         interface_path: &MappingPath<'a>,
         data: &AstarteType,
-    ) -> Result<bool, AstarteError> {
+    ) -> Result<bool, Error> {
         // Check the mapping exists
-        interface.mapping(interface_path).ok_or_else(|| {
-            AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
-        })?;
+        interface
+            .mapping(interface_path)
+            .ok_or_else(|| Error::SendError(format!("Mapping {interface_path} doesn't exist")))?;
 
         // Check if already in db
         let stored = self
@@ -821,9 +805,9 @@ where
         property: PropertyRef<'a>,
         interface_path: &MappingPath<'a>,
         data: &AstarteType,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         property.mapping(interface_path).ok_or_else(|| {
-            AstarteError::InterfaceError(interface::Error::MappingNotFound {
+            Error::InterfaceError(interface::Error::MappingNotFound {
                 path: interface_path.to_string(),
             })
         })?;
@@ -842,7 +826,7 @@ where
         Ok(())
     }
 
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), AstarteError> {
+    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error> {
         let interfaces = self.interfaces.read().await;
         let mappings = interfaces.get_property(interface_name);
 
@@ -870,7 +854,7 @@ where
         interface_path: &MappingPath<'a>,
         data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {
@@ -934,7 +918,7 @@ where
         interface_path: &str,
         data: T,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {
@@ -953,7 +937,7 @@ where
         interface_name: &str,
         interface_path: &str,
         data: T,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {
@@ -971,7 +955,7 @@ impl<DB> fmt::Debug for AstarteDeviceSdk<DB> {
             .field("device_id", &self.device_id)
             .field("mqtt_options", &self.mqtt_options)
             .field("interfaces", &self.interfaces)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

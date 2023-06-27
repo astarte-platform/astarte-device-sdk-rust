@@ -40,8 +40,9 @@ use interface::Interface;
 /// Astarte options error.
 ///
 /// Possible errors used by the Astarte options module.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum AstarteOptionsError {
+pub enum Error {
     #[error("private key or CSR creation failed")]
     CryptoGeneration(#[from] CryptoError),
 
@@ -176,7 +177,7 @@ impl<DB> AstarteOptions<DB> {
     ///
     /// It will validate that the interfaces are the same, or a newer version of the interfaces
     /// with the same name that are already present.
-    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
+    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, Error> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.interface_name();
 
@@ -188,10 +189,7 @@ impl<DB> AstarteOptions<DB> {
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory(
-        self,
-        interfaces_directory: &str,
-    ) -> Result<Self, AstarteOptionsError> {
+    pub fn interface_directory(self, interfaces_directory: &str) -> Result<Self, Error> {
         walk_dir_json(interfaces_directory)?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))

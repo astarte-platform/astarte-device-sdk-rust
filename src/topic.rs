@@ -20,11 +20,12 @@
 
 use log::trace;
 
-use crate::{error::AstarteError, interface::mapping::path::MappingPath};
+use crate::interface::mapping::path::{Error as MappingError, MappingPath};
 
 /// Error returned when parsing a topic.
 ///
 /// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
+#[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error("topic is empty")]
@@ -33,6 +34,13 @@ pub enum Error {
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]
     Malformed(String),
+
+    #[error("could not parse mapping path")]
+    Mapping {
+        #[source]
+        err: MappingError,
+        topic: String,
+    },
 }
 
 impl Error {
@@ -40,15 +48,14 @@ impl Error {
         match self {
             Error::Empty => "",
             Error::Malformed(topic) => topic,
+            Error::Mapping { topic, .. } => topic,
         }
     }
 }
 
-pub(crate) fn parse_topic(
-    topic: &str,
-) -> Result<(&str, &str, &str, MappingPath<'_>), AstarteError> {
+pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath<'_>), Error> {
     if topic.is_empty() {
-        return Err(Error::Empty.into());
+        return Err(Error::Empty);
     }
 
     let mut parts = topic.splitn(3, '/');
@@ -83,10 +90,13 @@ pub(crate) fn parse_topic(
     trace!("path: {}", path);
 
     if interface.is_empty() || path.is_empty() {
-        return Err(Error::Malformed(topic.to_string()).into());
+        return Err(Error::Malformed(topic.to_string()));
     }
 
-    let path = MappingPath::try_from(path)?;
+    let path = MappingPath::try_from(path).map_err(|err| Error::Mapping {
+        err,
+        topic: topic.to_string(),
+    })?;
 
     Ok((realm, device, interface, path))
 }
@@ -108,10 +118,10 @@ mod tests {
 
     #[test]
     fn test_parse_topic_empty() {
-        let topic = "".to_owned();
+        let topic = String::new();
         let err = parse_topic(&topic).unwrap_err();
 
-        assert!(matches!(err, AstarteError::InvalidTopic(Error::Empty)));
+        assert!(matches!(err, Error::Empty));
     }
 
     #[test]
@@ -119,9 +129,6 @@ mod tests {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test".to_owned();
         let err = parse_topic(&topic).unwrap_err();
 
-        assert!(matches!(
-            err,
-            AstarteError::InvalidTopic(Error::Malformed(_))
-        ));
+        assert!(matches!(err, Error::Malformed(_)));
     }
 }

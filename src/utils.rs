@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use bson::Bson;
 use log::trace;
 
-use crate::{types::AstarteType, Aggregation, AstarteError};
+use crate::{types::AstarteType, Aggregation, Error};
 use flate2::read::ZlibDecoder;
 
 pub fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
@@ -39,7 +39,7 @@ pub fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
 pub fn serialize_individual(
     data: &AstarteType,
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<Vec<u8>, AstarteError> {
+) -> Result<Vec<u8>, Error> {
     let b_data = Bson::from(data);
 
     serialize(b_data, timestamp)
@@ -48,7 +48,7 @@ pub fn serialize_individual(
 pub fn serialize(
     data: Bson,
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<Vec<u8>, AstarteError> {
+) -> Result<Vec<u8>, Error> {
     if let Bson::Null = data {
         return Ok(Vec::new());
     }
@@ -68,7 +68,7 @@ pub fn serialize(
     Ok(buf)
 }
 
-pub fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, AstarteError> {
+pub fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, Error> {
     if bdata.is_empty() {
         trace!("empty document");
 
@@ -82,12 +82,12 @@ pub fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, AstarteError>
     // Take the value without cloning
     let value = document
         .remove("v")
-        .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+        .ok_or_else(|| Error::DeserializationMissingValue(document))?;
 
     AstarteType::try_from(value)
 }
 
-pub fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
+pub fn deserialize(bdata: &[u8]) -> Result<Aggregation, Error> {
     if bdata.is_empty() {
         return Ok(Aggregation::Individual(AstarteType::Unset));
     }
@@ -99,14 +99,14 @@ pub fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
     // Take the value without cloning
     let value = document
         .remove("v")
-        .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+        .ok_or_else(|| Error::DeserializationMissingValue(document))?;
 
     match value {
         Bson::Document(doc) => {
             let hmap = doc
                 .into_iter()
                 .map(|(name, value)| AstarteType::try_from(value).map(|v| (name, v)))
-                .collect::<Result<HashMap<String, AstarteType>, AstarteError>>()?;
+                .collect::<Result<HashMap<String, AstarteType>, Error>>()?;
 
             Ok(Aggregation::Object(hmap))
         }
@@ -121,7 +121,7 @@ pub fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
 pub fn serialize_object(
     data: HashMap<String, AstarteType>,
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<Vec<u8>, AstarteError> {
+) -> Result<Vec<u8>, Error> {
     let iter = data.into_iter().map(|(k, v)| (k, Bson::from(v)));
 
     let doc: bson::Document = bson::Document::from_iter(iter);
