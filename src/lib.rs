@@ -202,7 +202,7 @@ pub enum AstarteError {
 }
 
 /// Payload format for an Astarte device event data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Aggregation {
     /// Individual data, can be both from a datastream or property.
     Individual(AstarteType),
@@ -1713,5 +1713,64 @@ mod test {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_receive_object() {
+        let client = AsyncClient::default();
+
+        let mut eventloope = EventLoop::default();
+
+        let data = bson::doc! {
+            "v": {
+                "endpoint1": 4.2,
+                "endpoint2": "obj",
+                "endpoint3": [true],
+            }
+        };
+
+        // Send object
+        eventloope.expect_poll().returning(move || {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1",
+                    rumqttc::QoS::AtLeastOnce,
+                    bson::to_vec(&data).unwrap()
+                ),
+            )))
+        });
+
+        let mut astarte = mock_astarte_device(client, eventloope, [
+            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
+        ]);
+
+        let event = astarte.handle_events().await;
+
+        assert!(
+            event.is_ok(),
+            "Error handling event {:?}",
+            event.unwrap_err()
+        );
+
+        let event = event.unwrap();
+
+        let mut obj = HashMap::new();
+        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+        obj.insert(
+            "endpoint2".to_string(),
+            AstarteType::String("obj".to_string()),
+        );
+        obj.insert(
+            "endpoint3".to_string(),
+            AstarteType::BooleanArray(vec![true]),
+        );
+        let expected = Aggregation::Object(obj);
+
+        assert_eq!(
+            "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            event.interface
+        );
+        assert_eq!("/1", event.path);
+        assert_eq!(expected, event.data);
     }
 }
