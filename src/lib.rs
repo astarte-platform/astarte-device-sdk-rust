@@ -446,7 +446,10 @@ impl AstarteDeviceSdk {
                             let bdata = publish.payload;
 
                             if interface == "control" && path == "/consumer/properties" {
+                                debug!("Purging properties");
+
                                 self.purge_properties(&bdata).await?;
+
                                 continue;
                             }
 
@@ -1603,6 +1606,18 @@ mod test {
             "v": true
         };
 
+        // Purge properties
+        eventloope.expect_poll().once().returning(|| {
+            Ok(Event::Incoming(rumqttc::Packet::Publish(
+                rumqttc::Publish::new(
+                    "realm/device_id/control/consumer/properties",
+                    rumqttc::QoS::AtLeastOnce,
+                    vec![],
+                ),
+            )))
+        });
+
+        // Send properties
         eventloope.expect_poll().returning(move || {
             Ok(Event::Incoming(rumqttc::Packet::Publish(
                 rumqttc::Publish::new(

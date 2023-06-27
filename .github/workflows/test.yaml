@@ -28,6 +28,8 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
+  # Enable logging otherwise the logging lines will count as not covered in the test coverage
+  RUST_LOG: trace
 jobs:
   required:
     runs-on: ubuntu-latest
