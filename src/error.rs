@@ -28,6 +28,7 @@ use crate::interface::mapping::path::Error as MappingError;
 use crate::interface::Error as InterfaceError;
 use crate::options::Error as OptionsError;
 use crate::topic::Error as TopicError;
+use crate::utils::PurgePropertiesError;
 
 /// Astarte error.
 ///
@@ -94,6 +95,10 @@ pub enum Error {
 
     #[error("invalid interface added")]
     InvalidInterface(#[from] ValidationError),
+
+    /// Error while parsing the /control/consumer/properties payload.
+    #[error("failed to parse consumer/producer properties")]
+    PurgeProperty(#[from] PurgePropertiesError),
 
     /// Wraps a generic [`DatabaseError`] from the database implementation.
     #[error(transparent)]

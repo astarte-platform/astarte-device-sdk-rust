@@ -21,19 +21,56 @@
 use std::collections::HashMap;
 
 use bson::Bson;
-use log::trace;
+use log::{error, trace};
 
 use crate::{types::AstarteType, Aggregation, Error};
 use flate2::read::ZlibDecoder;
 
-pub fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
+/// Error parsing the /control/consumer/properties payload.
+#[derive(thiserror::Error, Debug)]
+pub enum PurgePropertiesError {
+    /// The payload is too short, it should be at least 4 bytes long.
+    #[error("the payload should at least 4 bytes long, got {0}")]
+    PayloadTooShort(usize),
+    /// Couldn't convert the size from u32 to usize.
+    #[error("error converting the size from u32 to usize")]
+    Conversion(#[from] std::num::TryFromIntError),
+
+    /// Error decoding the zlib compressed payload.
+    #[error("error decoding the zlib compressed payload")]
+    Decode(#[from] std::io::Error),
+}
+
+/// Extracts the properties from a set payload.
+///
+/// See https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#purge-properties
+pub fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, PurgePropertiesError> {
     use std::io::prelude::*;
 
-    let mut d = ZlibDecoder::new(&bdata[4..]);
-    let mut s = String::new();
-    d.read_to_string(&mut s).unwrap();
+    if bdata.len() < 4 {
+        return Err(PurgePropertiesError::PayloadTooShort(bdata.len()));
+    }
 
-    s.split(';').map(|x| x.to_owned()).collect()
+    let (size, data) = bdata.split_at(4);
+    // The size is a u32 jn big endian, so we need to convert it to usize
+    let size: u32 = u32::from_be_bytes([size[0], size[1], size[2], size[3]]);
+    let size: usize = size.try_into()?;
+
+    let mut d = ZlibDecoder::new(data);
+    let mut s = String::new();
+    let bytes_red = d.read_to_string(&mut s)?;
+
+    debug_assert_eq!(
+        bytes_red, size,
+        "Byte red and size mismatch: {} != {}",
+        bytes_red, size
+    );
+    // Signal the error in production
+    if bytes_red != size {
+        error!("Byte red and size mismatch: {} != {}", bytes_red, size);
+    }
+
+    Ok(s.split(';').map(|x| x.to_string()).collect())
 }
 
 pub fn serialize_individual(

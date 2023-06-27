@@ -492,7 +492,7 @@ where
     async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         let stored_props = self.database.load_all_props().await?;
 
-        let paths = utils::extract_set_properties(bdata);
+        let paths = utils::extract_set_properties(bdata)?;
 
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
@@ -1272,7 +1272,7 @@ mod test {
     fn test_deflate() {
         let example = b"com.example.MyInterface/some/path;org.example.DraftInterface/otherPath";
 
-        let s = astarte_device_sdk::utils::extract_set_properties(EXAMPLE_PURGE);
+        let s = astarte_device_sdk::utils::extract_set_properties(EXAMPLE_PURGE).unwrap();
 
         assert!(s.join(";").as_bytes() == example);
     }
