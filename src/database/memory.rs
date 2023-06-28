@@ -32,7 +32,7 @@ use crate::{types::AstarteType, Error};
 /// Can be used by an Astarte device to store variables while the device is running.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStore {
-    // Tore the properties in memory
+    // Store the properties in memory
     store: Arc<RwLock<HashMap<Key, Value>>>,
 }
 
@@ -47,7 +47,6 @@ impl MemoryStore {
 
 #[async_trait]
 impl AstarteDatabase for MemoryStore {
-    // TODO: refactor error
     type Err = Error;
 
     async fn store_prop_impl(
@@ -58,19 +57,14 @@ impl AstarteDatabase for MemoryStore {
         interface_major: i32,
     ) -> Result<(), Error> {
         let key = Key::new(interface, path);
+        let value = Value {
+            value: value.clone(),
+            interface_major,
+        };
 
         let mut store = self.store.write().await;
 
-        store
-            .entry(key)
-            .and_modify(|val| {
-                val.value = value.clone();
-                val.interface_major = interface_major;
-            })
-            .or_insert_with(|| Value {
-                value: value.clone(),
-                interface_major,
-            });
+        store.insert(key, value);
 
         Ok(())
     }
@@ -152,8 +146,6 @@ struct Key {
 impl Key {
     /// Creates a new Key
     fn new(interface: &str, path: &str) -> Self {
-        // NOTE: I cannot find a good way to not allocate those string, since the HashMap needs to
-        //       own the key
         Key {
             interface: interface.to_string(),
             path: path.to_string(),
