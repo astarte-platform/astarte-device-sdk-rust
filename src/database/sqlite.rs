@@ -25,7 +25,11 @@ use log::{debug, error, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use super::{AstarteDatabase, StoredProp};
-use crate::{mqtt::Payload, types::AstarteType, utils, Error as AstarteError};
+use crate::{
+    payload::{self, Payload},
+    types::AstarteType,
+    Error as AstarteError,
+};
 
 #[deprecated = "Use SqliteStore instead"]
 pub type AstarteSqliteDatabase = SqliteStore;
@@ -150,7 +154,7 @@ impl AstarteDatabase for SqliteStore {
             interface, path, value
         );
 
-        let ser = utils::serialize_individual(value, None)?;
+        let ser = payload::serialize_individual(value, None)?;
 
         sqlx::query_file!(
             "queries/store_prop.sql",
@@ -192,7 +196,7 @@ impl AstarteDatabase for SqliteStore {
                     return Ok(None);
                 }
 
-                utils::deserialize_individual(&record.value)
+                payload::deserialize_individual(&record.value)
                     .map(Some)
                     .map_err(Error::from)
             }

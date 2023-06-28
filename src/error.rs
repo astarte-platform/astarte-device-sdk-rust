@@ -27,8 +27,8 @@ use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::Error as MappingError;
 use crate::interface::Error as InterfaceError;
 use crate::options::Error as OptionsError;
+use crate::properties::Error as PropertiesError;
 use crate::topic::Error as TopicError;
-use crate::utils::PurgePropertiesError;
 
 /// Astarte error.
 ///
@@ -98,7 +98,7 @@ pub enum Error {
 
     /// Error while parsing the /control/consumer/properties payload.
     #[error("failed to parse consumer/producer properties")]
-    PurgeProperty(#[from] PurgePropertiesError),
+    PurgeProperty(#[from] PropertiesError),
 
     /// Wraps a generic [`DatabaseError`] from the database implementation.
     #[error(transparent)]

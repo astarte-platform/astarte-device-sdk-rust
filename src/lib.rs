@@ -26,13 +26,13 @@ pub mod interface;
 mod interfaces;
 #[cfg(test)]
 mod mock;
-pub(crate) mod mqtt;
 pub mod options;
 pub mod pairing;
+pub(crate) mod payload;
+pub(crate) mod properties;
 pub mod registration;
 mod topic;
 pub mod types;
-pub(crate) mod utils;
 
 // Re-export rumqttc since we return its types in some methods
 pub use chrono;
@@ -58,8 +58,8 @@ use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::Ownership;
 use crate::interfaces::PropertyRef;
-use crate::mqtt::Payload;
 use crate::options::AstarteOptions;
+use crate::payload::Payload;
 use crate::topic::parse_topic;
 use crate::types::AstarteType;
 
@@ -391,7 +391,7 @@ where
 
                             debug!("Incoming publish = {} {:?}", publish.topic, bdata);
 
-                            let data = utils::deserialize(&bdata)?;
+                            let data = payload::deserialize(&bdata)?;
 
                             self.handle_payload(interface, &path, &data).await?;
 
@@ -492,7 +492,7 @@ where
     async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         let stored_props = self.database.load_all_props().await?;
 
-        let paths = utils::extract_set_properties(bdata)?;
+        let paths = properties::extract_set_properties(bdata)?;
 
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
@@ -730,7 +730,7 @@ where
 
         let data = data.try_into().map_err(|_| Error::Conversion)?;
 
-        let buf = utils::serialize_individual(&data, timestamp)?;
+        let buf = payload::serialize_individual(&data, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -859,7 +859,7 @@ where
         T: AstarteAggregate,
     {
         let aggregate = data.astarte_aggregate()?;
-        let buf = utils::serialize_object(aggregate, timestamp)?;
+        let buf = payload::serialize_object(aggregate, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -972,7 +972,7 @@ mod test {
 
     use crate::database::memory::MemoryStore;
     use crate::interfaces::Interfaces;
-    use crate::{self as astarte_device_sdk, utils, Interface};
+    use crate::{self as astarte_device_sdk, payload, properties, Interface};
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
@@ -1197,9 +1197,9 @@ mod test {
         for ty in alltypes {
             println!("checking {ty:?}");
 
-            let buf = utils::serialize_individual(&ty, None).unwrap();
+            let buf = payload::serialize_individual(&ty, None).unwrap();
 
-            let ty2 = utils::deserialize(&buf).unwrap();
+            let ty2 = payload::deserialize(&buf).unwrap();
 
             if let Aggregation::Individual(data) = ty2 {
                 assert!(ty == data);
@@ -1255,9 +1255,9 @@ mod test {
             data.insert(i.0.clone(), i.1.clone());
         }
 
-        let bytes = utils::serialize_object(data.clone(), None).unwrap();
+        let bytes = payload::serialize_object(data.clone(), None).unwrap();
 
-        let data_processed = utils::deserialize(&bytes).unwrap();
+        let data_processed = payload::deserialize(&bytes).unwrap();
 
         println!("\nComparing {data:?}\nto {data_processed:?}");
 
@@ -1272,14 +1272,15 @@ mod test {
     fn test_deflate() {
         let example = b"com.example.MyInterface/some/path;org.example.DraftInterface/otherPath";
 
-        let s = astarte_device_sdk::utils::extract_set_properties(EXAMPLE_PURGE).unwrap();
+        let s = properties::extract_set_properties(EXAMPLE_PURGE).unwrap();
 
         assert!(s.join(";").as_bytes() == example);
     }
 
     #[test]
     fn test_integer_longinteger_compatibility() {
-        let integer_buf = utils::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
+        let integer_buf =
+            payload::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
         if let Aggregation::Individual(astarte_type) = integer_buf {
             assert_eq!(astarte_type, MappingType::LongInteger);
         } else {
@@ -1290,8 +1291,8 @@ mod test {
     #[test]
     fn test_bson_serialization() {
         let og_value = AstarteType::LongInteger(3600);
-        let buf = utils::serialize_individual(&og_value, None).unwrap();
-        if let Aggregation::Individual(astarte_type) = utils::deserialize(&buf).unwrap() {
+        let buf = payload::serialize_individual(&og_value, None).unwrap();
+        if let Aggregation::Individual(astarte_type) = payload::deserialize(&buf).unwrap() {
             assert_eq!(astarte_type, AstarteType::LongInteger(3600));
             if let AstarteType::LongInteger(value) = astarte_type {
                 assert_eq!(value, 3600);
@@ -1502,11 +1503,13 @@ mod test {
     async fn test_unset_property() {
         let mut client = AsyncClient::default();
 
-        let buf =
-            utils::serialize_individual(&AstarteType::String(String::from("name number 1")), None)
-                .unwrap();
+        let buf = payload::serialize_individual(
+            &AstarteType::String(String::from("name number 1")),
+            None,
+        )
+        .unwrap();
 
-        let unset = utils::serialize_individual(&AstarteType::Unset, None).unwrap();
+        let unset = payload::serialize_individual(&AstarteType::Unset, None).unwrap();
 
         client
             .expect_publish::<String, Vec<u8>>()
