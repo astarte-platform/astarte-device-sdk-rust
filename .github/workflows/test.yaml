@@ -66,10 +66,17 @@ jobs:
           submodules: true
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
+      # Setup vcpkg binary cache
+      # https://learn.microsoft.com/en-us/vcpkg/users/binarycaching#gha-quickstart
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
       - name: Set VCPKG_ROOT
         run: echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install openssl
-        run: vcpkg install openssl:x64-windows-static-md
+        run: vcpkg install --binarysource="clear;x-gha,readwrite" openssl:x64-windows-static-md
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
