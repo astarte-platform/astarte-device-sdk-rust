@@ -23,7 +23,7 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::SqliteStore, error::Error, options::AstarteOptions, types::AstarteType,
+    error::Error, options::AstarteOptions, store::sqlite::SqliteStore, types::AstarteType,
     AstarteDeviceSdk, AstarteDeviceSdkSqlite,
 };
 

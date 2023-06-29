@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use log::error;
 use tokio::sync::RwLock;
 
-use super::{AstarteDatabase, StoredProp};
+use super::{PropertyStore, StoredProp};
 use crate::{types::AstarteType, Error};
 
 /// Data structure providing an implementation of an in memory Key Value Store.
@@ -46,10 +46,10 @@ impl MemoryStore {
 }
 
 #[async_trait]
-impl AstarteDatabase for MemoryStore {
+impl PropertyStore for MemoryStore {
     type Err = Error;
 
-    async fn store_prop_impl(
+    async fn store_prop(
         &self,
         interface: &str,
         path: &str,
@@ -69,7 +69,7 @@ impl AstarteDatabase for MemoryStore {
         Ok(())
     }
 
-    async fn load_prop_impl(
+    async fn load_prop(
         &self,
         interface: &str,
         path: &str,
@@ -100,7 +100,7 @@ impl AstarteDatabase for MemoryStore {
         }
     }
 
-    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), Error> {
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Error> {
         let key = Key::new(interface, path);
 
         let mut store = self.store.write().await;
@@ -110,7 +110,7 @@ impl AstarteDatabase for MemoryStore {
         Ok(())
     }
 
-    async fn clear_impl(&self) -> Result<(), Error> {
+    async fn clear(&self) -> Result<(), Error> {
         let mut store = self.store.write().await;
 
         store.clear();
@@ -118,7 +118,7 @@ impl AstarteDatabase for MemoryStore {
         Ok(())
     }
 
-    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, Error> {
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error> {
         let store = self.store.read().await;
 
         let props = store
@@ -169,7 +169,7 @@ struct Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::tests::test_db;
+    use crate::store::tests::test_db;
 
     #[tokio::test]
     async fn test_db_sqlite() {

@@ -22,9 +22,11 @@ use std::{error::Error as StdError, fmt::Debug};
 
 use async_trait::async_trait;
 
+use self::error::Error;
 pub use self::sqlite::SqliteStore;
 use crate::types::AstarteType;
 
+pub mod error;
 pub mod memory;
 pub mod sqlite;
 
@@ -34,37 +36,14 @@ pub mod sqlite;
 /// of an Astarte device.
 ///
 /// This SDK provides an implementation of a sqlite database for which this trait has already
-/// been implemented, see [`AstarteSqliteDatabase`].
+/// been implemented, see [`crate::store::sqlite::SqliteStore`].
 // NOTE: the 'static bound is required for the MSRV, in other version the error is not present
 #[async_trait]
-pub trait AstarteDatabase: Debug + Sync + 'static
+pub trait PropertyStore: Debug + Send + Sync + 'static
 where
-    Self::Err: StdError,
+    Self::Err: StdError + Send + Sync + 'static,
 {
     type Err;
-
-    /// Stores a property within the database.
-    async fn store_prop_impl(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), Self::Err>;
-    /// Load a property from the database.
-    async fn load_prop_impl(
-        &self,
-        interface: &str,
-        path: &str,
-        interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err>;
-    /// Delete a property from the database.
-    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
-    /// Removes all saved properties from the database.
-    async fn clear_impl(&self) -> Result<(), Self::Err>;
-    /// Retrieves all property values in the database, together with their interface name, path
-    /// and major version.
-    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, Self::Err>;
 
     /// Stores a property within the database.
     async fn store_prop(
@@ -73,41 +52,21 @@ where
         path: &str,
         value: &AstarteType,
         interface_major: i32,
-    ) -> Result<(), Error<Self>> {
-        self.store_prop_impl(interface, path, value, interface_major)
-            .await
-            .map_err(Error::Store)
-    }
-
+    ) -> Result<(), Self::Err>;
     /// Load a property from the database.
     async fn load_prop(
         &self,
         interface: &str,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, Error<Self>> {
-        self.load_prop_impl(interface, path, interface_major)
-            .await
-            .map_err(Error::<Self>::Load)
-    }
-
+    ) -> Result<Option<AstarteType>, Self::Err>;
     /// Delete a property from the database.
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Error<Self>> {
-        self.delete_prop_impl(interface, path)
-            .await
-            .map_err(Error::Delete)
-    }
-
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
     /// Removes all saved properties from the database.
-    async fn clear(&self) -> Result<(), Error<Self>> {
-        self.clear_impl().await.map_err(Error::Clear)
-    }
-
+    async fn clear(&self) -> Result<(), Self::Err>;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<Self>> {
-        self.load_all_props_impl().await.map_err(Error::LoadAll)
-    }
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
@@ -120,22 +79,70 @@ pub struct StoredProp {
     pub interface_major: i32,
 }
 
-/// Error type returned by the [`AstarteDatabase`] trait.
-#[derive(Debug, thiserror::Error)]
-pub enum Error<D>
+/// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
+#[derive(Debug, Clone)]
+pub(crate) struct StoreWrapper<S>
 where
-    D: AstarteDatabase + ?Sized + 'static,
+    S: PropertyStore,
 {
-    #[error("could not store property")]
-    Store(#[source] D::Err),
-    #[error("could not load property")]
-    Load(#[source] D::Err),
-    #[error("could not delete property")]
-    Delete(#[source] D::Err),
-    #[error("could not clear database")]
-    Clear(#[source] D::Err),
-    #[error("could not load all properties")]
-    LoadAll(#[source] D::Err),
+    pub(crate) store: S,
+}
+
+impl<S> StoreWrapper<S>
+where
+    S: PropertyStore,
+{
+    pub(crate) fn new(store: S) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl<S> PropertyStore for StoreWrapper<S>
+where
+    S: PropertyStore,
+{
+    type Err = Error;
+
+    async fn store_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        value: &AstarteType,
+        interface_major: i32,
+    ) -> Result<(), Self::Err> {
+        self.store
+            .store_prop(interface, path, value, interface_major)
+            .await
+            .map_err(Error::store)
+    }
+
+    async fn load_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, Self::Err> {
+        self.store
+            .load_prop(interface, path, interface_major)
+            .await
+            .map_err(Error::load)
+    }
+
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+        self.store
+            .delete_prop(interface, path)
+            .await
+            .map_err(Error::delete)
+    }
+
+    async fn clear(&self) -> Result<(), Self::Err> {
+        self.store.clear().await.map_err(Error::clear)
+    }
+
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store.load_all_props().await.map_err(Error::load_all)
+    }
 }
 
 #[cfg(test)]
@@ -144,7 +151,7 @@ mod tests {
 
     pub(crate) async fn test_db<D>(db: D)
     where
-        D: AstarteDatabase,
+        D: PropertyStore,
     {
         let ty = AstarteType::Integer(23);
 

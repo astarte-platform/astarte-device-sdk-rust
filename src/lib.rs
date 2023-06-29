@@ -20,7 +20,6 @@
 #![doc = include_str!("../README.md")]
 
 pub mod crypto;
-pub mod database;
 pub mod error;
 pub mod interface;
 mod interfaces;
@@ -31,6 +30,7 @@ pub mod pairing;
 pub(crate) mod payload;
 pub(crate) mod properties;
 pub mod registration;
+pub mod store;
 mod topic;
 pub mod types;
 
@@ -53,13 +53,14 @@ use crate::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
 use rumqttc::{AsyncClient, EventLoop};
 
-use crate::database::{AstarteDatabase, Error as DatabaseError, StoredProp};
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::Ownership;
 use crate::interfaces::PropertyRef;
 use crate::options::AstarteOptions;
 use crate::payload::Payload;
+use crate::store::StoreWrapper;
+use crate::store::{PropertyStore, StoredProp};
 use crate::topic::parse_topic;
 use crate::types::AstarteType;
 
@@ -112,8 +113,10 @@ impl AstarteAggregate for HashMap<String, AstarteType> {
     }
 }
 
-pub type AstarteDeviceSdkSqlite = AstarteDeviceSdk<database::sqlite::SqliteStore>;
-pub type AstarteDeviceSdkMemory = AstarteDeviceSdk<database::memory::MemoryStore>;
+/// Astarte device SDK backed by an SQLite database to store the properties.
+pub type AstarteDeviceSdkSqlite = AstarteDeviceSdk<crate::store::sqlite::SqliteStore>;
+/// Astarte device SDK backed by an in-memory key value store for the properties.
+pub type AstarteDeviceSdkMemory = AstarteDeviceSdk<crate::store::memory::MemoryStore>;
 
 // Re-export #[derive(AstarteAggregate)].
 //
@@ -134,14 +137,17 @@ pub use astarte_device_sdk_derive::AstarteAggregate;
 /// Provides functionality to transmit and receive individual and object datastreams as well
 /// as properties.
 #[derive(Clone)]
-pub struct AstarteDeviceSdk<DB> {
+pub struct AstarteDeviceSdk<S>
+where
+    S: PropertyStore,
+{
     realm: String,
     device_id: String,
     mqtt_options: MqttOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
-    database: DB,
+    store: StoreWrapper<S>,
 }
 
 /// Payload format for an Astarte device event data.
@@ -166,9 +172,9 @@ pub struct AstarteDeviceDataEvent {
     pub data: Aggregation,
 }
 
-impl<DB> AstarteDeviceSdk<DB>
+impl<S> AstarteDeviceSdk<S>
 where
-    DB: AstarteDatabase,
+    S: PropertyStore,
 {
     /// Create a new instance of the Astarte Device SDK.
     ///
@@ -185,7 +191,7 @@ where
     ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: AstarteOptions<DB>) -> Result<AstarteDeviceSdk<DB>, Error> {
+    pub async fn new(opts: AstarteOptions<S>) -> Result<AstarteDeviceSdk<S>, Error> {
         let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
@@ -199,7 +205,7 @@ where
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
             interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces)),
-            database: opts.database,
+            store: StoreWrapper::new(opts.store),
         };
 
         device.wait_for_connack().await?;
@@ -432,8 +438,7 @@ where
                     .filter(|interface| interface.mapping(path).is_some());
 
                 if let Some(property) = interface {
-                    self.store_property_in_database(property, path, data)
-                        .await?;
+                    self.store_property(property, path, data).await?;
                 }
 
                 Ok(())
@@ -441,8 +446,8 @@ where
         }
     }
 
-    /// Store the property in the database.
-    async fn store_property_in_database<'a>(
+    /// Store the property.
+    async fn store_property<'a>(
         &self,
         interface: PropertyRef<'a>,
         path: &MappingPath<'a>,
@@ -454,32 +459,31 @@ where
         let interface_name = interface.interface_name();
         let major_version = interface.version_major();
 
-        self.database
-            .store_prop_impl(
+        self.store
+            .store_prop(
                 interface.interface_name(),
                 path.as_str(),
                 data,
                 major_version,
             )
-            .await
-            .map_err(|err| Error::from(DatabaseError::<DB>::Store(err)))?;
+            .await?;
 
-        // database self-test / sanity check for debug builds
+        // storage self-test / sanity check for debug builds
         if cfg!(debug_assertions) {
             let stored_prop = self
-                .database
+                .store
                 .load_prop(interface_name, path.as_str(), major_version)
                 .await
                 .expect("load_prop failed")
-                .expect("property wasn't correctly saved in the database");
+                .expect("property wasn't correctly saved in the storage");
 
             assert_eq!(*data, stored_prop);
             let prop = self
                 .property(interface_name, path)
                 .await?
-                .expect("property wasn't correctly saved in the database");
+                .expect("property wasn't correctly saved in the storage");
             assert_eq!(*data, prop);
-            trace!("database test ok");
+            trace!("storage test ok");
         }
 
         Ok(())
@@ -490,7 +494,7 @@ where
     }
 
     async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
-        let stored_props = self.database.load_all_props().await?;
+        let stored_props = self.store.load_all_props().await?;
 
         let paths = properties::extract_set_properties(bdata)?;
 
@@ -499,7 +503,7 @@ where
                 continue;
             }
 
-            self.database
+            self.store
                 .delete_prop(&stored_prop.interface, &stored_prop.path)
                 .await?;
         }
@@ -536,7 +540,7 @@ where
     }
 
     async fn send_device_owned_properties(&self) -> Result<(), Error> {
-        let properties = self.database.load_all_props().await?;
+        let properties = self.store.load_all_props().await?;
         // publish only device-owned properties...
         let interfaces = self.interfaces.read().await;
         let device_owned_properties: Vec<StoredProp> = properties
@@ -602,11 +606,11 @@ where
         Ok(())
     }
 
-    /// When present get property from the allocated database (if allocated).
+    /// When present get property from the allocated storage (if allocated).
     ///
     /// ```no_run
     /// use astarte_device_sdk::{
-    ///     AstarteDeviceSdk, database::sqlite::SqliteStore, options::AstarteOptions,
+    ///     AstarteDeviceSdk, store::sqlite::SqliteStore, options::AstarteOptions,
     ///     types::AstarteType
     /// };
     ///
@@ -650,7 +654,7 @@ where
 
         match major {
             Some(major) => self
-                .database
+                .store
                 .load_prop(interface, path.as_str(), major)
                 .await
                 .map_err(Error::from),
@@ -790,7 +794,7 @@ where
 
         // Check if already in db
         let stored = self
-            .database
+            .store
             .load_prop(interface.interface_name(), interface_path.as_str(), 0)
             .await?;
 
@@ -812,7 +816,7 @@ where
             })
         })?;
 
-        self.database
+        self.store
             .store_prop(
                 property.interface_name(),
                 interface_path.as_str(),
@@ -837,7 +841,7 @@ where
 
         for mapping in property.iter_mappings() {
             let path = mapping.endpoint();
-            self.database.delete_prop(interface_name, path).await?;
+            self.store.delete_prop(interface_name, path).await?;
             debug!("Stored property {}{} deleted", interface_name, path);
         }
 
@@ -948,7 +952,10 @@ where
     }
 }
 
-impl<DB> fmt::Debug for AstarteDeviceSdk<DB> {
+impl<S> fmt::Debug for AstarteDeviceSdk<S>
+where
+    S: PropertyStore,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AstarteDeviceSdk")
             .field("realm", &self.realm)
@@ -961,6 +968,7 @@ impl<DB> fmt::Debug for AstarteDeviceSdk<DB> {
 
 #[cfg(test)]
 mod test {
+    use astarte_device_sdk::store::StoreWrapper;
     use base64::Engine;
     use chrono::{TimeZone, Utc};
     use mockall::predicate;
@@ -970,8 +978,8 @@ mod test {
     use std::sync::Arc;
     use tokio::sync::{Mutex, RwLock};
 
-    use crate::database::memory::MemoryStore;
     use crate::interfaces::Interfaces;
+    use crate::store::memory::MemoryStore;
     use crate::{self as astarte_device_sdk, payload, properties, Interface};
     use astarte_device_sdk::interface::MappingType;
     use astarte_device_sdk::AstarteAggregate;
@@ -992,6 +1000,12 @@ mod test {
         0x02, 0x00, 0xb2, 0x0c, 0x1a, 0xc9,
     ];
 
+    // Interfaces
+    const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
+    const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
+    const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+
     fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: EventLoop,
@@ -1005,7 +1019,7 @@ mod test {
             device_id: "device_id".to_string(),
             mqtt_options: MqttOptions::new("device_id", "localhost", 1883),
             client,
-            database: MemoryStore::new(),
+            store: StoreWrapper::new(MemoryStore::new()),
             interfaces: Arc::new(RwLock::new(Interfaces::from(interfaces).unwrap())),
             eventloop: Arc::new(Mutex::new(eventloop)),
         }
@@ -1351,8 +1365,8 @@ mod test {
         });
 
         let interfaces = [
-            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
-            Interface::from_str(include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json")).unwrap()
+            Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap(),
+            Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
         ];
 
         let mut astarte = mock_astarte_device(client, eventloope, interfaces);
@@ -1403,11 +1417,12 @@ mod test {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_| Ok(()));
 
-        let interface = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
-
         let astarte = mock_astarte_device(client, eventloope, []);
 
-        astarte.add_interface_from_str(interface).await.unwrap();
+        astarte
+            .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
+            .await
+            .unwrap();
 
         astarte
             .remove_interface(
@@ -1423,6 +1438,7 @@ mod test {
 
         client
             .expect_publish::<String, Vec<u8>>()
+            .once()
             .with(
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
                 predicate::always(),
@@ -1455,7 +1471,7 @@ mod test {
         });
 
         // Send properties
-        eventloope.expect_poll().returning(move || {
+        eventloope.expect_poll().once().returning(move || {
             Ok(Event::Incoming(rumqttc::Packet::Publish(
                 rumqttc::Publish::new(
                     "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
@@ -1465,10 +1481,14 @@ mod test {
             )))
         });
 
-        let mut astarte = mock_astarte_device(client, eventloope, [
-            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
-            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json")).unwrap(),
-        ]);
+        let mut astarte = mock_astarte_device(
+            client,
+            eventloope,
+            [
+                Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+                Interface::from_str(SERVER_PROPERTIES).unwrap(),
+            ],
+        );
 
         astarte
             .send(
@@ -1530,9 +1550,11 @@ mod test {
 
         let eventloope = EventLoop::default();
 
-        let astarte = mock_astarte_device(client, eventloope, [
-            Interface::from_str(include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json")).unwrap(),
-        ]);
+        let astarte = mock_astarte_device(
+            client,
+            eventloope,
+            [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
+        );
 
         astarte
             .send(
@@ -1577,9 +1599,11 @@ mod test {
             )))
         });
 
-        let mut astarte = mock_astarte_device(client, eventloope, [
-            Interface::from_str(include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json")).unwrap(),
-        ]);
+        let mut astarte = mock_astarte_device(
+            client,
+            eventloope,
+            [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
+        );
 
         let event = astarte.handle_events().await;
 

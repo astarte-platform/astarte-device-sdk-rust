@@ -19,15 +19,13 @@
 //! Error types for the Astarte SDK.
 
 use std::convert::Infallible;
-use std::error::Error as StdError;
 
-use crate::database::AstarteDatabase;
-use crate::database::Error as DatabaseError;
 use crate::interface::error::ValidationError;
 use crate::interface::mapping::path::Error as MappingError;
 use crate::interface::Error as InterfaceError;
 use crate::options::Error as OptionsError;
 use crate::properties::Error as PropertiesError;
+use crate::store::error::Error as StoreError;
 use crate::topic::Error as TopicError;
 
 /// Astarte error.
@@ -66,9 +64,6 @@ pub enum Error {
     #[error("receive error ({0})")]
     ReceiveError(String),
 
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
-
     #[error("options error")]
     OptionsError(#[from] OptionsError),
 
@@ -100,16 +95,7 @@ pub enum Error {
     #[error("failed to parse consumer/producer properties")]
     PurgeProperty(#[from] PropertiesError),
 
-    /// Wraps a generic [`DatabaseError`] from the database implementation.
+    /// Wraps a generic [`StoreError`] from the storage implementation.
     #[error(transparent)]
-    Database(#[from] Box<dyn StdError>),
-}
-
-impl<D> From<DatabaseError<D>> for Error
-where
-    D: AstarteDatabase,
-{
-    fn from(err: DatabaseError<D>) -> Self {
-        Error::Database(Box::new(err))
-    }
+    Database(#[from] StoreError),
 }

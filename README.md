@@ -29,7 +29,7 @@ for more information regarding Astarte and the available SDKs.
 use std::error::Error;
 
 use astarte_device_sdk::{
-    database::sqlite::SqliteStore,
+    store::sqlite::SqliteStore,
     options::AstarteOptions,
     AstarteDeviceSdk,
 };

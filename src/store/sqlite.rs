@@ -24,15 +24,12 @@ use async_trait::async_trait;
 use log::{debug, error, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use super::{AstarteDatabase, StoredProp};
+use super::{PropertyStore, StoredProp};
 use crate::{
     payload::{self, Payload},
     types::AstarteType,
     Error as AstarteError,
 };
-
-#[deprecated = "Use SqliteStore instead"]
-pub type AstarteSqliteDatabase = SqliteStore;
 
 /// Error returned by the [`SqliteStore`]
 #[non_exhaustive]
@@ -106,7 +103,7 @@ impl SqliteStore {
     /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::database::sqlite::SqliteStore;
+    /// use astarte_device_sdk::store::sqlite::SqliteStore;
     ///
     /// #[tokio::main]
     /// async fn main() {
@@ -139,10 +136,10 @@ impl SqliteStore {
 }
 
 #[async_trait]
-impl AstarteDatabase for SqliteStore {
+impl PropertyStore for SqliteStore {
     type Err = Error;
 
-    async fn store_prop_impl(
+    async fn store_prop(
         &self,
         interface: &str,
         path: &str,
@@ -169,7 +166,7 @@ impl AstarteDatabase for SqliteStore {
         Ok(())
     }
 
-    async fn load_prop_impl(
+    async fn load_prop(
         &self,
         interface: &str,
         path: &str,
@@ -191,7 +188,7 @@ impl AstarteDatabase for SqliteStore {
                         interface, path, record.interface_major, interface_major
                     );
 
-                    self.delete_prop_impl(interface, path).await?;
+                    self.delete_prop(interface, path).await?;
 
                     return Ok(None);
                 }
@@ -204,7 +201,7 @@ impl AstarteDatabase for SqliteStore {
         }
     }
 
-    async fn delete_prop_impl(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
         sqlx::query_file!("queries/delete_prop.sql", interface, path)
             .execute(&self.db_conn)
             .await?;
@@ -212,7 +209,7 @@ impl AstarteDatabase for SqliteStore {
         Ok(())
     }
 
-    async fn clear_impl(&self) -> Result<(), Self::Err> {
+    async fn clear(&self) -> Result<(), Self::Err> {
         sqlx::query!("delete from propcache")
             .execute(&self.db_conn)
             .await?;
@@ -220,7 +217,7 @@ impl AstarteDatabase for SqliteStore {
         Ok(())
     }
 
-    async fn load_all_props_impl(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
         let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/load_all_props.sql")
             .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
             .fetch_all(&self.db_conn)
@@ -233,7 +230,7 @@ impl AstarteDatabase for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::tests::test_db;
+    use crate::store::tests::test_db;
 
     #[tokio::test]
     async fn test_db_sqlite() {

@@ -29,11 +29,11 @@ use log::debug;
 use pairing::PairingError;
 
 use crate::crypto::Error as CryptoError;
-use crate::database::memory::MemoryStore;
-use crate::database::AstarteDatabase;
 use crate::interface;
 use crate::interfaces::Interfaces;
 use crate::pairing;
+use crate::store::memory::MemoryStore;
+use crate::store::PropertyStore;
 
 use interface::Interface;
 
@@ -77,18 +77,18 @@ pub enum Error {
 /// Structure used to store the configuration options for an instance of
 /// [AstarteDeviceSdk][crate::AstarteDeviceSdk].
 #[derive(Clone)]
-pub struct AstarteOptions<DB> {
+pub struct AstarteOptions<S> {
     pub(crate) realm: String,
     pub(crate) device_id: String,
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
     pub(crate) interfaces: Interfaces,
-    pub(crate) database: DB,
+    pub(crate) store: S,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
 }
 
-impl<DB> Debug for AstarteOptions<DB> {
+impl<S> Debug for AstarteOptions<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("realm", &self.realm)
@@ -131,18 +131,18 @@ impl AstarteOptions<MemoryStore> {
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
             interfaces: Interfaces::new(),
-            database: MemoryStore::new(),
+            store: MemoryStore::new(),
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
         }
     }
 }
 
-impl<DB> AstarteOptions<DB> {
+impl<S> AstarteOptions<S> {
     /// Add a database to the astarte options.
     pub fn database<T>(self, database: T) -> AstarteOptions<T>
     where
-        T: AstarteDatabase,
+        T: PropertyStore,
     {
         AstarteOptions {
             realm: self.realm,
@@ -150,7 +150,7 @@ impl<DB> AstarteOptions<DB> {
             credentials_secret: self.credentials_secret,
             pairing_url: self.pairing_url,
             interfaces: self.interfaces,
-            database,
+            store: database,
             ignore_ssl_errors: self.ignore_ssl_errors,
             keepalive: self.keepalive,
         }
