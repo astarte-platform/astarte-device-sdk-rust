@@ -44,7 +44,7 @@ use database::StoredProp;
 use log::{debug, error, info, trace, warn};
 use options::AstarteOptions;
 pub use rumqttc;
-use rumqttc::{Event, MqttOptions};
+use rumqttc::Event;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::convert::TryInto;
@@ -128,7 +128,6 @@ pub use astarte_device_sdk_derive::AstarteAggregate;
 pub struct AstarteDeviceSdk {
     realm: String,
     device_id: String,
-    mqtt_options: MqttOptions,
     client: AsyncClient,
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
@@ -236,23 +235,22 @@ impl AstarteDeviceSdk {
     ///     .unwrap()
     ///     .ignore_ssl_errors();
     ///
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: &AstarteOptions) -> Result<AstarteDeviceSdk, AstarteError> {
-        let mqtt_options = pairing::get_transport_config(opts).await?;
+    pub async fn new(opts: AstarteOptions) -> Result<AstarteDeviceSdk, AstarteError> {
+        let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
 
-        let (client, eventloop) = AsyncClient::new(mqtt_options.clone(), 50);
+        let (client, eventloop) = AsyncClient::new(mqtt_options, 50);
 
         let mut device = AstarteDeviceSdk {
-            realm: opts.realm.to_owned(),
-            device_id: opts.device_id.to_owned(),
-            mqtt_options,
+            realm: opts.realm,
+            device_id: opts.device_id,
             client,
             eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces.clone())),
+            interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces)),
             database: opts.database.clone(),
         };
 
@@ -414,7 +412,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     loop {
     ///         match device.handle_events().await {
@@ -619,7 +617,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     device
     ///         .unset("my.interface.name", "/endpoint/path",)
@@ -718,7 +716,7 @@ impl AstarteDeviceSdk {
     ///         .await
     ///         .unwrap();
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_").database(database);
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .get_property("my.interface.name", "/endpoint/path",)
@@ -792,7 +790,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let value: i32 = 42;
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
@@ -1056,7 +1054,7 @@ impl AstarteDeviceSdk {
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,
@@ -1106,7 +1104,6 @@ impl fmt::Debug for AstarteDeviceSdk {
         f.debug_struct("Device")
             .field("realm", &self.realm)
             .field("device_id", &self.device_id)
-            .field("mqtt_options", &self.mqtt_options)
             .finish()
     }
 }
@@ -1129,7 +1126,7 @@ mod test {
     use base64::Engine;
     use chrono::{TimeZone, Utc};
     use mockall::predicate;
-    use rumqttc::{Event, MqttOptions};
+    use rumqttc::Event;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1157,7 +1154,6 @@ mod test {
         AstarteDeviceSdk {
             realm: "realm".to_string(),
             device_id: "device_id".to_string(),
-            mqtt_options: MqttOptions::new("device_id", "localhost", 1883),
             client,
             database: None,
             interfaces: Arc::new(RwLock::new(Interfaces::from(interfaces).unwrap())),
