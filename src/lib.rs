@@ -21,6 +21,7 @@
 
 pub mod crypto;
 pub mod database;
+pub mod error;
 pub mod interface;
 mod interfaces;
 #[cfg(test)]
@@ -36,29 +37,32 @@ use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
 use rumqttc::{AsyncClient, EventLoop};
 
-// Re-export rumqttc since we return its types in some methods
-use bson::Bson;
-pub use chrono;
-use database::AstarteDatabase;
-use database::StoredProp;
-use log::{debug, error, info, trace, warn};
-use options::AstarteOptions;
-pub use rumqttc;
-use rumqttc::Event;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use types::AstarteType;
 
-use crate::interface::mapping::path::{Error as MappingError, MappingPath};
-use crate::topic::{parse_topic, TopicError};
-use interface::error::ValidationError;
-pub use interface::Interface;
+// Re-export rumqttc since we return its types in some methods
+pub use chrono;
+pub use rumqttc;
+
+use bson::Bson;
+use log::{debug, error, info, trace, warn};
+use rumqttc::Event;
+
+/// Re-exported internal structs
+pub use crate::interface::Interface;
+
+use crate::database::AstarteDatabase;
+use crate::database::StoredProp;
+use crate::error::AstarteError;
+use crate::interface::mapping::path::MappingPath;
+use crate::options::AstarteOptions;
+use crate::topic::parse_topic;
+use crate::types::AstarteType;
 
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::AstarteDeviceSdk::send_object] and
@@ -77,7 +81,7 @@ pub trait AstarteAggregate {
     /// use std::collections::HashMap;
     /// use std::convert::TryInto;
     ///
-    /// use astarte_device_sdk::{types::AstarteType, AstarteError, AstarteAggregate};
+    /// use astarte_device_sdk::{types::AstarteType, error::AstarteError, AstarteAggregate};
     ///
     /// struct Person {
     ///     name: String,
@@ -132,72 +136,6 @@ pub struct AstarteDeviceSdk {
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
-}
-
-/// Astarte error.
-///
-/// Possible errors returned by functions of the Astarte device SDK.
-#[derive(thiserror::Error, Debug)]
-pub enum AstarteError {
-    #[error("bson serialize error")]
-    BsonSerError(#[from] bson::ser::Error),
-
-    #[error("bson client error")]
-    BsonClientError(#[from] rumqttc::ClientError),
-
-    #[error("mqtt connection error")]
-    ConnectionError(#[from] rumqttc::ConnectionError),
-
-    #[error("malformed input from Astarte backend")]
-    DeserializationError(#[from] bson::de::Error),
-
-    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
-    DeserializationMissingValue(bson::Document),
-
-    #[error("error converting from Bson to AstarteType ({0})")]
-    FromBsonError(String),
-
-    #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
-    FromBsonArrayError,
-
-    #[error("forbidden floating point number")]
-    FloatError,
-
-    #[error("send error ({0})")]
-    SendError(String),
-
-    #[error("receive error ({0})")]
-    ReceiveError(String),
-
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
-
-    #[error("options error")]
-    OptionsError(#[from] options::AstarteOptionsError),
-
-    #[error(transparent)]
-    InterfaceError(#[from] interface::Error),
-
-    #[error("generic error ({0})")]
-    Reported(String),
-
-    #[error("generic error")]
-    Unreported,
-
-    #[error("conversion error")]
-    Conversion,
-
-    #[error("infallible error")]
-    Infallible(#[from] Infallible),
-
-    #[error("invalid topic {}",.0.topic())]
-    InvalidTopic(#[from] TopicError),
-
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
-
-    #[error("invalid interface added")]
-    InvalidInterface(#[from] ValidationError),
 }
 
 /// Payload format for an Astarte device event data.

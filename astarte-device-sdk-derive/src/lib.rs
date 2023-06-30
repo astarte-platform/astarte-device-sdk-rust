@@ -85,7 +85,7 @@ fn impl_astarte_aggregate_derive(ast: syn::DeriveInput) -> TokenStream {
                         self,
                     ) -> Result<
                         std::collections::HashMap<String, astarte_device_sdk::types::AstarteType>,
-                        astarte_device_sdk::AstarteError,
+                        astarte_device_sdk::error::AstarteError,
                     > {
                         let mut result = std::collections::HashMap::new();
                         #(

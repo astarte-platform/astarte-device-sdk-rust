@@ -21,8 +21,8 @@
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::AstarteSqliteDatabase, options::AstarteOptions, types::AstarteType, AstarteDeviceSdk,
-    AstarteError,
+    database::AstarteSqliteDatabase, error::AstarteError, options::AstarteOptions,
+    types::AstarteType, AstarteDeviceSdk,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
