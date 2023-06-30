@@ -28,6 +28,7 @@ use crate::topic::TopicError;
 /// Astarte error.
 ///
 /// Possible errors returned by functions of the Astarte device SDK.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("bson serialize error")]

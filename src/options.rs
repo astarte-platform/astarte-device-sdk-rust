@@ -38,6 +38,7 @@ use crate::pairing;
 /// Astarte options error.
 ///
 /// Possible errors used by the Astarte options module.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum OptionsError {
     #[error("private key or CSR creation failed")]

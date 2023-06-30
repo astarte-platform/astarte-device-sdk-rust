@@ -22,6 +22,7 @@ use std::io;
 use super::{mapping::endpoint::EndpointError, validation::VersionChangeError};
 
 /// Error for parsing and validating an interface.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum InterfaceError {
     #[error("cannot parse interface JSON")]

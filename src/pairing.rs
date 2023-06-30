@@ -63,6 +63,7 @@ struct AstarteMqttV1Info {
 }
 
 /// Error returned during pairing.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum PairingError {
     #[error("invalid credentials secret")]

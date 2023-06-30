@@ -126,6 +126,8 @@ impl PartialEq<&str> for MappingPath<'_> {
     }
 }
 
+/// Error that can happen while parsing the MQTT levels structure of the topic received.
+#[non_exhaustive]
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum MappingError {
     #[error("path missing prefix: {0}")]

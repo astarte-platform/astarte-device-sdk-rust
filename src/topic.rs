@@ -25,6 +25,7 @@ use crate::interface::mapping::path::{MappingError, MappingPath};
 /// Error returned when parsing a topic.
 ///
 /// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
+#[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TopicError {
     #[error("topic is empty")]

@@ -22,6 +22,7 @@ use std::{cmp::Ordering, fmt::Display};
 use super::Interface;
 
 /// Error for changing the version of an interface.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug, Clone, Copy)]
 pub enum VersionChangeError {
     /// The major version cannot be decreased.
