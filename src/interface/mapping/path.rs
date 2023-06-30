@@ -64,7 +64,7 @@ impl<'a> Display for MappingPath<'a> {
 }
 
 impl<'a> TryFrom<&'a str> for MappingPath<'a> {
-    type Error = Error;
+    type Error = MappingError;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         parse_mapping(value)
@@ -127,7 +127,7 @@ impl PartialEq<&str> for MappingPath<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
-pub enum Error {
+pub enum MappingError {
     #[error("path missing prefix: {0}")]
     Prefix(String),
     #[error("path should have at least one level")]
@@ -136,28 +136,28 @@ pub enum Error {
     EmptyLevel(String),
 }
 
-impl Error {
+impl MappingError {
     pub(crate) fn path(&self) -> &str {
         match self {
-            Error::Prefix(path) => path,
-            Error::Empty => "",
-            Error::EmptyLevel(path) => path,
+            MappingError::Prefix(path) => path,
+            MappingError::Empty => "",
+            MappingError::EmptyLevel(path) => path,
         }
     }
 }
 
 /// Parses the MQTT levels structure of the topic received.
-fn parse_mapping(input: &str) -> Result<MappingPath, Error> {
+fn parse_mapping(input: &str) -> Result<MappingPath, MappingError> {
     let path = input
         .strip_prefix('/')
-        .ok_or_else(|| Error::Prefix(input.to_string()))?;
+        .ok_or_else(|| MappingError::Prefix(input.to_string()))?;
 
     // Split and check that none are empty
     let levels: Vec<&str> = path
         .split('/')
         .map(|level| {
             if level.is_empty() {
-                return Err(Error::EmptyLevel(input.to_string()));
+                return Err(MappingError::EmptyLevel(input.to_string()));
             }
 
             Ok(level)
@@ -165,7 +165,7 @@ fn parse_mapping(input: &str) -> Result<MappingPath, Error> {
         .collect::<Result<_, _>>()?;
 
     if levels.is_empty() {
-        return Err(Error::Empty);
+        return Err(MappingError::Empty);
     }
 
     Ok(MappingPath::Mapping {
@@ -207,7 +207,7 @@ mod tests {
     fn empty_endpoint() {
         let path = MappingPath::try_from("/").unwrap_err();
 
-        assert_eq!(path, Error::EmptyLevel("/".into()));
+        assert_eq!(path, MappingError::EmptyLevel("/".into()));
     }
 
     #[test]

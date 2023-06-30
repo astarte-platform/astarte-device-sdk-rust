@@ -20,7 +20,7 @@
 
 use log::trace;
 
-use crate::{interface::mapping::path::MappingPath, AstarteError};
+use crate::interface::mapping::path::{MappingError, MappingPath};
 
 /// Error returned when parsing a topic.
 ///
@@ -33,6 +33,13 @@ pub enum TopicError {
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]
     Malformed(String),
+
+    #[error("couldn't parse mapping for '{topic}'")]
+    Maapping {
+        #[source]
+        err: MappingError,
+        topic: String,
+    },
 }
 
 impl TopicError {
@@ -40,15 +47,14 @@ impl TopicError {
         match self {
             TopicError::Empty => "",
             TopicError::Malformed(topic) => topic,
+            TopicError::Maapping { topic, .. } => topic,
         }
     }
 }
 
-pub(crate) fn parse_topic(
-    topic: &str,
-) -> Result<(&str, &str, &str, MappingPath<'_>), AstarteError> {
+pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath<'_>), TopicError> {
     if topic.is_empty() {
-        return Err(TopicError::Empty.into());
+        return Err(TopicError::Empty);
     }
 
     let mut parts = topic.splitn(3, '/');
@@ -83,10 +89,13 @@ pub(crate) fn parse_topic(
     trace!("path: {}", path);
 
     if interface.is_empty() || path.is_empty() {
-        return Err(TopicError::Malformed(topic.to_string()).into());
+        return Err(TopicError::Malformed(topic.to_string()));
     }
 
-    let path = MappingPath::try_from(path)?;
+    let path = MappingPath::try_from(path).map_err(|err| TopicError::Maapping {
+        err,
+        topic: topic.to_string(),
+    })?;
 
     Ok((realm, device, interface, path))
 }
@@ -111,7 +120,7 @@ mod tests {
         let topic = "".to_owned();
         let err = parse_topic(&topic).unwrap_err();
 
-        assert!(matches!(err, AstarteError::InvalidTopic(TopicError::Empty)));
+        assert!(matches!(err, TopicError::Empty));
     }
 
     #[test]
@@ -119,9 +128,6 @@ mod tests {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test".to_owned();
         let err = parse_topic(&topic).unwrap_err();
 
-        assert!(matches!(
-            err,
-            AstarteError::InvalidTopic(TopicError::Malformed(_))
-        ));
+        assert!(matches!(err, TopicError::Malformed(_)));
     }
 }

@@ -29,11 +29,11 @@ for more information regarding Astarte and the available SDKs.
 use astarte_device_sdk::{
     database::AstarteSqliteDatabase,
     options::AstarteOptions,
-    error::AstarteError,
+    error::Error,
     AstarteDeviceSdk
 };
 
-async fn run_astarte_device() -> Result<(), AstarteError> {
+async fn run_astarte_device() -> Result<(), Error> {
 
     let realm = "realm_name";
     let device_id = "device_id";

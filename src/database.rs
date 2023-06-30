@@ -26,7 +26,7 @@ use log::{debug, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::FromRow;
 
-use crate::{types::AstarteType, AstarteDeviceSdk, AstarteError};
+use crate::{types::AstarteType, AstarteDeviceSdk, Error};
 
 /// Data structure providing an implementation of a sqlite database.
 ///
@@ -62,21 +62,21 @@ pub trait AstarteDatabase {
         path: &str,
         value: &[u8],
         interface_major: i32,
-    ) -> Result<(), AstarteError>;
+    ) -> Result<(), Error>;
     /// Load a property from the database.
     async fn load_prop(
         &self,
         interface: &str,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, AstarteError>;
+    ) -> Result<Option<AstarteType>, Error>;
     /// Delete a property from the database.
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), AstarteError>;
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Error>;
     /// Removes all saved properties from the database.
-    async fn clear(&self) -> Result<(), AstarteError>;
+    async fn clear(&self) -> Result<(), Error>;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error>;
 }
 
 #[async_trait]
@@ -87,7 +87,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         path: &str,
         value: &[u8],
         interface_major: i32,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         debug!(
             "Storing property {} {} in db ({:?})",
             interface, path, value
@@ -116,7 +116,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         interface: &str,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let res: Option<(Vec<u8>, i32)> = sqlx::query_as(
             "select value, interface_major from propcache where interface=? and path=?",
         )
@@ -138,7 +138,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
 
             match data {
                 crate::Aggregation::Individual(data) => Ok(Some(data)),
-                crate::Aggregation::Object(_) => Err(AstarteError::Reported(
+                crate::Aggregation::Object(_) => Err(Error::Reported(
                     "BUG: extracting an object from the database".into(),
                 )),
             }
@@ -147,7 +147,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         }
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), AstarteError> {
+    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Error> {
         sqlx::query("delete from propcache where interface=? and path=?")
             .bind(interface)
             .bind(path)
@@ -157,7 +157,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), AstarteError> {
+    async fn clear(&self) -> Result<(), Error> {
         sqlx::query("delete from propcache")
             .execute(&self.db_conn)
             .await?;
@@ -165,7 +165,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         Ok(())
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error> {
         let res: Vec<StoredProp> = sqlx::query_as("select * from propcache")
             .fetch_all(&self.db_conn)
             .await?;
@@ -189,7 +189,7 @@ impl AstarteSqliteDatabase {
     ///         .unwrap();
     /// }
     /// ```
-    pub async fn new(uri: &str) -> Result<Self, crate::options::AstarteOptionsError> {
+    pub async fn new(uri: &str) -> Result<Self, crate::options::OptionsError> {
         let options = SqliteConnectOptions::from_str(uri)?.create_if_missing(true);
 
         let conn = SqlitePoolOptions::new().connect_with(options).await?;

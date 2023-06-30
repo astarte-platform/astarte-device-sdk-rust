@@ -20,17 +20,16 @@
 
 use std::convert::Infallible;
 
-use crate::interface::error::ValidationError;
-use crate::interface::mapping::path::Error as MappingError;
-use crate::interface::Error as InterfaceError;
-use crate::options::AstarteOptionsError;
+use crate::interface::mapping::path::MappingError;
+use crate::interface::InterfaceError;
+use crate::options::OptionsError;
 use crate::topic::TopicError;
 
 /// Astarte error.
 ///
 /// Possible errors returned by functions of the Astarte device SDK.
 #[derive(thiserror::Error, Debug)]
-pub enum AstarteError {
+pub enum Error {
     #[error("bson serialize error")]
     BsonSerError(#[from] bson::ser::Error),
 
@@ -65,10 +64,10 @@ pub enum AstarteError {
     DbError(#[from] sqlx::Error),
 
     #[error("options error")]
-    OptionsError(#[from] AstarteOptionsError),
+    OptionsError(#[from] OptionsError),
 
-    #[error(transparent)]
-    InterfaceError(#[from] InterfaceError),
+    #[error("invalid interface")]
+    Interface(#[from] InterfaceError),
 
     #[error("generic error ({0})")]
     Reported(String),
@@ -87,7 +86,4 @@ pub enum AstarteError {
 
     #[error("invalid mapping path '{}'", .0.path())]
     InvalidEndpoint(#[from] MappingError),
-
-    #[error("invalid interface added")]
-    InvalidInterface(#[from] ValidationError),
 }

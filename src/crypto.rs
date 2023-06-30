@@ -45,7 +45,7 @@ use x509_cert::{
 /// Errors that can occur while generating the Certificate and CSR.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum CryptoError {
     #[cfg(feature = "openssl")]
     #[error("Openssl error")]
     Openssl(#[from] openssl::error::ErrorStack),
@@ -72,7 +72,7 @@ pub(crate) struct Bundle {
 }
 
 impl Bundle {
-    pub(crate) fn new(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+    pub(crate) fn new(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // This is written this way so when all features are enable, the generate_key function is
         // not marked as unused. The if will be optimized out by the compiler in release.
         if cfg!(feature = "openssl") {
@@ -83,7 +83,7 @@ impl Bundle {
         Self::generate_key(realm, device_id)
     }
 
-    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // The realm/device_id for the certificate
         let subject = Name::from_str(&format!("CN={}/{}", realm, device_id))?;
 
@@ -108,7 +108,7 @@ impl Bundle {
     }
 
     #[cfg(feature = "openssl")]
-    pub(crate) fn openssl_key(realm: &str, device_id: &str) -> Result<Bundle, Error> {
+    pub(crate) fn openssl_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         let group = EcGroup::from_curve_name(Nid::SECP384R1)?;
         let ec_key = EcKey::generate(&group)?;
 

@@ -135,7 +135,7 @@ impl<'a> Ord for Endpoint<'a> {
 }
 
 impl<'a> TryFrom<&'a str> for Endpoint<'a> {
-    type Error = Error;
+    type Error = EndpointError;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         parse_endpoint(value)
@@ -224,7 +224,7 @@ impl<'a> Ord for Level<'a> {
 }
 
 #[derive(thiserror::Error, Debug, Clone)]
-pub enum Error {
+pub enum EndpointError {
     #[error("endpoint must start with a slash, got instead: {0}")]
     Prefix(String),
     #[error("endpoint must contain at least a level: {0}")]
@@ -237,12 +237,12 @@ pub enum Error {
     },
 }
 
-impl Error {
+impl EndpointError {
     pub fn endpoint(&self) -> &str {
         match self {
-            Error::Prefix(endpoint) => endpoint,
-            Error::Empty(endpoint) => endpoint,
-            Error::Level { input, .. } => input,
+            EndpointError::Prefix(endpoint) => endpoint,
+            EndpointError::Empty(endpoint) => endpoint,
+            EndpointError::Level { input, .. } => input,
         }
     }
 }
@@ -285,24 +285,24 @@ pub enum LevelError {
 ///
 /// - We allow ending the level with a '%' since we can peek
 ///
-fn parse_endpoint(input: &str) -> Result<Endpoint, Error> {
+fn parse_endpoint(input: &str) -> Result<Endpoint, EndpointError> {
     debug!("parsing endpoint: {}", input);
 
     let endpoint = input
         .strip_prefix('/')
-        .ok_or_else(|| Error::Prefix(input.to_string()))?;
+        .ok_or_else(|| EndpointError::Prefix(input.to_string()))?;
 
     let levels = endpoint
         .split('/')
         .map(parse_level)
         .collect::<Result<Vec<Level>, LevelError>>()
-        .map_err(|error| Error::Level {
+        .map_err(|error| EndpointError::Level {
             input: input.to_string(),
             error,
         })?;
 
     if levels.is_empty() {
-        return Err(Error::Empty(input.to_string()));
+        return Err(EndpointError::Empty(input.to_string()));
     }
 
     info!("levels: {:?}", levels);

@@ -19,7 +19,21 @@
 
 use std::{cmp::Ordering, fmt::Display};
 
-use super::{error::VersionChangeError, Interface};
+use super::Interface;
+
+/// Error for changing the version of an interface.
+#[derive(thiserror::Error, Debug, Clone, Copy)]
+pub enum VersionChangeError {
+    /// The major version cannot be decreased.
+    #[error("the major version decreased: {0}")]
+    MajorDecresed(VersionChange),
+    /// The minor version cannot be decreased.
+    #[error("the minor version decreased: {0}")]
+    MinorDecresed(VersionChange),
+    // The interface is different but the version did not change.
+    #[error("the version did not change: {0}")]
+    SameVersion(VersionChange),
+}
 
 /// A change in version of an interface.
 ///

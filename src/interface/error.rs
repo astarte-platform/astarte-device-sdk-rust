@@ -19,11 +19,11 @@
 
 use std::io;
 
-use super::{mapping::endpoint::Error as EndpointError, validation::VersionChange};
+use super::{mapping::endpoint::EndpointError, validation::VersionChangeError};
 
 /// Error for parsing and validating an interface.
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub enum InterfaceError {
     #[error("cannot parse interface JSON")]
     Parse(#[from] serde_json::Error),
     #[error("cannot read interface file")]
@@ -48,11 +48,6 @@ pub enum Error {
     DuplicateMapping { endpoint: String, duplicate: String },
     #[error("object endpoint should have at least 2 levels: '{0}'")]
     ObjectEndpointTooShort(String),
-}
-
-/// Error for an interface validation.
-#[derive(thiserror::Error, Debug)]
-pub enum ValidationError {
     /// The name of the interface was changed.
     #[error(
         r#"this version has a different name than the previous version
@@ -63,18 +58,4 @@ pub enum ValidationError {
     /// Invalid version change.
     #[error("invalid version: {0}")]
     Version(VersionChangeError),
-}
-
-/// Error for changing the version of an interface.
-#[derive(thiserror::Error, Debug, Clone, Copy)]
-pub enum VersionChangeError {
-    /// The major version cannot be decreased.
-    #[error("the major version decreased: {0}")]
-    MajorDecresed(VersionChange),
-    /// The minor version cannot be decreased.
-    #[error("the minor version decreased: {0}")]
-    MinorDecresed(VersionChange),
-    // The interface is different but the version did not change.
-    #[error("the version did not change: {0}")]
-    SameVersion(VersionChange),
 }

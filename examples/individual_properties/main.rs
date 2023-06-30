@@ -21,8 +21,8 @@
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::AstarteSqliteDatabase, error::AstarteError, options::AstarteOptions,
-    types::AstarteType, AstarteDeviceSdk,
+    database::AstarteSqliteDatabase, error::Error, options::AstarteOptions, types::AstarteType,
+    AstarteDeviceSdk,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -54,7 +54,7 @@ async fn get_name_for_sensor(device: &AstarteDeviceSdk, sensor_n: i32) -> Result
 }
 
 #[tokio::main]
-async fn main() -> Result<(), AstarteError> {
+async fn main() -> Result<(), Error> {
     env_logger::init();
 
     // Load configuration
@@ -129,7 +129,7 @@ async fn main() -> Result<(), AstarteError> {
                         .next()
                         .and_then(|id| id.parse::<u16>().ok())
                         .ok_or_else(|| {
-                            AstarteError::ReceiveError("Incorrect error received.".to_string())
+                            Error::ReceiveError("Incorrect error received.".to_string())
                         })?;
 
                     match iter.next() {
