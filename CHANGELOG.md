@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expose `pairing::PairingError` to public visibility.
 - Bump `MSRV` to 1.66.1.
 - The `AstartDeviceSdk` now requires an owned `AstarteOptions` instance.
+- Rename the main error in `Error` and give the other errors more specific names.
+- Mark all errors as `#[non_exhaustive]`.
 
 ## [0.5.1] - 2023-02-06
 ### Fixed
