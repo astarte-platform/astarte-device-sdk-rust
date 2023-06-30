@@ -78,7 +78,7 @@ impl TestCfg {
         let credentials_secret =
             env::var("E2E_CREDENTIALS_SECRET").map_err(|msg| msg.to_string())?;
         let api_url = env::var("E2E_API_URL").map_err(|msg| msg.to_string())?;
-        let pairing_url = format!("{api_url}/pairing");
+        let pairing_url = env::var("E2E_PAIRING_URL").map_err(|msg| msg.to_string())?;
 
         let interfaces_fld = env::current_dir()
             .map_err(|msg| msg.to_string())?
@@ -129,7 +129,7 @@ async fn e2etest_impl() {
 
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
-    let sdk_options = AstarteOptions::new(
+    let mut sdk_options = AstarteOptions::new(
         &test_cfg.realm,
         &test_cfg.device_id,
         &test_cfg.credentials_secret,
@@ -137,6 +137,11 @@ async fn e2etest_impl() {
     )
     .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
     .unwrap();
+
+    // Ignore SSL for local testing
+    if env::var("E2E_IGNORE_SSL").is_ok() {
+        sdk_options = sdk_options.ignore_ssl_errors();
+    }
 
     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
@@ -575,7 +580,7 @@ async fn test_property_server_to_device(
 /// - *interface*: interface for which to perform the GET request.
 async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, String> {
     let get_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface
     );
     println!("Sending HTTP GET request: {get_cmd}");
@@ -607,7 +612,7 @@ async fn http_post_to_intf(
     value_json: String,
 ) -> Result<(), String> {
     let post_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
     println!("Sending HTTP POST request: {post_cmd} {value_json}");
@@ -646,7 +651,7 @@ async fn http_delete_to_intf(
     path: &str,
 ) -> Result<(), String> {
     let post_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
     println!("Sending HTTP DELETE request: {post_cmd}");
