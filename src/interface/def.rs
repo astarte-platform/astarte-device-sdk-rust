@@ -33,7 +33,7 @@ use crate::{
     Interface,
 };
 
-use super::{DatabaseRetention, Error, InterfaceType, Retention};
+use super::{DatabaseRetention, InterfaceError, InterfaceType, Retention};
 
 /// Utility to skip default value
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -232,7 +232,7 @@ impl<'a> From<&'a Interface> for InterfaceDef<'a> {
 }
 
 impl<'a> TryFrom<InterfaceDef<'a>> for Interface {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(def: InterfaceDef<'a>) -> Result<Self, Self::Error> {
         let inner = match def.interface_type {

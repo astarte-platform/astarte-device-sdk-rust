@@ -20,7 +20,7 @@ use std::{borrow::Borrow, ops::Deref};
 
 use self::endpoint::Endpoint;
 
-use super::{DatabaseRetention, Error, Mapping, MappingType, Reliability, Retention};
+use super::{DatabaseRetention, InterfaceError, Mapping, MappingType, Reliability, Retention};
 
 pub mod endpoint;
 pub mod iter;
@@ -62,7 +62,7 @@ impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<'a> {
 }
 
 impl TryFrom<&Mapping<'_>> for DatastreamIndividualMapping {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
@@ -126,7 +126,7 @@ impl<'a> From<&'a PropertiesMapping> for Mapping<'a> {
 }
 
 impl TryFrom<&Mapping<'_>> for PropertiesMapping {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
@@ -211,7 +211,7 @@ impl<'a> From<&'a BaseMapping> for Mapping<'a> {
 }
 
 impl<'a> TryFrom<&Mapping<'a>> for BaseMapping {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &Mapping<'a>) -> Result<Self, Self::Error> {
         let endpoint = Endpoint::try_from(value.endpoint())?.into_owned();

@@ -21,6 +21,7 @@
 
 pub mod crypto;
 pub mod database;
+pub mod error;
 pub mod interface;
 mod interfaces;
 #[cfg(test)]
@@ -36,29 +37,33 @@ use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
 use rumqttc::{AsyncClient, EventLoop};
 
-// Re-export rumqttc since we return its types in some methods
-use bson::Bson;
-pub use chrono;
-use database::AstarteDatabase;
-use database::StoredProp;
-use log::{debug, error, info, trace, warn};
-use options::AstarteOptions;
-pub use rumqttc;
-use rumqttc::Event;
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use types::AstarteType;
 
-use crate::interface::mapping::path::{Error as MappingError, MappingPath};
-use crate::topic::{parse_topic, TopicError};
-use interface::error::ValidationError;
-pub use interface::Interface;
+// Re-export rumqttc since we return its types in some methods
+pub use chrono;
+pub use rumqttc;
+
+use bson::Bson;
+use log::{debug, error, info, trace, warn};
+use rumqttc::Event;
+
+/// Re-exported internal structs
+pub use crate::interface::Interface;
+
+use crate::database::AstarteDatabase;
+use crate::database::StoredProp;
+use crate::error::Error;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::InterfaceError;
+use crate::options::AstarteOptions;
+use crate::topic::parse_topic;
+use crate::types::AstarteType;
 
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::AstarteDeviceSdk::send_object] and
@@ -77,7 +82,7 @@ pub trait AstarteAggregate {
     /// use std::collections::HashMap;
     /// use std::convert::TryInto;
     ///
-    /// use astarte_device_sdk::{types::AstarteType, AstarteError, AstarteAggregate};
+    /// use astarte_device_sdk::{types::AstarteType, error::Error, AstarteAggregate};
     ///
     /// struct Person {
     ///     name: String,
@@ -87,7 +92,7 @@ pub trait AstarteAggregate {
     ///
     /// // This is what #[derive(AstarteAggregate)] would generate.
     /// impl AstarteAggregate for Person {
-    ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError>
+    ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>
     ///     {
     ///         let mut r = HashMap::new();
     ///         r.insert("name".to_string(), self.name.try_into()?);
@@ -97,11 +102,11 @@ pub trait AstarteAggregate {
     ///     }
     /// }
     /// ```
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError>;
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>;
 }
 
 impl AstarteAggregate for HashMap<String, AstarteType> {
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, AstarteError> {
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error> {
         Ok(self)
     }
 }
@@ -132,72 +137,6 @@ pub struct AstarteDeviceSdk {
     eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
     interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
     database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
-}
-
-/// Astarte error.
-///
-/// Possible errors returned by functions of the Astarte device SDK.
-#[derive(thiserror::Error, Debug)]
-pub enum AstarteError {
-    #[error("bson serialize error")]
-    BsonSerError(#[from] bson::ser::Error),
-
-    #[error("bson client error")]
-    BsonClientError(#[from] rumqttc::ClientError),
-
-    #[error("mqtt connection error")]
-    ConnectionError(#[from] rumqttc::ConnectionError),
-
-    #[error("malformed input from Astarte backend")]
-    DeserializationError(#[from] bson::de::Error),
-
-    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
-    DeserializationMissingValue(bson::Document),
-
-    #[error("error converting from Bson to AstarteType ({0})")]
-    FromBsonError(String),
-
-    #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
-    FromBsonArrayError,
-
-    #[error("forbidden floating point number")]
-    FloatError,
-
-    #[error("send error ({0})")]
-    SendError(String),
-
-    #[error("receive error ({0})")]
-    ReceiveError(String),
-
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
-
-    #[error("options error")]
-    OptionsError(#[from] options::AstarteOptionsError),
-
-    #[error(transparent)]
-    InterfaceError(#[from] interface::Error),
-
-    #[error("generic error ({0})")]
-    Reported(String),
-
-    #[error("generic error")]
-    Unreported,
-
-    #[error("conversion error")]
-    Conversion,
-
-    #[error("infallible error")]
-    Infallible(#[from] Infallible),
-
-    #[error("invalid topic {}",.0.topic())]
-    InvalidTopic(#[from] TopicError),
-
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
-
-    #[error("invalid interface added")]
-    InvalidInterface(#[from] ValidationError),
 }
 
 /// Payload format for an Astarte device event data.
@@ -238,7 +177,7 @@ impl AstarteDeviceSdk {
     ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: AstarteOptions) -> Result<AstarteDeviceSdk, AstarteError> {
+    pub async fn new(opts: AstarteOptions) -> Result<AstarteDeviceSdk, Error> {
         let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
@@ -259,7 +198,7 @@ impl AstarteDeviceSdk {
         Ok(device)
     }
 
-    async fn wait_for_connack(&mut self) -> Result<(), AstarteError> {
+    async fn wait_for_connack(&mut self) -> Result<(), Error> {
         loop {
             // keep consuming and processing packets until we have data for the user
             match self.eventloop.lock().await.poll().await? {
@@ -279,7 +218,7 @@ impl AstarteDeviceSdk {
         }
     }
 
-    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), AstarteError> {
+    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), Error> {
         if !p.session_present {
             self.subscribe().await?;
             self.send_introspection().await?;
@@ -291,7 +230,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn subscribe(&self) -> Result<(), AstarteError> {
+    async fn subscribe(&self) -> Result<(), Error> {
         let ifaces = &self.interfaces.read().await;
         let server_owned_ifaces = ifaces
             .iter_interfaces()
@@ -311,10 +250,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn subscribe_server_owned_interface(
-        &self,
-        iface: &Interface,
-    ) -> Result<(), AstarteError> {
+    async fn subscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
         if iface.ownership() != interface::Ownership::Server {
             warn!("Unable to subscribe to {} as it is not server owned", iface);
         } else {
@@ -328,10 +264,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn unsubscribe_server_owned_interface(
-        &self,
-        iface: &Interface,
-    ) -> Result<(), AstarteError> {
+    async fn unsubscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
         if iface.ownership() != interface::Ownership::Server {
             warn!(
                 "Unable to unsubscribe to {} as it is not server owned",
@@ -346,7 +279,7 @@ impl AstarteDeviceSdk {
     }
 
     /// Add a new interface from the provided file.
-    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), AstarteError> {
+    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), Error> {
         let path = Path::new(file_path);
         let interface = Interface::from_file(path)?;
         self.add_interface(interface).await
@@ -354,13 +287,13 @@ impl AstarteDeviceSdk {
 
     /// Add a new interface from a string. The string should contain a valid json formatted
     /// interface.
-    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), AstarteError> {
+    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
         let interface: Interface = Interface::from_str(json_str)?;
         self.add_interface(interface).await
     }
 
     /// Add a new [`Interface`] to the device interfaces.
-    pub async fn add_interface(&self, interface: Interface) -> Result<(), AstarteError> {
+    pub async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
         if interface.ownership() == interface::Ownership::Server {
             self.subscribe_server_owned_interface(&interface).await?;
         }
@@ -369,17 +302,14 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn add_interface_to_introspection(
-        &self,
-        interface: Interface,
-    ) -> Result<(), AstarteError> {
+    async fn add_interface_to_introspection(&self, interface: Interface) -> Result<(), Error> {
         self.interfaces.write().await.add(interface)?;
 
         Ok(())
     }
 
     /// Remove the interface with the name specified as argument.
-    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), AstarteError> {
+    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
         let interface = self.remove_interface_from_map(interface_name).await?;
         self.remove_properties_from_store(interface_name).await?;
         self.send_introspection().await?;
@@ -389,17 +319,12 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn remove_interface_from_map(
-        &self,
-        interface_name: &str,
-    ) -> Result<Interface, AstarteError> {
+    async fn remove_interface_from_map(&self, interface_name: &str) -> Result<Interface, Error> {
         self.interfaces
             .write()
             .await
             .remove(interface_name)
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::InterfaceNotFound,
-            ))
+            .ok_or(Error::Interface(InterfaceError::InterfaceNotFound))
     }
 
     /// Poll updates from mqtt, can be placed in a loop to receive data.
@@ -426,7 +351,7 @@ impl AstarteDeviceSdk {
     ///     }
     /// }
     /// ```
-    pub async fn handle_events(&mut self) -> Result<AstarteDeviceDataEvent, AstarteError> {
+    pub async fn handle_events(&mut self) -> Result<AstarteDeviceDataEvent, Error> {
         loop {
             // keep consuming and processing packets until we have data for the user
             match self.eventloop.lock().await.poll().await? {
@@ -484,7 +409,7 @@ impl AstarteDeviceSdk {
         interface: &str,
         path: &MappingPath<'a>,
         bdata: &[u8],
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), Error> {
         //if database is loaded
         if let Some(database) = &self.database {
             //if it's a property
@@ -527,7 +452,7 @@ impl AstarteDeviceSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), AstarteError> {
+    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         if let Some(db) = &self.database {
             let stored_props = db.load_all_props().await?;
 
@@ -546,7 +471,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn send_emptycache(&self) -> Result<(), AstarteError> {
+    async fn send_emptycache(&self) -> Result<(), Error> {
         let url = self.client_id() + "/control/emptyCache";
         debug!("sending emptyCache to {}", url);
 
@@ -557,7 +482,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn send_introspection(&self) -> Result<(), AstarteError> {
+    async fn send_introspection(&self) -> Result<(), Error> {
         let interfaces = self.interfaces.read().await;
         let introspection = interfaces.get_introspection_string();
 
@@ -574,7 +499,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn send_device_owned_properties(&self) -> Result<(), AstarteError> {
+    async fn send_device_owned_properties(&self) -> Result<(), Error> {
         if let Some(database) = &self.database {
             let properties = database.load_all_props().await?;
             // publish only device-owned properties...
@@ -625,11 +550,7 @@ impl AstarteDeviceSdk {
     ///         .unwrap();
     /// }
     /// ```
-    pub async fn unset(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-    ) -> Result<(), AstarteError> {
+    pub async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error> {
         trace!("unsetting {} {}", interface_name, interface_path);
 
         if cfg!(debug_assertions) {
@@ -650,7 +571,7 @@ impl AstarteDeviceSdk {
     fn serialize(
         data: Bson,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError> {
+    ) -> Result<Vec<u8>, Error> {
         if let Bson::Null = data {
             return Ok(Vec::new());
         }
@@ -671,7 +592,7 @@ impl AstarteDeviceSdk {
         Ok(buf)
     }
 
-    fn deserialize(bdata: &[u8]) -> Result<Aggregation, AstarteError> {
+    fn deserialize(bdata: &[u8]) -> Result<Aggregation, Error> {
         if bdata.is_empty() {
             return Ok(Aggregation::Individual(AstarteType::Unset));
         }
@@ -683,14 +604,14 @@ impl AstarteDeviceSdk {
         // Take the value without cloning
         let value = document
             .remove("v")
-            .ok_or_else(|| AstarteError::DeserializationMissingValue(document))?;
+            .ok_or_else(|| Error::DeserializationMissingValue(document))?;
 
         match value {
             Bson::Document(doc) => {
                 let hmap = doc
                     .into_iter()
                     .map(|(name, value)| AstarteType::try_from(value).map(|v| (name, v)))
-                    .collect::<Result<HashMap<String, AstarteType>, AstarteError>>()?;
+                    .collect::<Result<HashMap<String, AstarteType>, Error>>()?;
 
                 Ok(Aggregation::Object(hmap))
             }
@@ -728,7 +649,7 @@ impl AstarteDeviceSdk {
         &self,
         interface: &str,
         path: &str,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let path_mappings = MappingPath::try_from(path)?;
 
         self.property(interface, &path_mappings).await
@@ -741,7 +662,7 @@ impl AstarteDeviceSdk {
         &self,
         interface: &str,
         path: &MappingPath<'a>,
-    ) -> Result<Option<AstarteType>, AstarteError> {
+    ) -> Result<Option<AstarteType>, Error> {
         let db = match &self.database {
             Some(db) => db,
             None => return Ok(None),
@@ -773,7 +694,7 @@ impl AstarteDeviceSdk {
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -805,7 +726,7 @@ impl AstarteDeviceSdk {
         interface_path: &str,
         data: D,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -819,13 +740,13 @@ impl AstarteDeviceSdk {
         interface_path: &str,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
         debug!("sending {} {}", interface_name, interface_path);
 
-        let data = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        let data = data.try_into().map_err(|_| Error::Conversion)?;
 
         let buf = AstarteDeviceSdk::serialize_individual(data.clone(), timestamp)?;
 
@@ -871,7 +792,7 @@ impl AstarteDeviceSdk {
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<bool, AstarteError>
+    ) -> Result<bool, Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -881,15 +802,13 @@ impl AstarteDeviceSdk {
         };
         //if database is present
 
-        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
 
         let interfaces = self.interfaces.read().await;
 
         interfaces
             .get_propertiy_mapping(interface_name, &interface_path.try_into()?)
-            .ok_or_else(|| {
-                AstarteError::SendError(format!("Mapping {interface_path} doesn't exist"))
-            })?;
+            .ok_or_else(|| Error::SendError(format!("Mapping {interface_path} doesn't exist")))?;
 
         // Check if already in db
         let is_present = db
@@ -906,7 +825,7 @@ impl AstarteDeviceSdk {
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         D: TryInto<AstarteType>,
     {
@@ -916,15 +835,13 @@ impl AstarteDeviceSdk {
         };
         //if database is present
 
-        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
 
         let interfaces = self.interfaces.read().await;
 
         let interface = interfaces
             .get(interface_name)
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::InterfaceNotFound,
-            ))?;
+            .ok_or(Error::Interface(InterfaceError::InterfaceNotFound))?;
 
         let interface_major = interface.version_major();
 
@@ -933,9 +850,7 @@ impl AstarteDeviceSdk {
         interface
             .properties()
             .and_then(|properties| properties.mapping(&path))
-            .ok_or(AstarteError::InterfaceError(
-                interface::Error::MappingNotFound,
-            ))?;
+            .ok_or(Error::Interface(InterfaceError::MappingNotFound))?;
 
         let bin = AstarteDeviceSdk::serialize_individual(data, None)?;
 
@@ -947,7 +862,7 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), AstarteError> {
+    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error> {
         let db = match self.database {
             Some(ref db) => db,
             None => return Ok(()),
@@ -976,11 +891,11 @@ impl AstarteDeviceSdk {
     fn serialize_individual<D>(
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
+    ) -> Result<Vec<u8>, Error>
     where
         D: TryInto<AstarteType>,
     {
-        let data: AstarteType = data.try_into().map_err(|_| AstarteError::Conversion)?;
+        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
         AstarteDeviceSdk::serialize(data.into(), timestamp)
     }
 
@@ -991,7 +906,7 @@ impl AstarteDeviceSdk {
     fn serialize_object<T>(
         data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, AstarteError>
+    ) -> Result<Vec<u8>, Error>
     where
         T: AstarteAggregate,
     {
@@ -1010,7 +925,7 @@ impl AstarteDeviceSdk {
         interface_path: &str,
         data: T,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {
@@ -1072,7 +987,7 @@ impl AstarteDeviceSdk {
         interface_path: &str,
         data: T,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {
@@ -1090,7 +1005,7 @@ impl AstarteDeviceSdk {
         interface_name: &str,
         interface_path: &str,
         data: T,
-    ) -> Result<(), AstarteError>
+    ) -> Result<(), Error>
     where
         T: AstarteAggregate,
     {

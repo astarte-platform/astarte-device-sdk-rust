@@ -37,10 +37,9 @@ use std::str::FromStr;
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
-pub use self::error::Error;
+pub use self::error::InterfaceError;
 use self::{
     def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
-    error::ValidationError,
     mapping::{
         iter::{IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter},
         path::MappingPath,
@@ -84,7 +83,7 @@ pub struct Interface {
 
 impl Interface {
     /// Instantiate a new `Interface` from a file.
-    pub fn from_file(path: &Path) -> Result<Self, Error> {
+    pub fn from_file(path: &Path) -> Result<Self, InterfaceError> {
         let file = fs::read_to_string(path)?;
 
         Self::from_str(&file)
@@ -210,14 +209,14 @@ impl Interface {
     }
 
     /// Validate if an interface is valid
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), InterfaceError> {
         // TODO: add additional validation
         if self.version() == (0, 0) {
-            return Err(Error::MajorMinor);
+            return Err(InterfaceError::MajorMinor);
         }
 
         if self.mappings_len() == 0 {
-            return Err(Error::EmptyMappings);
+            return Err(InterfaceError::EmptyMappings);
         }
 
         Ok(())
@@ -230,7 +229,7 @@ impl Interface {
     /// - Both the versions are valid
     /// - The name of the interface is the same
     /// - The new version is a valid successor of the previous version.
-    pub fn validate_with(&self, prev: &Self) -> Result<&Self, ValidationError> {
+    pub fn validate_with(&self, prev: &Self) -> Result<&Self, InterfaceError> {
         // If the interfaces are the same, they are valid
         if self == prev {
             return Ok(self);
@@ -240,7 +239,7 @@ impl Interface {
         let name = self.interface_name();
         let prev_name = prev.interface_name();
         if name != prev_name {
-            return Err(ValidationError::NameMismatch {
+            return Err(InterfaceError::NameMismatch {
                 name: name.to_string(),
                 prev_name: prev_name.to_string(),
             });
@@ -248,7 +247,7 @@ impl Interface {
 
         // Validate the new interface version
         VersionChange::try_new(self, prev)
-            .map_err(ValidationError::Version)
+            .map_err(InterfaceError::Version)
             .map(|change| {
                 info!("Interface {} version changed: {}", name, change);
 
@@ -266,7 +265,7 @@ impl Serialize for Interface {
 }
 
 impl FromStr for Interface {
-    type Err = Error;
+    type Err = InterfaceError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         serde_json::from_str(s).map_err(Self::Err::from)
@@ -303,17 +302,17 @@ impl DatastreamIndividual {
         IndividualMappingIter::new(&self.mappings)
     }
 
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
         let individual = DatastreamIndividualMapping::try_from(mapping)?;
 
         self.add(individual)
     }
 
-    pub fn add(&mut self, mapping: DatastreamIndividualMapping) -> Result<(), Error> {
+    pub fn add(&mut self, mapping: DatastreamIndividualMapping) -> Result<(), InterfaceError> {
         let path = mapping.endpoint().clone().into_owned().into();
 
         if let Some(existing) = self.mappings.get(&path) {
-            return Err(Error::DuplicateMapping {
+            return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
@@ -341,7 +340,7 @@ impl DatastreamIndividual {
 }
 
 impl TryFrom<&InterfaceDef<'_>> for DatastreamIndividual {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
         let mut individual = Self {
@@ -394,9 +393,9 @@ impl DatastreamObject {
     ///
     /// Since the interface is an object, the mapping must be compatible with the interface. It
     /// needs to have the same length and prefix as the other mapping.
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
         if !self.is_compatible(mapping) {
-            return Err(Error::InconsistentMapping);
+            return Err(InterfaceError::InconsistentMapping);
         }
 
         let mapping = BaseMapping::try_from(mapping)?;
@@ -404,11 +403,11 @@ impl DatastreamObject {
         self.add(mapping)
     }
 
-    pub fn add(&mut self, mapping: BaseMapping) -> Result<(), Error> {
+    pub fn add(&mut self, mapping: BaseMapping) -> Result<(), InterfaceError> {
         // Check that the mapping has at least two components
         // https://docs.astarte-platform.org/astarte/latest/030-interface.html#endpoints-and-aggregation
         if mapping.endpoint().len() < 2 {
-            return Err(Error::ObjectEndpointTooShort(
+            return Err(InterfaceError::ObjectEndpointTooShort(
                 mapping.endpoint().to_string(),
             ));
         }
@@ -417,7 +416,7 @@ impl DatastreamObject {
         if let Some((_, entry)) = self.mappings.iter().next() {
             // Check that the mapping has the same endpoint as the other mappings
             if !entry.endpoint().eq_till_last(mapping.endpoint()) {
-                return Err(Error::InconsistentEndpoints);
+                return Err(InterfaceError::InconsistentEndpoints);
             }
         }
 
@@ -425,7 +424,7 @@ impl DatastreamObject {
 
         // Check that the mapping is not already present
         if let Some(existing) = self.mappings.get(&path) {
-            return Err(Error::DuplicateMapping {
+            return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
@@ -450,13 +449,13 @@ impl DatastreamObject {
 }
 
 impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
         let mut mappings_iter = value.mappings.iter();
         let mut mappings_set = BTreeMap::new();
 
-        let first = mappings_iter.next().ok_or(Error::EmptyMappings)?;
+        let first = mappings_iter.next().ok_or(InterfaceError::EmptyMappings)?;
         let first_base = BaseMapping::try_from(first)?;
 
         let path = first_base.endpoint().clone_owned().into();
@@ -502,17 +501,17 @@ impl Properties {
         self.mappings.contains_key(path)
     }
 
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), Error> {
+    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
         let property = PropertiesMapping::try_from(mapping)?;
 
         self.add(property)
     }
 
-    pub fn add(&mut self, mapping: PropertiesMapping) -> Result<(), Error> {
+    pub fn add(&mut self, mapping: PropertiesMapping) -> Result<(), InterfaceError> {
         let path = mapping.endpoint().clone_owned().into();
 
         if let Some(existing) = self.mappings.get(&path) {
-            return Err(Error::DuplicateMapping {
+            return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
@@ -525,7 +524,7 @@ impl Properties {
 }
 
 impl TryFrom<&InterfaceDef<'_>> for Properties {
-    type Error = Error;
+    type Error = InterfaceError;
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
         let mut properties = Self {

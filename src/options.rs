@@ -29,19 +29,18 @@ use std::sync::Arc;
 use log::debug;
 use pairing::PairingError;
 
-use crate::crypto::Error as CryptoError;
+use crate::crypto::CryptoError;
 use crate::database::AstarteDatabase;
-use crate::interface;
+use crate::interface::{Interface, InterfaceError};
 use crate::interfaces::Interfaces;
 use crate::pairing;
-
-use interface::Interface;
 
 /// Astarte options error.
 ///
 /// Possible errors used by the Astarte options module.
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum AstarteOptionsError {
+pub enum OptionsError {
     #[error("private key or CSR creation failed")]
     CryptoGeneration(#[from] CryptoError),
 
@@ -49,7 +48,7 @@ pub enum AstarteOptionsError {
     MissingInterfaces,
 
     #[error("error creating interface")]
-    InterfaceError(#[from] interface::Error),
+    Interface(#[from] InterfaceError),
 
     #[error(transparent)]
     IoError(#[from] std::io::Error),
@@ -68,9 +67,6 @@ pub enum AstarteOptionsError {
 
     #[error(transparent)]
     PkiError(#[from] webpki::Error),
-
-    #[error(transparent)]
-    ValidationError(#[from] interface::error::ValidationError),
 }
 
 /// Structure used to store the configuration options for an instance of
@@ -163,7 +159,7 @@ impl AstarteOptions {
     ///
     /// It will validate that the interfaces are the same, or a newer version of the interfaces
     /// with the same name that are already present.
-    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, AstarteOptionsError> {
+    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, OptionsError> {
         let interface = Interface::from_file(file_path)?;
         let name = interface.interface_name();
 
@@ -175,10 +171,7 @@ impl AstarteOptions {
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory(
-        self,
-        interfaces_directory: &str,
-    ) -> Result<Self, AstarteOptionsError> {
+    pub fn interface_directory(self, interfaces_directory: &str) -> Result<Self, OptionsError> {
         walk_dir_json(interfaces_directory)?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
