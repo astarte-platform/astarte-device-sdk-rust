@@ -143,7 +143,7 @@ async fn e2etest_impl() {
         sdk_options = sdk_options.ignore_ssl_errors();
     }
 
-    let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));

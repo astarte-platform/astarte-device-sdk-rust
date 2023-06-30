@@ -51,7 +51,7 @@ async fn run_astarte_device() -> Result<(), AstarteError> {
         .database(db);
 
     // 3. Create the device instance
-    let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
+    let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
 
     // Publishing new values can be performed using the send and send_object functions.
 
