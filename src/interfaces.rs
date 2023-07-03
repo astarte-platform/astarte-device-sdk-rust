@@ -18,17 +18,42 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    borrow::Borrow,
+    collections::{hash_map::Entry, HashMap},
+    ops::Deref,
+};
 
 use itertools::Itertools;
 use log::debug;
 
 use crate::{
-    interface::{mapping::path::MappingPath, InterfaceError, Mapping, Ownership},
+    interface::{mapping::path::MappingPath, InterfaceError, Mapping},
     payload,
     types::AstarteType,
     Aggregation, Error, Interface,
 };
+
+/// Struct to hold a reference to an interface, which is a property.
+///
+/// This type can be use to guaranty that the interface is a property when accessed from the
+/// [`Interfaces`] struct with the [get_property](`Interfaces::get_property`) method.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PropertyRef<'a>(&'a Interface);
+
+impl<'a> Borrow<Interface> for PropertyRef<'a> {
+    fn borrow(&self) -> &Interface {
+        self.0
+    }
+}
+
+impl<'a> Deref for PropertyRef<'a> {
+    type Target = Interface;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -128,12 +153,12 @@ impl Interfaces {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<&Interface> {
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
         self.interfaces.get(interface_name).and_then(|interface| {
             if !interface.is_property() {
                 None
             } else {
-                Some(interface)
+                Some(PropertyRef(interface))
             }
         })
     }
@@ -147,16 +172,6 @@ impl Interfaces {
         self.interfaces
             .get(interface_name)
             .and_then(|interface| interface.mapping(interface_path))
-    }
-
-    /// Get a property mapping
-    pub(crate) fn get_propertiy_mapping<'a: 's, 's>(
-        &'s self,
-        interface: &str,
-        path: &MappingPath<'a>,
-    ) -> Option<Mapping> {
-        self.get_property(interface)
-            .and_then(|interface| interface.mapping(path))
     }
 
     pub(crate) fn get_mqtt_reliability(
@@ -181,13 +196,6 @@ impl Interfaces {
         Some(interface.version_major())
     }
 
-    /// returns ownership if the interface is present in device introspection, None otherwise
-    pub(crate) fn get_ownership(&self, interface: &str) -> Option<Ownership> {
-        self.interfaces
-            .get(interface)
-            .map(|interface| interface.ownership())
-    }
-
     pub(crate) fn validate_float(data: &AstarteType) -> Result<(), Error> {
         match data {
             AstarteType::Double(d) => validate_float(d),
@@ -199,7 +207,7 @@ impl Interfaces {
     pub(crate) fn validate_send(
         &self,
         interface_name: &str,
-        interface_path: &str,
+        interface_path: &MappingPath<'_>,
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error> {
@@ -213,7 +221,7 @@ impl Interfaces {
         match data_deserialized {
             Aggregation::Individual(individual) => {
                 let mapping = interface
-                    .mapping(&interface_path.try_into()?)
+                    .mapping(interface_path)
                     .ok_or_else(|| Error::SendError("Mapping doesn't exist".into()))?;
 
                 if individual != AstarteType::Unset && individual != mapping.mapping_type() {
@@ -468,61 +476,6 @@ mod test {
             )
             .is_none());
     }
-    #[test]
-    fn test_get_ownership() {
-        let server_owned_interface_json = r#"
-        {
-            "interface_name": "org.astarte-platform.server-owned.test",
-            "version_major": 12,
-            "version_minor": 1,
-            "type": "properties",
-            "ownership": "server",
-            "mappings": [
-                {
-                    "endpoint": "/button",
-                    "type": "boolean",
-                    "explicit_timestamp": true
-                }
-            ]
-        }
-        "#;
-
-        let deser_interface = Interface::from_str(server_owned_interface_json).unwrap();
-        let mut ifa = Interfaces::default();
-        ifa.add(deser_interface).expect("valid interface");
-
-        assert_eq!(
-            ifa.get_ownership("org.astarte-platform.server-owned.test")
-                .unwrap(),
-            crate::interface::Ownership::Server
-        );
-
-        let device_owned_interface_json = r#"
-        {
-            "interface_name": "org.astarte-platform.device-owned.test",
-            "version_major": 12,
-            "version_minor": 1,
-            "type": "properties",
-            "ownership": "device",
-            "mappings": [
-                {
-                    "endpoint": "/button",
-                    "type": "boolean",
-                    "explicit_timestamp": true
-                }
-            ]
-        }
-        "#;
-        let deser_interface = Interface::from_str(device_owned_interface_json).unwrap();
-        let mut ifa = Interfaces::default();
-        ifa.add(deser_interface).expect("valid interface");
-
-        assert_eq!(
-            ifa.get_ownership("org.astarte-platform.device-owned.test")
-                .unwrap(),
-            crate::interface::Ownership::Device
-        );
-    }
 
     #[test]
     fn test_validate_float() {
@@ -551,29 +504,29 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_send("gibberish", "/1", &Vec::new(), &None)
+            .validate_send("gibberish", mapping!("/1"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test non existant endpoint
         let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1/25", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1/25"), &aggregate_data, &None)
             .unwrap_err();
 
         // Test sending an aggregate (with and without timestamp)
         let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &timestamp)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &timestamp)
             .unwrap();
 
         // Test sending an aggregate with an object field with incorrect type
         aggregate.insert("integer_endpoint".to_string(), AstarteType::Boolean(false));
         let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
         aggregate.insert("integer_endpoint".to_string(), AstarteType::Integer(45));
 
@@ -581,7 +534,7 @@ mod test {
         aggregate.insert("gibberish".to_string(), AstarteType::Boolean(false));
         let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
         aggregate.remove("gibberish");
 
@@ -589,7 +542,7 @@ mod test {
         aggregate.remove("integer_endpoint");
         let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/1", &aggregate_data, &None)
+            .validate_send(&interface_name, mapping!("/1"), &aggregate_data, &None)
             .unwrap_err();
     }
 
@@ -599,19 +552,24 @@ mod test {
 
         // Test non existant interface
         interfaces
-            .validate_send("gibberish", "/boolean", &Vec::new(), &None)
+            .validate_send("gibberish", mapping!("/boolean"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test sending a value on an unexisting endpoint
         interfaces
-            .validate_send(&interface_name, "/gibberish", &Vec::new(), &None)
+            .validate_send(&interface_name, mapping!("/gibberish"), &Vec::new(), &None)
             .unwrap_err();
 
         // Test sending a value (with and without timestamp)
         let boolean_endpoint_data =
             payload::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
-            .validate_send(&interface_name, "/boolean", &boolean_endpoint_data, &None)
+            .validate_send(
+                &interface_name,
+                mapping!("/boolean"),
+                &boolean_endpoint_data,
+                &None,
+            )
             .unwrap();
         let double_endpoint_data =
             payload::serialize_individual(&AstarteType::Double(23.2), None).unwrap();
@@ -619,7 +577,7 @@ mod test {
         interfaces
             .validate_send(
                 &interface_name,
-                "/double",
+                mapping!("/double"),
                 &double_endpoint_data,
                 &timestamp,
             )
@@ -627,12 +585,17 @@ mod test {
 
         // Test sending a value of the wrong type
         interfaces
-            .validate_send(&interface_name, "/double", &boolean_endpoint_data, &None)
+            .validate_send(
+                &interface_name,
+                mapping!("/double"),
+                &boolean_endpoint_data,
+                &None,
+            )
             .unwrap_err();
         interfaces
             .validate_send(
                 &interface_name,
-                "/booleanarray",
+                mapping!("/booleanarray"),
                 &boolean_endpoint_data,
                 &None,
             )

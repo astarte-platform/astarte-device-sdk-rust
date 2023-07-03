@@ -146,13 +146,6 @@ impl Interface {
         MappingIter::new(&self.inner)
     }
 
-    pub(crate) fn properties(&self) -> Option<&Properties> {
-        match &self.inner {
-            InterfaceType::Properties(properties) => Some(properties),
-            _ => None,
-        }
-    }
-
     pub(crate) fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
         match &self.inner {
             InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
@@ -175,15 +168,6 @@ impl Interface {
             InterfaceType::DatastreamObject(datastream) => datastream.mappings.len(),
             InterfaceType::Properties(properties) => properties.mappings.len(),
         }
-    }
-
-    /// Getter function for the endpoint paths for each property contained in the interface.
-    ///
-    /// Return a vector of tuples. Each tuple contains the endpoint as a String and the major version of the interface as a i32.
-    pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
-        self.iter_mappings()
-            .map(|mapping| (mapping.endpoint().to_string(), self.version_major()))
-            .collect()
     }
 
     pub fn is_property(&self) -> bool {
@@ -753,21 +737,20 @@ mod tests {
     fn test_properties() {
         let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
 
-        let properties = interface.properties();
+        assert!(interface.is_property(), "Properties interface not found");
+        assert_eq!(interface.version(), (1, 0));
+        assert_eq!(interface.version_major(), 1);
+        assert_eq!(interface.version_minor(), 0);
 
-        assert!(properties.is_some(), "Properties interface not found");
-
-        let properties = properties.unwrap();
-
-        let paths = interface.get_properties_paths();
+        let paths: Vec<_> = interface.iter_mappings().collect();
 
         assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0], ("/%{sensor_id}/aaaa".to_string(), 1));
-        assert_eq!(paths[1], ("/%{sensor_id}/bbbb".to_string(), 1));
+        assert_eq!(paths[0].endpoint(), "/%{sensor_id}/aaaa");
+        assert_eq!(paths[1].endpoint(), "/%{sensor_id}/bbbb");
 
         let path = MappingPath::try_from("/1/aaaa").unwrap();
 
-        let f = properties.get(&path).unwrap();
+        let f = interface.mapping(&path).unwrap();
 
         assert_eq!(f.mapping_type(), MappingType::LongInteger);
         assert!(f.allow_unset);
@@ -827,7 +810,6 @@ mod tests {
         assert_eq!(interface.aggregation(), Aggregation::Individual);
         assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
         assert_eq!(interface.doc(), Some("Interface doc"));
-        assert!(interface.properties().is_none());
     }
 
     #[test]

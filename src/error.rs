@@ -71,13 +71,14 @@ pub enum Error {
     InvalidEndpoint(#[from] MappingError),
 
     /// Errors when converting between Astarte types.
-    #[error("couldn't process payload")]
+    #[error("couldn't convert to Astarte Type")]
     Types(#[from] TypeError),
 
     /// Errors that can occur handling the payload.
     #[error("couldn't process payload")]
     Payload(#[from] PayloadError),
 
+    /// Error while parsing the /control/consumer/properties payload.
     #[error("couldn't handle properties")]
     Properties(#[from] PropertiesError),
 }
