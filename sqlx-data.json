@@ -1,0 +1,93 @@
+{
+  "db": "SQLite",
+  "225dcdfeb4392a1cd951952ec3959abf3d87be8ce5ee16c03c429260a526d0bf": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 0
+      }
+    },
+    "query": "delete from propcache"
+  },
+  "488897a561ea6f92ad353d6877eba336ad0cfc91b4921661081d4b16a7b1ed85": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 2
+      }
+    },
+    "query": "DELETE FROM propcache WHERE interface = ? AND path = ?\n"
+  },
+  "804a9c871aa5574facc14dc06e27916db45df75a89b5674ae9f7d3a54606d75e": {
+    "describe": {
+      "columns": [
+        {
+          "name": "value",
+          "ordinal": 0,
+          "type_info": "Blob"
+        },
+        {
+          "name": "interface_major: i32",
+          "ordinal": 1,
+          "type_info": "Int64"
+        }
+      ],
+      "nullable": [
+        false,
+        false
+      ],
+      "parameters": {
+        "Right": 2
+      }
+    },
+    "query": "SELECT\n    value,\n    interface_major AS \"interface_major: i32\"\nFROM propcache WHERE interface = ? AND path = ?\n"
+  },
+  "9a76747fa42999ead2991849a91f77176cfd07dee80f38c2e29e08f2e5f45bc1": {
+    "describe": {
+      "columns": [
+        {
+          "name": "interface",
+          "ordinal": 0,
+          "type_info": "Text"
+        },
+        {
+          "name": "path",
+          "ordinal": 1,
+          "type_info": "Text"
+        },
+        {
+          "name": "value",
+          "ordinal": 2,
+          "type_info": "Blob"
+        },
+        {
+          "name": "interface_major: i32",
+          "ordinal": 3,
+          "type_info": "Int64"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Right": 0
+      }
+    },
+    "query": "SELECT\n    interface,\n    path,\n    value,\n    interface_major AS \"interface_major: i32\"\nFROM propcache\n"
+  },
+  "9b3f0a34400ba357a3a7ff8a91c68e815ca4cf0e481530ea0d33334fbf4fbdb3": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 4
+      }
+    },
+    "query": "INSERT OR REPLACE INTO propcache (\n    interface, path, value, interface_major\n) VALUES (?, ?, ?, ?)\n"
+  }
+}

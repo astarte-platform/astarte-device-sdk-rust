@@ -24,16 +24,16 @@ use std::fmt::Debug;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use log::debug;
 use pairing::PairingError;
 
 use crate::crypto::CryptoError;
-use crate::database::AstarteDatabase;
 use crate::interface::{Interface, InterfaceError};
 use crate::interfaces::Interfaces;
 use crate::pairing;
+use crate::store::memory::MemoryStore;
+use crate::store::PropertyStore;
 
 /// Astarte options error.
 ///
@@ -72,18 +72,18 @@ pub enum OptionsError {
 /// Structure used to store the configuration options for an instance of
 /// [AstarteDeviceSdk][crate::AstarteDeviceSdk].
 #[derive(Clone)]
-pub struct AstarteOptions {
+pub struct AstarteOptions<S> {
     pub(crate) realm: String,
     pub(crate) device_id: String,
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
     pub(crate) interfaces: Interfaces,
-    pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
+    pub(crate) store: S,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
 }
 
-impl Debug for AstarteOptions {
+impl<S> Debug for AstarteOptions<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("realm", &self.realm)
@@ -93,13 +93,13 @@ impl Debug for AstarteOptions {
             .field("interfaces", &self.interfaces)
             .field("ignore_ssl_errors", &self.ignore_ssl_errors)
             .field("keepalive", &self.keepalive)
-            // We manually implement Debug for the database, so we can avoid have a trait bound on
-            // [AstarteDatabase] to implement [Display].
+            // We manually implement Debug for the store, so we can avoid have a trait bound on
+            // `S` to implement [Display].
             .finish_non_exhaustive()
     }
 }
 
-impl AstarteOptions {
+impl AstarteOptions<MemoryStore> {
     /// Create a new instance of the astarte options.
     ///
     /// ```no_run
@@ -119,25 +119,47 @@ impl AstarteOptions {
     ///             .keepalive(std::time::Duration::from_secs(90));
     /// }
     /// ```
-    pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
+    pub fn new(
+        realm: &str,
+        device_id: &str,
+        credentials_secret: &str,
+        pairing_url: &str,
+    ) -> AstarteOptions<MemoryStore> {
         AstarteOptions {
             realm: realm.to_owned(),
             device_id: device_id.to_owned(),
             credentials_secret: credentials_secret.to_owned(),
             pairing_url: pairing_url.to_owned(),
             interfaces: Interfaces::new(),
-            database: None,
+            store: MemoryStore::new(),
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
         }
     }
+}
 
-    /// Add a database to the astarte options.
-    pub fn database<T: AstarteDatabase + 'static + Sync + Send>(mut self, database: T) -> Self {
-        self.database = Some(Arc::new(database));
-        self
+impl<S> AstarteOptions<S>
+where
+    S: PropertyStore,
+{
+    /// Set the backing store for the device.
+    ///
+    /// This will store and retrieve the device's properties.
+    pub fn store<T>(self, store: T) -> AstarteOptions<T> {
+        AstarteOptions {
+            realm: self.realm,
+            device_id: self.device_id,
+            credentials_secret: self.credentials_secret,
+            pairing_url: self.pairing_url,
+            interfaces: self.interfaces,
+            store,
+            ignore_ssl_errors: self.ignore_ssl_errors,
+            keepalive: self.keepalive,
+        }
     }
+}
 
+impl<S> AstarteOptions<S> {
     /// Configure the keep alive timeout.
     ///
     /// The MQTT broker will be pinged when no data exchange has appened

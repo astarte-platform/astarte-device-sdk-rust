@@ -26,14 +26,16 @@ for more information regarding Astarte and the available SDKs.
 ## Basic usage
 
 ```rust
+use std::error::Error as StdError;
+
 use astarte_device_sdk::{
-    database::AstarteSqliteDatabase,
+    store::sqlite::SqliteStore,
     options::AstarteOptions,
     error::Error,
     AstarteDeviceSdk
 };
 
-async fn run_astarte_device() -> Result<(), Error> {
+async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
 
     let realm = "realm_name";
     let device_id = "device_id";
@@ -43,12 +45,12 @@ async fn run_astarte_device() -> Result<(), Error> {
     // Initializing an instance of a device can be performed as shown in the following three steps.
 
     // 1. (optional) Initialize a database to store the properties
-    let db = AstarteSqliteDatabase::new("sqlite::memory:").await?;
+    let db = SqliteStore::new("sqlite::memory:").await?;
 
     // 2. Initialize device options (the ".database(db)" is not needed if 1 was skipped)
     let sdk_options = AstarteOptions::new(&realm, &device_id, &credentials_secret, &pairing_url)
         .interface_directory("./examples/interfaces")?
-        .database(db);
+        .store(db);
 
     // 3. Create the device instance
     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();

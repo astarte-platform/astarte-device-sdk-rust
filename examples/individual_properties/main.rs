@@ -18,11 +18,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::error::Error as StdError;
+
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    database::AstarteSqliteDatabase, error::Error, options::AstarteOptions, types::AstarteType,
-    AstarteDeviceSdk,
+    error::Error, options::AstarteOptions, store::SqliteStore, types::AstarteType,
+    AstarteDeviceSdkSqlite,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,7 +36,10 @@ struct Config {
 }
 
 // Getter function for the property "name" of a sensor.
-async fn get_name_for_sensor(device: &AstarteDeviceSdk, sensor_n: i32) -> Result<String, String> {
+async fn get_name_for_sensor(
+    device: &AstarteDeviceSdkSqlite,
+    sensor_n: i32,
+) -> Result<String, String> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     let path = format!("/{sensor_n}/name");
 
@@ -54,7 +59,7 @@ async fn get_name_for_sensor(device: &AstarteDeviceSdk, sensor_n: i32) -> Result
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), Box<dyn StdError>> {
     env_logger::init();
 
     // Load configuration
@@ -63,9 +68,7 @@ async fn main() -> Result<(), Error> {
     let cfg: Config = serde_json::from_str(&file).unwrap();
 
     // Open the database, create it if it does not exists
-    let db =
-        AstarteSqliteDatabase::new("./examples/individual_properties/astarte-example-db.sqlite")
-            .await?;
+    let db = SqliteStore::new("./examples/individual_properties/astarte-example-db.sqlite").await?;
 
     // Create Astarte Options
     let sdk_options = AstarteOptions::new(
@@ -75,7 +78,7 @@ async fn main() -> Result<(), Error> {
         &cfg.pairing_url,
     )
     .interface_directory("./examples/individual_properties/interfaces")?
-    .database(db)
+    .store(db)
     .ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
