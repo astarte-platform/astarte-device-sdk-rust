@@ -28,6 +28,8 @@ mod interfaces;
 mod mock;
 pub mod options;
 pub mod pairing;
+pub mod payload;
+pub mod properties;
 pub mod registration;
 mod topic;
 pub mod types;
@@ -40,7 +42,6 @@ use rumqttc::{AsyncClient, EventLoop};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
-use std::iter::FromIterator;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -49,7 +50,6 @@ use std::sync::Arc;
 pub use chrono;
 pub use rumqttc;
 
-use bson::Bson;
 use log::{debug, error, info, trace, warn};
 use rumqttc::Event;
 
@@ -63,7 +63,7 @@ use crate::interface::mapping::path::MappingPath;
 use crate::interface::InterfaceError;
 use crate::options::AstarteOptions;
 use crate::topic::parse_topic;
-use crate::types::AstarteType;
+use crate::types::{AstarteType, TypeError};
 
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::AstarteDeviceSdk::send_object] and
@@ -388,7 +388,7 @@ impl AstarteDeviceSdk {
                                     .validate_receive(interface, &path, &bdata)?;
                             }
 
-                            let data = AstarteDeviceSdk::deserialize(&bdata)?;
+                            let data = payload::deserialize(&bdata)?;
 
                             return Ok(AstarteDeviceDataEvent {
                                 interface: interface.to_string(),
@@ -425,7 +425,7 @@ impl AstarteDeviceSdk {
 
                 // database selftest / sanity check for debug builds
                 if cfg!(debug_assertions) {
-                    let original = crate::AstarteDeviceSdk::deserialize(bdata)?;
+                    let original = payload::deserialize(bdata)?;
                     if let Aggregation::Individual(data) = original {
                         let db = database
                             .load_prop(interface, path.as_str(), major_version)
@@ -456,7 +456,7 @@ impl AstarteDeviceSdk {
         if let Some(db) = &self.database {
             let stored_props = db.load_all_props().await?;
 
-            let paths = utils::extract_set_properties(bdata);
+            let paths = properties::extract_set_properties(bdata)?;
 
             for stored_prop in stored_props {
                 if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
@@ -566,61 +566,6 @@ impl AstarteDeviceSdk {
             .await?;
 
         Ok(())
-    }
-
-    fn serialize(
-        data: Bson,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, Error> {
-        if let Bson::Null = data {
-            return Ok(Vec::new());
-        }
-
-        let doc = match timestamp {
-            Some(timestamp) => bson::doc! {
-               "t": timestamp,
-               "v": data
-            },
-            None => bson::doc! {
-               "v": data,
-            },
-        };
-
-        let mut buf = Vec::new();
-        doc.to_writer(&mut buf)?;
-        trace!("serialized {:#?}", doc);
-        Ok(buf)
-    }
-
-    fn deserialize(bdata: &[u8]) -> Result<Aggregation, Error> {
-        if bdata.is_empty() {
-            return Ok(Aggregation::Individual(AstarteType::Unset));
-        }
-
-        let mut document: bson::Document = bson::from_slice(bdata)?;
-
-        trace!("{:?}", document);
-
-        // Take the value without cloning
-        let value = document
-            .remove("v")
-            .ok_or_else(|| Error::DeserializationMissingValue(document))?;
-
-        match value {
-            Bson::Document(doc) => {
-                let hmap = doc
-                    .into_iter()
-                    .map(|(name, value)| AstarteType::try_from(value).map(|v| (name, v)))
-                    .collect::<Result<HashMap<String, AstarteType>, Error>>()?;
-
-                Ok(Aggregation::Object(hmap))
-            }
-            _ => {
-                let individual = AstarteType::try_from(value)?;
-
-                Ok(Aggregation::Individual(individual))
-            }
-        }
     }
 
     /// When present get property from the allocated database (if allocated).
@@ -746,9 +691,9 @@ impl AstarteDeviceSdk {
     {
         debug!("sending {} {}", interface_name, interface_path);
 
-        let data = data.try_into().map_err(|_| Error::Conversion)?;
+        let data = data.try_into().map_err(|_| TypeError::Conversion)?;
 
-        let buf = AstarteDeviceSdk::serialize_individual(data.clone(), timestamp)?;
+        let buf = payload::serialize_individual(&data, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -802,7 +747,7 @@ impl AstarteDeviceSdk {
         };
         //if database is present
 
-        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
+        let data: AstarteType = data.try_into().map_err(|_| TypeError::Conversion)?;
 
         let interfaces = self.interfaces.read().await;
 
@@ -835,7 +780,7 @@ impl AstarteDeviceSdk {
         };
         //if database is present
 
-        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
+        let data: AstarteType = data.try_into().map_err(|_| TypeError::Conversion)?;
 
         let interfaces = self.interfaces.read().await;
 
@@ -852,7 +797,7 @@ impl AstarteDeviceSdk {
             .and_then(|properties| properties.mapping(&path))
             .ok_or(Error::Interface(InterfaceError::MappingNotFound))?;
 
-        let bin = AstarteDeviceSdk::serialize_individual(data, None)?;
+        let bin = payload::serialize_individual(&data, None)?;
 
         db.store_prop(interface_name, interface_path, &bin, interface_major)
             .await?;
@@ -888,36 +833,9 @@ impl AstarteDeviceSdk {
         Ok(())
     }
 
-    fn serialize_individual<D>(
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, Error>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let data: AstarteType = data.try_into().map_err(|_| Error::Conversion)?;
-        AstarteDeviceSdk::serialize(data.into(), timestamp)
-    }
-
     // ------------------------------------------------------------------------
     // object types
     // ------------------------------------------------------------------------
-
-    fn serialize_object<T>(
-        data: T,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Vec<u8>, Error>
-    where
-        T: AstarteAggregate,
-    {
-        let iter_d = data
-            .astarte_aggregate()?
-            .into_iter()
-            .map(|(k, v)| (k, v.into()));
-        let doc_d: bson::Document = bson::Document::from_iter(iter_d);
-        let bson_d: bson::Bson = bson::Bson::Document(doc_d);
-        AstarteDeviceSdk::serialize(bson_d, timestamp)
-    }
 
     async fn send_object_with_timestamp_impl<T>(
         &self,
@@ -929,7 +847,9 @@ impl AstarteDeviceSdk {
     where
         T: AstarteAggregate,
     {
-        let buf = AstarteDeviceSdk::serialize_object(data, timestamp)?;
+        let obj = data.astarte_aggregate()?;
+
+        let buf = payload::serialize_object(&obj, timestamp)?;
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -1023,23 +943,9 @@ impl fmt::Debug for AstarteDeviceSdk {
     }
 }
 
-mod utils {
-    pub(crate) fn extract_set_properties(bdata: &[u8]) -> Vec<String> {
-        use flate2::read::ZlibDecoder;
-        use std::io::prelude::*;
-
-        let mut d = ZlibDecoder::new(&bdata[4..]);
-        let mut s = String::new();
-        d.read_to_string(&mut s).unwrap();
-
-        s.split(';').map(|x| x.to_owned()).collect()
-    }
-}
-
 #[cfg(test)]
 mod test {
     use base64::Engine;
-    use chrono::{TimeZone, Utc};
     use mockall::predicate;
     use rumqttc::Event;
     use std::collections::HashMap;
@@ -1048,8 +954,7 @@ mod test {
     use tokio::sync::{Mutex, RwLock};
 
     use crate::interfaces::Interfaces;
-    use crate::{self as astarte_device_sdk, Interface};
-    use astarte_device_sdk::interface::MappingType;
+    use crate::{self as astarte_device_sdk, payload, Interface};
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
     use astarte_device_sdk_derive::astarte_aggregate;
@@ -1234,148 +1139,6 @@ mod test {
             ),
         ]);
         assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
-    }
-
-    #[test]
-    fn test_individual_serialization() {
-        let alltypes: Vec<AstarteType> = vec![
-            AstarteType::Double(4.5),
-            AstarteType::Integer(-4),
-            AstarteType::Boolean(true),
-            AstarteType::LongInteger(45543543534_i64),
-            AstarteType::String("hello".into()),
-            AstarteType::BinaryBlob(b"hello".to_vec()),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
-            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
-            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
-            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
-            AstarteType::DateTimeArray(vec![
-                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-            ]),
-        ];
-
-        for ty in alltypes {
-            println!("checking {ty:?}");
-
-            let buf = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();
-
-            let ty2 = AstarteDeviceSdk::deserialize(&buf).unwrap();
-
-            if let Aggregation::Individual(data) = ty2 {
-                assert!(ty == data);
-            } else {
-                panic!();
-            }
-        }
-    }
-
-    #[test]
-    fn test_serialize_object() {
-        let alltypes: Vec<AstarteType> = vec![
-            AstarteType::Double(4.5),
-            AstarteType::Integer(-4),
-            AstarteType::Boolean(true),
-            AstarteType::LongInteger(45543543534_i64),
-            AstarteType::String("hello".into()),
-            AstarteType::BinaryBlob(b"hello".to_vec()),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
-            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
-            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
-            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
-            AstarteType::DateTimeArray(vec![
-                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
-                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
-            ]),
-        ];
-
-        let allendpoints = vec![
-            "double".to_string(),
-            "integer".to_string(),
-            "boolean".to_string(),
-            "longinteger".to_string(),
-            "string".to_string(),
-            "binaryblob".to_string(),
-            "datetime".to_string(),
-            "doublearray".to_string(),
-            "integerarray".to_string(),
-            "booleanarray".to_string(),
-            "longintegerarray".to_string(),
-            "stringarray".to_string(),
-            "binaryblobarray".to_string(),
-            "datetimearray".to_string(),
-        ];
-
-        let mut data = std::collections::HashMap::new();
-
-        for i in allendpoints.iter().zip(alltypes.iter()) {
-            data.insert(i.0.clone(), i.1.clone());
-        }
-
-        let bytes = AstarteDeviceSdk::serialize_object(data.clone(), None).unwrap();
-
-        let data_processed = AstarteDeviceSdk::deserialize(&bytes).unwrap();
-
-        println!("\nComparing {data:?}\nto {data_processed:?}");
-
-        if let Aggregation::Object(data_processed) = data_processed {
-            assert_eq!(data, data_processed);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn test_deflate() {
-        let example = b"com.example.MyInterface/some/path;org.example.DraftInterface/otherPath";
-
-        let bdata: Vec<u8> = vec![
-            0x00, 0x00, 0x00, 0x46, 0x78, 0x9c, 0x4b, 0xce, 0xcf, 0xd5, 0x4b, 0xad, 0x48, 0xcc,
-            0x2d, 0xc8, 0x49, 0xd5, 0xf3, 0xad, 0xf4, 0xcc, 0x2b, 0x49, 0x2d, 0x4a, 0x4b, 0x4c,
-            0x4e, 0xd5, 0x2f, 0xce, 0xcf, 0x4d, 0xd5, 0x2f, 0x48, 0x2c, 0xc9, 0xb0, 0xce, 0x2f,
-            0x4a, 0x87, 0xab, 0x70, 0x29, 0x4a, 0x4c, 0x2b, 0x41, 0x28, 0xca, 0x2f, 0xc9, 0x48,
-            0x2d, 0x0a, 0x00, 0x2a, 0x02, 0x00, 0xb2, 0x0c, 0x1a, 0xc9,
-        ];
-
-        let s = astarte_device_sdk::utils::extract_set_properties(&bdata);
-
-        assert!(s.join(";").as_bytes() == example);
-    }
-
-    #[test]
-    fn test_integer_longinteger_compatibility() {
-        let integer_buf =
-            AstarteDeviceSdk::deserialize(&[12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0]).unwrap();
-        if let Aggregation::Individual(astarte_type) = integer_buf {
-            assert_eq!(astarte_type, MappingType::LongInteger);
-        } else {
-            panic!("Deserialization in not individual");
-        }
-    }
-
-    #[test]
-    fn test_bson_serialization() {
-        let og_value: i64 = 3600;
-        let buf = AstarteDeviceSdk::serialize_individual(og_value, None).unwrap();
-        if let Aggregation::Individual(astarte_type) = AstarteDeviceSdk::deserialize(&buf).unwrap()
-        {
-            assert_eq!(astarte_type, AstarteType::LongInteger(3600));
-            if let AstarteType::LongInteger(value) = astarte_type {
-                assert_eq!(value, 3600);
-            } else {
-                panic!("Astarte Type is not LongInteger");
-            }
-        } else {
-            panic!("Deserialization in not individual");
-        }
     }
 
     #[tokio::test]
@@ -1577,13 +1340,10 @@ mod test {
     async fn test_unset_property() {
         let mut client = AsyncClient::default();
 
-        let buf = AstarteDeviceSdk::serialize_individual(
-            AstarteType::String(String::from("name number 1")),
-            None,
-        )
-        .unwrap();
+        let value = AstarteType::String(String::from("name number 1"));
+        let buf = payload::serialize_individual(&value, None).unwrap();
 
-        let unset = AstarteDeviceSdk::serialize_individual(AstarteType::Unset, None).unwrap();
+        let unset = payload::serialize_individual(&AstarteType::Unset, None).unwrap();
 
         client
             .expect_publish::<String, Vec<u8>>()

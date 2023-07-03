@@ -28,7 +28,7 @@ astarte-device-sdk-derive = { optional = true, path = "./astarte-device-sdk-deri
 async-trait = "0.1.68"
 base64 = "0.21.2"
 bson = { version = "2.6.1", features = ["chrono-0_4"] }
-chrono = "0.4.26"
+chrono = { version = "0.4.26", features = ["serde"] }
 ecdsa = { version = "0.16.7", features = ["sha2"] }
 flate2 = "1.0.26"
 http = "0.2.9"
