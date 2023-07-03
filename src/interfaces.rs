@@ -25,6 +25,7 @@ use log::debug;
 
 use crate::{
     interface::{mapping::path::MappingPath, InterfaceError, Mapping, Ownership},
+    payload,
     types::AstarteType,
     Aggregation, Error, Interface,
 };
@@ -202,7 +203,7 @@ impl Interfaces {
         data: &[u8],
         timestamp: &Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error> {
-        let data_deserialized = crate::AstarteDeviceSdk::deserialize(data)?;
+        let data_deserialized = payload::deserialize(data)?;
 
         let interface = self
             .interfaces
@@ -286,7 +287,7 @@ impl Interfaces {
             Error::ReceiveError(format!("Interface '{interface_name}' does not exists"))
         })?;
 
-        let data = crate::AstarteDeviceSdk::deserialize(bdata)?;
+        let data = payload::deserialize(bdata)?;
 
         match data {
             Aggregation::Individual(individual) => {
@@ -346,8 +347,8 @@ mod test {
     use std::{collections::HashMap, str::FromStr};
 
     use crate::{
-        interfaces::Interfaces, mapping, options::AstarteOptions, types::AstarteType,
-        AstarteDeviceSdk, Interface,
+        interfaces::Interfaces, mapping, options::AstarteOptions, payload, types::AstarteType,
+        Interface,
     };
 
     #[test]
@@ -554,7 +555,7 @@ mod test {
             .unwrap_err();
 
         // Test non existant endpoint
-        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
             .validate_send(&interface_name, "/1/25", &aggregate_data, &None)
             .unwrap_err();
@@ -570,7 +571,7 @@ mod test {
 
         // Test sending an aggregate with an object field with incorrect type
         aggregate.insert("integer_endpoint".to_string(), AstarteType::Boolean(false));
-        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
             .validate_send(&interface_name, "/1", &aggregate_data, &None)
             .unwrap_err();
@@ -578,7 +579,7 @@ mod test {
 
         // Test sending an aggregate with an non existing object field
         aggregate.insert("gibberish".to_string(), AstarteType::Boolean(false));
-        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
             .validate_send(&interface_name, "/1", &aggregate_data, &None)
             .unwrap_err();
@@ -586,7 +587,7 @@ mod test {
 
         // Test sending an aggregate with a missing object field
         aggregate.remove("integer_endpoint");
-        let aggregate_data = AstarteDeviceSdk::serialize_object(aggregate.clone(), None).unwrap();
+        let aggregate_data = payload::serialize_object(&aggregate, None).unwrap();
         interfaces
             .validate_send(&interface_name, "/1", &aggregate_data, &None)
             .unwrap_err();
@@ -608,12 +609,12 @@ mod test {
 
         // Test sending a value (with and without timestamp)
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            payload::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_send(&interface_name, "/boolean", &boolean_endpoint_data, &None)
             .unwrap();
         let double_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Double(23.2), None).unwrap();
+            payload::serialize_individual(&AstarteType::Double(23.2), None).unwrap();
         let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
         interfaces
             .validate_send(
@@ -654,7 +655,7 @@ mod test {
 
         // Test receiving a new value
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            payload::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -665,7 +666,7 @@ mod test {
 
         // Test receiving a new value with the wrong type
         let integer_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+            payload::serialize_individual(&AstarteType::Integer(23), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -699,7 +700,7 @@ mod test {
             ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
             ("integer_endpoint".to_string(), AstarteType::Integer(324)),
         ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        let aggr_data = payload::serialize_object(&aggr_data, None).unwrap();
         interfaces
             .validate_receive(&interface_name, mapping!("/obj"), &aggr_data)
             .unwrap();
@@ -709,7 +710,7 @@ mod test {
             ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
             ("integer_endpoint".to_string(), AstarteType::Boolean(false)),
         ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        let aggr_data = payload::serialize_object(&aggr_data, None).unwrap();
         interfaces
             .validate_receive(&interface_name, mapping!("/foo"), &aggr_data)
             .unwrap_err();
@@ -731,7 +732,7 @@ mod test {
 
         // Test receiving a set property
         let boolean_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Boolean(true), None).unwrap();
+            payload::serialize_individual(&AstarteType::Boolean(true), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -752,7 +753,7 @@ mod test {
 
         // Test receiving a set property with the wrong type
         let integer_endpoint_data =
-            AstarteDeviceSdk::serialize_individual(AstarteType::Integer(23), None).unwrap();
+            payload::serialize_individual(&AstarteType::Integer(23), None).unwrap();
         interfaces
             .validate_receive(
                 &interface_name,
@@ -766,7 +767,7 @@ mod test {
             ("boolean_endpoint".to_string(), AstarteType::Boolean(false)),
             ("integer_endpoint".to_string(), AstarteType::Integer(324)),
         ]);
-        let aggr_data = AstarteDeviceSdk::serialize_object(aggr_data, None).unwrap();
+        let aggr_data = payload::serialize_object(&aggr_data, None).unwrap();
         interfaces
             .validate_receive(&interface_name, mapping!("/obj"), &aggr_data)
             .unwrap_err();

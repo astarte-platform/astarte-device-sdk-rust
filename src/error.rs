@@ -23,7 +23,10 @@ use std::convert::Infallible;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::InterfaceError;
 use crate::options::OptionsError;
+use crate::payload::PayloadError;
+use crate::properties::PropertiesError;
 use crate::topic::TopicError;
+use crate::types::TypeError;
 
 /// Astarte error.
 ///
@@ -31,29 +34,11 @@ use crate::topic::TopicError;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("bson serialize error")]
-    BsonSerError(#[from] bson::ser::Error),
-
     #[error("bson client error")]
     BsonClientError(#[from] rumqttc::ClientError),
 
     #[error("mqtt connection error")]
     ConnectionError(#[from] rumqttc::ConnectionError),
-
-    #[error("malformed input from Astarte backend")]
-    DeserializationError(#[from] bson::de::Error),
-
-    #[error("malformed input from Astarte backend, missing value 'v' in document: {0}")]
-    DeserializationMissingValue(bson::Document),
-
-    #[error("error converting from Bson to AstarteType ({0})")]
-    FromBsonError(String),
-
-    #[error("type mismatch in bson array from astarte, something has gone very wrong here")]
-    FromBsonArrayError,
-
-    #[error("forbidden floating point number")]
-    FloatError,
 
     #[error("send error ({0})")]
     SendError(String),
@@ -76,9 +61,6 @@ pub enum Error {
     #[error("generic error")]
     Unreported,
 
-    #[error("conversion error")]
-    Conversion,
-
     #[error("infallible error")]
     Infallible(#[from] Infallible),
 
@@ -87,4 +69,15 @@ pub enum Error {
 
     #[error("invalid mapping path '{}'", .0.path())]
     InvalidEndpoint(#[from] MappingError),
+
+    /// Errors when converting between Astarte types.
+    #[error("couldn't process payload")]
+    Types(#[from] TypeError),
+
+    /// Errors that can occur handling the payload.
+    #[error("couldn't process payload")]
+    Payload(#[from] PayloadError),
+
+    #[error("couldn't handle properties")]
+    Properties(#[from] PropertiesError),
 }
