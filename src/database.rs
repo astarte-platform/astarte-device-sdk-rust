@@ -61,7 +61,7 @@ pub trait AstarteDatabase {
         &self,
         interface: &str,
         path: &str,
-        value: &[u8],
+        value: &AstarteType,
         interface_major: i32,
     ) -> Result<(), Error>;
     /// Load a property from the database.
@@ -86,7 +86,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
         &self,
         interface: &str,
         path: &str,
-        value: &[u8],
+        value: &AstarteType,
         interface_major: i32,
     ) -> Result<(), Error> {
         debug!(
@@ -94,10 +94,7 @@ impl AstarteDatabase for AstarteSqliteDatabase {
             interface, path, value
         );
 
-        if value.is_empty() {
-            //if unset?
-            debug!("Unsetting {} {}", interface, path);
-        }
+        let value = payload::serialize_individual(value, None)?;
 
         sqlx::query(
                 "insert or replace into propcache (interface, path, value, interface_major) VALUES (?,?,?,?)",
@@ -223,7 +220,7 @@ mod test {
         //non existing
         assert_eq!(db.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
-        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test", "/test", &ty, 1).await.unwrap();
         assert_eq!(
             db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
             ty
@@ -237,7 +234,7 @@ mod test {
 
         // delete
 
-        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test", "/test", &ty, 1).await.unwrap();
         assert_eq!(
             db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
             ty
@@ -249,13 +246,15 @@ mod test {
 
         // unset
 
-        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test", "/test", &ty, 1).await.unwrap();
         assert_eq!(
             db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
             ty
         );
 
-        db.store_prop("com.test", "/test", &[], 1).await.unwrap();
+        db.store_prop("com.test", "/test", &AstarteType::Unset, 1)
+            .await
+            .unwrap();
 
         assert_eq!(
             db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
@@ -263,7 +262,7 @@ mod test {
         );
         // clear
 
-        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test", "/test", &ty, 1).await.unwrap();
         assert_eq!(
             db.load_prop("com.test", "/test", 1).await.unwrap().unwrap(),
             ty
@@ -274,8 +273,8 @@ mod test {
         assert_eq!(db.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // load all props
-        db.store_prop("com.test", "/test", &ser, 1).await.unwrap();
-        db.store_prop("com.test2", "/test", &ser, 1).await.unwrap();
+        db.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        db.store_prop("com.test2", "/test", &ty, 1).await.unwrap();
         assert_eq!(
             db.load_all_props().await.unwrap(),
             vec![

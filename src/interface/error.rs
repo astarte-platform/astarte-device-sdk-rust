@@ -25,28 +25,40 @@ use super::{mapping::endpoint::EndpointError, validation::VersionChangeError};
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum InterfaceError {
+    /// Couldn't parse the interface JSON.
     #[error("cannot parse interface JSON")]
     Parse(#[from] serde_json::Error),
+    /// Cannot read the interface file.
     #[error("cannot read interface file")]
     Io(#[from] io::Error),
+    /// Both major and minor are 0.
     #[error("wrong major and minor")]
     MajorMinor,
-    #[error("interface not found")]
-    InterfaceNotFound,
-    #[error("mapping not found")]
-    MappingNotFound,
+    /// Couldn't find an interface with the given name.
+    #[error("couldn't find interface '{name}'")]
+    InterfaceNotFound { name: String },
+    /// The interface has no mapping with the given path.
+    #[error("couldn't find the mapping '{path}' in the interface")]
+    MappingNotFound { path: String },
+    /// The database retention policy is set to `use_ttl` but the TTL was not specified.
     #[error("Database retention policy set to `use_ttl` but the TTL was not specified")]
     MissingTtl,
+    /// Error while parsing the endpoint.
     #[error("invalid endpoint")]
     InvalidEndpoint(#[from] EndpointError),
+    /// The interface has no mappings.
     #[error("interface with no mappings")]
     EmptyMappings,
+    /// The object must have the mappings with the same ttl and retention policy.
     #[error("object with inconsistent mappings")]
     InconsistentMapping,
+    /// The object interface must have the same levels for every mapping, except the last one.
     #[error("object with inconsistent endpoints")]
     InconsistentEndpoints,
+    /// The interfaced endpoints must all be unique.
     #[error("duplicate endpoint mapping '{endpoint}' and '{duplicate}'")]
     DuplicateMapping { endpoint: String, duplicate: String },
+    /// The object interface should have at least 2 levels.
     #[error("object endpoint should have at least 2 levels: '{0}'")]
     ObjectEndpointTooShort(String),
     /// The name of the interface was changed.

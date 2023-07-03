@@ -69,7 +69,7 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub(crate) const PROPERTIES_PAYLOAD: [u8; 66] = [
