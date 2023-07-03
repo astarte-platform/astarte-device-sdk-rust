@@ -86,28 +86,49 @@ pub enum AstarteType {
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<DateTime<Utc>>),
 
+    /// A generic empty array. This is out of the mqtt-v1-protocol, but it's needed since we do not
+    /// know the type of the array without elements. It should only be build when converting from a
+    /// bson array.
+    EmptyArray,
+
     Unset,
+}
+
+macro_rules! check_astype_match {
+    ( $self:ident, $other:ident, {$( $astartetype:tt ,)*}) => {
+        match ($self, $other) {
+            $((AstarteType::$astartetype(_), $crate::interface::MappingType::$astartetype) => true,)*
+            _ => false,
+        }
+    };
 }
 
 impl PartialEq<MappingType> for AstarteType {
     fn eq(&self, other: &MappingType) -> bool {
-        macro_rules! check_astype_match {
-            ( $self:ident, $other:ident, {$( $astartetype:tt ,)*}) => {
-                match $other {
-                    $(
-                        crate::interface::MappingType::$astartetype => if let AstarteType::$astartetype(_) = $self {
-                                true
-                            } else {
-                                false
-                            }
-                    )*
-                }
-            };
-        }
-
         if other == &MappingType::LongInteger || other == &MappingType::Double {
             if let AstarteType::Integer(_) = self {
                 return true;
+            }
+        }
+
+        if self == &AstarteType::EmptyArray {
+            match other {
+                // The empty array should be equal to any other array
+                MappingType::DoubleArray
+                | MappingType::IntegerArray
+                | MappingType::BooleanArray
+                | MappingType::LongIntegerArray
+                | MappingType::StringArray
+                | MappingType::BinaryBlobArray
+                | MappingType::DateTimeArray => return true,
+                // Not an array, continue
+                MappingType::Double
+                | MappingType::Integer
+                | MappingType::Boolean
+                | MappingType::LongInteger
+                | MappingType::String
+                | MappingType::BinaryBlob
+                | MappingType::DateTime => {}
             }
         }
 
@@ -300,11 +321,11 @@ impl From<AstarteType> for Bson {
                 subtype: bson::spec::BinarySubtype::Generic,
             }),
             AstarteType::DateTime(d) => Bson::DateTime(d.into()),
-            AstarteType::DoubleArray(d) => d.iter().collect(),
-            AstarteType::IntegerArray(d) => d.iter().collect(),
-            AstarteType::BooleanArray(d) => d.iter().collect(),
-            AstarteType::LongIntegerArray(d) => d.iter().collect(),
-            AstarteType::StringArray(d) => d.iter().collect(),
+            AstarteType::DoubleArray(d) => d.into_iter().collect(),
+            AstarteType::IntegerArray(d) => d.into_iter().collect(),
+            AstarteType::BooleanArray(d) => d.into_iter().collect(),
+            AstarteType::LongIntegerArray(d) => d.into_iter().collect(),
+            AstarteType::StringArray(d) => d.into_iter().collect(),
             AstarteType::BinaryBlobArray(d) => d
                 .into_iter()
                 .map(|bytes| Binary {
@@ -312,56 +333,11 @@ impl From<AstarteType> for Bson {
                     subtype: bson::spec::BinarySubtype::Generic,
                 })
                 .collect(),
-            AstarteType::DateTimeArray(d) => d.iter().collect(),
+            AstarteType::DateTimeArray(d) => d.into_iter().collect(),
             AstarteType::Unset => Bson::Null,
+            AstarteType::EmptyArray => Bson::Array(Vec::new()),
         }
     }
-}
-
-macro_rules! from_bson_array {
-    // Bson::Binary is built different from the other types
-    // we have to make a special case for it
-    ($arr:ident, $astartetype:tt,Binary,$typ:ty) => {{
-        let ret = $arr.iter().map(|x| {
-            if let Bson::Binary(val) = x {
-                Ok(val.bytes.clone())
-            } else {
-                Err($crate::types::TypeError::FromBsonArrayError)
-            }
-        });
-
-        let ret: Result<Vec<$typ>, $crate::types::TypeError> = ret.collect();
-        Ok(AstarteType::$astartetype(ret?))
-    }};
-
-    // We have to specialize for DateTimeArray too because bson has its own datetime type
-    ($arr:ident, $astartetype:tt,DateTime,$typ:ty) => {{
-        let ret = $arr.iter().map(|x| {
-            if let Bson::DateTime(val) = x {
-                Ok(val.clone())
-            } else {
-                Err($crate::types::TypeError::FromBsonArrayError)
-            }
-        });
-
-        let ret: Result<Vec<bson::DateTime>, $crate::types::TypeError> = ret.collect();
-        let ret: Vec<$typ> = ret?.iter().map(|f| f.to_chrono()).collect();
-
-        Ok(AstarteType::$astartetype(ret))
-    }};
-
-    ($arr:ident, $astartetype:tt,$bsontype:tt,$typ:ty) => {{
-        let ret = $arr.iter().map(|x| {
-            if let Bson::$bsontype(val) = x {
-                Ok(val.clone())
-            } else {
-                Err($crate::types::TypeError::FromBsonArrayError)
-            }
-        });
-
-        let ret: Result<Vec<$typ>, $crate::types::TypeError> = ret.collect();
-        Ok(AstarteType::$astartetype(ret?))
-    }};
 }
 
 impl TryFrom<Bson> for AstarteType {
@@ -369,28 +345,15 @@ impl TryFrom<Bson> for AstarteType {
 
     fn try_from(d: Bson) -> Result<Self, Self::Error> {
         match d {
-            Bson::Double(d) => Ok(AstarteType::Double(d)),
-            Bson::String(d) => Ok(AstarteType::String(d)),
-            Bson::Array(arr) => match arr[0] {
-                Bson::Double(_) => from_bson_array!(arr, DoubleArray, Double, f64),
-                Bson::Boolean(_) => from_bson_array!(arr, BooleanArray, Boolean, bool),
-                Bson::Int32(_) => from_bson_array!(arr, IntegerArray, Int32, i32),
-                Bson::Int64(_) => from_bson_array!(arr, LongIntegerArray, Int64, i64),
-                Bson::DateTime(_) => {
-                    from_bson_array!(arr, DateTimeArray, DateTime, chrono::DateTime<chrono::Utc>)
-                }
-                Bson::String(_) => from_bson_array!(arr, StringArray, String, String),
-                Bson::Binary(_) => from_bson_array!(arr, BinaryBlobArray, Binary, Vec<u8>),
-                _ => Err(TypeError::FromBsonError(format!(
-                    "Can't convert array {arr:?} to astarte"
-                ))),
-            },
-            Bson::Boolean(d) => Ok(AstarteType::Boolean(d)),
-            Bson::Int32(d) => Ok(AstarteType::Integer(d)),
-            Bson::Int64(d) => Ok(AstarteType::LongInteger(d)),
-            Bson::Binary(d) => Ok(AstarteType::BinaryBlob(d.bytes)),
-            Bson::DateTime(d) => Ok(AstarteType::DateTime(d.into())),
+            Bson::Double(d) => AstarteType::try_from(d),
+            Bson::String(d) => Ok(AstarteType::from(d)),
+            Bson::Boolean(d) => Ok(AstarteType::from(d)),
+            Bson::Int32(d) => Ok(AstarteType::from(d)),
+            Bson::Int64(d) => Ok(AstarteType::from(d)),
+            Bson::Binary(d) => Ok(AstarteType::from(d.bytes)),
+            Bson::DateTime(d) => Ok(AstarteType::from(d.to_chrono())),
             Bson::Null => Ok(AstarteType::Unset),
+            Bson::Array(arr) => AstarteType::from_bson_array(arr),
             _ => Err(Self::Error::FromBsonError(format!(
                 "Can't convert {d:?} to astarte"
             ))),
@@ -398,9 +361,60 @@ impl TryFrom<Bson> for AstarteType {
     }
 }
 
+/// Utility to convert a Bson array into an [`AstarteType`] array.
+fn bson_array<T, F>(array: Vec<Bson>, f: F) -> Result<Vec<T>, TypeError>
+where
+    F: FnMut(Bson) -> Option<T>,
+{
+    array
+        .into_iter()
+        .map(f)
+        .map(|item| item.ok_or(TypeError::FromBsonArrayError))
+        .collect()
+}
+
 impl AstarteType {
     pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, TypeError> {
         d.into_iter().map(AstarteType::try_from).collect()
+    }
+
+    /// Convert a non empty bson array to astarte array
+    pub(crate) fn from_bson_array(array: Vec<Bson>) -> Result<Self, TypeError> {
+        let Some(first) = array.first() else {
+            return Ok(AstarteType::EmptyArray);
+        };
+
+        match first {
+            Bson::Double(_) => bson_array(array, |b| b.as_f64()).and_then(AstarteType::try_from),
+            Bson::String(_) => {
+                // Take the same string and don't use as_str
+                bson_array(array, |b| match b {
+                    Bson::String(s) => Some(s),
+                    _ => None,
+                })
+                .map(AstarteType::from)
+            }
+            Bson::Boolean(_) => bson_array(array, |b| b.as_bool()).map(AstarteType::from),
+            Bson::Int32(_) => bson_array(array, |b| b.as_i32()).map(AstarteType::from),
+            Bson::Int64(_) => bson_array(array, |b| b.as_i64()).map(AstarteType::from),
+            Bson::Binary(_) => {
+                // Take the same buf allocation
+                bson_array(array, |b| match b {
+                    Bson::Binary(b) => Some(b.bytes),
+                    _ => None,
+                })
+                .map(AstarteType::from)
+            }
+            Bson::DateTime(_) => {
+                // Manually convert to chrono
+                bson_array(array, |b| match b {
+                    Bson::DateTime(d) => Some(d.to_chrono()),
+                    _ => None,
+                })
+                .map(AstarteType::from)
+            }
+            _ => Err(TypeError::FromBsonArrayError),
+        }
     }
 }
 
@@ -620,5 +634,18 @@ mod test {
         } else {
             panic!();
         }
+    }
+
+    #[test]
+    fn test_empty_array() {
+        let astarte_type_double = AstarteType::DoubleArray(vec![]);
+
+        let bson: Bson = astarte_type_double.try_into().expect("Failed to convert");
+
+        assert_eq!(bson, Bson::Array(vec![]));
+
+        let astarte_type_double: AstarteType = bson.try_into().expect("Failed to convert");
+
+        assert_eq!(astarte_type_double, AstarteType::EmptyArray);
     }
 }
