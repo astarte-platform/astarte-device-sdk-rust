@@ -19,6 +19,10 @@ description = "A library that provides communication and pairing primitives to a
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bench]]
+name = "benchmark"
+harness = false
+
 [dependencies]
 astarte-device-sdk-derive = { optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.68"
@@ -51,6 +55,7 @@ x509-cert = { version = "0.2.3", features = ["builder"] }
 [dev-dependencies]
 astarte-device-sdk-derive = { path = "./astarte-device-sdk-derive" }
 colored = "2.0.0"
+criterion = "0.5.1"
 env_logger = "0.10.0"
 mockall = "0.11.4"
 structopt = "0.3.26"
