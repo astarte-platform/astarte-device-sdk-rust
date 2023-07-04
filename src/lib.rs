@@ -459,23 +459,7 @@ where
             .store_prop(interface_name, path.as_str(), data, version_major)
             .await?;
 
-        // storage self-test / sanity check for debug builds
-        if cfg!(debug_assertions) {
-            let stored_prop = self
-                .store
-                .load_prop(interface_name, path.as_str(), version_major)
-                .await
-                .expect("load_prop failed")
-                .expect("property wasn't correctly saved in the storage");
-
-            assert_eq!(*data, stored_prop);
-            let prop = self
-                .property(interface_name, path)
-                .await?
-                .expect("property wasn't correctly saved in the storage");
-            assert_eq!(*data, prop);
-            trace!("storage test ok");
-        }
+        trace!("property stored");
 
         Ok(())
     }
@@ -1159,6 +1143,62 @@ mod test {
             ),
         ]);
         assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_proprety_set_unset() {
+        let eventloop = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .returning(|_, _, _, _| Ok(()));
+
+        let device = mock_astarte_device(
+            client,
+            eventloop,
+            [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
+        );
+
+        let expected = AstarteType::String("value".to_string());
+        device
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                expected.clone(),
+            )
+            .await
+            .expect("Failed to send property");
+
+        let val = device
+            .get_property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .expect("Failed to get property")
+            .expect("Property not found");
+        assert_eq!(expected, val);
+
+        device
+            .unset(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .expect("Failed to unset property");
+
+        let val = device
+            .get_property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .expect("Failed to get property")
+            .expect("Property not found");
+
+        assert_eq!(AstarteType::Unset, val);
     }
 
     #[tokio::test]

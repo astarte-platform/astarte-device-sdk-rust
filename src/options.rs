@@ -142,7 +142,7 @@ impl<S> AstarteOptions<S>
 where
     S: PropertyStore,
 {
-    /// Set the backing store for the device.
+    /// Set the backing storage for the device.
     ///
     /// This will store and retrieve the device's properties.
     pub fn store<T>(self, store: T) -> AstarteOptions<T> {

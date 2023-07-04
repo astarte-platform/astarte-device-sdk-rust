@@ -1,6 +1,6 @@
 {
   "db": "SQLite",
-  "225dcdfeb4392a1cd951952ec3959abf3d87be8ce5ee16c03c429260a526d0bf": {
+  "0791b986211f697635648ef4c15f6dd1d8e89d468b57836aa46fee2cd09f395e": {
     "describe": {
       "columns": [],
       "nullable": [],
@@ -8,7 +8,7 @@
         "Right": 0
       }
     },
-    "query": "delete from propcache"
+    "query": "DELETE FROM propcache\n"
   },
   "488897a561ea6f92ad353d6877eba336ad0cfc91b4921661081d4b16a7b1ed85": {
     "describe": {
