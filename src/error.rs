@@ -25,6 +25,7 @@ use crate::interface::InterfaceError;
 use crate::options::OptionsError;
 use crate::payload::PayloadError;
 use crate::properties::PropertiesError;
+use crate::store::error::StoreError;
 use crate::topic::TopicError;
 use crate::types::TypeError;
 
@@ -45,9 +46,6 @@ pub enum Error {
 
     #[error("receive error ({0})")]
     ReceiveError(String),
-
-    #[error("database error")]
-    DbError(#[from] sqlx::Error),
 
     #[error("options error")]
     OptionsError(#[from] OptionsError),
@@ -81,4 +79,8 @@ pub enum Error {
     /// Error while parsing the /control/consumer/properties payload.
     #[error("couldn't handle properties")]
     Properties(#[from] PropertiesError),
+
+    /// Error returned by a store operation.
+    #[error("could't complete store operation")]
+    Database(#[from] StoreError),
 }

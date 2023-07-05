@@ -107,6 +107,21 @@ pub(crate) fn serialize_object(
     payload.to_vec()
 }
 
+/// Deserialize a bson payload to an individual [`AstarteType`].
+pub(crate) fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, PayloadError> {
+    if bdata.is_empty() {
+        trace!("empty document");
+
+        return Ok(AstarteType::Unset);
+    }
+
+    let payload = Payload::<AstarteType>::from_slice(bdata)?;
+
+    trace!("{:?}", payload);
+
+    Ok(payload.value)
+}
+
 /// Deserialize a bson payload to an individual [`AstarteType`] or an object as an [`HashMap`].
 pub(crate) fn deserialize(bdata: &[u8]) -> Result<Aggregation, PayloadError> {
     if bdata.is_empty() {

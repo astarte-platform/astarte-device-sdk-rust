@@ -82,7 +82,7 @@ pub enum PairingError {
     ConfigError(String),
 }
 
-async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
+async fn fetch_credentials<S>(opts: &AstarteOptions<S>, csr: &str) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -128,7 +128,7 @@ async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<String, P
     }
 }
 
-async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError> {
+async fn fetch_broker_url<S>(opts: &AstarteOptions<S>) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -169,8 +169,8 @@ async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError>
     }
 }
 
-async fn populate_credentials(
-    opts: &AstarteOptions,
+async fn populate_credentials<S>(
+    opts: &AstarteOptions<S>,
 ) -> Result<(Vec<Certificate>, PrivateKey), PairingError> {
     let Bundle { private_key, csr } = Bundle::new(&opts.realm, &opts.device_id)?;
 
@@ -184,14 +184,14 @@ async fn populate_credentials(
     Ok((certs, private_key))
 }
 
-async fn populate_broker_url(opts: &AstarteOptions) -> Result<Url, PairingError> {
+async fn populate_broker_url<S>(opts: &AstarteOptions<S>) -> Result<Url, PairingError> {
     let broker_url = fetch_broker_url(opts).await?;
     let parsed_broker_url = Url::parse(&broker_url)?;
     Ok(parsed_broker_url)
 }
 
-fn build_mqtt_opts(
-    options: &AstarteOptions,
+fn build_mqtt_opts<S>(
+    options: &AstarteOptions<S>,
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
@@ -262,8 +262,8 @@ fn build_mqtt_opts(
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(
-    opts: &AstarteOptions,
+pub(crate) async fn get_transport_config<S>(
+    opts: &AstarteOptions<S>,
 ) -> Result<MqttOptions, OptionsError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 

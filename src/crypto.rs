@@ -140,6 +140,7 @@ pub mod bench {
 
     use super::Bundle;
 
+    #[cfg(not(taurpaulin_include))]
     pub fn generate_key(realm: &str, device: &str) -> (PrivateKey, String) {
         let Bundle { private_key, csr } =
             Bundle::generate_key(realm, device).expect("Failed to generate key");
@@ -148,6 +149,7 @@ pub mod bench {
     }
 
     #[cfg(feature = "openssl")]
+    #[cfg(not(taurpaulin_include))]
     pub fn openssl_key(realm: &str, device: &str) -> (PrivateKey, String) {
         let Bundle { private_key, csr } =
             Bundle::openssl_key(realm, device).expect("Failed to generate key");
