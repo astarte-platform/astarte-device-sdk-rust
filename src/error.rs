@@ -81,6 +81,6 @@ pub enum Error {
     Properties(#[from] PropertiesError),
 
     /// Error returned by a store operation.
-    #[error("could't complete store operation")]
+    #[error("couldn't complete store operation")]
     Database(#[from] StoreError),
 }
