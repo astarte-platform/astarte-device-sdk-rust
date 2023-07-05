@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for different case conventions on `AstarteAggregate` derive macro
   ([#126](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/126)).
 - Add support to store properties in volatile memory using `MemoryStore` if no
-  database is provided
-- Make `AstarteDeviceSdk` generic over the storage type
-- Provide type aliases for `AstarteDeviceSdk` with `MemoryStore` and `SqliteStore`
+  database is provided.
+- Make `AstarteDeviceSdk` generic over the storage type.
+- Provide type aliases for `AstarteDeviceSdk` with `MemoryStore` and `SqliteStore`.
 
 ### Changed
 - Expose `pairing::PairingError` to public visibility.
@@ -19,7 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `AstartDeviceSdk` now requires an owned `AstarteOptions` instance.
 - Rename the main error in `Error` and give the other errors more specific names.
 - Mark all errors as `#[non_exhaustive]`.
-- Renamed the `AstarteSqliteDatabase` into `SqliteStore`
+- Renamed the `AstarteSqliteDatabase` into `SqliteStore`.
+- Added a new `AstarteType` for a generic `EmptyArray`.
+
+### Fixed
+- Solve a panic when deserializing an empty BSON array.
 
 ## [0.5.1] - 2023-02-06
 ### Fixed
