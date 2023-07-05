@@ -86,9 +86,9 @@ pub enum AstarteType {
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<DateTime<Utc>>),
 
-    /// A generic empty array. This is out of the mqtt-v1-protocol, but it's needed since we do not
-    /// know the type of the array without elements. It should only be build when converting from a
-    /// bson array.
+    /// A generic empty array. This is not part of the Astarte MQTT v1 protocol. However, it's
+    /// required since we cannot know the type of an empty array. It should only be used when
+    /// converting from a Bson array.
     EmptyArray,
 
     Unset,
