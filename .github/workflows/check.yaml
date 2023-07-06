@@ -64,6 +64,7 @@ jobs:
         uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-targets --all-features -- -D warnings
   doc:
     runs-on: ubuntu-latest
     name: nightly / doc
@@ -74,7 +75,7 @@ jobs:
       - name: cargo doc
         run: cargo doc --no-deps --all-features
         env:
-          RUSTDOCFLAGS: --cfg docsrs
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
   hack:
     runs-on: ubuntu-latest
     name: ubuntu / stable / features
@@ -93,7 +94,7 @@ jobs:
     # https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability
     strategy:
       matrix:
-        msrv: [1.59.0]
+        msrv: [1.66.1]
     name: ubuntu / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v3
@@ -102,4 +103,4 @@ jobs:
         with:
           toolchain: ${{ matrix.msrv }}
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo check
+        run: cargo check --all-features

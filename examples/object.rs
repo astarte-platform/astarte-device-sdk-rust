@@ -22,6 +22,7 @@ use astarte_device_sdk::{options::AstarteOptions, AstarteError};
 use structopt::StructOpt;
 
 use astarte_device_sdk::AstarteAggregate;
+#[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
 
 #[derive(Debug, StructOpt)]
