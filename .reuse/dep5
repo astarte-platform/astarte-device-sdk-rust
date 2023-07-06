@@ -17,3 +17,7 @@ License: CC0-1.0
 Files: astarte-device-sdk-derive/CHANGELOG.md
 Copyright: 2023 SECO Mind Srl
 License: CC0-1.0
+
+Files: Cargo.lock
+Copyright: 2023 SECO Mind Srl
+License: CC0-1.0

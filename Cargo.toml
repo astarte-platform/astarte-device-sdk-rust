@@ -16,6 +16,7 @@ homepage = "https://astarte.cloud/"
 documentation = "https://docs.rs/astarte-device-sdk"
 readme ="README.md"
 keywords = ["sdk", "iot", "astarte"]
+rust-version = "1.59.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

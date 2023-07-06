@@ -4,4 +4,4 @@
 
 /target
 /astarte-device-sdk-derive/target
-Cargo.lock
+/.pre-commit-config.yaml

@@ -17,14 +17,21 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: End to End test
-
+permissions:
+  contents: read
 on:
   push:
+    branches:
+      - master
+      - release-*
   # Run on branch/tag creation
   create:
-  # Run on pull requests
   pull_request:
-
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: always
 jobs:
   e2e-test:
     runs-on: ubuntu-latest
@@ -32,8 +39,10 @@ jobs:
       - name: Create Astarte Cluster
         id: astarte
         uses: astarte-platform/astarte-cluster-action@v1
+        with:
+          astarte_version: "1.0.4"
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
@@ -48,13 +57,16 @@ jobs:
           echo "RUST_LOG=debug" >> $GITHUB_ENV
           TOKEN=$(astartectl utils gen-jwt appengine)
           echo "E2E_TOKEN=$TOKEN" >> $GITHUB_ENV
-          echo "E2E_API_URL=https://api.autotest.astarte-platform.org" >> $GITHUB_ENV
+          echo "E2E_API_URL=https://api.autotest.astarte-platform.org/appengine" >> $GITHUB_ENV
+          echo "E2E_PAIRING_URL=https://api.autotest.astarte-platform.org/pairing" >> $GITHUB_ENV
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: stable
           override: true
+      - name: Update Cargo.lock
+        run: cargo update
       - name: Run test
         run: |
           cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored
