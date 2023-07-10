@@ -74,14 +74,14 @@ struct StoredRecord {
 impl TryFrom<StoredRecord> for StoredProp {
     type Error = PayloadError;
 
-    fn try_from(value: StoredRecord) -> Result<Self, Self::Error> {
-        let payload = Payload::from_slice(&value.value)?;
+    fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
+        let payload = Payload::try_from(record.value.as_slice())?;
 
         Ok(StoredProp {
-            interface: value.interface,
-            path: value.path,
+            interface: record.interface,
+            path: record.path,
             value: payload.value,
-            interface_major: value.interface_major,
+            interface_major: record.interface_major,
         })
     }
 }

@@ -81,6 +81,25 @@ where
     }
 }
 
+impl TryFrom<&[u8]> for Payload<AstarteType> {
+    type Error = PayloadError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        // When sending/receiving an unset we should accept an empty payload.
+        // https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#payload-format
+        if value.is_empty() {
+            trace!("empty buf");
+
+            return Ok(Payload {
+                value: AstarteType::Unset,
+                timestamp: None,
+            });
+        }
+
+        Self::from_slice(value)
+    }
+}
+
 /// Serialize an [`AstarteType`] to bson payload.
 pub(crate) fn serialize_individual(
     data: &AstarteType,
@@ -109,13 +128,7 @@ pub(crate) fn serialize_object(
 
 /// Deserialize a bson payload to an individual [`AstarteType`].
 pub(crate) fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, PayloadError> {
-    if bdata.is_empty() {
-        trace!("empty document");
-
-        return Ok(AstarteType::Unset);
-    }
-
-    let payload = Payload::<AstarteType>::from_slice(bdata)?;
+    let payload = Payload::<AstarteType>::try_from(bdata)?;
 
     trace!("{:?}", payload);
 
