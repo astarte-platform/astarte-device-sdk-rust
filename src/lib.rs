@@ -709,7 +709,12 @@ where
 
         let data = data.try_into().map_err(|_| TypeError::Conversion)?;
 
-        let buf = payload::serialize_individual(&data, timestamp)?;
+        let buf = match data {
+            // When sending unset we should send an empty payload.
+            // https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#payload-format
+            AstarteType::Unset => Vec::new(),
+            _ => payload::serialize_individual(&data, timestamp)?,
+        };
 
         if cfg!(debug_assertions) {
             self.interfaces.read().await.validate_send(
@@ -1409,7 +1414,7 @@ mod test {
         let value = AstarteType::String(String::from("name number 1"));
         let buf = payload::serialize_individual(&value, None).unwrap();
 
-        let unset = payload::serialize_individual(&AstarteType::Unset, None).unwrap();
+        let unset = Vec::new();
 
         client
             .expect_publish::<String, Vec<u8>>()
@@ -1425,7 +1430,12 @@ mod test {
         client
             .expect_publish::<String, Vec<u8>>()
             .once()
-            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()), predicate::always(), predicate::always(), predicate::eq(unset))
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(unset)
+            )
             .returning(|_, _, _, _| Ok(()));
 
         let eventloope = EventLoop::default();
