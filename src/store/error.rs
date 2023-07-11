@@ -21,7 +21,7 @@
 /// Dynamic error type of an [`super::PropertyStore`].
 type DynError = Box<dyn std::error::Error>;
 
-/// Error type returned by the [`AstarteDatabase`] trait.
+/// Error that wraps the type returned by an implementation of the [`super::PropertyStore`] trait.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
