@@ -30,14 +30,17 @@ pub mod pairing;
 pub mod payload;
 pub mod properties;
 pub mod registration;
+mod retry;
+mod shared;
 pub mod store;
 mod topic;
 pub mod types;
 
 #[cfg(test)]
-use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
+pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
-use rumqttc::{AsyncClient, EventLoop};
+pub(crate) use rumqttc::{AsyncClient, EventLoop};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -51,7 +54,7 @@ pub use chrono;
 pub use rumqttc;
 
 use log::{debug, error, info, trace, warn};
-use rumqttc::Event;
+use rumqttc::{Event, Publish};
 
 /// Re-exported internal structs
 pub use crate::interface::Interface;
@@ -61,6 +64,8 @@ use crate::interface::mapping::path::MappingPath;
 use crate::interface::{InterfaceError, Ownership};
 use crate::interfaces::PropertyRef;
 use crate::options::AstarteOptions;
+use crate::retry::DelaiedPoll;
+use crate::shared::SharedDevice;
 use crate::store::memory::MemoryStore;
 use crate::store::sqlite::SqliteStore;
 use crate::store::wrapper::StoreWrapper;
@@ -119,6 +124,11 @@ pub type AstarteDeviceSdkSqlite = AstarteDeviceSdk<SqliteStore>;
 /// Astarte device SDK backed by an in-memory key value store for the properties.
 pub type AstarteDeviceSdkMemory = AstarteDeviceSdk<MemoryStore>;
 
+/// Sender end of the channel for the [`AstarteDeviceDataEvent`].
+pub type EventSender = mpsc::Sender<Result<AstarteDeviceDataEvent, Error>>;
+/// Receiver end of the channel for the [`AstarteDeviceDataEvent`].
+pub type EventReceiver = mpsc::Receiver<Result<AstarteDeviceDataEvent, Error>>;
+
 // Re-export #[derive(AstarteAggregate)].
 //
 // The reason re-exporting is not enabled by default is that disabling it would
@@ -137,14 +147,18 @@ pub use astarte_device_sdk_derive::AstarteAggregate;
 ///
 /// Provides functionality to transmit and receive individual and object datastreams as well
 /// as properties.
-#[derive(Clone)]
 pub struct AstarteDeviceSdk<S> {
-    realm: String,
-    device_id: String,
-    client: AsyncClient,
-    eventloop: Arc<tokio::sync::Mutex<EventLoop>>,
-    interfaces: Arc<tokio::sync::RwLock<interfaces::Interfaces>>,
-    store: StoreWrapper<S>,
+    shared: Arc<SharedDevice<S>>,
+}
+
+/// Manual implementation of [`Clone`] since the inner shared device doesn't requires the [`Clone`]
+/// trait since it's inside an [`Arc`].
+impl<S> Clone for AstarteDeviceSdk<S> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+        }
+    }
 }
 
 /// Payload format for an Astarte device event data.
@@ -188,25 +202,32 @@ where
     ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     /// }
     /// ```
-    pub async fn new(opts: AstarteOptions<S>) -> Result<AstarteDeviceSdk<S>, Error> {
+    pub async fn new(
+        opts: AstarteOptions<S>,
+    ) -> Result<(AstarteDeviceSdk<S>, EventReceiver), Error> {
         let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
 
         let (client, eventloop) = AsyncClient::new(mqtt_options, 50);
 
+        let (tx_events, rx_events) = mpsc::channel(50);
+
         let mut device = AstarteDeviceSdk {
-            realm: opts.realm,
-            device_id: opts.device_id,
-            client,
-            eventloop: Arc::new(tokio::sync::Mutex::new(eventloop)),
-            interfaces: Arc::new(tokio::sync::RwLock::new(opts.interfaces)),
-            store: StoreWrapper::new(opts.store),
+            shared: Arc::new(SharedDevice {
+                realm: opts.realm,
+                device_id: opts.device_id,
+                client,
+                events_channel: tx_events,
+                eventloop: Mutex::new(eventloop),
+                interfaces: RwLock::new(opts.interfaces),
+                store: StoreWrapper::new(opts.store),
+            }),
         };
 
         device.wait_for_connack().await?;
 
-        Ok(device)
+        Ok((device, rx_events))
     }
 
     async fn wait_for_connack(&mut self) -> Result<(), Error> {
@@ -344,7 +365,8 @@ where
 
     /// Poll updates from mqtt, can be placed in a loop to receive data.
     ///
-    /// This is a blocking function. It should be placed on a dedicated thread/task.
+    /// This is a blocking function. It should be placed on a dedicated thread/task or as the main
+    /// thread.
     ///
     /// ```no_run
     /// use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions};
@@ -352,24 +374,36 @@ where
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let (mut device, mut rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
-    ///     loop {
-    ///         match device.handle_events().await {
-    ///             Ok(data) => {
-    ///                 // React to received data
-    ///             }
-    ///             Err(err) => {
-    ///                 // React to reception error
-    ///             }
-    ///         }
-    ///     }
+    ///     tokio::spawn(async move {
+    ///         while let Some(event) = rx_events.recv().await {
+    ///             assert!(event.is_ok());
+    ///         };
+    ///     });
+    ///
+    ///     device.handle_events().await;
     /// }
     /// ```
-    pub async fn handle_events(&mut self) -> Result<AstarteDeviceDataEvent, Error> {
+    pub async fn handle_events(&mut self) -> Result<(), Error> {
         loop {
-            // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
+            // Don't keep a ref to lock so we can retry in the match bellow
+            let res = {
+                let mut lock = self.eventloop.lock().await;
+                lock.poll().await
+            };
+
+            let event = match res {
+                Ok(event) => event,
+                Err(err) => {
+                    error!("couldn't poll the event loop: {err:#?}");
+
+                    DelaiedPoll::retry_poll_event(self).await?
+                }
+            };
+
+            // Keep consuming and processing packets until we have data for the user
+            match event {
                 Event::Incoming(incoming) => {
                     trace!("MQTT Incoming = {:?}", incoming);
 
@@ -378,42 +412,78 @@ where
                             self.connack(conn_ack).await?;
                         }
                         rumqttc::Packet::Publish(publish) => {
-                            let (_, _, interface, path) = parse_topic(&publish.topic)?;
+                            let mut sdk = self.clone();
 
-                            // It can be borrowed as a &[u8]
-                            let bdata = publish.payload;
+                            // New task for the publish to not block the event loop
+                            tokio::spawn(async move {
+                                let res = sdk.handle_publish(publish).await;
 
-                            if interface == "control" && path == "/consumer/properties" {
-                                debug!("Purging properties");
+                                let res = match res {
+                                    // Skip events like purge_properties
+                                    Ok(None) => return,
+                                    Ok(Some(res)) => Ok(res),
+                                    Err(err) => {
+                                        error!(
+                                            "error encountered while handling a publish: {err:#?}"
+                                        );
 
-                                self.purge_properties(&bdata).await?;
+                                        Err(err)
+                                    }
+                                };
 
-                                continue;
-                            }
-
-                            debug!("Incoming publish = {} {:?}", publish.topic, bdata);
-
-                            let data = payload::deserialize(&bdata)?;
-
-                            self.handle_payload(interface, &path, &data).await?;
-
-                            if cfg!(debug_assertions) {
-                                self.interfaces
-                                    .read()
+                                sdk.events_channel
+                                    .send(res)
                                     .await
-                                    .validate_receive(interface, &path, &bdata)?;
-                            }
-
-                            return Ok(AstarteDeviceDataEvent {
-                                interface: interface.to_string(),
-                                path: path.to_string(),
-                                data,
+                                    .expect("error channel dropped");
                             });
                         }
                         _ => {}
                     }
                 }
                 Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
+            }
+        }
+    }
+
+    /// Handles an incoming publish
+    async fn handle_publish(
+        &mut self,
+        publish: Publish,
+    ) -> Result<Option<AstarteDeviceDataEvent>, Error> {
+        let (_, _, interface, path) = parse_topic(&publish.topic)?;
+
+        debug!("received publish for interface \"{interface}\" and path \"{path}\"");
+
+        // It can be borrowed as a &[u8]
+        let bdata = publish.payload;
+
+        match (interface, path.as_str()) {
+            ("control", "/consumer/properties") => {
+                debug!("Purging properties");
+
+                self.purge_properties(&bdata).await?;
+
+                Ok(None)
+            }
+            _ => {
+                debug!("Incoming publish = {} {:x}", publish.topic, bdata);
+
+                let data = payload::deserialize(&bdata)?;
+
+                self.handle_payload(interface, &path, &data).await?;
+
+                if cfg!(debug_assertions) {
+                    self.interfaces
+                        .read()
+                        .await
+                        .validate_receive(interface, &path, &bdata)?;
+                }
+
+                Ok(Some(AstarteDeviceDataEvent {
+                    interface: interface.to_string(),
+                    path: path.to_string(),
+                    data,
+                }))
             }
         }
     }
@@ -555,7 +625,7 @@ where
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     device
     ///         .unset("my.interface.name", "/endpoint/path",)
@@ -595,7 +665,7 @@ where
     ///         .await
     ///         .unwrap();
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_").store(database);
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .get_property("my.interface.name", "/endpoint/path",)
@@ -670,7 +740,7 @@ where
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let value: i32 = 42;
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
@@ -884,7 +954,7 @@ where
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,
@@ -951,13 +1021,13 @@ mod test {
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::{Mutex, RwLock};
+    use tokio::sync::{mpsc, Mutex, RwLock};
 
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
-    use crate::{self as astarte_device_sdk, payload, Interface};
+    use crate::{self as astarte_device_sdk, payload, EventReceiver, Interface, SharedDevice};
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
     use astarte_device_sdk_derive::astarte_aggregate;
@@ -976,18 +1046,25 @@ mod test {
         client: AsyncClient,
         eventloop: EventLoop,
         interfaces: I,
-    ) -> AstarteDeviceSdk<MemoryStore>
+    ) -> (AstarteDeviceSdk<MemoryStore>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
     {
-        AstarteDeviceSdk {
-            realm: "realm".to_string(),
-            device_id: "device_id".to_string(),
-            client,
-            store: StoreWrapper::new(MemoryStore::new()),
-            interfaces: Arc::new(RwLock::new(Interfaces::from(interfaces).unwrap())),
-            eventloop: Arc::new(Mutex::new(eventloop)),
-        }
+        let (tx, rx) = mpsc::channel(50);
+
+        let sdk = AstarteDeviceSdk {
+            shared: Arc::new(SharedDevice {
+                realm: "realm".to_string(),
+                device_id: "device_id".to_string(),
+                client,
+                events_channel: tx,
+                store: StoreWrapper::new(MemoryStore::new()),
+                interfaces: RwLock::new(Interfaces::from(interfaces).unwrap()),
+                eventloop: Mutex::new(eventloop),
+            }),
+        };
+
+        (sdk, rx)
     }
 
     #[derive(AstarteAggregate)]
@@ -1160,7 +1237,7 @@ mod test {
             .expect_publish::<String, Vec<u8>>()
             .returning(|_, _, _, _| Ok(()));
 
-        let device = mock_astarte_device(
+        let (device, _rx) = mock_astarte_device(
             client,
             eventloop,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
@@ -1257,7 +1334,7 @@ mod test {
             Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
         ];
 
-        let mut astarte = mock_astarte_device(client, eventloope, interfaces);
+        let (mut astarte, _rx) = mock_astarte_device(client, eventloope, interfaces);
 
         astarte.wait_for_connack().await.unwrap();
     }
@@ -1305,7 +1382,7 @@ mod test {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_| Ok(()));
 
-        let astarte = mock_astarte_device(client, eventloope, []);
+        let (astarte, _rx) = mock_astarte_device(client, eventloope, []);
 
         astarte
             .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
@@ -1369,7 +1446,7 @@ mod test {
             )))
         });
 
-        let mut astarte = mock_astarte_device(
+        let (mut astarte, mut rx) = mock_astarte_device(
             client,
             eventloope,
             [
@@ -1387,7 +1464,14 @@ mod test {
             .await
             .unwrap();
 
-        let event = astarte.handle_events().await;
+        let handle_events = tokio::spawn(async move {
+            astarte
+                .handle_events()
+                .await
+                .expect("failed to poll events");
+        });
+
+        let event = rx.recv().await.expect("no event received");
 
         assert!(
             event.is_ok(),
@@ -1405,6 +1489,9 @@ mod test {
             }
             _ => panic!("Wrong data type {:?}", event.data),
         }
+
+        handle_events.abort();
+        let _ = handle_events.await;
     }
 
     #[tokio::test]
@@ -1440,7 +1527,7 @@ mod test {
 
         let eventloope = EventLoop::default();
 
-        let astarte = mock_astarte_device(
+        let (astarte, _rx) = mock_astarte_device(
             client,
             eventloope,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
@@ -1489,13 +1576,20 @@ mod test {
             )))
         });
 
-        let mut astarte = mock_astarte_device(
+        let (mut astarte, mut rx) = mock_astarte_device(
             client,
             eventloope,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
         );
 
-        let event = astarte.handle_events().await;
+        let handle_events = tokio::spawn(async move {
+            astarte
+                .handle_events()
+                .await
+                .expect("failed to poll events");
+        });
+
+        let event = rx.recv().await.expect("no event received");
 
         assert!(
             event.is_ok(),
@@ -1523,5 +1617,8 @@ mod test {
         );
         assert_eq!("/1", event.path);
         assert_eq!(expected, event.data);
+
+        handle_events.abort();
+        let _ = handle_events.await;
     }
 }

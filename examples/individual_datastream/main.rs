@@ -52,11 +52,12 @@ async fn main() -> Result<(), Error> {
     .ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let mut device = astarte_device_sdk::AstarteDeviceSdk::new(sdk_options).await?;
+    let (mut device, mut rx_events) =
+        astarte_device_sdk::AstarteDeviceSdk::new(sdk_options).await?;
+    let device_cpy = device.clone();
     println!("Connection to Astarte established.");
 
-    // Create an thread to transmit
-    let device_cpy = device.clone();
+    // Create an task to transmit
     tokio::task::spawn(async move {
         loop {
             // Send endpoint 1
@@ -88,39 +89,47 @@ async fn main() -> Result<(), Error> {
         }
     });
 
-    // Use the current thread to receive
-    loop {
-        match device.handle_events().await {
-            Ok(data) => {
-                if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
-                    let mut iter = data.path.splitn(3, '/').skip(1);
-                    let led_id = iter
-                        .next()
-                        .and_then(|id| id.parse::<u16>().ok())
-                        .ok_or_else(|| {
-                            Error::ReceiveError("Incorrect error received.".to_string())
-                        })?;
+    // Spawn a task to receive
+    tokio::spawn(async move {
+        while let Some(event) = rx_events.recv().await {
+            match event {
+                Ok(data) => {
+                    if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                        let mut iter = data.path.splitn(3, '/').skip(1);
+                        let led_id = iter
+                            .next()
+                            .and_then(|id| id.parse::<u16>().ok())
+                            .ok_or_else(|| {
+                                Error::ReceiveError("Incorrect error received.".to_string())
+                            })?;
 
-                    match iter.next() {
-                        Some("enable") => {
-                            println!(
+                        match iter.next() {
+                            Some("enable") => {
+                                println!(
                             "Received new enable datastream for LED number {}. LED status is now {}",
                             led_id,
                             if var == true { "ON" } else { "OFF" }
                         );
-                        }
-                        Some("intensity") => {
-                            let value: f64 = var.try_into().unwrap();
-                            println!(
+                            }
+                            Some("intensity") => {
+                                let value: f64 = var.try_into().unwrap();
+                                println!(
                             "Received new intensity datastream for LED number {}. LED intensity is now {}",
                             led_id, value
                         );
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
+                Err(err) => log::error!("{:?}", err),
             }
-            Err(err) => log::error!("{:?}", err),
         }
-    }
+
+        Ok::<_, Error>(())
+    });
+
+    device.handle_events().await?;
+
+    Ok(())
 }

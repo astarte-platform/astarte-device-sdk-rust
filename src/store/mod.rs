@@ -41,7 +41,7 @@ pub mod wrapper;
 pub trait PropertyStore: Debug + Send + Sync + 'static
 where
     // NOTE: the 'static bound is required for the MSRV, in other version the error is not present
-    Self::Err: StdError,
+    Self::Err: StdError + Send + Sync + 'static,
 {
     type Err;
 

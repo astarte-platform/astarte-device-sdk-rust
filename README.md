@@ -53,7 +53,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
         .store(db);
 
     // 3. Create the device instance
-    let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    let (mut device, mut rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
 
     // Publishing new values can be performed using the send and send_object functions.
 
@@ -76,15 +76,21 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     let data = MyAggObj {endpoint1: 1.34, endpoint2: 22};
     device.send_object("interface.name", "/common/endpoint/path", data).await.unwrap();
 
-    // Polling for new data can be performed using the function handle_events.
 
-    // Receive a server publish
-    loop {
-        match device.handle_events().await {
-            Ok(data) => (), // Handle data
-            Err(err) => (), // Handle errors
+    // Receive a server publish from the event channel
+    tokio::spawn(async move {
+        while let Some(event) = rx_events.recv().await {
+          match event {
+              Ok(data) => (), // Handle data
+              Err(err) => (), // Handle errors
+          }
         }
-    }
+    });
+
+    // Blocking call for the device event loop
+    device.handle_events().await?;
+
+    Ok(())
 }
 ```
 
