@@ -64,7 +64,7 @@ use crate::interface::mapping::path::MappingPath;
 use crate::interface::{InterfaceError, Ownership};
 use crate::interfaces::PropertyRef;
 use crate::options::AstarteOptions;
-use crate::retry::DelaiedPoll;
+use crate::retry::DelayedPoll;
 use crate::shared::SharedDevice;
 use crate::store::memory::MemoryStore;
 use crate::store::sqlite::SqliteStore;
@@ -398,7 +398,7 @@ where
                 Err(err) => {
                     error!("couldn't poll the event loop: {err:#?}");
 
-                    DelaiedPoll::retry_poll_event(self).await?
+                    DelayedPoll::retry_poll_event(self).await?
                 }
             };
 

@@ -57,7 +57,7 @@ async fn main() -> Result<(), Error> {
     let device_cpy = device.clone();
     println!("Connection to Astarte established.");
 
-    // Create an task to transmit
+    // Create a task to transmit
     tokio::task::spawn(async move {
         loop {
             // Send endpoint 1

@@ -27,14 +27,14 @@ use crate::{error::Error, AstarteDeviceSdk};
 
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DelaiedPoll {
+pub(crate) struct DelayedPoll {
     max: u32,
     delay: u32,
     exp: u32,
     base: u32,
 }
 
-impl DelaiedPoll {
+impl DelayedPoll {
     /// Retry to pool the connection after an error occurred
     pub(crate) async fn retry_poll_event<T>(sdk: &AstarteDeviceSdk<T>) -> Result<Event, Error> {
         for delay in Self::default() {
@@ -54,7 +54,7 @@ impl DelaiedPoll {
     }
 }
 
-impl Default for DelaiedPoll {
+impl Default for DelayedPoll {
     fn default() -> Self {
         Self {
             max: 16,
@@ -65,7 +65,7 @@ impl Default for DelaiedPoll {
     }
 }
 
-impl Iterator for DelaiedPoll {
+impl Iterator for DelayedPoll {
     type Item = u32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -84,12 +84,12 @@ impl Iterator for DelaiedPoll {
 
 #[cfg(test)]
 mod tests {
-    use super::DelaiedPoll;
+    use super::DelayedPoll;
 
     #[test]
     fn iter_delays() {
         let expected = [1, 2, 4, 8, 16, 16, 16];
-        let delay: Vec<u32> = DelaiedPoll::default().take(7).collect();
+        let delay: Vec<u32> = DelayedPoll::default().take(7).collect();
 
         assert_eq!(delay, expected);
     }
