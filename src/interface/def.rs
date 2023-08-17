@@ -287,7 +287,7 @@ impl Display for InterfaceTypeDef {
 ///
 /// See [Interface Schema](https://docs.astarte-platform.org/latest/040-interface_schema.html#reference-astarte-interface-schema)
 /// for more information.
-#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Copy, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum Ownership {
     Device,
