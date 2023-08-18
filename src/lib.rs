@@ -536,13 +536,19 @@ where
 
         if interface.is_property() {
             let interface_name = interface.interface_name();
-            let version_major = interface.version_major();
+            let path = path.as_str();
+            let interface_major = interface.version_major();
 
-            self.store
-                .store_prop(interface_name, path.as_str(), &data, version_major)
-                .await?;
+            let prop = StoredProp {
+                interface: interface_name,
+                path,
+                value: &data,
+                interface_major,
+            };
 
-            info!("property stored {interface}:{version_major} {path} ");
+            self.store.store_prop(prop).await?;
+
+            info!("property stored {interface_name}{path}:{interface_major}");
         }
 
         Ok((Aggregation::Individual(data), timestamp))
@@ -854,16 +860,20 @@ where
 
         //  Store the property in the database after it has been successfully sent
         if let Some(prop_mapping) = opt_prop {
-            self.store
-                .store_prop(
-                    prop_mapping.interface().interface_name(),
-                    path.as_str(),
-                    &data,
-                    prop_mapping.interface().version_major(),
-                )
-                .await?;
+            let interface_name = prop_mapping.interface().interface_name();
+            let path = path.as_str();
+            let interface_major = prop_mapping.interface().version_major();
 
-            info!("Stored new property in database");
+            let prop = StoredProp {
+                interface: interface_name,
+                path,
+                value: &data,
+                interface_major,
+            };
+
+            self.store.store_prop(prop).await?;
+
+            info!("property stored {interface_name}{path}:{interface_major}");
         }
 
         Ok(())

@@ -245,10 +245,12 @@ impl PropertyStore for SqliteStore {
 
     async fn store_prop(
         &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
+        StoredProp {
+            interface,
+            path,
+            value,
+            interface_major,
+        }: StoredProp<&str, &AstarteType>,
     ) -> Result<(), Self::Err> {
         debug!(
             "Storing property {} {} in db ({:?})",

@@ -47,13 +47,7 @@ where
     type Err;
 
     /// Stores a property within the database.
-    async fn store_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), Self::Err>;
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err>;
     /// Load a property from the database.
     ///
     /// The property store should delete the property from the database if the major version of the
@@ -75,12 +69,29 @@ where
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
 /// trait.
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct StoredProp {
-    pub interface: String,
-    pub path: String,
-    pub value: AstarteType,
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct StoredProp<S = String, V = AstarteType> {
+    pub interface: S,
+    pub path: S,
+    pub value: V,
     pub interface_major: i32,
+}
+
+impl StoredProp {
+    pub fn as_ref(&self) -> StoredProp<&str, &AstarteType> {
+        self.into()
+    }
+}
+
+impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
+    fn from(value: &'a StoredProp) -> Self {
+        Self {
+            interface: &value.interface,
+            path: &value.path,
+            value: &value.value,
+            interface_major: value.interface_major,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -102,7 +113,14 @@ mod tests {
         // non existing
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        let prop = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &ty,
+            interface_major: 1,
+        };
+
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -119,7 +137,7 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // delete
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -132,7 +150,7 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // unset
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -141,10 +159,13 @@ mod tests {
                 .unwrap(),
             ty
         );
-        store
-            .store_prop("com.test", "/test", &AstarteType::Unset, 1)
-            .await
-            .unwrap();
+        let unset = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &AstarteType::Unset,
+            interface_major: 1,
+        };
+        store.store_prop(unset).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -155,7 +176,7 @@ mod tests {
         );
 
         // clear
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -168,26 +189,23 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // load all props
-        let expected = [
-            StoredProp {
-                interface: "com.test".into(),
-                path: "/test".into(),
-                value: ty.clone(),
-                interface_major: 1,
-            },
-            StoredProp {
-                interface: "com.test2".into(),
-                path: "/test".into(),
-                value: ty.clone(),
-                interface_major: 1,
-            },
-        ];
+        let device = StoredProp {
+            interface: "com.test1".into(),
+            path: "/test1".into(),
+            value: ty.clone(),
+            interface_major: 1,
+        };
+        let server = StoredProp {
+            interface: "com.test2".into(),
+            path: "/test2".into(),
+            value: ty.clone(),
+            interface_major: 1,
+        };
 
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
-        store
-            .store_prop("com.test2", "/test", &ty, 1)
-            .await
-            .unwrap();
+        store.store_prop(device.as_ref()).await.unwrap();
+        store.store_prop(server.as_ref()).await.unwrap();
+
+        let expected = [device.clone(), server.clone()];
 
         let mut props = store.load_all_props().await.unwrap();
 
@@ -219,7 +237,15 @@ mod tests {
 
         for ty in all_types {
             let path = format!("/test/{}", ty.display_type());
-            store.store_prop("com.test", &path, &ty, 1).await.unwrap();
+
+            let prop = StoredProp {
+                interface: "com.test",
+                path: &path,
+                value: &ty,
+                interface_major: 1,
+            };
+
+            store.store_prop(prop).await.unwrap();
 
             let res = store.load_prop("com.test", &path, 1).await.unwrap();
 
@@ -233,7 +259,13 @@ mod tests {
         let mem = StoreWrapper::new(MemoryStore::new());
 
         let exp = AstarteType::Integer(1);
-        mem.store_prop("com.test", "/test", &exp, 1).await.unwrap();
+        let prop = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &exp,
+            interface_major: 1,
+        };
+        mem.store_prop(prop).await.unwrap();
 
         let res = tokio::spawn(async move { mem.load_prop("com.test", "/test", 1).await })
             .await

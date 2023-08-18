@@ -58,10 +58,12 @@ impl PropertyStore for MemoryStore {
 
     async fn store_prop(
         &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
+        StoredProp {
+            interface,
+            path,
+            value,
+            interface_major,
+        }: StoredProp<&str, &AstarteType>,
     ) -> Result<(), Self::Err> {
         let key = Key::new(interface, path);
         let value = Value {
@@ -128,15 +130,7 @@ impl PropertyStore for MemoryStore {
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
         let store = self.store.read().await;
 
-        let props = store
-            .iter()
-            .map(|(key, value)| StoredProp {
-                interface: key.interface.clone(),
-                path: key.path.clone(),
-                value: value.value.clone(),
-                interface_major: value.interface_major,
-            })
-            .collect();
+        let props = store.iter().map(StoredProp::from).collect();
 
         Ok(props)
     }
@@ -171,6 +165,17 @@ impl Display for Key {
 struct Value {
     value: AstarteType,
     interface_major: i32,
+}
+
+impl From<(&Key, &Value)> for StoredProp {
+    fn from((key, value): (&Key, &Value)) -> Self {
+        StoredProp {
+            interface: key.interface.clone(),
+            path: key.path.clone(),
+            value: value.value.clone(),
+            interface_major: value.interface_major,
+        }
+    }
 }
 
 #[cfg(test)]

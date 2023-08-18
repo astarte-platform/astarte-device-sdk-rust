@@ -46,17 +46,8 @@ where
 {
     type Err = StoreError;
 
-    async fn store_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), Self::Err> {
-        self.store
-            .store_prop(interface, path, value, interface_major)
-            .await
-            .map_err(StoreError::store)
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+        self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
     async fn load_prop(
