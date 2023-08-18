@@ -544,6 +544,7 @@ where
                 path,
                 value: &data,
                 interface_major,
+                ownership: interface.ownership(),
             };
 
             self.store.store_prop(prop).await?;
@@ -863,12 +864,14 @@ where
             let interface_name = prop_mapping.interface().interface_name();
             let path = path.as_str();
             let interface_major = prop_mapping.interface().version_major();
+            let ownership = prop_mapping.interface().ownership();
 
             let prop = StoredProp {
                 interface: interface_name,
                 path,
                 value: &data,
                 interface_major,
+                ownership,
             };
 
             self.store.store_prop(prop).await?;

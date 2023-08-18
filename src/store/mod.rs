@@ -23,7 +23,7 @@ use std::{error::Error as StdError, fmt::Debug};
 use async_trait::async_trait;
 
 pub use self::sqlite::SqliteStore;
-use crate::types::AstarteType;
+use crate::{interface::Ownership, types::AstarteType};
 
 pub mod error;
 pub mod memory;
@@ -65,6 +65,12 @@ where
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
@@ -75,6 +81,7 @@ pub struct StoredProp<S = String, V = AstarteType> {
     pub path: S,
     pub value: V,
     pub interface_major: i32,
+    pub ownership: Ownership,
 }
 
 impl StoredProp {
@@ -90,6 +97,7 @@ impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
             path: &value.path,
             value: &value.value,
             interface_major: value.interface_major,
+            ownership: value.ownership,
         }
     }
 }
@@ -118,6 +126,7 @@ mod tests {
             path: "/test",
             value: &ty,
             interface_major: 1,
+            ownership: Ownership::Device,
         };
 
         store.store_prop(prop).await.unwrap();
@@ -164,6 +173,7 @@ mod tests {
             path: "/test",
             value: &AstarteType::Unset,
             interface_major: 1,
+            ownership: Ownership::Device,
         };
         store.store_prop(unset).await.unwrap();
         assert_eq!(
@@ -194,12 +204,14 @@ mod tests {
             path: "/test1".into(),
             value: ty.clone(),
             interface_major: 1,
+            ownership: Ownership::Device,
         };
         let server = StoredProp {
             interface: "com.test2".into(),
             path: "/test2".into(),
             value: ty.clone(),
             interface_major: 1,
+            ownership: Ownership::Server,
         };
 
         store.store_prop(device.as_ref()).await.unwrap();
@@ -212,6 +224,12 @@ mod tests {
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
 
         assert_eq!(props, expected);
+
+        let dev_props = store.device_props().await.unwrap();
+        assert_eq!(dev_props, [device]);
+
+        let serv_props = store.server_props().await.unwrap();
+        assert_eq!(serv_props, [server]);
 
         // test all types
         let all_types = [
@@ -243,6 +261,7 @@ mod tests {
                 path: &path,
                 value: &ty,
                 interface_major: 1,
+                ownership: Ownership::Server,
             };
 
             store.store_prop(prop).await.unwrap();
@@ -264,6 +283,7 @@ mod tests {
             path: "/test",
             value: &exp,
             interface_major: 1,
+            ownership: Ownership::Device,
         };
         mem.store_prop(prop).await.unwrap();
 

@@ -25,7 +25,7 @@ use log::error;
 use tokio::sync::RwLock;
 
 use super::{PropertyStore, StoredProp};
-use crate::types::AstarteType;
+use crate::{interface::Ownership, types::AstarteType};
 
 /// Error from the memory store.
 ///
@@ -63,12 +63,14 @@ impl PropertyStore for MemoryStore {
             path,
             value,
             interface_major,
+            ownership,
         }: StoredProp<&str, &AstarteType>,
     ) -> Result<(), Self::Err> {
         let key = Key::new(interface, path);
         let value = Value {
             value: value.clone(),
             interface_major,
+            ownership,
         };
 
         let mut store = self.store.write().await;
@@ -134,6 +136,34 @@ impl PropertyStore for MemoryStore {
 
         Ok(props)
     }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let store = self.store.read().await;
+
+        let props = store
+            .iter()
+            .filter_map(|(k, v)| match v.ownership {
+                Ownership::Device => None,
+                Ownership::Server => Some(StoredProp::from((k, v))),
+            })
+            .collect();
+
+        Ok(props)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let store = self.store.read().await;
+
+        let props = store
+            .iter()
+            .filter_map(|(k, v)| match v.ownership {
+                Ownership::Device => Some(StoredProp::from((k, v))),
+                Ownership::Server => None,
+            })
+            .collect();
+
+        Ok(props)
+    }
 }
 
 /// Key for the in memory store, this let us customize the hash and equality, and use (&str, &str)
@@ -165,6 +195,7 @@ impl Display for Key {
 struct Value {
     value: AstarteType,
     interface_major: i32,
+    ownership: Ownership,
 }
 
 impl From<(&Key, &Value)> for StoredProp {
@@ -174,6 +205,7 @@ impl From<(&Key, &Value)> for StoredProp {
             path: key.path.clone(),
             value: value.value.clone(),
             interface_major: value.interface_major,
+            ownership: value.ownership,
         }
     }
 }

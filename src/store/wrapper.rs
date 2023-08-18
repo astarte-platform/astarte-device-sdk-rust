@@ -79,6 +79,20 @@ where
             .await
             .map_err(StoreError::load_all)
     }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .server_props()
+            .await
+            .map_err(StoreError::server_props)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .device_props()
+            .await
+            .map_err(StoreError::device_props)
+    }
 }
 
 #[cfg(test)]

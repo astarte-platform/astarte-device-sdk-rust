@@ -26,7 +26,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use super::{PropertyStore, StoredProp};
 use crate::{
-    interface::MappingType,
+    interface::{MappingType, Ownership},
     payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
@@ -58,6 +58,59 @@ pub enum SqliteError {
     #[error("could not decode property from bson")]
     #[deprecated = "moved to the ValueError"]
     Decode(#[from] PayloadError),
+    /// Couldn't convert ownership value
+    #[error("could not deserialize ownership")]
+    Ownership(#[from] OwnershipError),
+}
+
+/// Error when converting a u8 into the [`Ownership`] struct
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ownership value {value}")]
+pub struct OwnershipError {
+    value: u8,
+}
+
+/// Ownership of a property.
+///
+/// The ownership is an enum stored as an single byte integer (u8) in the SQLite database, the values
+/// for the enum are:
+/// - **Device owned**: 0
+/// - **Server owned**: 1
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum RecordOwnership {
+    Device = 0,
+    Server = 1,
+}
+
+impl TryFrom<u8> for RecordOwnership {
+    type Error = OwnershipError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(RecordOwnership::Device),
+            1 => Ok(RecordOwnership::Server),
+            _ => Err(OwnershipError { value }),
+        }
+    }
+}
+
+impl From<RecordOwnership> for Ownership {
+    fn from(value: RecordOwnership) -> Self {
+        match value {
+            RecordOwnership::Device => Ownership::Device,
+            RecordOwnership::Server => Ownership::Server,
+        }
+    }
+}
+
+impl From<Ownership> for RecordOwnership {
+    fn from(value: Ownership) -> Self {
+        match value {
+            Ownership::Device => RecordOwnership::Device,
+            Ownership::Server => RecordOwnership::Server,
+        }
+    }
 }
 
 /// Error when de/serializing a value stored in the [`SqliteStore`].
@@ -119,6 +172,7 @@ struct StoredRecord {
     value: Vec<u8>,
     stored_type: u8,
     interface_major: i32,
+    ownership: u8,
 }
 
 fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
@@ -176,7 +230,7 @@ fn from_stored_type(value: u8) -> Result<Option<MappingType>, ValueError> {
 }
 
 impl TryFrom<StoredRecord> for StoredProp {
-    type Error = ValueError;
+    type Error = SqliteError;
 
     fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
         let value = deserialize_prop(record.stored_type, &record.value)?;
@@ -186,6 +240,7 @@ impl TryFrom<StoredRecord> for StoredProp {
             path: record.path,
             value,
             interface_major: record.interface_major,
+            ownership: RecordOwnership::try_from(record.ownership)?.into(),
         })
     }
 }
@@ -250,6 +305,7 @@ impl PropertyStore for SqliteStore {
             path,
             value,
             interface_major,
+            ownership,
         }: StoredProp<&str, &AstarteType>,
     ) -> Result<(), Self::Err> {
         debug!(
@@ -260,13 +316,16 @@ impl PropertyStore for SqliteStore {
         let mapping_type = into_stored_type(value)?;
         let buf = Payload::new(value).to_vec()?;
 
+        let own = RecordOwnership::from(ownership) as u8;
+
         sqlx::query_file!(
             "queries/store_prop.sql",
             interface,
             path,
             buf,
             mapping_type,
-            interface_major
+            interface_major,
+            own
         )
         .execute(&self.db_conn)
         .await?;
@@ -327,6 +386,24 @@ impl PropertyStore for SqliteStore {
 
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
         let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/load_all_props.sql")
+            .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
+            .fetch_all(&self.db_conn)
+            .await?;
+
+        Ok(res)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/device_props.sql")
+            .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
+            .fetch_all(&self.db_conn)
+            .await?;
+
+        Ok(res)
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/server_props.sql")
             .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
             .fetch_all(&self.db_conn)
             .await?;
