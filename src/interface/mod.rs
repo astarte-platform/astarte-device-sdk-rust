@@ -23,6 +23,7 @@
 pub mod def;
 pub mod error;
 pub(crate) mod mapping;
+pub mod reference;
 pub(crate) mod validation;
 
 use log::info;
@@ -34,14 +35,13 @@ use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::interfaces::{MappingRef, ObjectRef, PropertyRef};
-
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
 pub use self::error::InterfaceError;
 use self::mapping::vec::Item;
 use self::mapping::InterfaceMapping;
+use self::reference::{MappingRef, ObjectRef, PropertyRef};
 use self::{
     def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
     mapping::{
@@ -79,7 +79,7 @@ pub(crate) const MAX_INTERFACE_MAPPINGS: usize = 1024;
 /// Astarte interface implementation.
 ///
 /// Should be used only through its methods, not instantiated directly.
-#[derive(Deserialize, Debug, PartialEq, Clone)]
+#[derive(Deserialize, Debug, PartialEq, Eq, Clone)]
 #[serde(try_from = "InterfaceDef")]
 pub struct Interface {
     interface_name: String,
@@ -263,6 +263,15 @@ impl Interface {
 
                 self
             })
+    }
+
+    /// Returns a typed reference to a property, only if the interface is of type
+    /// [`InterfaceTypeDef::Properties`].
+    pub fn as_prop(&self) -> Option<PropertyRef> {
+        match self.inner {
+            InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => None,
+            InterfaceType::Properties(_) => Some(PropertyRef(self)),
+        }
     }
 }
 
@@ -851,5 +860,18 @@ mod tests {
         let value = serde_json::Value::from_str(&serialized).unwrap();
         let expected = serde_json::Value::from_str(INTERFACE_JSON).unwrap();
         assert_eq!(value, expected);
+    }
+
+    #[test]
+    fn check_as_prop() {
+        let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
+
+        let prop = interface.as_prop().expect("interface is a property");
+
+        assert!(std::ptr::eq(prop.0, &interface));
+
+        let interface = Interface::from_str(INTERFACE_JSON).unwrap();
+
+        assert_eq!(interface.as_prop(), None);
     }
 }

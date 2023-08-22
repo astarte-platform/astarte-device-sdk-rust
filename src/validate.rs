@@ -19,7 +19,7 @@
 //! Validate the submission and reception of a payload.
 
 use crate::{
-    interfaces::{MappingRef, ObjectRef},
+    interface::reference::{MappingRef, ObjectRef},
     Interface,
 };
 

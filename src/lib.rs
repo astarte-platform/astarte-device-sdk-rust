@@ -38,6 +38,7 @@ pub mod types;
 mod validate;
 
 use chrono::{DateTime, Utc};
+use interface::reference::MappingRef;
 #[cfg(test)]
 pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
@@ -63,9 +64,8 @@ pub use crate::interface::Interface;
 
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
-use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError, Ownership};
-use crate::interfaces::MappingRef;
-use crate::interfaces::PropertyRef;
+use crate::interface::reference::PropertyRef;
+use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
 use crate::options::AstarteOptions;
 use crate::payload::{
     deserialize_individual, deserialize_object, serialize_individual, serialize_object, Payload,
@@ -623,22 +623,10 @@ where
     }
 
     async fn send_device_owned_properties(&self) -> Result<(), Error> {
-        let properties = self.store.load_all_props().await?;
-        // publish only device-owned properties...
-        let interfaces = self.interfaces.read().await;
-        let device_owned_properties: Vec<StoredProp> = properties
-            .into_iter()
-            .filter(|prop| match interfaces.get_property(&prop.interface) {
-                Some(interface) => {
-                    interface.ownership() == Ownership::Device
-                        && interface.version_major() == prop.interface_major
-                }
-                None => false,
-            })
-            .collect();
+        let properties = self.store.device_props().await?;
 
-        for prop in device_owned_properties {
-            let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
+        for prop in properties {
+            let topic = self.client_id() + &prop.interface + &prop.path;
 
             debug!(
                 "sending device-owned property = {}{}",

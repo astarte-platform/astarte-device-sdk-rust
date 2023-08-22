@@ -29,8 +29,10 @@ use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    interface::mapping::path::{MappingError, MappingPath},
-    interfaces::{MappingRef, ObjectRef},
+    interface::{
+        mapping::path::{MappingError, MappingPath},
+        reference::{MappingRef, ObjectRef},
+    },
     types::{AstarteType, BsonConverter, TypeError},
     Interface,
 };
