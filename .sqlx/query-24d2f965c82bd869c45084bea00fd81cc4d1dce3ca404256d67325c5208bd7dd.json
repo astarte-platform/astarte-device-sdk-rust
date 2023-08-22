@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO propcache (\n    interface,\n    path,\n    value,\n    type,\n    interface_major,\n    ownership\n) VALUES (?, ?, ?, ?, ?, ?)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "24d2f965c82bd869c45084bea00fd81cc4d1dce3ca404256d67325c5208bd7dd"
+}
