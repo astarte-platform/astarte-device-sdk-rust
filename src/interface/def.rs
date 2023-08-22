@@ -294,6 +294,15 @@ pub enum Ownership {
     Server,
 }
 
+impl Display for Ownership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ownership::Device => write!(f, "device"),
+            Ownership::Server => write!(f, "server"),
+        }
+    }
+}
+
 /// Aggregation of interface's mappings.
 ///
 /// See [Interface Schema](https://docs.astarte-platform.org/latest/040-interface_schema.html#reference-astarte-interface-schema)

@@ -1075,11 +1075,7 @@ mod test {
                 client,
                 events_channel: tx,
                 store: StoreWrapper::new(MemoryStore::new()),
-                interfaces: RwLock::new(Interfaces::from_iter(
-                    interfaces
-                        .into_iter()
-                        .map(|i| (i.interface_name().to_string(), i)),
-                )),
+                interfaces: RwLock::new(Interfaces::from_iter(interfaces)),
                 eventloop: Mutex::new(eventloop),
             }),
         };

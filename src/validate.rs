@@ -19,7 +19,10 @@
 //! Validate the submission and reception of a payload.
 
 use crate::{
-    interface::reference::{MappingRef, ObjectRef},
+    interface::{
+        reference::{MappingRef, ObjectRef},
+        Ownership,
+    },
     Interface,
 };
 
@@ -30,6 +33,8 @@ pub enum ValidationError {
     /// Sending timestamp to a mapping without `explicit_timestamp`
     #[error("sending timestamp to a mapping without `explicit_timestamp`")]
     Timestamp,
+    #[error("expected interface with ownership {exp}, but got {got}")]
+    Ownership { exp: Ownership, got: Ownership },
 }
 
 /// Optionals check on the sent individual payload.
@@ -37,6 +42,13 @@ pub(crate) fn validate_send_individual(
     mapping: MappingRef<&Interface>,
     timestamp: &Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<(), ValidationError> {
+    if mapping.interface().ownership() != Ownership::Device {
+        return Err(ValidationError::Ownership {
+            exp: Ownership::Device,
+            got: mapping.interface().ownership(),
+        });
+    }
+
     if !mapping.mapping().explicit_timestamp() && timestamp.is_some() {
         return Err(ValidationError::Timestamp);
     }
@@ -68,6 +80,10 @@ mod tests {
 
     const DEVICE_DATASTREAM: &str = include_str!(
         "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+    );
+
+    const SERVER_DATASTREAM: &str = include_str!(
+        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
     fn inititialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {
@@ -118,9 +134,19 @@ mod tests {
         let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
 
         let res = validate_send_individual(mapping, &None);
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "error: {}", res.unwrap_err());
 
         let res = validate_send_individual(mapping, &Some(Utc::now()));
         assert!(res.is_ok());
+    }
+    #[test]
+
+    fn test_validate_send_for_server() {
+        let interface = Interface::from_str(SERVER_DATASTREAM).unwrap();
+
+        let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
+
+        let res = validate_send_individual(mapping, &None);
+        assert!(res.is_err());
     }
 }

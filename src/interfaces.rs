@@ -164,10 +164,13 @@ impl Interfaces {
     }
 }
 
-impl FromIterator<(String, Interface)> for Interfaces {
-    fn from_iter<T: IntoIterator<Item = (String, Interface)>>(iter: T) -> Self {
+impl FromIterator<Interface> for Interfaces {
+    fn from_iter<T: IntoIterator<Item = Interface>>(iter: T) -> Self {
         Self {
-            interfaces: iter.into_iter().collect(),
+            interfaces: iter
+                .into_iter()
+                .map(|i| (i.interface_name().to_string(), i))
+                .collect(),
         }
     }
 }
@@ -181,9 +184,7 @@ pub(crate) mod tests {
         options::AstarteOptions, Interface,
     };
 
-    pub(crate) const PROPERTIES_SERVER: (&str, &str) = (
-        "org.astarte-platform.test.test",
-        r#"
+    pub(crate) const PROPERTIES_SERVER: &str = r#"
         {
             "interface_name": "org.astarte-platform.test.test",
             "version_major": 12,
@@ -210,8 +211,7 @@ pub(crate) mod tests {
                     "allow_unset": true
                 }
             ]
-        }"#,
-    );
+        }"#;
 
     pub(crate) const DEVICE_OBJECT: &str = r#"
         {
@@ -246,12 +246,8 @@ pub(crate) mod tests {
         }
         "#;
 
-    pub(crate) fn create_interfaces(interfaces: &[(&str, &str)]) -> Interfaces {
-        Interfaces::from_iter(
-            interfaces
-                .iter()
-                .map(|(n, i)| (n.to_string(), Interface::from_str(i).unwrap())),
-        )
+    pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
+        Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))
     }
 
     pub(crate) struct CheckEndpoint<'a> {
