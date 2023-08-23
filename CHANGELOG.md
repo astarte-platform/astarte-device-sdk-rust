@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Handle MQTT connection errors by trying to reconnect.
 - Make the reconnection attempt wait with an exponential back-off.
+- Trait `PropAccess` to access the stored properties from the
+  `AstarteDeviceSdk`.
 
 ### Changed
 - Return a channel for the events when creating a device SDK.
@@ -15,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create a shareable struct (`Arc`) of the `AstarteDeviceSdk` to not clone the
   device id and realm.
 - Make the `DynError` trait bound shareable across threads.
+- Added ownership field to the `StoredProp` struct.
+- The `PropertyStore::store_prop` now receives the `StoredProp` struct.
 
 ## [0.6.1] - 2023-10-02
 - Check if an interface exists and the type is the same of the value
@@ -24,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unset of property send empty buffer instead of document with null value.
 - Deserialize mixed integer BSON arrays from Astarte to the type specified in
   the interface (longinteger and integer)
+
+### Deprecated
+- Added a warning to the `AstarteDeviceSdk::get_property` method to use the
+  `PropAccess` trait instead
 
 ## [0.6.0] - 2023-07-05
 ### Added

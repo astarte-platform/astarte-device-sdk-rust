@@ -63,7 +63,6 @@ impl<S> PropAccess for AstarteDeviceSdk<S>
 where
     S: PropertyStore,
 {
-    /// Get the value of a property given the interface and path.
     async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error> {
         let path = MappingPath::try_from(path)?;
 
@@ -72,15 +71,12 @@ where
 
         self.try_load_prop(&mapping, &path).await
     }
-    /// Get all the stored properties, device or server owners.
     async fn all_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.load_all_props().await.map_err(Error::from)
     }
-    /// Get all the stored device properties.
     async fn device_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.device_props().await.map_err(Error::from)
     }
-    /// Get all the stored server properties.
     async fn server_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.server_props().await.map_err(Error::from)
     }
