@@ -75,7 +75,7 @@ where
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
 /// trait.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialOrd)]
 pub struct StoredProp<S = String, V = AstarteType> {
     pub interface: S,
     pub path: S,
@@ -99,6 +99,20 @@ impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
             interface_major: value.interface_major,
             ownership: value.ownership,
         }
+    }
+}
+
+impl<T, U, V, W> PartialEq<StoredProp<T, V>> for StoredProp<U, W>
+where
+    U: PartialEq<T>,
+    W: PartialEq<V>,
+{
+    fn eq(&self, other: &StoredProp<T, V>) -> bool {
+        self.interface == other.interface
+            && self.path == other.path
+            && self.value == other.value
+            && self.interface_major == other.interface_major
+            && self.ownership == other.ownership
     }
 }
 

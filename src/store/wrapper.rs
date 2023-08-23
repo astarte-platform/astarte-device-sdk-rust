@@ -30,10 +30,7 @@ pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
 }
 
-impl<S> StoreWrapper<S>
-where
-    S: PropertyStore,
-{
+impl<S> StoreWrapper<S> {
     pub(crate) fn new(store: S) -> Self {
         Self { store }
     }
