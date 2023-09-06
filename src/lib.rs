@@ -205,13 +205,15 @@ where
     pub async fn new(
         opts: AstarteOptions<S>,
     ) -> Result<(AstarteDeviceSdk<S>, EventReceiver), Error> {
+        const MQTT_CHANNEL_SIZE: usize = 50;
+
         let mqtt_options = pairing::get_transport_config(&opts).await?;
 
         debug!("{:#?}", mqtt_options);
 
-        let (client, eventloop) = AsyncClient::new(mqtt_options, 50);
+        let (client, eventloop) = AsyncClient::new(mqtt_options, MQTT_CHANNEL_SIZE);
 
-        let (tx_events, rx_events) = mpsc::channel(50);
+        let (tx_events, rx_events) = mpsc::channel(MQTT_CHANNEL_SIZE);
 
         let mut device = AstarteDeviceSdk {
             shared: Arc::new(SharedDevice {
