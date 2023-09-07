@@ -18,7 +18,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use astarte_device_sdk::{error::Error, options::AstarteOptions, AstarteAggregate};
+#[cfg(feature = "derive")]
+use astarte_device_sdk::AstarteAggregate;
+use astarte_device_sdk::{error::Error, options::AstarteOptions};
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
 
