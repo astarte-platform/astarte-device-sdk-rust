@@ -18,7 +18,7 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::str::FromStr;
+use std::{fmt::Debug, str::FromStr};
 
 use async_trait::async_trait;
 use log::{debug, error, trace};
@@ -56,10 +56,27 @@ pub enum SqliteError {
 }
 
 /// Result of the load_prop query
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct PropRecord {
-    value: Vec<u8>,
     interface_major: i32,
+    value: Vec<u8>,
+}
+
+impl Debug for PropRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use itertools::Itertools;
+
+        // Print the value as an hex string instead of an array of numbers
+        let hex_value = self
+            .value
+            .iter()
+            .format_with("", |element, f| f(&format_args!("{element:x}")));
+
+        f.debug_struct("PropRecord")
+            .field("interface_major", &self.interface_major)
+            .field("value", &format_args!("{}", hex_value))
+            .finish()
+    }
 }
 
 /// Result of the load_all_props query

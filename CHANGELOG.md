@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Handle MQTT connection errors by trying to reconnect.
+- Make the reconnection attempt wait with an exponential back-off.
+
+### Changed
+- Return a channel for the events when creating a device SDK.
+- Make handle event loop block to handle the events.
+- Create a shareable struct (`Arc`) of the `AstarteDeviceSdk` to not clone the
+  device id and realm.
+- Make the `DynError` trait bound shareable across threads.
+
 ### Fixed
 - Unset of property send empty buffer instead of document with null value.
 

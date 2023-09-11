@@ -42,7 +42,6 @@ pub enum PayloadError {
     /// Couldn't deserialize the payload to bson.
     #[error("couldn't deserialize the payload")]
     Deserialize(#[from] bson::de::Error),
-
     /// Couldn't convert the value to [`AstarteType`]
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),

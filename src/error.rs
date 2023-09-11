@@ -41,6 +41,10 @@ pub enum Error {
     #[error("mqtt connection error")]
     ConnectionError(#[from] rumqttc::ConnectionError),
 
+    /// The connection poll reached the max number of retries.
+    #[error("mqtt connection reached max retries")]
+    ConnectionTimeout,
+
     #[error("send error ({0})")]
     SendError(String),
 

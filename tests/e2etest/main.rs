@@ -143,7 +143,7 @@ async fn e2etest_impl() {
         sdk_options = sdk_options.ignore_ssl_errors();
     }
 
-    let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    let (mut device, mut rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
@@ -180,9 +180,11 @@ async fn e2etest_impl() {
         process::exit(0);
     });
 
-    loop {
-        // Poll any astarte message and store its content in the correct shared data structure
-        match device.handle_events().await {
+    let handle_events = tokio::spawn(async move { device.handle_events().await });
+
+    // Poll any astarte message and store its content in the correct shared data structure
+    while let Some(event) = rx_events.recv().await {
+        match event {
             Ok(data) => {
                 if data.interface == test_cfg.interface_datastream_so {
                     if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
@@ -224,6 +226,15 @@ async fn e2etest_impl() {
             Err(err) => {
                 panic!("poll error {err:?}");
             }
+        }
+    }
+
+    handle_events.abort();
+    match handle_events.await {
+        Ok(res) => res.expect("error while handling events"),
+        Err(err) if err.is_cancelled() => {}
+        Err(err) => {
+            panic!("error while joining thread: {err:#?}")
         }
     }
 }
