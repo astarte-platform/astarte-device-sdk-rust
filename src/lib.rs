@@ -21,6 +21,7 @@
 
 pub mod crypto;
 pub mod error;
+pub mod event;
 pub mod interface;
 mod interfaces;
 #[cfg(test)]
