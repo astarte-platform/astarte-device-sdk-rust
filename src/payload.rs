@@ -284,10 +284,10 @@ mod test {
     use super::*;
 
     const DEVICE_DATASTREAM: &str = include_str!(
-        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
     const DEVICE_AGGREGATE: &str = include_str!(
-        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
     );
 
     fn mapping_type(value: &AstarteType) -> MappingType {

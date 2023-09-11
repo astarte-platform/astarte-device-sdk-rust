@@ -79,11 +79,11 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     const DEVICE_DATASTREAM: &str = include_str!(
-        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
 
     const SERVER_DATASTREAM: &str = include_str!(
-        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.ServerDatastream.json"
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
     fn inititialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {

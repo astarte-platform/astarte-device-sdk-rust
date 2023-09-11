@@ -6,16 +6,34 @@
 
 [package]
 name = "astarte-device-sdk"
-version = "0.6.1"
+version = { workspace = true }
+categories = ["embedded", "api-bindings"]
 documentation = "https://docs.rs/astarte-device-sdk"
+edition = { workspace = true }
+exclude = { workspace = true }
+homepage = { workspace = true }
+keywords = ["sdk", "iot", "astarte"]
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+rust-version = { workspace = true }
+description = "A library that provides communication and pairing primitives to an Astarte Cluster"
+
+[workspace]
+resolver = "2"
+members = [
+  "astarte-device-sdk-derive",
+  "e2e-test",
+]
+
+[workspace.package]
 edition = "2021"
 homepage = "https://astarte.cloud/"
-keywords = ["sdk", "iot", "astarte"]
 license = "Apache-2.0"
-readme = "README.md"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 rust-version = "1.66.1"
-description = "A library that provides communication and pairing primitives to an Astarte Cluster"
+version = "0.6.1"
+exclude = [".github"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -24,43 +42,42 @@ name = "benchmark"
 harness = false
 
 [dependencies]
-astarte-device-sdk-derive = { version = "0.6.1", optional = true, path = "./astarte-device-sdk-derive" }
-async-trait = "0.1.2"
-base64 = "0.21.0"
-bson = { version = "2.1.0", features = ["chrono-0_4"] }
-chrono = { version = "0.4.14", features = ["serde"] }
-ecdsa = { version = "0.16.7", features = ["sha2"] }
-flate2 = "1.0.0"
-futures = "0.3.0"
-http = "0.2.0"
-itertools = "0.11.0"
-log = "0.4.17"
-openssl = { version = "0.10.46", optional = true }
-p384 = "0.13.0"
-rand_core = { version = "0.6.4", features = ["getrandom"] }
-reqwest = { version = "0.11.0", features = ["json", "rustls-tls"] }
-rumqttc = "0.21.0"
-rustls = { version = "0.20.1", features = ["dangerous_configuration"] }
-rustls-native-certs = "0.6.0"
-rustls-pemfile = "1.0.0"
-serde = { version = "1.0.145", features = ["derive"] }
-serde_json = "1.0.85"
-sqlx = { version = "0.7.0", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
-thiserror = "1.0.35"
-tokio = { version = "1.18.0", features = ["parking_lot", "macros"] }
-url = "2.2.2"
-uuid = { version = "1.0.0", features = ["v5", "v4"] }
-webpki = "0.22.0"
-x509-cert = { version = "0.2.2", features = ["builder"] }
+astarte-device-sdk-derive = { workspace = true, optional = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bson = { workspace = true, features = ["chrono-0_4"] }
+chrono = { workspace = true, features = ["serde"] }
+ecdsa = { workspace = true, features = ["sha2"] }
+flate2 = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+itertools = { workspace = true }
+log = { workspace = true }
+openssl = { workspace = true, optional = true }
+p384 = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+rumqttc = { workspace = true }
+rustls = { workspace = true, features = ["dangerous_configuration"] }
+rustls-native-certs = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["parking_lot", "macros"] }
+url = { workspace = true }
+uuid = { workspace = true, features = ["v5", "v4"] }
+webpki = { workspace = true }
+x509-cert = { workspace = true, features = ["builder"] }
 
 [dev-dependencies]
-astarte-device-sdk-derive = { path = "./astarte-device-sdk-derive" }
-criterion = "0.5.1"
-env_logger = "0.10.0"
-mockall = "0.11.4"
-structopt = "0.3.26"
-tempfile = "3.6.0"
-tokio = { version = "1.18.0", features = ["rt", "rt-multi-thread"] }
+astarte-device-sdk-derive = { workspace = true }
+criterion = { workspace = true }
+env_logger = { workspace = true }
+mockall = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies.cargo-husky]
 version = "1.5.0"
@@ -68,5 +85,43 @@ default-features = false # Disable features which are enabled by default
 features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]
 
 [features]
-derive = ["astarte-device-sdk-derive"]
+derive = ["dep:astarte-device-sdk-derive"]
 openssl = ["dep:openssl"]
+
+[workspace.dependencies]
+astarte-device-sdk-derive = { version = "0.6.1", path = "./astarte-device-sdk-derive" }
+async-trait = "0.1.2"
+base64 = "0.21.0"
+bson = "2.1.0"
+chrono = "0.4.14"
+criterion = "0.5.1"
+ecdsa = "0.16.7"
+env_logger = "0.10.0"
+flate2 = "1.0.0"
+futures = "0.3.0"
+http = "0.2.0"
+itertools = "0.11.0"
+log = "0.4.17"
+mockall = "0.11.4"
+openssl = "0.10.46"
+p384 = "0.13.0"
+proc-macro2 = "1.0.60"
+quote = "1.0.26"
+rand_core = "0.6.4"
+reqwest = "0.11.0"
+rumqttc = "0.21.0"
+rustls = "0.20.1"
+rustls-native-certs = "0.6.0"
+rustls-pemfile = "1.0.0"
+serde = "1.0.145"
+serde_json = "1.0.85"
+sqlx = "0.7.0"
+structopt = "0.3.26"
+syn = "2.0.0"
+tempfile = "3.6.0"
+thiserror = "1.0.35"
+tokio = "1.18.0"
+url = "2.2.2"
+uuid = "1.0.0"
+webpki = "0.22.0"
+x509-cert = "0.2.2"
