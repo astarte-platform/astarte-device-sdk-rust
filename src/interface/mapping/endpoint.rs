@@ -41,9 +41,8 @@ use super::path::MappingPath;
 /// For more information see [Astarte - Docs](https://docs.astarte-platform.org/astarte/latest/030-interface.html#limitations)
 ///
 /// The endpoints uses Cow to not allocate the string if an error occurs.
-///
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct Endpoint<T> {
+pub struct Endpoint<T> {
     pub(super) path: T,
     pub(super) levels: Vec<Level<T>>,
 }

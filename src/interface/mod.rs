@@ -22,7 +22,7 @@
 
 pub mod def;
 pub mod error;
-pub(crate) mod mapping;
+pub mod mapping;
 pub mod reference;
 pub(crate) mod validation;
 

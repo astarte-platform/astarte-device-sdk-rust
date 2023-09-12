@@ -18,10 +18,6 @@
 
 //! Path of a mapping in interface. It's the parsed struct path received from the MQTT levels
 //! structure of the topic received.
-//!
-//! It will be used to access the [`crate::interface::Mapping`] in an
-//! [`crate::interface::Interface`]. Since the mapping is a tree, the path will compared to the
-//! [`crate::interface::mapping::endpoint::Endpoint`] of the mapping.
 
 use std::{cmp::Ordering, fmt::Display};
 
@@ -89,8 +85,6 @@ where
     }
 }
 
-/// Implement [`PartialEq`] to index a [`super::vec::MappingVec`] by a tuble of [`MappingPath`] as
-/// the base path and field of an object aggregate.
 impl<'a, S, T> PartialEq<Endpoint<T>> for (&MappingPath<'a>, S)
 where
     S: AsRef<str>,
@@ -117,8 +111,6 @@ where
     }
 }
 
-/// Implement [`PartialOrd`] to index a [`super::vec::MappingVec`] by a tuble of [`MappingPath`] as
-/// the base path and field of an object aggregate.
 impl<'a, S, T> PartialOrd<Endpoint<T>> for (&MappingPath<'a>, S)
 where
     S: AsRef<str>,
