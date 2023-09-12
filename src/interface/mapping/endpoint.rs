@@ -23,7 +23,7 @@ use std::{
 };
 
 use itertools::{EitherOrBoth, Itertools};
-use log::{debug, info, trace};
+use log::{debug, error, info, trace};
 
 use super::path::MappingPath;
 
@@ -48,6 +48,22 @@ pub struct Endpoint<T> {
 }
 
 impl<T> Endpoint<T> {
+    /// Check that the endpoint is equal to the given mapping
+    pub fn eq_mapping<S>(&self, mapping: S) -> bool
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        match MappingPath::try_from(mapping.as_ref()) {
+            Ok(mapping) => mapping.eq(self),
+            Err(err) => {
+                error!("failed to parse mapping {err}");
+
+                false
+            }
+        }
+    }
+
     /// Iter the levels of the endpoint.
     pub(crate) fn iter(&self) -> SliceIter<Level<T>> {
         self.levels.iter()

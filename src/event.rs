@@ -56,6 +56,9 @@ pub enum FromEventError {
     /// couldn't convert from [`AstarteType`](crate::types::AstarteType)
     #[error("couldn't convert from AstarteType")]
     Conversion(#[from] crate::types::TypeError),
+    /// couldn't parse the [`crate::interface::mapping::endpoint::Endpoint`]
+    #[error("couldn't parse the endpoint")]
+    Endpoint(#[from] crate::interface::mapping::endpoint::EndpointError),
 }
 
 /// Converts a struct form an [`AstarteDeviceDataEvent`].
@@ -65,6 +68,9 @@ pub enum FromEventError {
 /// ```rust
 /// use astarte_device_sdk::{Aggregation, AstarteDeviceDataEvent};
 /// use astarte_device_sdk::event::{FromEvent, FromEventError};
+/// use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
+///
+/// use std::convert::TryFrom;
 ///
 /// struct Sensor {
 ///     name: String,
@@ -75,11 +81,13 @@ pub enum FromEventError {
 ///     type Err = FromEventError;
 ///
 ///     fn from_event(event: AstarteDeviceDataEvent) -> Result<Self, Self::Err> {
+///         let base_path: Endpoint<&str> = Endpoint::try_from("/sensor")?;
+///
 ///         if event.interface != "com.example.Sensor" {
 ///             return Err(FromEventError::Interface(event.interface.clone()));
 ///         }
 ///
-///         if event.path != "/sensor" {
+///         if base_path.eq_mapping(&event.path) {
 ///             return Err(FromEventError::Path {
 ///                 interface: "com.example.Person",
 ///                 object: event.path.clone(),
