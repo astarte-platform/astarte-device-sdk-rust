@@ -61,6 +61,7 @@ use log::{debug, error, info, trace, warn};
 use rumqttc::{Event, Publish};
 
 /// Re-exported internal structs
+pub use crate::event::FromEvent;
 pub use crate::interface::Interface;
 
 use crate::error::Error;
@@ -148,9 +149,9 @@ pub type EventReceiver = mpsc::Receiver<Result<AstarteDeviceDataEvent, Error>>;
 #[macro_use]
 extern crate astarte_device_sdk_derive;
 
-/// Derive macro to implement `AstarteAggregate` trait with `feature = ["derive"]`.
+/// Derive macros enable with the `feature = ["derive"]`.
 #[cfg(feature = "derive")]
-pub use astarte_device_sdk_derive::AstarteAggregate;
+pub use astarte_device_sdk_derive::*;
 
 /// Astarte device implementation.
 ///

@@ -28,28 +28,28 @@ pub enum FromEventError {
     #[error("couldn't parse request from interface {0}")]
     Interface(String),
     /// object has wrong base path
-    #[error("object has wrong base path ({interface}) {object}")]
+    #[error("object has wrong base path ({interface}) {base_path}")]
     Path {
         /// Interface that generated the error
         interface: &'static str,
         /// Base path of the interface
-        object: String,
+        base_path: String,
     },
     /// individual data passed to object
-    #[error("individual data passed to object ({interface}/{object})")]
+    #[error("individual data passed to object ({interface}/{base_path})")]
     Individual {
         /// Interface that generated the error
         interface: &'static str,
         /// Base path of the interface
-        object: &'static str,
+        base_path: &'static str,
     },
     /// object missing field
-    #[error("object missing field ({interface}/{object}) {path}")]
+    #[error("object missing field ({interface}/{base_path}) {path}")]
     MissingField {
         /// Interface that generated the error
         interface: &'static str,
         /// Base path of the interface
-        object: &'static str,
+        base_path: &'static str,
         /// Path of the endpoint in error
         path: &'static str,
     },
@@ -89,31 +89,31 @@ pub enum FromEventError {
 ///
 ///         if base_path.eq_mapping(&event.path) {
 ///             return Err(FromEventError::Path {
-///                 interface: "com.example.Person",
-///                 object: event.path.clone(),
+///                 interface: "com.example.Sensor",
+///                 base_path: event.path.clone(),
 ///             });
 ///         }
 ///
 ///         let Aggregation::Object(mut object) = event.data else {
 ///             return Err(FromEventError::Individual {
-///                 interface: "com.example.Person",
-///                 object: "/sensor",
+///                 interface: "com.example.Sensor",
+///                 base_path: "sensor",
 ///             });
 ///         };
 ///
 ///         let name = object
 ///             .remove("name")
 ///             .ok_or(FromEventError::MissingField {
-///                 interface: "com.example.Person",
-///                 object: "/sensor",
+///                 interface: "com.example.Sensor",
+///                 base_path: "sensor",
 ///                 path: "name",
 ///             })?
 ///             .try_into()?;
 ///         let value = object
 ///             .remove("value")
 ///             .ok_or(FromEventError::MissingField {
-///                 interface: "com.example.Person",
-///                 object: "/sensor",
+///                 interface: "com.example.Sensor",
+///                 base_path: "sensor",
 ///                 path: "value",
 ///             })?
 ///             .try_into()?;
@@ -126,4 +126,44 @@ pub trait FromEvent: Sized {
     type Err;
 
     fn from_event(event: AstarteDeviceDataEvent) -> Result<Self, Self::Err>;
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "derive")]
+    #[test]
+    fn should_derive_form_event() {
+        use std::collections::HashMap;
+
+        use crate::{Aggregation, FromEvent};
+
+        // Alias the crate to the resulting macro
+        use crate::{self as astarte_device_sdk, AstarteDeviceDataEvent};
+
+        #[derive(Debug, FromEvent, PartialEq, Eq)]
+        #[from_event(interface = "com.example.Sensor", path = "/sensor")]
+        struct Sensor {
+            name: String,
+            value: i32,
+        }
+
+        let mut data = HashMap::new();
+        data.insert("name".to_string(), "Foo".to_string().into());
+        data.insert("value".to_string(), 42i32.into());
+
+        let event = AstarteDeviceDataEvent {
+            interface: "com.example.Sensor".to_string(),
+            path: "/sensor".to_string(),
+            data: Aggregation::Object(data),
+        };
+
+        let sensor = Sensor::from_event(event).expect("couldn't parse the event");
+
+        let expected = Sensor {
+            name: "Foo".to_string(),
+            value: 42,
+        };
+
+        assert_eq!(sensor, expected);
+    }
 }
