@@ -19,7 +19,9 @@
 
 use std::io;
 
-use super::{mapping::endpoint::EndpointError, validation::VersionChangeError};
+use super::{
+    mapping::endpoint::EndpointError, validation::VersionChangeError, MAX_INTERFACE_MAPPINGS,
+};
 
 /// Error for parsing and validating an interface.
 #[non_exhaustive]
@@ -62,13 +64,15 @@ pub enum InterfaceError {
     #[error("object endpoint should have at least 2 levels: '{0}'")]
     ObjectEndpointTooShort(String),
     /// The name of the interface was changed.
-    #[error(
-        r#"this version has a different name than the previous version
-    name: {name}
-    prev_name: {prev_name}"#
-    )]
+    #[error( r#"this version has a different name than the previous version name: {name} prev_name: {prev_name}"#)]
     NameMismatch { name: String, prev_name: String },
     /// Invalid version change.
     #[error("invalid version: {0}")]
     Version(VersionChangeError),
+    /// Interface with too many mappings
+    #[error(
+        "too many mappings {0}, interfaces can have a max of {} mappings",
+        MAX_INTERFACE_MAPPINGS
+    )]
+    TooManyMappings(usize),
 }
