@@ -23,10 +23,9 @@
 //! [`crate::interface::Interface`]. Since the mapping is a tree, the path will compared to the
 //! [`crate::interface::mapping::endpoint::Endpoint`] of the mapping.
 
-use std::{
-    borrow::{Borrow, Cow},
-    fmt::Display,
-};
+use std::{cmp::Ordering, fmt::Display};
+
+use itertools::{EitherOrBoth, Itertools};
 
 use super::endpoint::Endpoint;
 
@@ -34,32 +33,21 @@ use super::endpoint::Endpoint;
 ///
 /// This is used to access the [`crate::interface::Interface`] so we can compare the parsed [`MappingPath::Mapping`]
 /// with the [`crate::interface::mapping::endpoint::Endpoint`].
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum MappingPath<'a> {
-    /// The parsed MQTT levels structure of the topic received.
-    Mapping {
-        /// Needs to be a [`Cow<'a, str>`], because if a full path is passed, we can avoid allocating
-        /// by using the [`Cow::Borrowed`]. While for the object, two different [`&str`] are passed
-        /// and we need to allocate a string for [`Cow::Owned`].
-        path: Cow<'a, str>,
-        levels: Vec<&'a str>,
-    },
-    /// The [`crate::interface::Mapping`] endpoint of an [`crate::interface::Interface`]'s.
-    Endpoint(Endpoint<'a>),
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+pub(crate) struct MappingPath<'a> {
+    pub(crate) path: &'a str,
+    pub(crate) levels: Vec<&'a str>,
 }
 
 impl<'a> MappingPath<'a> {
     pub(crate) fn as_str(&self) -> &str {
-        self.borrow()
+        self.path
     }
 }
 
 impl<'a> Display for MappingPath<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MappingPath::Mapping { path, .. } => write!(f, "{}", path),
-            MappingPath::Endpoint(endpoint) => write!(f, "{}", endpoint),
-        }
+        write!(f, "{}", self.path)
     }
 }
 
@@ -71,58 +59,91 @@ impl<'a> TryFrom<&'a str> for MappingPath<'a> {
     }
 }
 
-impl<'a> PartialOrd for MappingPath<'a> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'a> Ord for MappingPath<'a> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (MappingPath::Mapping { levels, .. }, MappingPath::Mapping { levels: o_lvs, .. }) => {
-                levels.cmp(o_lvs)
-            }
-            (MappingPath::Endpoint(endpoint), MappingPath::Endpoint(o_endpoint)) => {
-                endpoint.cmp(o_endpoint)
-            }
-            (MappingPath::Mapping { levels, .. }, MappingPath::Endpoint(endpoint)) => {
-                endpoint.cmp_levels(levels).reverse()
-            }
-            (MappingPath::Endpoint(endpoint), MappingPath::Mapping { levels, .. }) => {
-                endpoint.cmp_levels(levels)
-            }
-        }
-    }
-}
-
-impl<'a> From<Endpoint<'a>> for MappingPath<'a> {
-    fn from(endpoint: Endpoint<'a>) -> Self {
-        MappingPath::Endpoint(endpoint)
-    }
-}
-
-impl<'a> Borrow<str> for MappingPath<'a> {
-    fn borrow(&self) -> &str {
-        match self {
-            MappingPath::Mapping { path, .. } => path,
-            MappingPath::Endpoint(endpoint) => endpoint,
-        }
+impl<'a> PartialEq<&str> for MappingPath<'a> {
+    fn eq(&self, &other: &&str) -> bool {
+        self.path == other
     }
 }
 
 impl<'a> PartialEq<str> for MappingPath<'a> {
     fn eq(&self, other: &str) -> bool {
-        match self {
-            MappingPath::Mapping { path, .. } => path == other,
-            MappingPath::Endpoint(endpoint) => endpoint == other,
-        }
+        self.path == other
     }
 }
 
-impl PartialEq<&str> for MappingPath<'_> {
-    fn eq(&self, &other: &&str) -> bool {
-        self == other
+impl<'a, T> PartialEq<Endpoint<T>> for MappingPath<'a>
+where
+    T: AsRef<str>,
+{
+    fn eq(&self, other: &Endpoint<T>) -> bool {
+        other == self
+    }
+}
+
+impl<'a, T> PartialOrd<Endpoint<T>> for MappingPath<'a>
+where
+    T: AsRef<str>,
+{
+    fn partial_cmp(&self, other: &Endpoint<T>) -> Option<std::cmp::Ordering> {
+        Some(other.cmp_levels(&self.levels).reverse())
+    }
+}
+
+/// Implement [`PartialEq`] to index a [`super::vec::MappingVec`] by a tuble of [`MappingPath`] as
+/// the base path and field of an object aggregate.
+impl<'a, S, T> PartialEq<Endpoint<T>> for (&MappingPath<'a>, S)
+where
+    S: AsRef<str>,
+    T: AsRef<str>,
+{
+    fn eq(&self, endpoint: &Endpoint<T>) -> bool {
+        let (base, path) = self;
+
+        if base.levels.len() != endpoint.len() - 1 {
+            return false;
+        }
+
+        let levels = base
+            .levels
+            .iter()
+            .copied()
+            .chain(std::iter::once(path.as_ref()));
+
+        endpoint
+            .levels
+            .iter()
+            .zip(levels)
+            .all(|(e_level, m_level)| e_level.eq_str(m_level))
+    }
+}
+
+/// Implement [`PartialOrd`] to index a [`super::vec::MappingVec`] by a tuble of [`MappingPath`] as
+/// the base path and field of an object aggregate.
+impl<'a, S, T> PartialOrd<Endpoint<T>> for (&MappingPath<'a>, S)
+where
+    S: AsRef<str>,
+    T: AsRef<str>,
+{
+    fn partial_cmp(&self, endpoint: &Endpoint<T>) -> Option<Ordering> {
+        let (base, path) = self;
+
+        let iter = base
+            .levels
+            .iter()
+            .copied()
+            .chain(std::iter::once(path.as_ref()))
+            .zip_longest(endpoint.levels.iter());
+
+        for i in iter {
+            match i {
+                EitherOrBoth::Both(a, b) if b == a => {}
+                EitherOrBoth::Both(a, b) => return b.partial_cmp(a).map(Ordering::reverse),
+                EitherOrBoth::Left(_) => return Some(Ordering::Greater),
+                EitherOrBoth::Right(_) => return Some(Ordering::Less),
+            }
+        }
+
+        Some(Ordering::Equal)
     }
 }
 
@@ -170,8 +191,8 @@ fn parse_mapping(input: &str) -> Result<MappingPath, MappingError> {
         return Err(MappingError::Empty);
     }
 
-    Ok(MappingPath::Mapping {
-        path: Cow::Borrowed(input),
+    Ok(MappingPath {
+        path: input,
         levels,
     })
 }
@@ -192,17 +213,17 @@ mod tests {
 
     #[test]
     fn endpoint_equals_to_mapping() {
-        let expected = MappingPath::Endpoint(Endpoint {
+        let expected = Endpoint {
             path: "/%{sensor_id}/boolean_endpoint".into(),
             levels: vec![
-                Level::Parameter(Cow::from("sensor_id")),
-                Level::Simple(Cow::from("boolean_endpoint")),
+                Level::Parameter("sensor_id".to_string()),
+                Level::Simple("boolean_endpoint".to_string()),
             ],
-        });
+        };
 
         let path = MappingPath::try_from("/1/boolean_endpoint").unwrap();
 
-        assert!(path.cmp(&expected).is_eq());
+        assert_eq!(path, expected);
     }
 
     #[test]
@@ -214,18 +235,43 @@ mod tests {
 
     #[test]
     fn test_compatible() {
-        let endpoint = MappingPath::Endpoint(Endpoint {
+        let endpoint = Endpoint {
             path: "/%{sensor_id}/value".into(),
             levels: vec![
-                Level::Parameter(Cow::from("sensor_id")),
-                Level::Simple(Cow::from("value")),
+                Level::Parameter("sensor_id".to_string()),
+                Level::Simple("value".to_string()),
             ],
-        });
+        };
 
-        assert!(endpoint.cmp(mapping!("/foo/value")).is_eq());
-        assert!(endpoint.cmp(mapping!("/bar/value")).is_eq());
-        assert!(endpoint.cmp(mapping!("/value")).is_ne());
-        assert!(endpoint.cmp(mapping!("/foo/bar/value")).is_ne());
-        assert!(endpoint.cmp(mapping!("/foo/value/bar")).is_ne());
+        assert_eq!(endpoint, *mapping!("/foo/value"));
+        assert_eq!(endpoint, *mapping!("/bar/value"));
+        assert_ne!(endpoint, *mapping!("/value"));
+        assert_ne!(endpoint, *mapping!("/foo/bar/value"));
+        assert_ne!(endpoint, *mapping!("/foo/value/bar"));
+    }
+
+    #[test]
+    fn compare_object_with_endpoint() {
+        let endpoint = Endpoint {
+            path: "/%{sensor_id}/foo/bar",
+            levels: vec![
+                Level::Parameter("sensor_id"),
+                Level::Simple("foo"),
+                Level::Simple("bar"),
+            ],
+        };
+
+        let cases = [
+            ((mapping!("/1/foo"), "bar"), Ordering::Equal),
+            ((mapping!("/1/foo"), "a"), Ordering::Less),
+            ((mapping!("/1"), "foo"), Ordering::Less),
+            ((mapping!("/1/foo"), "some"), Ordering::Greater),
+            ((mapping!("/1/foo/bar"), "some"), Ordering::Greater),
+        ];
+
+        for (mapping, exp) in cases {
+            let res = mapping.partial_cmp(&endpoint);
+            assert_eq!(res, Some(exp), "wrong compare for {mapping:?}")
+        }
     }
 }
