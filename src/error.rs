@@ -20,9 +20,9 @@
 
 use std::convert::Infallible;
 
+use crate::builder::BuilderError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
-use crate::options::OptionsError;
 use crate::payload::PayloadError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
@@ -55,7 +55,7 @@ pub enum Error {
     ReceiveError(String),
 
     #[error("options error")]
-    OptionsError(#[from] OptionsError),
+    Builder(#[from] BuilderError),
 
     #[error("invalid interface")]
     Interface(#[from] InterfaceError),

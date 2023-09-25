@@ -180,8 +180,8 @@ pub(crate) mod tests {
     use std::str::FromStr;
 
     use crate::{
-        error::Error, interface::MappingType, interfaces::Interfaces, mapping,
-        options::AstarteOptions, Interface,
+        builder::DeviceBuilder, error::Error, interface::MappingType, interfaces::Interfaces,
+        mapping, Interface,
     };
 
     pub(crate) const PROPERTIES_SERVER: &str = r#"
@@ -351,7 +351,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_instrospection_string() {
-        let mut options = AstarteOptions::new("test", "test", "test", "test");
+        let mut options = DeviceBuilder::new();
         options = options
             .interface_directory("examples/individual_datastream/interfaces")
             .expect("Failed to set interface directory");

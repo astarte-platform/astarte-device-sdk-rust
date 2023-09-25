@@ -23,11 +23,10 @@
 use std::convert::TryFrom;
 
 use bson::{Binary, Bson};
-use chrono::{DateTime, Utc};
 use log::debug;
 use serde::Serialize;
 
-use crate::interface::MappingType;
+use crate::{interface::MappingType, Timestamp};
 
 /// Astarte type conversion errors.
 #[non_exhaustive]
@@ -80,7 +79,7 @@ pub enum AstarteType {
     LongInteger(i64),
     String(String),
     BinaryBlob(Vec<u8>),
-    DateTime(DateTime<Utc>),
+    DateTime(Timestamp),
 
     DoubleArray(Vec<f64>),
     IntegerArray(Vec<i32>),
@@ -88,7 +87,7 @@ pub enum AstarteType {
     LongIntegerArray(Vec<i64>),
     StringArray(Vec<String>),
     BinaryBlobArray(Vec<Vec<u8>>),
-    DateTimeArray(Vec<DateTime<Utc>>),
+    DateTimeArray(Vec<Timestamp>),
 
     Unset,
 
@@ -302,14 +301,14 @@ impl_reverse_type_conversion_traits!(
     (Boolean, bool),
     (String, String),
     (BinaryBlob, Vec<u8>),
-    (DateTime, DateTime<Utc>),
+    (DateTime, Timestamp),
     (DoubleArray, Vec<f64>),
     (IntegerArray, Vec<i32>),
     (BooleanArray, Vec<bool>),
     (LongIntegerArray, Vec<i64>),
     (StringArray, Vec<String>),
     (BinaryBlobArray, Vec<Vec<u8>>),
-    (DateTimeArray, Vec<DateTime<Utc>>),
+    (DateTimeArray, Vec<Timestamp>),
 );
 
 impl From<AstarteType> for Bson {
@@ -583,7 +582,7 @@ mod test {
         assert!(AstarteType::LongInteger(42) == 42_i64);
         assert!(AstarteType::String("hello".to_string()) == "hello");
         assert!(AstarteType::BinaryBlob(vec![1, 2, 3, 4]) == vec![1_u8, 2, 3, 4]);
-        let data: chrono::DateTime<Utc> = TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap();
+        let data: Timestamp = TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap();
         assert!(AstarteType::DateTime(data) == data);
         let data: Vec<f64> = vec![1.3, 2.6, 3.1, 4.0];
         assert!(AstarteType::DoubleArray(data.clone()) == data);
@@ -597,7 +596,7 @@ mod test {
         assert!(AstarteType::StringArray(data.clone()) == data);
         let data: Vec<Vec<u8>> = vec![vec![1, 2, 3, 4], vec![4, 4, 1, 4]];
         assert!(AstarteType::BinaryBlobArray(data.clone()) == data);
-        let data: Vec<chrono::DateTime<Utc>> = vec![
+        let data: Vec<Timestamp> = vec![
             TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
             TimeZone::timestamp_opt(&Utc, 1611580808, 0).unwrap(),
         ];
@@ -738,7 +737,7 @@ mod test {
             TimeZone::timestamp_opt(&Utc, 4646841646, 11).unwrap(),
         ];
         let a_data = AstarteType::DateTimeArray(data.clone());
-        assert_eq!(Vec::<DateTime<Utc>>::try_from(a_data)?, data);
+        assert_eq!(Vec::<Timestamp>::try_from(a_data)?, data);
 
         Ok(())
     }

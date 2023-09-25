@@ -35,9 +35,9 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::{task, time};
 
-use astarte_device_sdk::options::AstarteOptions;
+use astarte_device_sdk::builder::{DeviceBuilder, MqttConfig};
 use astarte_device_sdk::types::AstarteType;
-use astarte_device_sdk::{AstarteDeviceSdk, AstarteDeviceSdkMemory};
+use astarte_device_sdk::Device;
 
 mod mock_data_aggregate;
 mod mock_data_datastream;
@@ -124,21 +124,23 @@ async fn main() {
 
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
-    let mut sdk_options = AstarteOptions::new(
+    let mut mqtt_config = MqttConfig::new(
         &test_cfg.realm,
         &test_cfg.device_id,
         &test_cfg.credentials_secret,
         &test_cfg.pairing_url,
-    )
-    .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
-    .unwrap();
+    );
+
+    let device_builder = DeviceBuilder::new()
+        .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
+        .unwrap();
 
     // Ignore SSL for local testing
     if env::var("E2E_IGNORE_SSL").is_ok() {
-        sdk_options = sdk_options.ignore_ssl_errors();
+        mqtt_config.ignore_ssl_errors();
     }
 
-    let (mut device, mut rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    let (mut device, mut rx_events) = device_builder.connect_mqtt(mqtt_config).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
@@ -240,7 +242,7 @@ async fn main() {
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_datastream_device_to_server(
-    device: &AstarteDeviceSdkMemory,
+    device: &impl Device,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataDatastream::init();
@@ -327,7 +329,7 @@ async fn test_datastream_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_aggregate_device_to_server(
-    device: &AstarteDeviceSdkMemory,
+    device: &impl Device,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataAggregate::init();
@@ -421,7 +423,7 @@ async fn test_aggregate_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_property_device_to_server(
-    device: &AstarteDeviceSdkMemory,
+    device: &impl Device,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataProperty::init();

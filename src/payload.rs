@@ -23,7 +23,6 @@
 use std::collections::HashMap;
 
 use bson::Bson;
-use chrono::{DateTime, Utc};
 
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
@@ -34,7 +33,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
     },
     types::{AstarteType, BsonConverter, TypeError},
-    Interface,
+    Interface, Timestamp,
 };
 
 /// Errors that can occur handling the payload.
@@ -67,9 +66,6 @@ pub enum PayloadError {
     Unset,
 }
 
-/// Timestamp returned int the astarte payload
-pub(crate) type Timestamp = DateTime<Utc>;
-
 /// The payload of an MQTT message.
 ///
 /// It is serialized as a BSON object when sent over the wire.
@@ -95,7 +91,7 @@ impl<T> Payload<T> {
     }
 
     /// Create a new payload with the given value and time-stamp.
-    pub(crate) fn with_timestamp(value: T, timestamp: Option<DateTime<Utc>>) -> Self {
+    pub(crate) fn with_timestamp(value: T, timestamp: Option<Timestamp>) -> Self {
         Self { value, timestamp }
     }
 
@@ -275,6 +271,7 @@ pub(crate) fn deserialize_object(
 
 #[cfg(test)]
 mod test {
+    use chrono::Utc;
     use std::str::FromStr;
 
     use chrono::TimeZone;

@@ -23,7 +23,11 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    error::Error, options::AstarteOptions, properties::PropAccess, store::SqliteStore,
+    builder::{DeviceBuilder, MqttConfig},
+    error::Error,
+    properties::PropAccess,
+    store::SqliteStore,
+    Device,
 };
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;
@@ -37,7 +41,10 @@ struct Config {
 }
 
 // Getter function for the property "name" of a sensor.
-async fn get_name_for_sensor<T: PropAccess>(device: &T, sensor_n: i32) -> Result<String, DynError> {
+async fn get_name_for_sensor(
+    device: &impl PropAccess,
+    sensor_n: i32,
+) -> Result<String, crate::Error> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     let path = format!("/{sensor_n}/name");
 
@@ -63,20 +70,21 @@ async fn main() -> Result<(), DynError> {
     // Open the database, create it if it does not exists
     let db = SqliteStore::new("./examples/individual_properties/astarte-example-db.sqlite").await?;
 
-    // Create Astarte Options
-    let sdk_options = AstarteOptions::new(
+    let mut mqtt_config = MqttConfig::new(
         &cfg.realm,
         &cfg.device_id,
         &cfg.credentials_secret,
         &cfg.pairing_url,
-    )
-    .interface_directory("./examples/individual_properties/interfaces")?
-    .store(db)
-    .ignore_ssl_errors();
+    );
+
+    mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (mut device, mut rx_events) =
-        astarte_device_sdk::AstarteDeviceSdk::new(sdk_options).await?;
+    let (mut device, mut rx_events) = DeviceBuilder::new()
+        .interface_directory("./examples/individual_properties/interfaces")?
+        .store(db)
+        .connect_mqtt(mqtt_config)
+        .await?;
     let device_cpy = device.clone();
 
     println!("Connection to Astarte established.");

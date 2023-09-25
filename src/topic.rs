@@ -20,8 +20,6 @@
 
 use log::trace;
 
-use crate::interface::mapping::path::{MappingError, MappingPath};
-
 /// Error returned when parsing a topic.
 ///
 /// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
@@ -31,50 +29,49 @@ pub enum TopicError {
     #[error("topic is empty")]
     Empty,
     #[error(
+        "the topic should start with <realm>/<device_id> equal to {client_id}, received: {topic}"
+    )]
+    UnkownClientId { client_id: String, topic: String },
+    #[error(
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]
     Malformed(String),
-
-    #[error("couldn't parse mapping for '{topic}'")]
-    Maapping {
-        #[source]
-        err: MappingError,
-        topic: String,
-    },
 }
 
 impl TopicError {
     pub fn topic(&self) -> &str {
         match self {
             TopicError::Empty => "",
+            TopicError::UnkownClientId { topic, .. } => topic,
             TopicError::Malformed(topic) => topic,
-            TopicError::Maapping { topic, .. } => topic,
         }
     }
 }
 
-pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath), TopicError> {
+#[derive(Debug)]
+pub(crate) struct ParsedTopic<'a> {
+    pub(crate) interface: &'a str,
+    pub(crate) path: &'a str,
+}
+
+pub(crate) fn parse_topic<'a>(
+    client_id: &str,
+    topic: &'a str,
+) -> Result<ParsedTopic<'a>, TopicError> {
     if topic.is_empty() {
         return Err(TopicError::Empty);
     }
 
-    let mut parts = topic.splitn(3, '/');
+    let rest = topic
+        .strip_prefix(client_id)
+        .ok_or(TopicError::UnkownClientId {
+            client_id: client_id.to_string(),
+            topic: topic.to_string(),
+        })?;
 
-    let realm = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("realm: {}", realm);
-
-    let device = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("device: {}", device);
-
-    let rest = parts
-        .next()
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+    let rest = rest
+        .strip_prefix('/')
+        .ok_or(TopicError::Malformed(topic.to_string()))?;
 
     trace!("rest: {}", rest);
 
@@ -93,25 +90,20 @@ pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath)
         return Err(TopicError::Malformed(topic.to_string()));
     }
 
-    let path = MappingPath::try_from(path).map_err(|err| TopicError::Maapping {
-        err,
-        topic: topic.to_string(),
-    })?;
-
-    Ok((realm, device, interface, path))
+    Ok(ParsedTopic { interface, path })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const CLIENT_ID: &str = "test/u-WraCwtK_G_fjJf63TiAw";
+
     #[test]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let (realm, device, interface, path) = parse_topic(&topic).unwrap();
+        let ParsedTopic { interface, path } = parse_topic(CLIENT_ID, &topic).unwrap();
 
-        assert_eq!(realm, "test");
-        assert_eq!(device, "u-WraCwtK_G_fjJf63TiAw");
         assert_eq!(interface, "com.interface.test");
         assert_eq!(path, "/led/red");
     }
@@ -119,7 +111,7 @@ mod tests {
     #[test]
     fn test_parse_topic_empty() {
         let topic = "".to_owned();
-        let err = parse_topic(&topic).unwrap_err();
+        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
 
         assert!(matches!(err, TopicError::Empty));
     }
@@ -127,8 +119,16 @@ mod tests {
     #[test]
     fn test_parse_topic_malformed() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test".to_owned();
-        let err = parse_topic(&topic).unwrap_err();
+        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
 
         assert!(matches!(err, TopicError::Malformed(_)));
+    }
+
+    #[test]
+    fn test_parse_unkown_client_id() {
+        let topic = "test/u-WraCwtK_G_different/com.interface.test/led/red".to_owned();
+        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
+
+        assert!(matches!(err, TopicError::UnkownClientId { .. }));
     }
 }

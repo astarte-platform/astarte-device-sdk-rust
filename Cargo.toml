@@ -34,7 +34,6 @@ repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 rust-version = "1.66.1"
 version = "0.6.2"
 exclude = [".github"]
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bench]]
@@ -45,6 +44,7 @@ harness = false
 astarte-device-sdk-derive = { workspace = true, optional = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
+bytes = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
 chrono = { workspace = true, features = ["serde"] }
 ecdsa = { workspace = true, features = ["sha2"] }
@@ -53,6 +53,7 @@ futures = { workspace = true }
 http = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
+once_cell = { workspace = true }
 openssl = { workspace = true, optional = true }
 p384 = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
@@ -85,8 +86,9 @@ openssl = ["dep:openssl"]
 
 [workspace.dependencies]
 astarte-device-sdk-derive = { version = "0.6.1", path = "./astarte-device-sdk-derive" }
-async-trait = "0.1.2"
+async-trait = "0.1.41"
 base64 = "0.21.0"
+bytes = "1.5.0"
 bson = "2.1.0"
 chrono = "0.4.14"
 criterion = "0.5.1"
@@ -98,6 +100,7 @@ http = "0.2.0"
 itertools = "0.11.0"
 log = "0.4.17"
 mockall = "0.11.4"
+once_cell = "1.18.0"
 openssl = "0.10.46"
 p384 = "0.13.0"
 proc-macro2 = "1.0.60"

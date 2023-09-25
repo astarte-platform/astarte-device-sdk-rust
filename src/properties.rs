@@ -50,6 +50,29 @@ pub enum PropertiesError {
 #[async_trait]
 pub trait PropAccess {
     /// Get the value of a property given the interface and path.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::{
+    ///     AstarteDeviceSdk, properties::PropAccess, store::sqlite::SqliteStore, builder::DeviceBuilder,
+    ///     builder::MqttConfig, types::AstarteType
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let database = SqliteStore::new("path/to/database/file.sqlite")
+    ///         .await
+    ///         .unwrap();
+    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(database)
+    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///
+    ///     let property_value: Option<AstarteType> = device
+    ///         .property("my.interface.name", "/endpoint/path")
+    ///         .await
+    ///         .unwrap();
+    /// }
+    /// ```
     async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
     /// Get all the properties of the given interface.
     async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
@@ -62,9 +85,10 @@ pub trait PropAccess {
 }
 
 #[async_trait]
-impl<S> PropAccess for AstarteDeviceSdk<S>
+impl<S, C> PropAccess for AstarteDeviceSdk<S, C>
 where
     S: PropertyStore,
+    C: Sync,
 {
     async fn property(
         &self,
@@ -163,8 +187,9 @@ pub(crate) mod tests {
     use crate::store::memory::MemoryStore;
     use crate::store::SqliteStore;
     use crate::test::mock_astarte_device_store;
+    use crate::Interface;
 
-    use crate::{AsyncClient, EventLoop, Interface};
+    use crate::connection::mqtt::{AsyncClient, EventLoop};
 
     use super::*;
 

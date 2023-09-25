@@ -30,8 +30,8 @@ use serde_json::json;
 use url::ParseError;
 
 use crate::{
+    builder::{BuilderError, MqttConfig},
     crypto::{Bundle, CryptoError},
-    options::{AstarteOptions, OptionsError},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -82,7 +82,7 @@ pub enum PairingError {
     ConfigError(String),
 }
 
-async fn fetch_credentials<S>(opts: &AstarteOptions<S>, csr: &str) -> Result<String, PairingError> {
+async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -128,7 +128,7 @@ async fn fetch_credentials<S>(opts: &AstarteOptions<S>, csr: &str) -> Result<Str
     }
 }
 
-async fn fetch_broker_url<S>(opts: &AstarteOptions<S>) -> Result<String, PairingError> {
+async fn fetch_broker_url(opts: &MqttConfig) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
     // We have to do this this way to avoid unconsistent behaviour depending
     // on the user putting the trailing slash or not
@@ -169,8 +169,8 @@ async fn fetch_broker_url<S>(opts: &AstarteOptions<S>) -> Result<String, Pairing
     }
 }
 
-async fn populate_credentials<S>(
-    opts: &AstarteOptions<S>,
+async fn populate_credentials(
+    opts: &MqttConfig,
 ) -> Result<(Vec<Certificate>, PrivateKey), PairingError> {
     let Bundle { private_key, csr } = Bundle::new(&opts.realm, &opts.device_id)?;
 
@@ -184,21 +184,21 @@ async fn populate_credentials<S>(
     Ok((certs, private_key))
 }
 
-async fn populate_broker_url<S>(opts: &AstarteOptions<S>) -> Result<Url, PairingError> {
+async fn populate_broker_url(opts: &MqttConfig) -> Result<Url, PairingError> {
     let broker_url = fetch_broker_url(opts).await?;
     let parsed_broker_url = Url::parse(&broker_url)?;
     Ok(parsed_broker_url)
 }
 
-fn build_mqtt_opts<S>(
-    options: &AstarteOptions<S>,
+fn build_mqtt_opts(
+    opts: &MqttConfig,
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, OptionsError> {
-    let AstarteOptions {
+) -> Result<MqttOptions, BuilderError> {
+    let MqttConfig {
         realm, device_id, ..
-    } = options;
+    } = opts;
 
     let client_id = format!("{realm}/{device_id}");
     let host = broker_url
@@ -221,15 +221,15 @@ fn build_mqtt_opts<S>(
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
-    if options.keepalive.as_secs() < 5 {
-        return Err(OptionsError::ConfigError(
+    if opts.keepalive.as_secs() < 5 {
+        return Err(BuilderError::ConfigError(
             "Keepalive should be >= 5 secs".into(),
         ));
     }
 
-    mqtt_opts.set_keep_alive(options.keepalive);
+    mqtt_opts.set_keep_alive(opts.keepalive);
 
-    if options.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
+    if opts.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
         struct OkVerifier {}
         impl rustls::client::ServerCertVerifier for OkVerifier {
             fn verify_server_cert(
@@ -262,9 +262,7 @@ fn build_mqtt_opts<S>(
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config<S>(
-    opts: &AstarteOptions<S>,
-) -> Result<MqttOptions, OptionsError> {
+pub(crate) async fn get_transport_config(opts: &MqttConfig) -> Result<MqttOptions, BuilderError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;
