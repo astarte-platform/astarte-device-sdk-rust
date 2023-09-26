@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, panic, process};
 
-use colored::Colorize;
+use log::{debug, info};
 use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::{task, time};
@@ -127,6 +127,8 @@ async fn e2etest_impl() {
         process::exit(1);
     }));
 
+    env_logger::init();
+
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
     let mut sdk_options = AstarteOptions::new(
@@ -176,7 +178,7 @@ async fn e2etest_impl() {
             .await
             .unwrap();
 
-        println!("\nTest datastreams completed successfully");
+        info!("Test datastreams completed successfully");
         process::exit(0);
     });
 
@@ -252,8 +254,7 @@ async fn test_datastream_device_to_server(
     let tx_data = mock_data.get_device_to_server_data_as_astarte();
 
     // Send all the mock test data
-    let msg = "\nSending device owned datastreams from device to server.".cyan();
-    println!("{msg}");
+    debug!("Sending device owned datastreams from device to server.");
     for (key, value) in tx_data.clone() {
         device
             .send(&test_cfg.interface_datastream_do, &format!("/{key}"), value)
@@ -265,7 +266,7 @@ async fn test_datastream_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_datastream_do).await?;
 
     // Check if the sent and received data match
@@ -301,8 +302,7 @@ async fn test_datastream_server_to_device(
     let mock_data = MockDataDatastream::init();
 
     // Send the data using http requests
-    let msg = "\nSending server owned datastreams from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned datastreams from server to device.");
     for (key, value) in mock_data.get_server_to_device_data_as_json() {
         http_post_to_intf(test_cfg, &test_cfg.interface_datastream_so, &key, value).await?;
     }
@@ -311,7 +311,7 @@ async fn test_datastream_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
 
-    println!("{}", "\nChecking data received by the device.".cyan());
+    debug!("Checking data received by the device.");
     let rx_data_rw_acc = rx_data
         .lock()
         .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -342,8 +342,7 @@ async fn test_aggregate_device_to_server(
     let sensor_number: i8 = 45;
 
     // Send all the mock test data
-    let msg = "\nSending device owned aggregate from device to server.".cyan();
-    println!("{msg}");
+    debug!("Sending device owned aggregate from device to server");
     device
         .send_object(
             &test_cfg.interface_aggregate_do,
@@ -356,7 +355,7 @@ async fn test_aggregate_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_aggregate_do).await?;
 
     // Check if the sent and received data match
@@ -393,8 +392,7 @@ async fn test_aggregate_server_to_device(
     let sensor_number: i8 = 11;
 
     // Send the data using http requests
-    let msg = "\nSending server owned aggregate from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned aggregate from server to device.");
     http_post_to_intf(
         test_cfg,
         &test_cfg.interface_aggregate_so,
@@ -406,7 +404,7 @@ async fn test_aggregate_server_to_device(
     time::sleep(Duration::from_secs(1)).await;
 
     // Lock the shared data and check if everything sent has been correctly received
-    println!("{}", "\nChecking data received by the device.".cyan());
+    debug!("Checking data received by the device.");
     let rx_data_rw_acc = rx_data
         .lock()
         .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -438,8 +436,7 @@ async fn test_property_device_to_server(
     let sensor_number = 1;
 
     // Send all the mock test data
-    let msg = "\nSet device owned property (will be also sent to server).".cyan();
-    println!("{msg}");
+    debug!("Set device owned property (will be also sent to server).");
     for (key, value) in tx_data.clone() {
         device
             .send(
@@ -454,7 +451,7 @@ async fn test_property_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     // Check if the sent and received data match
@@ -474,8 +471,7 @@ async fn test_property_device_to_server(
     }
 
     // Unset one specific property
-    let msg = "\nUnset all the device owned property (will be also sent to server).".cyan();
-    println!("{msg}");
+    debug!("Unset all the device owned property (will be also sent to server).");
     for (key, _) in tx_data.clone() {
         device
             .unset(
@@ -489,7 +485,7 @@ async fn test_property_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     if http_get_response != "{\"data\":{}}" {
@@ -518,8 +514,7 @@ async fn test_property_server_to_device(
     let sensor_number: i8 = 42;
 
     // Send the data using http requests
-    let msg = "\nSending server owned properties from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned properties from server to device.");
     for (key, value) in mock_data.get_server_to_device_data_as_json() {
         http_post_to_intf(
             test_cfg,
@@ -534,7 +529,7 @@ async fn test_property_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
     {
-        println!("{}", "\nChecking data received by the device.".cyan());
+        debug!("Checking data received by the device.");
         let rx_data_rw_acc = rx_data
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -550,8 +545,7 @@ async fn test_property_server_to_device(
     }
 
     // Unset all the properties
-    let msg = "\nUnsetting all the server owned properties (will be also sent to device).".cyan();
-    println!("{msg}");
+    debug!("Unsetting all the server owned properties (will be also sent to device).");
     for (key, _) in mock_data.get_server_to_device_data_as_json() {
         http_delete_to_intf(
             test_cfg,
@@ -565,7 +559,7 @@ async fn test_property_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
     {
-        println!("{}", "\nChecking data received by the device.".cyan());
+        debug!("Checking data received by the device.");
         let rx_data_rw_acc = rx_data
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -594,7 +588,7 @@ async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, St
         "{}/v1/{}/devices/{}/interfaces/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface
     );
-    println!("Sending HTTP GET request: {get_cmd}");
+    debug!("Sending HTTP GET request: {get_cmd}");
     reqwest::Client::new()
         .get(get_cmd)
         .header(
@@ -626,7 +620,7 @@ async fn http_post_to_intf(
         "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
-    println!("Sending HTTP POST request: {post_cmd} {value_json}");
+    debug!("Sending HTTP POST request: {post_cmd} {value_json}");
     let response = reqwest::Client::new()
         .post(post_cmd)
         .header(
@@ -665,7 +659,7 @@ async fn http_delete_to_intf(
         "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
-    println!("Sending HTTP DELETE request: {post_cmd}");
+    debug!("Sending HTTP DELETE request: {post_cmd}");
     let response = reqwest::Client::new()
         .delete(post_cmd)
         .header(
