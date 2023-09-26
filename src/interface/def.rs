@@ -158,7 +158,7 @@ impl<'a> Mapping<'a> {
     pub(crate) fn retention(&self) -> Retention {
         match self.retention {
             RetentionDef::Discard => {
-                if self.expiry >= 0 {
+                if self.expiry > 0 {
                     warn!("Discard retention policy with expiry set, ignoring expiry");
                 }
 

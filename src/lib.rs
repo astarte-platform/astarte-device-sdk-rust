@@ -832,6 +832,8 @@ where
             return Err(Error::Validation(err));
         }
 
+        trace!("sending individual type {}", data.display_type());
+
         let opt_prop = mapping.as_prop();
         if let Some(prop_mapping) = opt_prop {
             let stored = self
