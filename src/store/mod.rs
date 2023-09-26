@@ -40,7 +40,8 @@ pub mod wrapper;
 #[async_trait]
 pub trait PropertyStore: Debug + Send + Sync + 'static
 where
-    // NOTE: the 'static bound is required for the MSRV, in other version the error is not present
+    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
+    //       bound to further restrict the error type.
     Self::Err: StdError + Send + Sync + 'static,
 {
     type Err;
@@ -84,6 +85,8 @@ pub struct StoredProp {
 
 #[cfg(test)]
 mod tests {
+    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
+
     use super::*;
 
     pub(crate) async fn test_property_store<S>(store: S)
@@ -189,5 +192,21 @@ mod tests {
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
 
         assert_eq!(props, expected);
+    }
+
+    /// Test that the error is Send + Sync + 'static to be send across task boundaries.
+    #[tokio::test]
+    async fn erro_should_compatible_with_tokio() {
+        let mem = StoreWrapper::new(MemoryStore::new());
+
+        let exp = AstarteType::Integer(1);
+        mem.store_prop("com.test", "/test", &exp, 1).await.unwrap();
+
+        let res = tokio::spawn(async move { mem.load_prop("com.test", "/test", 1).await })
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(res, Some(exp));
     }
 }
