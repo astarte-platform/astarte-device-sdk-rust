@@ -78,9 +78,8 @@ impl RenameRule {
     /// Apply a renaming rule to a struct field, returning the version expected in the source.
     pub fn apply_to_field<'a>(&self, field: &'a str) -> Cow<'a, str> {
         match *self {
-            RenameRule::None | RenameRule::LowerCase | RenameRule::SnakeCase => {
-                Cow::Borrowed(field)
-            }
+            RenameRule::None => Cow::Borrowed(field),
+            RenameRule::LowerCase | RenameRule::SnakeCase => field.to_ascii_lowercase().into(),
             RenameRule::UpperCase => field.to_ascii_uppercase().into(),
             RenameRule::PascalCase => {
                 let mut pascal = String::new();
