@@ -93,7 +93,7 @@ jobs:
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
       - name: Run cargo-tarpaulin with xml output
-        run: cargo tarpaulin --engine llvm --ignore-tests --lib --out Xml -- --test-threads 1
+        run: cargo tarpaulin --engine llvm --ignore-tests --lib --out xml -- --test-threads 1
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
         with:
