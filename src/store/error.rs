@@ -19,9 +19,9 @@
 //! Error for the store.
 
 /// Dynamic error type of an [`super::PropertyStore`].
-type DynError = Box<dyn std::error::Error>;
+type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-/// Error type returned by the [`super::PropertyStore`] trait.
+/// Error that wraps the type returned by an implementation of the [`super::PropertyStore`] trait.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
