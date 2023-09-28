@@ -23,6 +23,7 @@ pub mod crypto;
 pub mod error;
 pub mod interface;
 mod interfaces;
+pub mod message_hub;
 #[cfg(test)]
 mod mock;
 pub mod options;
@@ -35,7 +36,6 @@ mod shared;
 pub mod store;
 mod topic;
 pub mod types;
-
 #[cfg(test)]
 pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
