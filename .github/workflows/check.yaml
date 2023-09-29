@@ -88,6 +88,23 @@ jobs:
       # intentionally no target specifier; see https://github.com/jonhoo/rust-ci-conf/pull/4
       - name: cargo hack
         run: cargo hack --feature-powerset check
+  minimal-versions:
+    runs-on: ubuntu-latest
+    name: ubuntu / nightly / minimal-versions
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: cargo install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - name: remove dev-deps
+        run: cargo hack --remove-dev-deps
+      - name: update to minimal deps
+        run: cargo update -Z direct-minimal-versions
+      - name: cargo check
+        run: cargo check --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
   msrv:
     runs-on: ubuntu-latest
     # we use a matrix here just because env can't be used in job names
