@@ -8,8 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Handle MQTT connection errors by trying to reconnect.
 - Make the reconnection attempt wait with an exponential back-off.
-- Check if an interface exists and the type is the same of the value
-  passed/received when sending or receiving data from Astarte.
 
 ### Changed
 - Return a channel for the events when creating a device SDK.
@@ -17,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create a shareable struct (`Arc`) of the `AstarteDeviceSdk` to not clone the
   device id and realm.
 - Make the `DynError` trait bound shareable across threads.
+
+## [0.6.1] - 2023-10-02
+- Check if an interface exists and the type is the same of the value
+  passed/received when sending or receiving data from Astarte.
 
 ### Fixed
 - Unset of property send empty buffer instead of document with null value.
