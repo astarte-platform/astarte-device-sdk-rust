@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "quote",
  "syn",
@@ -12,9 +12,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.50"
+version = "1.0.67"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ef7d57beacfaf2d8aee5937dab7b7f28de3cb8b1828479bb5de2a7106f2bae2"
+checksum = "3d433d9f1a3e8c1263d9456598b16fec66f4acc9a74dacffd35c7bb09b3a1328"
 dependencies = [
  "unicode-ident",
 ]
