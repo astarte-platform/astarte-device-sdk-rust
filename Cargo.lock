@@ -92,7 +92,7 @@ checksum = "3a30da5c5f2d5e72842e00bcb57657162cdabef0931f40e2deb9b4140440cecd"
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "astarte-device-sdk-derive",
  "async-trait",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "quote",
  "syn 1.0.109",
