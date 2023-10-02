@@ -24,12 +24,15 @@ use std::collections::HashMap;
 
 use bson::Bson;
 use chrono::{DateTime, Utc};
-use log::trace;
+
+use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    types::{AstarteType, TypeError},
-    Aggregation,
+    interface::mapping::path::{MappingError, MappingPath},
+    interfaces::{MappingRef, ObjectRef},
+    types::{AstarteType, BsonConverter, TypeError},
+    Interface,
 };
 
 /// Errors that can occur handling the payload.
@@ -42,11 +45,28 @@ pub enum PayloadError {
     /// Couldn't deserialize the payload to bson.
     #[error("couldn't deserialize the payload")]
     Deserialize(#[from] bson::de::Error),
-
     /// Couldn't convert the value to [`AstarteType`]
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),
+    /// Expected object, individual data deserialized
+    #[error("expected object, individual data deserialized intead {0}")]
+    Object(Bson),
+    /// Missing mapping in payload
+    #[error["missing mappings in the payload"]]
+    MissingMapping,
+    /// Couldn't parse a mapping
+    #[error("couldn't parse the mapping")]
+    Mapping(#[from] MappingError),
+    /// Mismatching type while serializing
+    #[error("mimatching type while serializing, expected {expected} but got {got}")]
+    SerializeType { expected: String, got: String },
+    /// Couldn't accept unset for mapping without `allow_unset`
+    #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]
+    Unset,
 }
+
+/// Timestamp returned int the astarte payload
+pub(crate) type Timestamp = DateTime<Utc>;
 
 /// The payload of an MQTT message.
 ///
@@ -58,19 +78,36 @@ pub(crate) struct Payload<T> {
     #[serde(rename = "v")]
     pub(crate) value: T,
     #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
-    pub(crate) timestamp: Option<DateTime<Utc>>,
+    pub(crate) timestamp: Option<Timestamp>,
 }
 
-impl<T> Payload<T>
-where
-    T: serde::Serialize,
-{
-    pub(crate) fn to_vec(&self) -> Result<Vec<u8>, PayloadError> {
+impl<T> Payload<T> {
+    /// Create a new payload with the given value.
+    ///
+    /// The time-stamp will be set to [`None`]
+    pub(crate) fn new(value: T) -> Self {
+        Self {
+            value,
+            timestamp: None,
+        }
+    }
+
+    /// Create a new payload with the given value and time-stamp.
+    pub(crate) fn with_timestamp(value: T, timestamp: Option<DateTime<Utc>>) -> Self {
+        Self { value, timestamp }
+    }
+
+    /// Serialize the payload to a BSON vector of bytes.
+    pub(crate) fn to_vec(&self) -> Result<Vec<u8>, PayloadError>
+    where
+        T: serde::Serialize,
+    {
         let res = bson::to_vec(self)?;
 
         Ok(res)
     }
 
+    /// Deserialize the payload from a BSON slice of bytes.
     pub(crate) fn from_slice<'a>(buf: &'a [u8]) -> Result<Payload<T>, PayloadError>
     where
         T: serde::de::Deserialize<'a>,
@@ -81,102 +118,204 @@ where
     }
 }
 
-impl TryFrom<&[u8]> for Payload<AstarteType> {
-    type Error = PayloadError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        // When sending/receiving an unset we should accept an empty payload.
-        // https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#payload-format
-        if value.is_empty() {
-            trace!("empty buf");
-
-            return Ok(Payload {
-                value: AstarteType::Unset,
-                timestamp: None,
-            });
-        }
-
-        Self::from_slice(value)
-    }
-}
-
-/// Serialize an [`AstarteType`] to bson payload.
-pub(crate) fn serialize_individual(
+/// Serialize an [`AstarteType`] to a [`Bson`] buffer
+pub(crate) fn serialize_individual<'a>(
+    mapping: MappingRef<'a, &'a Interface>,
     data: &AstarteType,
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
-    let payload = Payload {
-        value: data,
-        timestamp,
-    };
+    match data {
+        AstarteType::Unset => {
+            if !mapping.allow_unset() {
+                return Err(PayloadError::Unset);
+            }
 
-    payload.to_vec()
+            // When sending/receiving an unset we should accept an empty payload.
+            // https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#payload-format
+            return Ok(Vec::new());
+        }
+        data => {
+            if *data != mapping.mapping_type() {
+                return Err(PayloadError::SerializeType {
+                    expected: mapping.mapping_type().to_string(),
+                    got: data.display_type().to_string(),
+                });
+            }
+        }
+    }
+
+    Payload::with_timestamp(data, timestamp).to_vec()
 }
 
-/// Serialize an Object passed as an [`HashMap`] of [`AstarteType`] to bson payload.
+/// Serialize an aggregate to a [`Bson`] buffer
 pub(crate) fn serialize_object(
+    object: ObjectRef,
+    path: &MappingPath,
     data: &HashMap<String, AstarteType>,
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
-    let payload = Payload {
-        value: data,
-        timestamp,
+    // Filter only the valid fields
+    let aggregate: HashMap<&String, &AstarteType> = data
+        .iter()
+        .filter_map(|(key, value)| {
+            let Some(mapping) = object.get_field(path, key) else {
+                warn!("unrecognized mapping {path}/{key}, ignoring");
+
+                return None;
+            };
+
+            if value.is_unset() {
+                return Some(Err(PayloadError::Unset));
+            }
+
+            if *value != mapping.mapping_type() {
+                return Some(Err(PayloadError::SerializeType {
+                    expected: mapping.mapping_type().to_string(),
+                    got: value.display_type().to_string(),
+                }));
+            }
+
+            debug!("serialized object field {path} {}", value.display_type());
+
+            Some(Ok((key, value)))
+        })
+        .collect::<Result<_, _>>()?;
+
+    if aggregate.len() != object.len() {
+        return Err(PayloadError::MissingMapping);
+    }
+
+    Payload::with_timestamp(aggregate, timestamp).to_vec()
+}
+
+/// Deserialize an individual [`AstarteType`]
+pub(crate) fn deserialize_individual<'a>(
+    mapping: MappingRef<'a, &'a Interface>,
+    buf: &[u8],
+) -> Result<(AstarteType, Option<Timestamp>), PayloadError> {
+    if buf.is_empty() {
+        debug!("unset received");
+
+        if !mapping.allow_unset() {
+            return Err(PayloadError::Unset);
+        }
+
+        return Ok((AstarteType::Unset, None));
+    }
+
+    let payload = Payload::<Bson>::from_slice(buf)?;
+
+    let hint = BsonConverter::new(mapping.mapping_type(), payload.value);
+
+    let ast_val = AstarteType::try_from(hint)?;
+
+    Ok((ast_val, payload.timestamp))
+}
+
+pub(crate) fn deserialize_object(
+    object: ObjectRef,
+    path: &MappingPath,
+    buf: &[u8],
+) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), PayloadError> {
+    if buf.is_empty() {
+        return Err(PayloadError::Unset);
+    }
+
+    let payload = Payload::<Bson>::from_slice(buf)?;
+
+    let doc = match payload.value {
+        Bson::Document(document) => document,
+        data => return Err(PayloadError::Object(data)),
     };
 
-    payload.to_vec()
-}
+    trace!("base path {path}");
 
-/// Deserialize a bson payload to an individual [`AstarteType`].
-pub(crate) fn deserialize_individual(bdata: &[u8]) -> Result<AstarteType, PayloadError> {
-    let payload = Payload::<AstarteType>::try_from(bdata)?;
+    let aggregate = doc
+        .into_iter()
+        .filter_map(|(key, value)| {
+            trace!("key {key}");
 
-    trace!("{:?}", payload);
+            let full_path = format!("{path}/{key}");
+            let path = match MappingPath::try_from(full_path.as_str()) {
+                Ok(path) => path,
+                Err(err) => return Some(Err(PayloadError::from(err))),
+            };
 
-    Ok(payload.value)
-}
+            let mapping = match object.mapping(&path) {
+                Some(mapping) => mapping,
+                None => {
+                    debug!(
+                        "unrecognized mapping {path} for interface {}",
+                        object.interface.interface_name()
+                    );
 
-/// Deserialize a bson payload to an individual [`AstarteType`] or an object as an [`HashMap`].
-pub(crate) fn deserialize(bdata: &[u8]) -> Result<Aggregation, PayloadError> {
-    if bdata.is_empty() {
-        return Ok(Aggregation::Individual(AstarteType::Unset));
-    }
+                    return None;
+                }
+            };
 
-    let payload = Payload::<Bson>::from_slice(bdata)?;
+            let hint = BsonConverter::new(mapping.mapping_type(), value);
 
-    trace!("{:?}", payload);
+            let ast_val = match AstarteType::try_from(hint) {
+                Ok(t) => t,
+                Err(err) => return Some(Err(PayloadError::from(err))),
+            };
 
-    match payload.value {
-        Bson::Document(doc) => {
-            let hmap = doc
-                .into_iter()
-                .map(|(name, value)| {
-                    let v = AstarteType::try_from(value)?;
+            if ast_val.is_unset() {
+                return Some(Err(PayloadError::Unset));
+            }
 
-                    Ok((name, v))
-                })
-                .collect::<Result<HashMap<String, AstarteType>, PayloadError>>()?;
+            Some(Ok((key, ast_val)))
+        })
+        .collect::<Result<HashMap<String, AstarteType>, _>>()?;
 
-            Ok(Aggregation::Object(hmap))
-        }
-        value => {
-            let individual = AstarteType::try_from(value)?;
-
-            Ok(Aggregation::Individual(individual))
-        }
-    }
+    Ok((aggregate, payload.timestamp))
 }
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use chrono::TimeZone;
 
-    use crate::interface::MappingType;
+    use crate::{interface::MappingType, mapping};
 
     use super::*;
 
+    const DEVICE_DATASTREAM: &str = include_str!(
+        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+    );
+    const DEVICE_AGGREGATE: &str = include_str!(
+        "../tests/e2etest/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+    );
+
+    fn mapping_type(value: &AstarteType) -> MappingType {
+        match value {
+            AstarteType::Double(_) => MappingType::Double,
+            AstarteType::Integer(_) => MappingType::Integer,
+            AstarteType::Boolean(_) => MappingType::Boolean,
+            AstarteType::LongInteger(_) => MappingType::LongInteger,
+            AstarteType::String(_) => MappingType::String,
+            AstarteType::BinaryBlob(_) => MappingType::BinaryBlob,
+            AstarteType::DateTime(_) => MappingType::DateTime,
+            AstarteType::DoubleArray(_) => MappingType::DoubleArray,
+            AstarteType::IntegerArray(_) => MappingType::IntegerArray,
+            AstarteType::BooleanArray(_) => MappingType::BooleanArray,
+            AstarteType::LongIntegerArray(_) => MappingType::LongIntegerArray,
+            AstarteType::StringArray(_) => MappingType::StringArray,
+            AstarteType::BinaryBlobArray(_) => MappingType::BinaryBlobArray,
+            AstarteType::DateTimeArray(_) => MappingType::DateTimeArray,
+            #[allow(deprecated)]
+            AstarteType::Unset | AstarteType::EmptyArray => {
+                panic!("Mapping doesn't exists for those type")
+            }
+        }
+    }
+
     #[test]
     fn test_individual_serialization() {
-        let alltypes: Vec<AstarteType> = vec![
+        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+
+        let alltypes = [
             AstarteType::Double(4.5),
             AstarteType::Integer(-4),
             AstarteType::Boolean(true),
@@ -199,22 +338,24 @@ mod test {
 
         for ty in alltypes {
             println!("checking {ty:?}");
+            let mapping_type = mapping_type(&ty);
+            let endpoint = format!("/{mapping_type}_endpoint");
+            let path = mapping!(endpoint.as_str());
+            let mapping = interface.as_mapping_ref(path).unwrap();
 
-            let buf = serialize_individual(&ty, None).unwrap();
+            let buf = serialize_individual(mapping, &ty, None).unwrap();
 
-            let ty2 = deserialize(&buf).unwrap();
+            let (res, _) = deserialize_individual(mapping, &buf).unwrap();
 
-            if let Aggregation::Individual(data) = ty2 {
-                assert!(ty == data);
-            } else {
-                panic!();
-            }
+            assert_eq!(res, ty);
         }
     }
 
     #[test]
     fn test_serialize_object() {
-        let alltypes: Vec<AstarteType> = vec![
+        let interface = Interface::from_str(DEVICE_AGGREGATE).unwrap();
+
+        let alltypes = [
             AstarteType::Double(4.5),
             AstarteType::Integer(-4),
             AstarteType::Boolean(true),
@@ -235,66 +376,138 @@ mod test {
             ]),
         ];
 
-        let allendpoints = vec![
-            "double".to_string(),
-            "integer".to_string(),
-            "boolean".to_string(),
-            "longinteger".to_string(),
-            "string".to_string(),
-            "binaryblob".to_string(),
-            "datetime".to_string(),
-            "doublearray".to_string(),
-            "integerarray".to_string(),
-            "booleanarray".to_string(),
-            "longintegerarray".to_string(),
-            "stringarray".to_string(),
-            "binaryblobarray".to_string(),
-            "datetimearray".to_string(),
-        ];
+        let base_path = "/1";
+        let data: HashMap<_, _> = alltypes
+            .into_iter()
+            .map(|ty| {
+                let mapping_type = mapping_type(&ty);
 
-        let mut data = std::collections::HashMap::new();
+                let endpoint = format!("{mapping_type}_endpoint");
 
-        for i in allendpoints.iter().zip(alltypes.iter()) {
-            data.insert(i.0.clone(), i.1.clone());
-        }
+                (endpoint, ty)
+            })
+            .collect();
 
-        let bytes = serialize_object(&data, None).unwrap();
+        let object = interface.as_object_ref().unwrap();
+        let path = mapping!(base_path);
 
-        let data_processed = deserialize(&bytes).unwrap();
+        let buf = serialize_object(object, path, &data, None).unwrap();
 
-        println!("\nComparing {data:?}\nto {data_processed:?}");
+        let (res, _) = deserialize_object(object, path, &buf).unwrap();
 
-        if let Aggregation::Object(data_processed) = data_processed {
-            assert_eq!(data, data_processed);
-        } else {
-            panic!();
-        }
+        assert_eq!(res, data)
     }
 
     #[test]
     fn test_integer_longinteger_compatibility() {
+        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+        let mapping = interface
+            .as_mapping_ref(mapping!("/longinteger_endpoint"))
+            .unwrap();
+
+        // 3600i32
         let longinteger_b = [12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0];
-        let integer_buf = deserialize(&longinteger_b).unwrap();
-        if let Aggregation::Individual(astarte_type) = integer_buf {
-            assert_eq!(astarte_type, MappingType::LongInteger);
-        } else {
-            panic!("Deserialization in not individual");
-        }
+
+        let (res, _) = deserialize_individual(mapping, &longinteger_b).unwrap();
+
+        assert_eq!(res, AstarteType::LongInteger(3600i64));
     }
 
     #[test]
     fn test_bson_serialization() {
+        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+        let mapping = interface
+            .as_mapping_ref(mapping!("/longinteger_endpoint"))
+            .unwrap();
+
         let og_value = AstarteType::LongInteger(3600);
-        let buf = serialize_individual(&og_value, None).unwrap();
-        if let Aggregation::Individual(astarte_type) = deserialize(&buf).unwrap() {
-            assert_eq!(astarte_type, AstarteType::LongInteger(3600));
-            if let AstarteType::LongInteger(value) = astarte_type {
-                assert_eq!(value, 3600);
-            } else {
-                panic!("Astarte Type is not LongInteger");
-            }
-        } else {
-            panic!("Deserialization in not individual");
+        let buf = serialize_individual(mapping, &og_value, None).unwrap();
+
+        let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
+
+        assert_eq!(buf, expected);
+
+        let (res, _) = deserialize_individual(mapping, &buf).unwrap();
+
+        assert_eq!(res, og_value);
+    }
+
+    #[test]
+    fn deserialize_mixed_array() {
+        let buf = [
+            49, 0, 0, 0, 4, 118, 0, 41, 0, 0, 0, 18, 48, 0, 238, 82, 155, 154, 10, 0, 0, 0, 16, 49,
+            0, 10, 0, 0, 0, 16, 50, 0, 0, 0, 0, 0, 18, 51, 0, 238, 82, 155, 154, 10, 0, 0, 0, 0, 0,
+        ];
+
+        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+
+        let mapping = interface
+            .as_mapping_ref(mapping!("/longintegerarray_endpoint"))
+            .unwrap();
+
+        let (at, _) = deserialize_individual(mapping, &buf).unwrap();
+
+        let expected = AstarteType::LongIntegerArray(vec![45543543534, 10, 0, 45543543534]);
+
+        assert_eq!(at, expected);
+    }
+
+    #[test]
+    fn deserialize_empty_array() {
+        let buf = [13, 0, 0, 0, 4, 118, 0, 5, 0, 0, 0, 0, 0];
+
+        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+
+        let mapping = interface
+            .as_mapping_ref(mapping!("/longintegerarray_endpoint"))
+            .unwrap();
+
+        let (at, _) = deserialize_individual(mapping, &buf).unwrap();
+
+        let expected = AstarteType::LongIntegerArray(vec![]);
+
+        assert_eq!(at, expected);
+    }
+
+    #[test]
+    fn deserialize_unset_individual() {
+        let buf = [];
+
+        let interface = Interface::from_str(
+            r#"{
+    "interface_name": "org.astarte-platform.rust.e2etest.DeviceProperty",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "properties",
+    "ownership": "device",
+    "mappings": [
+        {
+            "endpoint": "/%{sensor_id}/double_endpoint",
+            "type": "double",
+            "allow_unset": false
         }
+]}"#,
+        )
+        .unwrap();
+
+        let mapping = interface
+            .as_mapping_ref(mapping!("/1/double_endpoint"))
+            .unwrap();
+
+        let at = deserialize_individual(mapping, &buf);
+
+        assert!(matches!(at, Err(PayloadError::Unset)));
+    }
+
+    #[test]
+    fn deserialize_unset_aggregate() {
+        let buf = [];
+
+        let interface = Interface::from_str(DEVICE_AGGREGATE).unwrap();
+        let object = interface.as_object_ref().unwrap();
+
+        let at = deserialize_object(object, mapping!("/1"), &buf);
+
+        assert!(matches!(at, Err(PayloadError::Unset)));
     }
 }

@@ -53,7 +53,7 @@ impl TopicError {
     }
 }
 
-pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath<'_>), TopicError> {
+pub(crate) fn parse_topic(topic: &str) -> Result<(&str, &str, &str, MappingPath), TopicError> {
     if topic.is_empty() {
         return Err(TopicError::Empty);
     }

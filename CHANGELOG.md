@@ -5,8 +5,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Check if an interface exists and the type is the same of the value
+  passed/received when sending or receiving data from Astarte.
+
 ### Fixed
 - Unset of property send empty buffer instead of document with null value.
+- Deserialize mixed integer BSON arrays from Astarte to the type specified in
+  the interface (longinteger and integer)
 
 ## [0.6.0] - 2023-07-05
 ### Added

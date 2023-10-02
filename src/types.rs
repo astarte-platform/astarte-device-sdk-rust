@@ -24,7 +24,8 @@ use std::convert::TryFrom;
 
 use bson::{Binary, Bson};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use log::debug;
+use serde::Serialize;
 
 use crate::interface::MappingType;
 
@@ -44,6 +45,9 @@ pub enum TypeError {
     /// Failed to convert from Bson array
     #[error("type mismatch in bson array from astarte")]
     FromBsonArrayError,
+    /// Invalid type convert between the BSON and [`AstarteType`]
+    #[error("type mismatch for bson and mapping")]
+    InvalidType,
 }
 
 /// Types supported by the Astarte device.
@@ -67,8 +71,8 @@ pub enum TypeError {
 ///
 /// For more information about the types supported by Astarte see the
 /// [documentation](https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#astarte-data-types-to-bson-types)
-#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(try_from = "Bson", into = "Bson")]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize)]
+#[serde(into = "Bson")]
 pub enum AstarteType {
     Double(f64),
     Integer(i32),
@@ -86,12 +90,10 @@ pub enum AstarteType {
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<DateTime<Utc>>),
 
-    /// A generic empty array. This is not part of the Astarte MQTT v1 protocol. However, it's
-    /// required since we cannot know the type of an empty array. It should only be used when
-    /// converting from a Bson array.
-    EmptyArray,
-
     Unset,
+
+    #[deprecated = "this will never be constructed, was kept for API compatibility but will removed in future versions"]
+    EmptyArray,
 }
 
 macro_rules! check_astype_match {
@@ -111,6 +113,8 @@ impl PartialEq<MappingType> for AstarteType {
             }
         }
 
+        // Will be removed in a future version.
+        #[allow(deprecated)]
         if self == &AstarteType::EmptyArray {
             match other {
                 // The empty array should be equal to any other array
@@ -194,7 +198,7 @@ impl_type_conversion_traits!({
     (Vec<chrono::DateTime<chrono::Utc>>, DateTimeArray),
 });
 
-// we implement float types on the side since they have different requirements
+// We implement float types on the side since they have different requirements
 impl TryFrom<f32> for AstarteType {
     type Error = TypeError;
 
@@ -335,28 +339,9 @@ impl From<AstarteType> for Bson {
                 .collect(),
             AstarteType::DateTimeArray(d) => d.into_iter().collect(),
             AstarteType::Unset => Bson::Null,
+            // Will be removed in a future version
+            #[allow(deprecated)]
             AstarteType::EmptyArray => Bson::Array(Vec::new()),
-        }
-    }
-}
-
-impl TryFrom<Bson> for AstarteType {
-    type Error = TypeError;
-
-    fn try_from(d: Bson) -> Result<Self, Self::Error> {
-        match d {
-            Bson::Double(d) => AstarteType::try_from(d),
-            Bson::String(d) => Ok(AstarteType::from(d)),
-            Bson::Boolean(d) => Ok(AstarteType::from(d)),
-            Bson::Int32(d) => Ok(AstarteType::from(d)),
-            Bson::Int64(d) => Ok(AstarteType::from(d)),
-            Bson::Binary(d) => Ok(AstarteType::from(d.bytes)),
-            Bson::DateTime(d) => Ok(AstarteType::from(d.to_chrono())),
-            Bson::Null => Ok(AstarteType::Unset),
-            Bson::Array(arr) => AstarteType::from_bson_array(arr),
-            _ => Err(Self::Error::FromBsonError(format!(
-                "Can't convert {d:?} to astarte"
-            ))),
         }
     }
 }
@@ -374,19 +359,48 @@ where
 }
 
 impl AstarteType {
+    #[deprecated = "this method will be removed in the next major update"]
     pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, TypeError> {
-        d.into_iter().map(AstarteType::try_from).collect()
+        d.into_iter()
+            .map(|b| match b {
+                Bson::Double(v) => v.try_into(),
+                Bson::String(v) => Ok(v.into()),
+                Bson::Boolean(v) => Ok(v.into()),
+                Bson::Int32(v) => Ok(v.into()),
+                Bson::Int64(v) => Ok(v.into()),
+                Bson::Binary(v) => Ok(v.bytes.into()),
+                Bson::DateTime(v) => Ok(v.to_chrono().into()),
+                _ => Err(TypeError::FromBsonArrayError),
+            })
+            .collect()
     }
 
-    /// Convert a non empty bson array to astarte array
-    pub(crate) fn from_bson_array(array: Vec<Bson>) -> Result<Self, TypeError> {
-        let Some(first) = array.first() else {
-            return Ok(AstarteType::EmptyArray);
-        };
+    /// Check if the variant is [`AstarteType::Unset`].
+    pub fn is_unset(&self) -> bool {
+        matches!(self, AstarteType::Unset)
+    }
 
-        match first {
-            Bson::Double(_) => bson_array(array, |b| b.as_f64()).and_then(AstarteType::try_from),
-            Bson::String(_) => {
+    /// Convert a non empty BSON array to astarte array with all the elements of the same type.
+    pub(crate) fn try_from_array(
+        array: Vec<Bson>,
+        item_type: ArrayType,
+    ) -> Result<Self, TypeError> {
+        if array.is_empty() {
+            return Ok(item_type.as_empty());
+        }
+
+        match item_type {
+            ArrayType::Double => bson_array(array, |b| b.as_f64()).and_then(AstarteType::try_from),
+            ArrayType::Integer => bson_array(array, |b| b.as_i32()).map(AstarteType::from),
+            ArrayType::Boolean => bson_array(array, |b| b.as_bool()).map(AstarteType::from),
+            ArrayType::LongInteger => {
+                bson_array(array, |b| {
+                    // Astarte can send different size integer
+                    b.as_i64().or_else(|| b.as_i32().map(i64::from))
+                })
+                .map(AstarteType::from)
+            }
+            ArrayType::String => {
                 // Take the same string and don't use as_str
                 bson_array(array, |b| match b {
                     Bson::String(s) => Some(s),
@@ -394,10 +408,7 @@ impl AstarteType {
                 })
                 .map(AstarteType::from)
             }
-            Bson::Boolean(_) => bson_array(array, |b| b.as_bool()).map(AstarteType::from),
-            Bson::Int32(_) => bson_array(array, |b| b.as_i32()).map(AstarteType::from),
-            Bson::Int64(_) => bson_array(array, |b| b.as_i64()).map(AstarteType::from),
-            Bson::Binary(_) => {
+            ArrayType::BinaryBlob => {
                 // Take the same buf allocation
                 bson_array(array, |b| match b {
                     Bson::Binary(b) => Some(b.bytes),
@@ -405,7 +416,7 @@ impl AstarteType {
                 })
                 .map(AstarteType::from)
             }
-            Bson::DateTime(_) => {
+            ArrayType::DateTime => {
                 // Manually convert to chrono
                 bson_array(array, |b| match b {
                     Bson::DateTime(d) => Some(d.to_chrono()),
@@ -413,7 +424,141 @@ impl AstarteType {
                 })
                 .map(AstarteType::from)
             }
-            _ => Err(TypeError::FromBsonArrayError),
+        }
+    }
+
+    pub(crate) fn display_type(&self) -> &'static str {
+        match self {
+            AstarteType::Double(_) => "double",
+            AstarteType::Integer(_) => "integer",
+            AstarteType::Boolean(_) => "boolean",
+            AstarteType::LongInteger(_) => "long integer",
+            AstarteType::String(_) => "string",
+            AstarteType::BinaryBlob(_) => "binary blob",
+            AstarteType::DateTime(_) => "datetime",
+            AstarteType::DoubleArray(_) => "double array",
+            AstarteType::IntegerArray(_) => "integer array",
+            AstarteType::BooleanArray(_) => "boolean array",
+            AstarteType::LongIntegerArray(_) => "long integer array",
+            AstarteType::StringArray(_) => "string array",
+            AstarteType::BinaryBlobArray(_) => "binary blob array",
+            AstarteType::DateTimeArray(_) => "datetime array",
+            AstarteType::Unset => "unset",
+            #[allow(deprecated)]
+            AstarteType::EmptyArray => "empty array",
+        }
+    }
+}
+
+/// Type of astarte arrays.
+///
+/// It's used to deserialize a BSON array to the given [`AstarteType`] given this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArrayType {
+    Double,
+    Integer,
+    Boolean,
+    LongInteger,
+    String,
+    BinaryBlob,
+    DateTime,
+}
+
+impl ArrayType {
+    /// Create an empty [`AstarteType`] array.
+    fn as_empty(&self) -> AstarteType {
+        match self {
+            ArrayType::Double => AstarteType::DoubleArray(Vec::new()),
+            ArrayType::Integer => AstarteType::IntegerArray(Vec::new()),
+            ArrayType::Boolean => AstarteType::BooleanArray(Vec::new()),
+            ArrayType::LongInteger => AstarteType::LongIntegerArray(Vec::new()),
+            ArrayType::String => AstarteType::StringArray(Vec::new()),
+            ArrayType::BinaryBlob => AstarteType::BinaryBlobArray(Vec::new()),
+            ArrayType::DateTime => AstarteType::DateTimeArray(Vec::new()),
+        }
+    }
+}
+
+/// Struct to convert a BSON to an [`AstarteType`] with the given [`MappingType`] as hint.
+///
+/// The struct is needed to convert an [`Bson`] value to an [`AstarteType`] since the Astarte's
+/// arrays cannot be of mixed type.
+///
+/// We use this struct to deserialize a buffer into the [`Bson`] so we can have a better control of
+/// the errors when converting it into the astarte type.
+#[derive(Debug, Clone)]
+pub(crate) struct BsonConverter {
+    mapping_type: MappingType,
+    bson: Bson,
+}
+
+impl BsonConverter {
+    /// Create a new hint with the given type
+    pub(crate) fn new(mapping_type: MappingType, bson: Bson) -> Self {
+        Self { mapping_type, bson }
+    }
+
+    /// Tries to convert the [`BsonHint::bson`] to an astarte array.
+    fn try_into_array(self, item_type: ArrayType) -> Result<AstarteType, TypeError> {
+        match self.bson {
+            Bson::Array(val) => AstarteType::try_from_array(val, item_type),
+            _ => Err(TypeError::InvalidType),
+        }
+    }
+}
+
+impl TryFrom<BsonConverter> for AstarteType {
+    type Error = TypeError;
+
+    fn try_from(value: BsonConverter) -> Result<Self, Self::Error> {
+        if value.bson == Bson::Null {
+            debug!("bson null returning unset");
+
+            return Ok(AstarteType::Unset);
+        }
+
+        match value.mapping_type {
+            MappingType::Double => value
+                .bson
+                .as_f64()
+                .ok_or(TypeError::InvalidType)
+                .and_then(AstarteType::try_from),
+            MappingType::Integer => value
+                .bson
+                .as_i32()
+                .ok_or(TypeError::InvalidType)
+                .map(AstarteType::from),
+            MappingType::Boolean => value
+                .bson
+                .as_bool()
+                .ok_or(TypeError::InvalidType)
+                .map(AstarteType::from),
+            MappingType::LongInteger => value
+                .bson
+                .as_i64()
+                // Astarte can send different size integer
+                .or_else(|| value.bson.as_i32().map(i64::from))
+                .ok_or(TypeError::InvalidType)
+                .map(AstarteType::from),
+            MappingType::String => match value.bson {
+                Bson::String(val) => Ok(AstarteType::from(val)),
+                _ => Err(TypeError::InvalidType),
+            },
+            MappingType::BinaryBlob => match value.bson {
+                Bson::Binary(val) => Ok(AstarteType::from(val.bytes)),
+                _ => Err(TypeError::InvalidType),
+            },
+            MappingType::DateTime => match value.bson {
+                Bson::DateTime(val) => Ok(AstarteType::from(val.to_chrono())),
+                _ => Err(TypeError::InvalidType),
+            },
+            MappingType::DoubleArray => value.try_into_array(ArrayType::Double),
+            MappingType::IntegerArray => value.try_into_array(ArrayType::Integer),
+            MappingType::BooleanArray => value.try_into_array(ArrayType::Boolean),
+            MappingType::LongIntegerArray => value.try_into_array(ArrayType::LongInteger),
+            MappingType::StringArray => value.try_into_array(ArrayType::String),
+            MappingType::BinaryBlobArray => value.try_into_array(ArrayType::BinaryBlob),
+            MappingType::DateTimeArray => value.try_into_array(ArrayType::DateTime),
         }
     }
 }
@@ -644,8 +789,23 @@ mod test {
 
         assert_eq!(bson, Bson::Array(vec![]));
 
-        let astarte_type_double: AstarteType = bson.try_into().expect("Failed to convert");
+        let hint = BsonConverter {
+            mapping_type: MappingType::DoubleArray,
+            bson,
+        };
 
-        assert_eq!(astarte_type_double, AstarteType::EmptyArray);
+        let astarte_type_double = AstarteType::try_from(hint).expect("failed to convert");
+
+        assert_eq!(astarte_type_double, AstarteType::DoubleArray(vec![]));
+    }
+
+    #[test]
+    fn tesat_float_validation() {
+        assert_eq!(
+            AstarteType::try_from(54.4).unwrap(),
+            AstarteType::Double(54.4)
+        );
+        AstarteType::try_from(f64::NAN).unwrap_err();
+        AstarteType::try_from(vec![1.0, 2.0, f64::NAN, 4.0]).unwrap_err();
     }
 }

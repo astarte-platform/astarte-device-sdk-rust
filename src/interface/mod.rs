@@ -28,21 +28,26 @@ pub(crate) mod validation;
 use log::info;
 use serde::{Deserialize, Serialize};
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
 
+use crate::interfaces::{MappingRef, ObjectRef, PropertyRef};
+
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
 pub use self::error::InterfaceError;
+use self::mapping::vec::Item;
+use self::mapping::InterfaceMapping;
 use self::{
     def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
     mapping::{
         iter::{IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter},
         path::MappingPath,
+        vec::MappingVec,
         BaseMapping, DatastreamIndividualMapping, PropertiesMapping,
     },
     validation::VersionChange,
@@ -64,7 +69,12 @@ use self::{
 /// compare the parsed endpoint with parameters and the mapping path of a topic received from MQTT.
 ///
 /// A mappings can be accessed by passing the endpoint to the [`Interface::mapping`] method.
-pub(crate) type MappingMap<'a, T> = BTreeMap<MappingPath<'a>, T>;
+pub(crate) type MappingSet<T> = BTreeSet<Item<T>>;
+
+/// Maximum number of mappings an interface can have
+///
+/// See the [Astarte interface scheme](https://docs.astarte-platform.org/latest/040-interface_schema.html#astarte-interface-schema-mappings)
+pub(crate) const MAX_INTERFACE_MAPPINGS: usize = 1024;
 
 /// Astarte interface implementation.
 ///
@@ -78,7 +88,7 @@ pub struct Interface {
     ownership: Ownership,
     description: Option<String>,
     doc: Option<String>,
-    inner: InterfaceType,
+    pub(crate) inner: InterfaceType,
 }
 
 impl Interface {
@@ -146,19 +156,11 @@ impl Interface {
         MappingIter::new(&self.inner)
     }
 
-    pub(crate) fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
+    pub(crate) fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
         match &self.inner {
             InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
             InterfaceType::DatastreamObject(object) => object.mapping(path),
             InterfaceType::Properties(properties) => properties.mapping(path),
-        }
-    }
-
-    pub(crate) fn contains(&self, path: &MappingPath<'_>) -> bool {
-        match &self.inner {
-            InterfaceType::DatastreamIndividual(individual) => individual.contains(path),
-            InterfaceType::DatastreamObject(object) => object.contains(path),
-            InterfaceType::Properties(properties) => properties.contains(path),
         }
     }
 
@@ -170,8 +172,29 @@ impl Interface {
         }
     }
 
+    /// Get a [`MappingRef`] reference of the path if the endpoint is present in the interface.
+    pub(crate) fn as_mapping_ref(&self, path: &MappingPath) -> Option<MappingRef<&Interface>> {
+        MappingRef::new(self, path)
+    }
+
+    /// Check if the interface is a property.
     pub fn is_property(&self) -> bool {
         matches!(self.inner, InterfaceType::Properties(_))
+    }
+
+    /// Returns a [`PropertyRef`] if the interface is a property.
+    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef> {
+        self.is_property().then_some(PropertyRef(self))
+    }
+
+    /// Check if the interface is an object.
+    pub fn is_object(&self) -> bool {
+        matches!(self.inner, InterfaceType::DatastreamObject(_))
+    }
+
+    /// Returns a [`ObjectRef`] if the interface is an object.
+    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
+        ObjectRef::new(self)
     }
 
     /// Getter function for the interface name.
@@ -194,13 +217,16 @@ impl Interface {
 
     /// Validate if an interface is valid
     pub fn validate(&self) -> Result<(), InterfaceError> {
-        // TODO: add additional validation
         if self.version() == (0, 0) {
             return Err(InterfaceError::MajorMinor);
         }
 
         if self.mappings_len() == 0 {
             return Err(InterfaceError::EmptyMappings);
+        }
+
+        if self.mappings_len() > MAX_INTERFACE_MAPPINGS {
+            return Err(InterfaceError::TooManyMappings(self.mappings_len()));
         }
 
         Ok(())
@@ -278,48 +304,38 @@ pub(crate) enum InterfaceType {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct DatastreamIndividual {
-    mappings: MappingMap<'static, DatastreamIndividualMapping>,
+    mappings: MappingVec<DatastreamIndividualMapping>,
 }
 
 impl DatastreamIndividual {
-    pub fn iter_mappings(&self) -> IndividualMappingIter {
+    pub(crate) fn iter_mappings(&self) -> IndividualMappingIter {
         IndividualMappingIter::new(&self.mappings)
     }
 
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
-        let individual = DatastreamIndividualMapping::try_from(mapping)?;
+    pub(crate) fn add_mapping(
+        tree: &mut MappingSet<DatastreamIndividualMapping>,
+        mapping: &Mapping,
+    ) -> Result<(), InterfaceError> {
+        let individual = Item::new(DatastreamIndividualMapping::try_from(mapping)?);
 
-        self.add(individual)
-    }
-
-    pub fn add(&mut self, mapping: DatastreamIndividualMapping) -> Result<(), InterfaceError> {
-        let path = mapping.endpoint().clone().into_owned().into();
-
-        if let Some(existing) = self.mappings.get(&path) {
+        if let Some(existing) = tree.get(&individual) {
             return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
         }
 
-        self.mappings.insert(path, mapping);
+        tree.insert(individual);
 
         Ok(())
     }
 
-    pub fn get<'a: 's, 's>(
-        &'s self,
-        path: &MappingPath<'a>,
-    ) -> Option<&'s DatastreamIndividualMapping> {
+    pub fn get(&self, path: &MappingPath) -> Option<&DatastreamIndividualMapping> {
         self.mappings.get(path)
     }
 
-    pub fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping<'s>> {
+    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
         self.get(path).map(Mapping::from)
-    }
-
-    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
-        self.mappings.contains_key(path)
     }
 }
 
@@ -327,15 +343,15 @@ impl TryFrom<&InterfaceDef<'_>> for DatastreamIndividual {
     type Error = InterfaceError;
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
-        let mut individual = Self {
-            mappings: BTreeMap::new(),
-        };
+        let mut btree = MappingSet::new();
 
         for mapping in value.mappings.iter() {
-            individual.add_mapping(mapping)?;
+            Self::add_mapping(&mut btree, mapping)?;
         }
 
-        Ok(individual)
+        Ok(Self {
+            mappings: MappingVec::from(btree),
+        })
     }
 }
 
@@ -345,7 +361,7 @@ pub(crate) struct DatastreamObject {
     explicit_timestamp: bool,
     retention: Retention,
     database_retention: DatabaseRetention,
-    mappings: MappingMap<'static, BaseMapping>,
+    mappings: MappingVec<BaseMapping>,
 }
 
 impl DatastreamObject {
@@ -377,17 +393,17 @@ impl DatastreamObject {
     ///
     /// Since the interface is an object, the mapping must be compatible with the interface. It
     /// needs to have the same length and prefix as the other mapping.
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
+    pub(crate) fn add_mapping(
+        &self,
+        btree: &mut MappingSet<BaseMapping>,
+        mapping: &Mapping,
+    ) -> Result<(), InterfaceError> {
         if !self.is_compatible(mapping) {
             return Err(InterfaceError::InconsistentMapping);
         }
 
-        let mapping = BaseMapping::try_from(mapping)?;
+        let mapping = Item::new(BaseMapping::try_from(mapping)?);
 
-        self.add(mapping)
-    }
-
-    pub fn add(&mut self, mapping: BaseMapping) -> Result<(), InterfaceError> {
         // Check that the mapping has at least two components
         // https://docs.astarte-platform.org/astarte/latest/030-interface.html#endpoints-and-aggregation
         if mapping.endpoint().len() < 2 {
@@ -397,38 +413,49 @@ impl DatastreamObject {
         }
 
         // Check if the first element exists
-        if let Some((_, entry)) = self.mappings.iter().next() {
+        if let Some(entry) = self.mappings.iter().next() {
             // Check that the mapping has the same endpoint as the other mappings
-            if !entry.endpoint().eq_till_last(mapping.endpoint()) {
+            if !entry.endpoint().is_same_object(mapping.endpoint()) {
                 return Err(InterfaceError::InconsistentEndpoints);
             }
         }
 
-        let path = MappingPath::from(mapping.endpoint().clone_owned());
-
         // Check that the mapping is not already present
-        if let Some(existing) = self.mappings.get(&path) {
+        if let Some(existing) = btree.get(&mapping) {
             return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
         }
 
-        self.mappings.insert(path, mapping);
+        btree.insert(mapping);
 
         Ok(())
     }
 
-    pub fn get<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<&'s BaseMapping> {
+    pub fn get(&self, path: &MappingPath) -> Option<&BaseMapping> {
         self.mappings.get(path)
     }
 
-    pub fn mapping<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<Mapping> {
+    pub fn get_field(&self, base: &MappingPath, field: &str) -> Option<&BaseMapping> {
+        self.mappings.get(&(base, field))
+    }
+
+    /// Returns the number of mappings in the interface.
+    pub(crate) fn len(&self) -> usize {
+        self.mappings.len()
+    }
+
+    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
         self.get(path).map(|base| self.apply(base))
     }
 
-    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
-        self.mappings.contains_key(path)
+    pub(crate) fn reliability(&self) -> Reliability {
+        self.reliability
+    }
+
+    pub(crate) fn explicit_timestamp(&self) -> bool {
+        self.explicit_timestamp
     }
 }
 
@@ -437,13 +464,12 @@ impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
         let mut mappings_iter = value.mappings.iter();
-        let mut mappings_set = BTreeMap::new();
+        let mut btree = MappingSet::new();
 
         let first = mappings_iter.next().ok_or(InterfaceError::EmptyMappings)?;
         let first_base = BaseMapping::try_from(first)?;
 
-        let path = first_base.endpoint().clone_owned().into();
-        mappings_set.insert(path, first_base);
+        btree.insert(Item::new(first_base));
 
         // We create the object from the first mapping and then insert the others, checking if
         // compatible
@@ -452,12 +478,14 @@ impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
             explicit_timestamp: first.explicit_timestamp(),
             retention: first.retention(),
             database_retention: first.database_retention(),
-            mappings: mappings_set,
+            mappings: MappingVec::new(),
         };
 
         for mapping in mappings_iter {
-            object.add_mapping(mapping)?;
+            object.add_mapping(&mut btree, mapping)?;
         }
+
+        object.mappings = MappingVec::from(btree);
 
         Ok(object)
     }
@@ -465,7 +493,7 @@ impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Properties {
-    mappings: MappingMap<'static, PropertiesMapping>,
+    mappings: MappingVec<PropertiesMapping>,
 }
 
 impl Properties {
@@ -473,57 +501,50 @@ impl Properties {
         PropertiesMappingIter::new(&self.mappings)
     }
 
-    pub fn get<'a: 's, 's>(&'s self, path: &MappingPath<'a>) -> Option<&'s PropertiesMapping> {
+    pub fn get(&self, path: &MappingPath) -> Option<&PropertiesMapping> {
         self.mappings.get(path)
     }
 
-    pub fn mapping<'a: 's, 's>(&'s self, endpoint: &MappingPath<'a>) -> Option<Mapping<'s>> {
+    pub fn mapping(&self, endpoint: &MappingPath) -> Option<Mapping> {
         self.get(endpoint).map(Mapping::from)
     }
 
-    pub fn contains(&self, path: &MappingPath<'_>) -> bool {
-        self.mappings.contains_key(path)
-    }
+    pub fn add_mapping(
+        btree: &mut MappingSet<PropertiesMapping>,
+        mapping: &Mapping,
+    ) -> Result<(), InterfaceError> {
+        let property = Item::new(PropertiesMapping::try_from(mapping)?);
 
-    pub fn add_mapping(&mut self, mapping: &Mapping) -> Result<(), InterfaceError> {
-        let property = PropertiesMapping::try_from(mapping)?;
-
-        self.add(property)
-    }
-
-    pub fn add(&mut self, mapping: PropertiesMapping) -> Result<(), InterfaceError> {
-        let path = mapping.endpoint().clone_owned().into();
-
-        if let Some(existing) = self.mappings.get(&path) {
+        if let Some(existing) = btree.get(&property) {
             return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
                 duplicate: mapping.endpoint().to_string(),
             });
         }
 
-        self.mappings.insert(path, mapping);
+        btree.insert(property);
 
         Ok(())
     }
 }
 
-impl TryFrom<&InterfaceDef<'_>> for Properties {
+impl<'a> TryFrom<&InterfaceDef<'a>> for Properties {
     type Error = InterfaceError;
 
     fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
-        let mut properties = Self {
-            mappings: BTreeMap::new(),
-        };
+        let mut btree = MappingSet::new();
 
         for mapping in value.mappings.iter() {
-            properties.add_mapping(mapping)?;
+            Self::add_mapping(&mut btree, mapping)?;
         }
 
-        Ok(properties)
+        Ok(Self {
+            mappings: MappingVec::from(btree),
+        })
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Retention {
     Discard,
     Volatile {
@@ -561,7 +582,7 @@ impl Default for Retention {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum DatabaseRetention {
     NoTtl,
     UseTtl {
@@ -598,9 +619,13 @@ mod tests {
     use crate::{
         interface::{
             def::{DatabaseRetentionPolicyDef, RetentionDef},
-            mapping::{path::MappingPath, BaseMapping, DatastreamIndividualMapping},
+            mapping::{
+                path::MappingPath,
+                vec::{Item, MappingVec},
+                BaseMapping, DatastreamIndividualMapping,
+            },
             Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
-            Mapping, MappingMap, MappingType, Ownership, Reliability, Retention,
+            Mapping, MappingSet, MappingType, Ownership, Reliability, Retention,
         },
         Interface,
     };
@@ -690,12 +715,15 @@ mod tests {
         let description = Some("Interface description".to_owned());
         let doc = Some("Interface doc".to_owned());
 
-        let mut datastream_individual = DatastreamIndividual {
-            mappings: MappingMap::new(),
-        };
+        let btree = MappingSet::from_iter(
+            [value_mapping, other_value_mapping]
+                .into_iter()
+                .map(Item::new),
+        );
 
-        datastream_individual.add(value_mapping).unwrap();
-        datastream_individual.add(other_value_mapping).unwrap();
+        let datastream_individual = DatastreamIndividual {
+            mappings: MappingVec::from(btree),
+        };
 
         let interface = Interface {
             interface_name,

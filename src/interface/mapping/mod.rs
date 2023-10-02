@@ -18,6 +18,8 @@
 
 use std::{borrow::Borrow, ops::Deref};
 
+use log::warn;
+
 use self::endpoint::Endpoint;
 
 use super::{DatabaseRetention, InterfaceError, Mapping, MappingType, Reliability, Retention};
@@ -25,6 +27,7 @@ use super::{DatabaseRetention, InterfaceError, Mapping, MappingType, Reliability
 pub mod endpoint;
 pub mod iter;
 pub mod path;
+pub mod vec;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct DatastreamIndividualMapping {
@@ -33,6 +36,12 @@ pub(crate) struct DatastreamIndividualMapping {
     pub(super) retention: Retention,
     pub(super) database_retention: DatabaseRetention,
     pub(super) explicit_timestamp: bool,
+}
+
+impl InterfaceMapping for DatastreamIndividualMapping {
+    fn endpoint(&self) -> &Endpoint<String> {
+        self.mapping.endpoint()
+    }
 }
 
 impl PartialOrd for DatastreamIndividualMapping {
@@ -67,6 +76,10 @@ impl TryFrom<&Mapping<'_>> for DatastreamIndividualMapping {
     fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
 
+        if value.allow_unset {
+            warn!("datastream cannot have allow_unset, ignoring");
+        }
+
         Ok(Self {
             mapping: base_mapping,
             reliability: value.reliability(),
@@ -77,8 +90,8 @@ impl TryFrom<&Mapping<'_>> for DatastreamIndividualMapping {
     }
 }
 
-impl<'a> Borrow<Endpoint<'a>> for DatastreamIndividualMapping {
-    fn borrow(&self) -> &Endpoint<'a> {
+impl Borrow<Endpoint<String>> for DatastreamIndividualMapping {
+    fn borrow(&self) -> &Endpoint<String> {
         &self.mapping.endpoint
     }
 }
@@ -101,6 +114,12 @@ impl Deref for DatastreamIndividualMapping {
 pub(crate) struct PropertiesMapping {
     pub(super) mapping: BaseMapping,
     pub(super) allow_unset: bool,
+}
+
+impl InterfaceMapping for PropertiesMapping {
+    fn endpoint(&self) -> &Endpoint<String> {
+        self.mapping.endpoint()
+    }
 }
 
 impl PartialOrd for PropertiesMapping {
@@ -131,6 +150,10 @@ impl TryFrom<&Mapping<'_>> for PropertiesMapping {
     fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
 
+        if value.explicit_timestamp {
+            warn!("property cannot have explicit_timestamp, ignoring");
+        }
+
         Ok(Self {
             mapping: base_mapping,
             allow_unset: value.allow_unset(),
@@ -144,8 +167,8 @@ impl Borrow<BaseMapping> for PropertiesMapping {
     }
 }
 
-impl<'a> Borrow<Endpoint<'a>> for PropertiesMapping {
-    fn borrow(&self) -> &Endpoint<'a> {
+impl Borrow<Endpoint<String>> for PropertiesMapping {
+    fn borrow(&self) -> &Endpoint<String> {
         &self.mapping.endpoint
     }
 }
@@ -160,17 +183,13 @@ impl Deref for PropertiesMapping {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct BaseMapping {
-    pub(super) endpoint: Endpoint<'static>,
+    pub(super) endpoint: Endpoint<String>,
     pub(super) mapping_type: MappingType,
     pub(super) description: Option<String>,
     pub(super) doc: Option<String>,
 }
 
 impl BaseMapping {
-    pub(crate) fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
-    }
-
     pub(crate) fn mapping_type(&self) -> MappingType {
         self.mapping_type
     }
@@ -184,8 +203,14 @@ impl BaseMapping {
     }
 }
 
-impl<'a> Borrow<Endpoint<'a>> for BaseMapping {
-    fn borrow(&self) -> &Endpoint<'a> {
+impl InterfaceMapping for BaseMapping {
+    fn endpoint(&self) -> &Endpoint<String> {
+        &self.endpoint
+    }
+}
+
+impl Borrow<Endpoint<String>> for BaseMapping {
+    fn borrow(&self) -> &Endpoint<String> {
         &self.endpoint
     }
 }
@@ -214,7 +239,7 @@ impl<'a> TryFrom<&Mapping<'a>> for BaseMapping {
     type Error = InterfaceError;
 
     fn try_from(value: &Mapping<'a>) -> Result<Self, Self::Error> {
-        let endpoint = Endpoint::try_from(value.endpoint())?.into_owned();
+        let endpoint = Endpoint::try_from(value.endpoint())?;
 
         Ok(Self {
             endpoint,
@@ -223,4 +248,9 @@ impl<'a> TryFrom<&Mapping<'a>> for BaseMapping {
             doc: value.doc().map(ToString::to_string),
         })
     }
+}
+
+/// Mapping of an interface.
+pub(crate) trait InterfaceMapping {
+    fn endpoint(&self) -> &Endpoint<String>;
 }
