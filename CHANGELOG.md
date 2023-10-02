@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Handle MQTT connection errors by trying to reconnect.
 - Make the reconnection attempt wait with an exponential back-off.
+- Check if an interface exists and the type is the same of the value
+  passed/received when sending or receiving data from Astarte.
 
 ### Changed
 - Return a channel for the events when creating a device SDK.
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Unset of property send empty buffer instead of document with null value.
+- Deserialize mixed integer BSON arrays from Astarte to the type specified in
+  the interface (longinteger and integer)
 
 ## [0.6.0] - 2023-07-05
 ### Added
