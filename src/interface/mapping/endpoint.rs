@@ -19,16 +19,13 @@
 //! Endpoint of an interface mapping.
 
 use std::{
-    borrow::{Borrow, Cow},
-    cmp::Ordering,
-    fmt::Display,
-    ops::Deref,
-    slice::Iter as SliceIter,
-    unreachable,
+    borrow::Borrow, cmp::Ordering, fmt::Display, ops::Deref, slice::Iter as SliceIter, unreachable,
 };
 
 use itertools::{EitherOrBoth, Itertools};
 use log::{debug, info, trace};
+
+use super::path::MappingPath;
 
 /// A mapping endpoint.
 ///
@@ -46,45 +43,28 @@ use log::{debug, info, trace};
 /// The endpoints uses Cow to not allocate the string if an error occurs.
 ///
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct Endpoint<'a> {
-    pub(super) path: Cow<'a, str>,
-    pub(super) levels: Vec<Level<'a>>,
+pub(crate) struct Endpoint<T> {
+    pub(super) path: T,
+    pub(super) levels: Vec<Level<T>>,
 }
 
-impl<'a> Endpoint<'a> {
-    pub(crate) fn into_owned(self) -> Endpoint<'static> {
-        // We try to not clone, so we do not have to allocate if we are already borrowed.
-        let Self { path, levels } = self;
-
-        let path = path.into_owned().into();
-
-        // There is no better way to reuse the same vector unfortunately.
-        let levels: Vec<Level<'static>> = levels.into_iter().map(Level::into_owned).collect();
-
-        Endpoint { path, levels }
-    }
-
-    /// Clone an owned endpoint, trying to be smart with allocations
-    pub(crate) fn clone_owned(&self) -> Endpoint<'static> {
-        let path = self.path.clone().into_owned();
-        let levels = self.levels.iter().map(Level::clone_owned).collect();
-
-        Endpoint {
-            path: path.into(),
-            levels,
-        }
-    }
-
-    pub(crate) fn iter(&self) -> SliceIter<Level> {
+impl<T> Endpoint<T> {
+    /// Iter the levels of the endpoint.
+    pub(crate) fn iter(&self) -> SliceIter<Level<T>> {
         self.levels.iter()
     }
 
-    pub(crate) fn cmp_levels(&self, levels: &[&str]) -> Ordering {
+    /// Compare the levels with the one of the endpoint.
+    pub(crate) fn cmp_levels<U>(&self, levels: &[U]) -> Ordering
+    where
+        T: AsRef<str>,
+        U: AsRef<str>,
+    {
         for element in self.iter().zip_longest(levels.iter()) {
             let ordering = match element {
                 EitherOrBoth::Left(_) => Ordering::Greater,
                 EitherOrBoth::Right(_) => Ordering::Less,
-                EitherOrBoth::Both(lvl, o_lvl) => lvl.cmp_str(o_lvl),
+                EitherOrBoth::Both(lvl, o_lvl) => lvl.cmp_str(o_lvl.as_ref()),
             };
 
             if ordering != Ordering::Equal {
@@ -101,7 +81,10 @@ impl<'a> Endpoint<'a> {
     }
 
     /// Check that two endpoints are compatible with the same object.
-    pub(crate) fn eq_till_last(&self, endpoint: &Endpoint) -> bool {
+    pub(crate) fn is_same_object(&self, endpoint: &Self) -> bool
+    where
+        T: PartialEq,
+    {
         if self.len() != endpoint.len() {
             return false;
         }
@@ -122,19 +105,25 @@ impl<'a> Endpoint<'a> {
     }
 }
 
-impl<'a> PartialOrd for Endpoint<'a> {
+impl<T> PartialOrd for Endpoint<T>
+where
+    T: Ord,
+{
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for Endpoint<'a> {
+impl<T> Ord for Endpoint<T>
+where
+    T: Ord,
+{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.levels.cmp(&other.levels)
     }
 }
 
-impl<'a> TryFrom<&'a str> for Endpoint<'a> {
+impl<'a> TryFrom<&'a str> for Endpoint<&'a str> {
     type Error = EndpointError;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
@@ -142,13 +131,27 @@ impl<'a> TryFrom<&'a str> for Endpoint<'a> {
     }
 }
 
-impl<'a> Borrow<str> for Endpoint<'a> {
-    fn borrow(&self) -> &str {
-        &self.path
+impl TryFrom<&str> for Endpoint<String> {
+    type Error = EndpointError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Endpoint::<&str>::try_from(value).map(Endpoint::into)
     }
 }
 
-impl Deref for Endpoint<'_> {
+impl<T> Borrow<str> for Endpoint<T>
+where
+    T: Borrow<str>,
+{
+    fn borrow(&self) -> &str {
+        self.path.borrow()
+    }
+}
+
+impl<T> Deref for Endpoint<T>
+where
+    T: Deref<Target = str>,
+{
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
@@ -156,45 +159,84 @@ impl Deref for Endpoint<'_> {
     }
 }
 
-impl PartialEq<str> for Endpoint<'_> {
+impl<T> PartialEq<str> for Endpoint<T>
+where
+    T: PartialEq<str>,
+{
     fn eq(&self, other: &str) -> bool {
-        self.path == other
+        self.path.eq(other)
     }
 }
 
-impl Display for Endpoint<'_> {
+impl<T> Display for Endpoint<T>
+where
+    T: Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.path)
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum Level<'a> {
-    Simple(Cow<'a, str>),
-    Parameter(Cow<'a, str>),
-}
-
-impl<'a> Level<'a> {
-    pub(crate) fn into_owned(self) -> Level<'static> {
-        match self {
-            Self::Simple(level) => Level::Simple(level.into_owned().into()),
-            Self::Parameter(level) => Level::Parameter(level.into_owned().into()),
+impl From<Endpoint<&str>> for Endpoint<String> {
+    fn from(value: Endpoint<&str>) -> Self {
+        Self {
+            path: value.path.into(),
+            levels: value.levels.into_iter().map(Level::into).collect(),
         }
     }
+}
 
-    pub(crate) fn cmp_str(&self, other: &str) -> Ordering {
+impl<'a, T> PartialEq<MappingPath<'a>> for Endpoint<T>
+where
+    T: AsRef<str>,
+{
+    fn eq(&self, other: &MappingPath<'a>) -> bool {
+        self.levels == other.levels
+    }
+}
+
+impl<'a, T> PartialOrd<MappingPath<'a>> for Endpoint<T>
+where
+    T: AsRef<str>,
+{
+    fn partial_cmp(&self, other: &MappingPath<'a>) -> Option<Ordering> {
+        Some(self.cmp_levels(&other.levels))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Level<T> {
+    Simple(T),
+    Parameter(T),
+}
+
+impl<T> Level<T> {
+    pub(crate) fn cmp_str(&self, other: &str) -> Ordering
+    where
+        T: AsRef<str>,
+    {
         match self {
             Self::Simple(level) => level.as_ref().cmp(other),
             Self::Parameter(_) => Ordering::Equal,
         }
     }
 
-    pub(crate) fn clone_owned(&self) -> Level<'static> {
-        self.clone().into_owned()
+    /// Check if the level is eq to the string
+    pub(crate) fn eq_str(&self, other: &str) -> bool
+    where
+        T: AsRef<str>,
+    {
+        match self {
+            Level::Simple(level) => level.as_ref() == other,
+            Level::Parameter(_) => true,
+        }
     }
 }
 
-impl<'a> Display for Level<'a> {
+impl<T> Display for Level<T>
+where
+    T: Display,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Simple(level) => write!(f, "{}", level),
@@ -204,13 +246,55 @@ impl<'a> Display for Level<'a> {
     }
 }
 
-impl<'a> PartialOrd for Level<'a> {
+impl<T> PartialOrd for Level<T>
+where
+    T: Ord,
+{
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> Ord for Level<'a> {
+impl<T> PartialEq<str> for Level<T>
+where
+    T: AsRef<str>,
+{
+    fn eq(&self, other: &str) -> bool {
+        self.eq_str(other)
+    }
+}
+
+impl<T> PartialOrd<str> for Level<T>
+where
+    T: AsRef<str>,
+{
+    fn partial_cmp(&self, other: &str) -> Option<Ordering> {
+        Some(self.cmp_str(other))
+    }
+}
+
+impl<T> PartialEq<&str> for Level<T>
+where
+    T: AsRef<str>,
+{
+    fn eq(&self, other: &&str) -> bool {
+        self.eq_str(other)
+    }
+}
+
+impl<T> PartialOrd<&str> for Level<T>
+where
+    T: AsRef<str>,
+{
+    fn partial_cmp(&self, other: &&str) -> Option<Ordering> {
+        Some(self.cmp_str(other))
+    }
+}
+
+impl<T> Ord for Level<T>
+where
+    T: Ord,
+{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // This could be simplified in an if, but i kept it explicit for clarity.
         match (self, other) {
@@ -219,6 +303,15 @@ impl<'a> Ord for Level<'a> {
             (Self::Parameter(_), Self::Parameter(_))
             | (Self::Simple(_), Self::Parameter(_))
             | (Self::Parameter(_), Self::Simple(_)) => std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+impl From<Level<&str>> for Level<String> {
+    fn from(value: Level<&str>) -> Self {
+        match value {
+            Level::Simple(simple) => Level::Simple(simple.into()),
+            Level::Parameter(param) => Level::Parameter(param.into()),
         }
     }
 }
@@ -289,7 +382,7 @@ pub enum LevelError {
 ///
 /// - We allow ending the level with a '%' since we can peek
 ///
-fn parse_endpoint(input: &str) -> Result<Endpoint, EndpointError> {
+fn parse_endpoint(input: &str) -> Result<Endpoint<&str>, EndpointError> {
     debug!("parsing endpoint: {}", input);
 
     let endpoint = input
@@ -299,7 +392,7 @@ fn parse_endpoint(input: &str) -> Result<Endpoint, EndpointError> {
     let levels = endpoint
         .split('/')
         .map(parse_level)
-        .collect::<Result<Vec<Level>, LevelError>>()
+        .collect::<Result<Vec<_>, LevelError>>()
         .map_err(|error| EndpointError::Level {
             input: input.to_string(),
             error,
@@ -312,26 +405,26 @@ fn parse_endpoint(input: &str) -> Result<Endpoint, EndpointError> {
     info!("levels: {:?}", levels);
 
     Ok(Endpoint {
-        path: input.into(),
+        path: input,
         levels,
     })
 }
 
-fn parse_level(input: &str) -> Result<Level, LevelError> {
+fn parse_level(input: &str) -> Result<Level<&str>, LevelError> {
     trace!("parsing level: {}", input);
 
     let level = match parse_parameter(input)? {
         Some(param) => {
             trace!("level is a parameter: {}", param);
 
-            Level::Parameter(Cow::from(param))
+            Level::Parameter(param)
         }
         None => {
             let level = parse_simple(input)?;
 
             trace!("level is simple: {}", level);
 
-            Level::Simple(Cow::from(level))
+            Level::Simple(level)
         }
     };
 
@@ -353,9 +446,7 @@ fn parse_simple(input: &str) -> Result<&str, LevelError> {
                 return Err(LevelError::Parameter);
             }
             '/' => unreachable!("level shouldn't contain '/' since it is used as separator"),
-            _ => {
-                trace!("level char: {}", chr)
-            }
+            _ => {}
         }
     }
 
@@ -383,8 +474,11 @@ fn parse_parameter(input: &str) -> Result<Option<&str>, LevelError> {
 mod tests {
     use super::*;
 
-    impl<'a> Endpoint<'a> {
-        pub(crate) fn eq_strict(&self, other: &Self) -> bool {
+    impl<T> Endpoint<T> {
+        pub(crate) fn eq_strict(&self, other: &Self) -> bool
+        where
+            T: PartialEq,
+        {
             if self.path != other.path {
                 return false;
             }
@@ -433,7 +527,7 @@ mod tests {
 
         let level = res.unwrap();
 
-        assert_eq!(level, Level::Parameter(Cow::from("test")));
+        assert_eq!(level, Level::Parameter("test"));
     }
 
     #[test]
@@ -449,11 +543,11 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/a/%{b}/c".into(),
+            path: "/a/%{b}/c",
             levels: vec![
-                Level::Simple(Cow::from("a")),
-                Level::Parameter(Cow::from("b")),
-                Level::Simple(Cow::from("c")),
+                Level::Simple("a"),
+                Level::Parameter("b"),
+                Level::Simple("c"),
             ],
         };
 
@@ -478,11 +572,11 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/%{a}/b/c".into(),
+            path: "/%{a}/b/c",
             levels: vec![
-                Level::Parameter(Cow::from("a")),
-                Level::Simple(Cow::from("b")),
-                Level::Simple(Cow::from("c")),
+                Level::Parameter("a"),
+                Level::Simple("b"),
+                Level::Simple("c"),
             ],
         };
 
@@ -507,13 +601,13 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/a/%{b}/c/%{d}/e".into(),
+            path: "/a/%{b}/c/%{d}/e",
             levels: vec![
-                Level::Simple(Cow::from("a")),
-                Level::Parameter(Cow::from("b")),
-                Level::Simple(Cow::from("c")),
-                Level::Parameter(Cow::from("d")),
-                Level::Simple(Cow::from("e")),
+                Level::Simple("a"),
+                Level::Parameter("b"),
+                Level::Simple("c"),
+                Level::Parameter("d"),
+                Level::Simple("e"),
             ],
         };
 
@@ -531,21 +625,18 @@ mod tests {
             (
                 "/%{sensor_id}/boolean_endpoint",
                 Endpoint {
-                    path: "/%{sensor_id}/boolean_endpoint".into(),
+                    path: "/%{sensor_id}/boolean_endpoint",
                     levels: vec![
-                        Level::Parameter(Cow::from("sensor_id")),
-                        Level::Simple(Cow::from("boolean_endpoint")),
+                        Level::Parameter("sensor_id"),
+                        Level::Simple("boolean_endpoint"),
                     ],
                 },
             ),
             (
                 "/%{sensor_id}/enable",
                 Endpoint {
-                    path: "/%{sensor_id}/enable".into(),
-                    levels: vec![
-                        Level::Parameter(Cow::from("sensor_id")),
-                        Level::Simple(Cow::from("enable")),
-                    ],
+                    path: "/%{sensor_id}/enable",
+                    levels: vec![Level::Parameter("sensor_id"), Level::Simple("enable")],
                 },
             ),
         ];

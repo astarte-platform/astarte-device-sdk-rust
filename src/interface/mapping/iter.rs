@@ -18,13 +18,11 @@
 
 //! Iterators over an interface mappings mappings.
 
-use std::{collections::btree_map::Values, iter::FusedIterator};
+use std::iter::FusedIterator;
 
-use crate::interface::{DatastreamObject, InterfaceType, Mapping, MappingMap, MappingPath};
+use crate::interface::{DatastreamObject, InterfaceType, Mapping, MappingVec};
 
-use super::{BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
-
-type ValuesIter<'a, T> = Values<'a, MappingPath<'a>, T>;
+use super::{vec::ItemIter, BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
 
 pub(crate) enum MappingIter<'a> {
     Properties(PropertiesMappingIter<'a>),
@@ -88,13 +86,13 @@ impl FusedIterator for MappingIter<'_> {}
 
 #[derive(Debug, Clone)]
 pub(crate) struct PropertiesMappingIter<'a> {
-    properties: ValuesIter<'a, PropertiesMapping>,
+    properties: ItemIter<'a, PropertiesMapping>,
 }
 
 impl<'a> PropertiesMappingIter<'a> {
-    pub(crate) fn new(properties: &'a MappingMap<PropertiesMapping>) -> Self {
+    pub(crate) fn new(properties: &'a MappingVec<PropertiesMapping>) -> Self {
         Self {
-            properties: properties.values(),
+            properties: properties.iter(),
         }
     }
 }
@@ -127,13 +125,13 @@ impl FusedIterator for PropertiesMappingIter<'_> {}
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndividualMappingIter<'a> {
-    properties: ValuesIter<'a, DatastreamIndividualMapping>,
+    properties: ItemIter<'a, DatastreamIndividualMapping>,
 }
 
 impl<'a> IndividualMappingIter<'a> {
-    pub(crate) fn new(properties: &'a MappingMap<DatastreamIndividualMapping>) -> Self {
+    pub(crate) fn new(properties: &'a MappingVec<DatastreamIndividualMapping>) -> Self {
         Self {
-            properties: properties.values(),
+            properties: properties.iter(),
         }
     }
 }
@@ -167,14 +165,14 @@ impl FusedIterator for IndividualMappingIter<'_> {}
 #[derive(Debug, Clone)]
 pub(crate) struct ObjectMappingIter<'a> {
     interface: &'a DatastreamObject,
-    properties: ValuesIter<'a, BaseMapping>,
+    properties: ItemIter<'a, BaseMapping>,
 }
 
 impl<'a> ObjectMappingIter<'a> {
     pub(crate) fn new(interface: &'a DatastreamObject) -> Self {
         Self {
             interface,
-            properties: interface.mappings.values(),
+            properties: interface.mappings.iter(),
         }
     }
 }

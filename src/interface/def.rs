@@ -89,7 +89,7 @@ pub(super) struct InterfaceDef<'a> {
 //
 /// You can find the specification here
 /// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct Mapping<'a> {
     pub(super) endpoint: &'a str,
     #[serde(rename = "type")]
@@ -158,7 +158,7 @@ impl<'a> Mapping<'a> {
     pub(crate) fn retention(&self) -> Retention {
         match self.retention {
             RetentionDef::Discard => {
-                if self.expiry >= 0 {
+                if self.expiry > 0 {
                     warn!("Discard retention policy with expiry set, ignoring expiry");
                 }
 
@@ -274,6 +274,15 @@ pub enum InterfaceTypeDef {
     Properties,
 }
 
+impl Display for InterfaceTypeDef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterfaceTypeDef::Datastream => write!(f, "datastream"),
+            InterfaceTypeDef::Properties => write!(f, "properties"),
+        }
+    }
+}
+
 /// Ownership of an interface.
 ///
 /// See [Interface Schema](https://docs.astarte-platform.org/latest/040-interface_schema.html#reference-astarte-interface-schema)
@@ -295,6 +304,15 @@ pub enum Aggregation {
     #[default]
     Individual,
     Object,
+}
+
+impl Display for Aggregation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Aggregation::Individual => write!(f, "individual"),
+            Aggregation::Object => write!(f, "object"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]

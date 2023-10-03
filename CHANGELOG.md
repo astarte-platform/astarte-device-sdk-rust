@@ -16,8 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device id and realm.
 - Make the `DynError` trait bound shareable across threads.
 
+## [0.6.1] - 2023-10-02
+- Check if an interface exists and the type is the same of the value
+  passed/received when sending or receiving data from Astarte.
+
 ### Fixed
 - Unset of property send empty buffer instead of document with null value.
+- Deserialize mixed integer BSON arrays from Astarte to the type specified in
+  the interface (longinteger and integer)
 
 ## [0.6.0] - 2023-07-05
 ### Added

@@ -26,8 +26,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use super::{PropertyStore, StoredProp};
 use crate::{
-    payload::{self, Payload, PayloadError},
-    types::AstarteType,
+    interface::MappingType,
+    payload::{Payload, PayloadError},
+    types::{AstarteType, BsonConverter, TypeError},
 };
 
 /// Error returned by the [`SqliteStore`].
@@ -50,16 +51,39 @@ pub enum SqliteError {
     /// Error returned when the database query fails
     #[error("could not execute query")]
     Query(#[from] sqlx::Error),
+    /// Couldn't convert the stored value.
+    #[error("couldn't convert the stored value")]
+    Value(#[from] ValueError),
     /// Error returned when the decode of the bson fails
     #[error("could not decode property from bson")]
+    #[deprecated = "moved to the ValueError"]
     Decode(#[from] PayloadError),
+}
+
+/// Error when de/serializing a value stored in the [`SqliteStore`].
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum ValueError {
+    /// Couldn't convert to AstarteType.
+    #[error("couldn't convert to AstarteType")]
+    Conversion(#[from] TypeError),
+    /// Couldn't decode the BSON buffer.
+    #[error("couldn't decode property from bson")]
+    Decode(#[from] PayloadError),
+    /// Unsupported [`AstarteType`].
+    #[error("unsupported property type {0}")]
+    UnsupportedType(&'static str),
+    /// Unsupported [`AstarteType`].
+    #[error("unsupported stored type {0}, expected [0-13]")]
+    StoredType(u8),
 }
 
 /// Result of the load_prop query
 #[derive(Clone)]
 struct PropRecord {
-    interface_major: i32,
     value: Vec<u8>,
+    stored_type: u8,
+    interface_major: i32,
 }
 
 impl Debug for PropRecord {
@@ -79,25 +103,88 @@ impl Debug for PropRecord {
     }
 }
 
+impl TryFrom<PropRecord> for AstarteType {
+    type Error = ValueError;
+
+    fn try_from(record: PropRecord) -> Result<Self, Self::Error> {
+        deserialize_prop(record.stored_type, &record.value)
+    }
+}
+
 /// Result of the load_all_props query
 #[derive(Debug, Clone)]
 struct StoredRecord {
     interface: String,
     path: String,
     value: Vec<u8>,
+    stored_type: u8,
     interface_major: i32,
 }
 
+fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
+    let mapping_type = match value {
+        AstarteType::Unset => 0,
+        AstarteType::Double(_) => 1,
+        AstarteType::Integer(_) => 2,
+        AstarteType::Boolean(_) => 3,
+        AstarteType::LongInteger(_) => 4,
+        AstarteType::String(_) => 5,
+        AstarteType::BinaryBlob(_) => 6,
+        AstarteType::DateTime(_) => 7,
+        AstarteType::DoubleArray(_) => 8,
+        AstarteType::IntegerArray(_) => 9,
+        AstarteType::BooleanArray(_) => 10,
+        AstarteType::LongIntegerArray(_) => 11,
+        AstarteType::StringArray(_) => 12,
+        AstarteType::BinaryBlobArray(_) => 13,
+        AstarteType::DateTimeArray(_) => 14,
+        #[allow(deprecated)]
+        AstarteType::EmptyArray => {
+            return Err(ValueError::UnsupportedType(value.display_type()));
+        }
+    };
+
+    Ok(mapping_type)
+}
+
+fn from_stored_type(value: u8) -> Result<Option<MappingType>, ValueError> {
+    let mapping_type = match value {
+        // Property is unset
+        0 => {
+            return Ok(None);
+        }
+        1 => MappingType::Double,
+        2 => MappingType::Integer,
+        3 => MappingType::Boolean,
+        4 => MappingType::LongInteger,
+        5 => MappingType::String,
+        6 => MappingType::BinaryBlob,
+        7 => MappingType::DateTime,
+        8 => MappingType::DoubleArray,
+        9 => MappingType::IntegerArray,
+        10 => MappingType::BooleanArray,
+        11 => MappingType::LongIntegerArray,
+        12 => MappingType::StringArray,
+        13 => MappingType::BinaryBlobArray,
+        14 => MappingType::DateTimeArray,
+        15.. => {
+            return Err(ValueError::StoredType(value));
+        }
+    };
+
+    Ok(Some(mapping_type))
+}
+
 impl TryFrom<StoredRecord> for StoredProp {
-    type Error = PayloadError;
+    type Error = ValueError;
 
     fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
-        let payload = Payload::try_from(record.value.as_slice())?;
+        let value = deserialize_prop(record.stored_type, &record.value)?;
 
         Ok(StoredProp {
             interface: record.interface,
             path: record.path,
-            value: payload.value,
+            value,
             interface_major: record.interface_major,
         })
     }
@@ -168,13 +255,15 @@ impl PropertyStore for SqliteStore {
             interface, path, value
         );
 
-        let ser = payload::serialize_individual(value, None)?;
+        let mapping_type = into_stored_type(value)?;
+        let buf = Payload::new(value).to_vec()?;
 
         sqlx::query_file!(
             "queries/store_prop.sql",
             interface,
             path,
-            ser,
+            buf,
+            mapping_type,
             interface_major
         )
         .execute(&self.db_conn)
@@ -210,9 +299,9 @@ impl PropertyStore for SqliteStore {
                     return Ok(None);
                 }
 
-                payload::deserialize_individual(&record.value)
-                    .map(Some)
-                    .map_err(SqliteError::from)
+                let ast_ty = record.try_into()?;
+
+                Ok(Some(ast_ty))
             }
             None => Ok(None),
         }
@@ -242,6 +331,18 @@ impl PropertyStore for SqliteStore {
 
         Ok(res)
     }
+}
+
+/// Deserialize a property from the store.
+fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueError> {
+    let Some(mapping_type) = from_stored_type(stored_type)? else {
+        return Ok(AstarteType::Unset);
+    };
+
+    let payload = Payload::from_slice(buf)?;
+    let value = BsonConverter::new(mapping_type, payload.value);
+
+    value.try_into().map_err(ValueError::from)
 }
 
 #[cfg(test)]

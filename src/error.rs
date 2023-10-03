@@ -21,13 +21,14 @@
 use std::convert::Infallible;
 
 use crate::interface::mapping::path::MappingError;
-use crate::interface::InterfaceError;
+use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
 use crate::options::OptionsError;
 use crate::payload::PayloadError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::topic::TopicError;
 use crate::types::TypeError;
+use crate::validate::ValidationError;
 
 /// Astarte error.
 ///
@@ -35,6 +36,7 @@ use crate::types::TypeError;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[deprecated = "The error is unused and will be removed in a future version"]
     #[error("bson client error")]
     BsonClientError(#[from] rumqttc::ClientError),
 
@@ -45,6 +47,7 @@ pub enum Error {
     #[error("mqtt connection reached max retries")]
     ConnectionTimeout,
 
+    #[deprecated = "The error is unused and will be removed in a future version"]
     #[error("send error ({0})")]
     SendError(String),
 
@@ -57,6 +60,7 @@ pub enum Error {
     #[error("invalid interface")]
     Interface(#[from] InterfaceError),
 
+    #[deprecated = "The error is unused and will be removed in a future version"]
     #[error("generic error ({0})")]
     Reported(String),
 
@@ -87,4 +91,25 @@ pub enum Error {
     /// Error returned by a store operation.
     #[error("couldn't complete store operation")]
     Database(#[from] StoreError),
+
+    /// Error missing interface
+    #[error("couldn't find the interface {0}")]
+    MissingInterface(String),
+
+    /// Error missing mapping in interface
+    #[error("couldn't find mapping {mapping} in interface {interface}")]
+    MissingMapping { interface: String, mapping: String },
+
+    /// Send or receive validation failed
+    #[error("validation of the payload failed")]
+    Validation(#[from] ValidationError),
+
+    #[error("invalid aggregation, expected {exp} but got {got}")]
+    Aggregation { exp: Aggregation, got: Aggregation },
+
+    #[error("invalid interface type, expected {exp} but got {got}")]
+    InterfaceType {
+        exp: InterfaceTypeDef,
+        got: InterfaceTypeDef,
+    },
 }

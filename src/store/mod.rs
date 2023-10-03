@@ -40,7 +40,8 @@ pub mod wrapper;
 #[async_trait]
 pub trait PropertyStore: Debug + Send + Sync + 'static
 where
-    // NOTE: the 'static bound is required for the MSRV, in other version the error is not present
+    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
+    //       bound to further restrict the error type.
     Self::Err: StdError + Send + Sync + 'static,
 {
     type Err;
@@ -84,6 +85,10 @@ pub struct StoredProp {
 
 #[cfg(test)]
 mod tests {
+    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
+
+    use chrono::{TimeZone, Utc};
+
     use super::*;
 
     pub(crate) async fn test_property_store<S>(store: S)
@@ -94,7 +99,7 @@ mod tests {
 
         store.clear().await.unwrap();
 
-        //non existing
+        // non existing
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
@@ -189,5 +194,52 @@ mod tests {
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
 
         assert_eq!(props, expected);
+
+        // test all types
+        let all_types = [
+            AstarteType::Double(4.5),
+            AstarteType::Integer(-4),
+            AstarteType::Boolean(true),
+            AstarteType::LongInteger(45543543534_i64),
+            AstarteType::String("hello".into()),
+            AstarteType::BinaryBlob(b"hello".to_vec()),
+            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteType::BooleanArray(vec![true, false, true, true]),
+            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteType::DateTimeArray(vec![
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
+            ]),
+        ];
+
+        for ty in all_types {
+            let path = format!("/test/{}", ty.display_type());
+            store.store_prop("com.test", &path, &ty, 1).await.unwrap();
+
+            let res = store.load_prop("com.test", &path, 1).await.unwrap();
+
+            assert_eq!(res, Some(ty));
+        }
+    }
+
+    /// Test that the error is Send + Sync + 'static to be send across task boundaries.
+    #[tokio::test]
+    async fn erro_should_compatible_with_tokio() {
+        let mem = StoreWrapper::new(MemoryStore::new());
+
+        let exp = AstarteType::Integer(1);
+        mem.store_prop("com.test", "/test", &exp, 1).await.unwrap();
+
+        let res = tokio::spawn(async move { mem.load_prop("com.test", "/test", 1).await })
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(res, Some(exp));
     }
 }
