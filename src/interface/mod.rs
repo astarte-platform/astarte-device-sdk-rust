@@ -80,7 +80,7 @@ pub(crate) const MAX_INTERFACE_MAPPINGS: usize = 1024;
 ///
 /// Should be used only through its methods, not instantiated directly.
 #[derive(Deserialize, Debug, PartialEq, Eq, Clone)]
-#[serde(try_from = "InterfaceDef")]
+#[serde(try_from = "InterfaceDef<std::borrow::Cow<str>>")]
 pub struct Interface {
     interface_name: String,
     version_major: i32,
@@ -156,7 +156,7 @@ impl Interface {
         MappingIter::new(&self.inner)
     }
 
-    pub(crate) fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
+    pub(crate) fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
         match &self.inner {
             InterfaceType::DatastreamIndividual(individual) => individual.mapping(path),
             InterfaceType::DatastreamObject(object) => object.mapping(path),
@@ -321,16 +321,19 @@ impl DatastreamIndividual {
         IndividualMappingIter::new(&self.mappings)
     }
 
-    pub(crate) fn add_mapping(
+    pub(crate) fn add_mapping<T>(
         tree: &mut MappingSet<DatastreamIndividualMapping>,
-        mapping: &Mapping,
-    ) -> Result<(), InterfaceError> {
+        mapping: &Mapping<T>,
+    ) -> Result<(), InterfaceError>
+    where
+        T: AsRef<str> + Into<String>,
+    {
         let individual = Item::new(DatastreamIndividualMapping::try_from(mapping)?);
 
         if let Some(existing) = tree.get(&individual) {
             return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
-                duplicate: mapping.endpoint().to_string(),
+                duplicate: mapping.endpoint().as_ref().into(),
             });
         }
 
@@ -343,15 +346,18 @@ impl DatastreamIndividual {
         self.mappings.get(path)
     }
 
-    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
+    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
         self.get(path).map(Mapping::from)
     }
 }
 
-impl TryFrom<&InterfaceDef<'_>> for DatastreamIndividual {
+impl<'a, T> TryFrom<&'a InterfaceDef<T>> for DatastreamIndividual
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
         let mut btree = MappingSet::new();
 
         for mapping in value.mappings.iter() {
@@ -374,7 +380,7 @@ pub(crate) struct DatastreamObject {
 }
 
 impl DatastreamObject {
-    pub(crate) fn apply<'a>(&self, base_mapping: &'a BaseMapping) -> Mapping<'a> {
+    pub(crate) fn apply<'a>(&self, base_mapping: &'a BaseMapping) -> Mapping<&'a str> {
         let mut mapping = Mapping::from(base_mapping);
 
         mapping.reliability = self.reliability;
@@ -391,7 +397,7 @@ impl DatastreamObject {
     }
 
     /// Check if the mapping is compatible with the interface
-    pub fn is_compatible(&self, mapping: &Mapping) -> bool {
+    pub fn is_compatible<T>(&self, mapping: &Mapping<T>) -> bool {
         mapping.reliability() == self.reliability
             && mapping.explicit_timestamp() == self.explicit_timestamp
             && mapping.retention() == self.retention
@@ -402,11 +408,14 @@ impl DatastreamObject {
     ///
     /// Since the interface is an object, the mapping must be compatible with the interface. It
     /// needs to have the same length and prefix as the other mapping.
-    pub(crate) fn add_mapping(
+    pub(crate) fn add_mapping<T>(
         &self,
         btree: &mut MappingSet<BaseMapping>,
-        mapping: &Mapping,
-    ) -> Result<(), InterfaceError> {
+        mapping: &Mapping<T>,
+    ) -> Result<(), InterfaceError>
+    where
+        T: AsRef<str> + Into<String>,
+    {
         if !self.is_compatible(mapping) {
             return Err(InterfaceError::InconsistentMapping);
         }
@@ -455,7 +464,7 @@ impl DatastreamObject {
         self.mappings.len()
     }
 
-    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping> {
+    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
         self.get(path).map(|base| self.apply(base))
     }
 
@@ -468,10 +477,13 @@ impl DatastreamObject {
     }
 }
 
-impl TryFrom<&InterfaceDef<'_>> for DatastreamObject {
+impl<T> TryFrom<&InterfaceDef<T>> for DatastreamObject
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
         let mut mappings_iter = value.mappings.iter();
         let mut btree = MappingSet::new();
 
@@ -514,20 +526,23 @@ impl Properties {
         self.mappings.get(path)
     }
 
-    pub fn mapping(&self, endpoint: &MappingPath) -> Option<Mapping> {
+    pub fn mapping(&self, endpoint: &MappingPath) -> Option<Mapping<&str>> {
         self.get(endpoint).map(Mapping::from)
     }
 
-    pub fn add_mapping(
+    pub fn add_mapping<T>(
         btree: &mut MappingSet<PropertiesMapping>,
-        mapping: &Mapping,
-    ) -> Result<(), InterfaceError> {
+        mapping: &Mapping<T>,
+    ) -> Result<(), InterfaceError>
+    where
+        T: AsRef<str> + Into<String>,
+    {
         let property = Item::new(PropertiesMapping::try_from(mapping)?);
 
         if let Some(existing) = btree.get(&property) {
             return Err(InterfaceError::DuplicateMapping {
                 endpoint: existing.endpoint().to_string(),
-                duplicate: mapping.endpoint().to_string(),
+                duplicate: mapping.endpoint().as_ref().into(),
             });
         }
 
@@ -537,10 +552,13 @@ impl Properties {
     }
 }
 
-impl<'a> TryFrom<&InterfaceDef<'a>> for Properties {
+impl<T> TryFrom<&InterfaceDef<T>> for Properties
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &InterfaceDef) -> Result<Self, Self::Error> {
+    fn try_from(value: &InterfaceDef<T>) -> Result<Self, Self::Error> {
         let mut btree = MappingSet::new();
 
         for mapping in value.mappings.iter() {
@@ -567,7 +585,7 @@ pub(crate) enum Retention {
 }
 
 impl Retention {
-    pub(self) fn apply(&self, mapping: &mut Mapping) {
+    pub(self) fn apply<T>(&self, mapping: &mut Mapping<T>) {
         match self {
             Retention::Discard => {
                 mapping.retention = RetentionDef::Discard;
@@ -601,7 +619,7 @@ pub(crate) enum DatabaseRetention {
 }
 
 impl DatabaseRetention {
-    pub(self) fn apply(&self, mapping: &mut Mapping) {
+    pub(self) fn apply<T>(&self, mapping: &mut Mapping<T>) {
         match self {
             DatabaseRetention::NoTtl => {
                 mapping.database_retention_policy = DatabaseRetentionPolicyDef::NoTtl;
@@ -636,7 +654,7 @@ mod tests {
             Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
             Mapping, MappingSet, MappingType, Ownership, Reliability, Retention,
         },
-        Interface,
+        mapping, Interface,
     };
 
     // The mappings are sorted alphabetically by endpoint, so we can confront them
@@ -782,8 +800,8 @@ mod tests {
         let paths: Vec<_> = interface.iter_mappings().collect();
 
         assert_eq!(paths.len(), 2);
-        assert_eq!(paths[0].endpoint(), "/%{sensor_id}/aaaa");
-        assert_eq!(paths[1].endpoint(), "/%{sensor_id}/bbbb");
+        assert_eq!(*paths[0].endpoint(), "/%{sensor_id}/aaaa");
+        assert_eq!(*paths[1].endpoint(), "/%{sensor_id}/bbbb");
 
         let path = MappingPath::try_from("/1/aaaa").unwrap();
 
@@ -873,5 +891,39 @@ mod tests {
         let interface = Interface::from_str(INTERFACE_JSON).unwrap();
 
         assert_eq!(interface.as_prop(), None);
+    }
+
+    #[test]
+    fn test_with_escaped_descriptions() {
+        let json = r#"{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "description": "Interface description \"escaped\"",
+            "doc": "Interface doc \"escaped\"",
+            "mappings": [{
+                "endpoint": "/double_endpoint",
+                "type": "double",
+                "doc": "Mapping doc \"escaped\""
+            }]
+        }"#;
+
+        let interface = Interface::from_str(json).unwrap();
+
+        assert_eq!(
+            interface.description().unwrap(),
+            r#"Interface description "escaped""#
+        );
+        assert_eq!(interface.doc().unwrap(), r#"Interface doc "escaped""#);
+        assert_eq!(
+            *interface
+                .mapping(mapping!("/double_endpoint"))
+                .unwrap()
+                .doc()
+                .unwrap(),
+            r#"Mapping doc "escaped""#
+        );
     }
 }

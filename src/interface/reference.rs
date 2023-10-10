@@ -86,7 +86,7 @@ impl<'a> Deref for ObjectRef<'a> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MappingRef<'m, I> {
     interface: I,
-    mapping: Mapping<'m>,
+    mapping: Mapping<&'m str>,
 }
 
 impl<'a> MappingRef<'a, &'a Interface> {
@@ -114,7 +114,7 @@ impl<'a> MappingRef<'a, PropertyRef<'a>> {
 
 impl<'a, I> MappingRef<'a, I> {
     #[inline]
-    pub(crate) fn mapping(&self) -> &Mapping {
+    pub(crate) fn mapping(&self) -> &Mapping<&'a str> {
         &self.mapping
     }
 
@@ -125,7 +125,7 @@ impl<'a, I> MappingRef<'a, I> {
 }
 
 impl<'a, I> Deref for MappingRef<'a, I> {
-    type Target = Mapping<'a>;
+    type Target = Mapping<&'a str>;
 
     fn deref(&self) -> &Self::Target {
         &self.mapping
