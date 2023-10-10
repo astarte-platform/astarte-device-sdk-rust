@@ -83,9 +83,9 @@ impl<'a> Deref for ObjectRef<'a> {
 
 /// Reference to an [`Interface`] and a [`Mapping`] that is guaranty to belong to the interface.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MappingRef<'m, I> {
+pub(crate) struct MappingRef<'a, I> {
     interface: I,
-    mapping: Mapping<'m>,
+    mapping: Mapping<&'a str>,
 }
 
 impl<'a> MappingRef<'a, &'a Interface> {
@@ -113,7 +113,7 @@ impl<'a> MappingRef<'a, PropertyRef<'a>> {
 
 impl<'a, I> MappingRef<'a, I> {
     #[inline]
-    pub(crate) fn mapping(&self) -> &Mapping {
+    pub(crate) fn mapping(&self) -> &Mapping<&str> {
         &self.mapping
     }
 
@@ -124,7 +124,7 @@ impl<'a, I> MappingRef<'a, I> {
 }
 
 impl<'a, I> Deref for MappingRef<'a, I> {
-    type Target = Mapping<'a>;
+    type Target = Mapping<&'a str>;
 
     fn deref(&self) -> &Self::Target {
         &self.mapping
@@ -371,7 +371,7 @@ pub(crate) mod tests {
             assert_eq!(mapping.interface().interface_name(), self.name);
             assert_eq!(mapping.interface().version_major(), self.version_major);
             assert_eq!(mapping.mapping_type(), self.mapping_type);
-            assert_eq!(mapping.endpoint(), self.endpoint);
+            assert_eq!(*mapping.endpoint(), self.endpoint);
             assert_eq!(mapping.explicit_timestamp(), self.explicit_timestamp);
             assert_eq!(mapping.allow_unset(), self.allow_unset);
         }
