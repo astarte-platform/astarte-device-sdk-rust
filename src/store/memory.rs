@@ -164,6 +164,17 @@ impl PropertyStore for MemoryStore {
 
         Ok(props)
     }
+
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+        Ok(self
+            .store
+            .read()
+            .await
+            .iter()
+            .filter(|(k, _)| (k.interface == interface))
+            .map(StoredProp::from)
+            .collect())
+    }
 }
 
 /// Key for the in memory store, this let us customize the hash and equality, and use (&str, &str)

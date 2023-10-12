@@ -20,7 +20,8 @@
 
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
-use log::error;
+use futures::{future, StreamExt, TryStreamExt};
+use log::{error, warn};
 
 use crate::{
     error::Error,
@@ -50,6 +51,8 @@ pub enum PropertiesError {
 pub trait PropAccess {
     /// Get the value of a property given the interface and path.
     async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+    /// Get all the properties of the given interface.
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
     /// Get all the stored properties, device or server owners.
     async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
     /// Get all the stored device properties.
@@ -63,20 +66,58 @@ impl<S> PropAccess for AstarteDeviceSdk<S>
 where
     S: PropertyStore,
 {
-    async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error> {
+    async fn property(
+        &self,
+        interface_name: &str,
+        path: &str,
+    ) -> Result<Option<AstarteType>, Error> {
         let path = MappingPath::try_from(path)?;
 
         let interfaces = &self.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface, &path)?;
+        let mapping = interfaces.property_mapping(interface_name, &path)?;
 
         self.try_load_prop(&mapping, &path).await
     }
+
+    async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
+        let interfaces = &self.interfaces.read().await;
+        let prop_if = interfaces
+            .get_property(interface_name)
+            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))?;
+
+        let stored_prop = self.store.interface_props(prop_if.interface_name()).await?;
+
+        futures::stream::iter(stored_prop)
+            .then(|p| async {
+                if p.interface_major != prop_if.version_major() {
+                    warn!(
+                        "version mismatch for property {}{} (stored {}, interface {}), deleting",
+                        p.interface,
+                        p.path,
+                        p.interface_major,
+                        prop_if.version_major()
+                    );
+
+                    self.store.delete_prop(&p.interface, &p.path).await?;
+
+                    Ok(None)
+                } else {
+                    Ok(Some(p))
+                }
+            })
+            .try_filter_map(future::ok)
+            .try_collect()
+            .await
+    }
+
     async fn all_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.load_all_props().await.map_err(Error::from)
     }
+
     async fn device_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.device_props().await.map_err(Error::from)
     }
+
     async fn server_props(&self) -> Result<Vec<StoredProp>, Error> {
         self.store.server_props().await.map_err(Error::from)
     }
@@ -242,6 +283,9 @@ pub(crate) mod tests {
         }];
         assert_eq!(props, expected);
 
+        let props = sdk.interface_props("org.Bar").await.unwrap();
+        assert_eq!(props, expected);
+
         let props = sdk.server_props().await.unwrap();
         let expected = [StoredProp::<&'static str> {
             interface: "org.Foo",
@@ -250,6 +294,9 @@ pub(crate) mod tests {
             interface_major: 1,
             ownership: Ownership::Server,
         }];
+        assert_eq!(props, expected);
+
+        let props = sdk.interface_props("org.Foo").await.unwrap();
         assert_eq!(props, expected);
     }
 

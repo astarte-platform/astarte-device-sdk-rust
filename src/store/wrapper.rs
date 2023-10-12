@@ -90,6 +90,13 @@ where
             .await
             .map_err(StoreError::device_props)
     }
+
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .interface_props(interface)
+            .await
+            .map_err(StoreError::interface_props)
+    }
 }
 
 #[cfg(test)]

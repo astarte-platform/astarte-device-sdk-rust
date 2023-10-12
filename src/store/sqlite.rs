@@ -410,6 +410,18 @@ impl PropertyStore for SqliteStore {
 
         Ok(res)
     }
+
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+        let res: Vec<StoredProp> =
+            sqlx::query_file_as!(StoredRecord, "queries/interface_props.sql", interface)
+                .try_map(|row| {
+                    StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into()))
+                })
+                .fetch_all(&self.db_conn)
+                .await?;
+
+        Ok(res)
+    }
 }
 
 /// Deserialize a property from the store.

@@ -31,6 +31,7 @@ bson = { version = "2.1.0", features = ["chrono-0_4"] }
 chrono = { version = "0.4.14", features = ["serde"] }
 ecdsa = { version = "0.16.7", features = ["sha2"] }
 flate2 = "1.0.0"
+futures = "0.3.0"
 http = "0.2.0"
 itertools = "0.11.0"
 log = "0.4.17"
