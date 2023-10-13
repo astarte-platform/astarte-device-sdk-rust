@@ -18,118 +18,19 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::{
-    borrow::Borrow,
-    collections::{hash_map::Entry, HashMap},
-    ops::Deref,
-};
+use std::collections::{hash_map::Entry, HashMap};
 
 use itertools::Itertools;
 use log::debug;
 
 use crate::{
-    interface::{mapping::path::MappingPath, DatastreamObject, InterfaceError, Mapping},
+    interface::{
+        mapping::path::MappingPath,
+        reference::{MappingRef, PropertyRef},
+        InterfaceError,
+    },
     Error, Interface,
 };
-
-/// Struct to hold a reference to an interface, which is a property.
-///
-/// This type can be use to guaranty that the interface is a property when accessed from the
-/// [`Interfaces`] struct with the [get_property](`Interfaces::get_property`) method.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PropertyRef<'a>(pub(crate) &'a Interface);
-
-impl<'a> Borrow<Interface> for PropertyRef<'a> {
-    fn borrow(&self) -> &Interface {
-        self.0
-    }
-}
-
-impl<'a> Deref for PropertyRef<'a> {
-    type Target = Interface;
-
-    fn deref(&self) -> &Self::Target {
-        self.0
-    }
-}
-
-/// Reference to an [`Interface`] and a [`DatastreamObject`] that is guaranty to belong to the interface.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ObjectRef<'a> {
-    pub(crate) interface: &'a Interface,
-    pub(crate) object: &'a DatastreamObject,
-}
-
-impl<'a> ObjectRef<'a> {
-    /// Create a new reference only if the interface is an object.
-    pub(crate) fn new(interface: &'a Interface) -> Option<Self> {
-        match &interface.inner {
-            crate::interface::InterfaceType::DatastreamIndividual(_)
-            | crate::interface::InterfaceType::Properties(_) => None,
-            crate::interface::InterfaceType::DatastreamObject(object) => {
-                Some(Self { interface, object })
-            }
-        }
-    }
-}
-
-impl<'a> Deref for ObjectRef<'a> {
-    type Target = DatastreamObject;
-
-    fn deref(&self) -> &Self::Target {
-        self.object
-    }
-}
-
-/// Reference to an [`Interface`] and a [`Mapping`] that is guaranty to belong to the interface.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct MappingRef<'m, I> {
-    interface: I,
-    mapping: Mapping<'m>,
-}
-
-impl<'a> MappingRef<'a, &'a Interface> {
-    pub(crate) fn new(interface: &'a Interface, path: &MappingPath) -> Option<Self> {
-        interface
-            .mapping(path)
-            .map(|mapping| Self { interface, mapping })
-    }
-
-    pub(crate) fn as_prop(&self) -> Option<MappingRef<'a, PropertyRef<'a>>> {
-        self.interface().as_prop_ref().map(|interface| MappingRef {
-            interface,
-            mapping: self.mapping,
-        })
-    }
-}
-
-impl<'a> MappingRef<'a, PropertyRef<'a>> {
-    pub(crate) fn with_prop(interface: PropertyRef<'a>, path: &MappingPath) -> Option<Self> {
-        let mapping = interface.0.mapping(path)?;
-
-        Some(Self { interface, mapping })
-    }
-}
-
-impl<'a, I> MappingRef<'a, I> {
-    #[inline]
-    pub(crate) fn mapping(&self) -> &Mapping {
-        &self.mapping
-    }
-
-    #[inline]
-    pub(crate) fn interface(&self) -> &I {
-        &self.interface
-    }
-}
-
-impl<'a, I> Deref for MappingRef<'a, I> {
-    type Target = Mapping<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.mapping
-    }
-}
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -263,10 +164,13 @@ impl Interfaces {
     }
 }
 
-impl FromIterator<(String, Interface)> for Interfaces {
-    fn from_iter<T: IntoIterator<Item = (String, Interface)>>(iter: T) -> Self {
+impl FromIterator<Interface> for Interfaces {
+    fn from_iter<T: IntoIterator<Item = Interface>>(iter: T) -> Self {
         Self {
-            interfaces: iter.into_iter().collect(),
+            interfaces: iter
+                .into_iter()
+                .map(|i| (i.interface_name().to_string(), i))
+                .collect(),
         }
     }
 }
@@ -280,9 +184,7 @@ pub(crate) mod tests {
         options::AstarteOptions, Interface,
     };
 
-    pub(crate) const PROPERTIES_SERVER: (&str, &str) = (
-        "org.astarte-platform.test.test",
-        r#"
+    pub(crate) const PROPERTIES_SERVER: &str = r#"
         {
             "interface_name": "org.astarte-platform.test.test",
             "version_major": 12,
@@ -309,8 +211,7 @@ pub(crate) mod tests {
                     "allow_unset": true
                 }
             ]
-        }"#,
-    );
+        }"#;
 
     pub(crate) const DEVICE_OBJECT: &str = r#"
         {
@@ -345,12 +246,8 @@ pub(crate) mod tests {
         }
         "#;
 
-    pub(crate) fn create_interfaces(interfaces: &[(&str, &str)]) -> Interfaces {
-        Interfaces::from_iter(
-            interfaces
-                .iter()
-                .map(|(n, i)| (n.to_string(), Interface::from_str(i).unwrap())),
-        )
+    pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
+        Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))
     }
 
     pub(crate) struct CheckEndpoint<'a> {

@@ -3,5 +3,6 @@ INSERT OR REPLACE INTO propcache (
     path,
     value,
     type,
-    interface_major
-) VALUES (?, ?, ?, ?, ?)
+    interface_major,
+    ownership
+) VALUES (?, ?, ?, ?, ?, ?)

@@ -23,7 +23,7 @@ use std::{error::Error as StdError, fmt::Debug};
 use async_trait::async_trait;
 
 pub use self::sqlite::SqliteStore;
-use crate::types::AstarteType;
+use crate::{interface::Ownership, types::AstarteType};
 
 pub mod error;
 pub mod memory;
@@ -47,13 +47,7 @@ where
     type Err;
 
     /// Stores a property within the database.
-    async fn store_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), Self::Err>;
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err>;
     /// Load a property from the database.
     ///
     /// The property store should delete the property from the database if the major version of the
@@ -71,16 +65,57 @@ where
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Retrieves all property values in the database, together with their interface name, path
+    /// and major version.
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Retrieves all the property values of a specific interface in the database.
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
 /// trait.
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct StoredProp {
-    pub interface: String,
-    pub path: String,
-    pub value: AstarteType,
+#[derive(Debug, Clone, Copy, PartialOrd)]
+pub struct StoredProp<S = String, V = AstarteType> {
+    pub interface: S,
+    pub path: S,
+    pub value: V,
     pub interface_major: i32,
+    pub ownership: Ownership,
+}
+
+impl StoredProp {
+    pub fn as_ref(&self) -> StoredProp<&str, &AstarteType> {
+        self.into()
+    }
+}
+
+impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
+    fn from(value: &'a StoredProp) -> Self {
+        Self {
+            interface: &value.interface,
+            path: &value.path,
+            value: &value.value,
+            interface_major: value.interface_major,
+            ownership: value.ownership,
+        }
+    }
+}
+
+impl<T, U, V, W> PartialEq<StoredProp<T, V>> for StoredProp<U, W>
+where
+    U: PartialEq<T>,
+    W: PartialEq<V>,
+{
+    fn eq(&self, other: &StoredProp<T, V>) -> bool {
+        self.interface == other.interface
+            && self.path == other.path
+            && self.value == other.value
+            && self.interface_major == other.interface_major
+            && self.ownership == other.ownership
+    }
 }
 
 #[cfg(test)]
@@ -102,7 +137,15 @@ mod tests {
         // non existing
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        let prop = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &ty,
+            interface_major: 1,
+            ownership: Ownership::Device,
+        };
+
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -119,7 +162,7 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // delete
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -132,7 +175,7 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // unset
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -141,10 +184,14 @@ mod tests {
                 .unwrap(),
             ty
         );
-        store
-            .store_prop("com.test", "/test", &AstarteType::Unset, 1)
-            .await
-            .unwrap();
+        let unset = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &AstarteType::Unset,
+            interface_major: 1,
+            ownership: Ownership::Device,
+        };
+        store.store_prop(unset).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -155,7 +202,7 @@ mod tests {
         );
 
         // clear
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
+        store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
                 .load_prop("com.test", "/test", 1)
@@ -168,32 +215,43 @@ mod tests {
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // load all props
-        let expected = [
-            StoredProp {
-                interface: "com.test".into(),
-                path: "/test".into(),
-                value: ty.clone(),
-                interface_major: 1,
-            },
-            StoredProp {
-                interface: "com.test2".into(),
-                path: "/test".into(),
-                value: ty.clone(),
-                interface_major: 1,
-            },
-        ];
+        let device = StoredProp {
+            interface: "com.test1".into(),
+            path: "/test1".into(),
+            value: ty.clone(),
+            interface_major: 1,
+            ownership: Ownership::Device,
+        };
+        let server = StoredProp {
+            interface: "com.test2".into(),
+            path: "/test2".into(),
+            value: ty.clone(),
+            interface_major: 1,
+            ownership: Ownership::Server,
+        };
 
-        store.store_prop("com.test", "/test", &ty, 1).await.unwrap();
-        store
-            .store_prop("com.test2", "/test", &ty, 1)
-            .await
-            .unwrap();
+        store.store_prop(device.as_ref()).await.unwrap();
+        store.store_prop(server.as_ref()).await.unwrap();
+
+        let expected = [device.clone(), server.clone()];
 
         let mut props = store.load_all_props().await.unwrap();
 
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
 
         assert_eq!(props, expected);
+
+        let dev_props = store.device_props().await.unwrap();
+        assert_eq!(dev_props, [device.clone()]);
+
+        let serv_props = store.server_props().await.unwrap();
+        assert_eq!(serv_props, [server.clone()]);
+
+        // props from interface
+        let props = store.interface_props("com.test1").await.unwrap();
+        assert_eq!(props, vec![device]);
+        let props = store.interface_props("com.test2").await.unwrap();
+        assert_eq!(props, vec![server]);
 
         // test all types
         let all_types = [
@@ -219,7 +277,16 @@ mod tests {
 
         for ty in all_types {
             let path = format!("/test/{}", ty.display_type());
-            store.store_prop("com.test", &path, &ty, 1).await.unwrap();
+
+            let prop = StoredProp {
+                interface: "com.test",
+                path: &path,
+                value: &ty,
+                interface_major: 1,
+                ownership: Ownership::Server,
+            };
+
+            store.store_prop(prop).await.unwrap();
 
             let res = store.load_prop("com.test", &path, 1).await.unwrap();
 
@@ -233,7 +300,14 @@ mod tests {
         let mem = StoreWrapper::new(MemoryStore::new());
 
         let exp = AstarteType::Integer(1);
-        mem.store_prop("com.test", "/test", &exp, 1).await.unwrap();
+        let prop = StoredProp {
+            interface: "com.test",
+            path: "/test",
+            value: &exp,
+            interface_major: 1,
+            ownership: Ownership::Device,
+        };
+        mem.store_prop(prop).await.unwrap();
 
         let res = tokio::spawn(async move { mem.load_prop("com.test", "/test", 1).await })
             .await

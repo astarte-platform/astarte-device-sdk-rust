@@ -38,6 +38,7 @@ pub mod types;
 mod validate;
 
 use chrono::{DateTime, Utc};
+use interface::reference::MappingRef;
 #[cfg(test)]
 pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
@@ -63,13 +64,13 @@ pub use crate::interface::Interface;
 
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
-use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError, Ownership};
-use crate::interfaces::MappingRef;
-use crate::interfaces::PropertyRef;
+use crate::interface::reference::PropertyRef;
+use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
 use crate::options::AstarteOptions;
 use crate::payload::{
     deserialize_individual, deserialize_object, serialize_individual, serialize_object, Payload,
 };
+use crate::properties::PropAccess;
 use crate::retry::DelayedPoll;
 use crate::shared::SharedDevice;
 use crate::store::memory::MemoryStore;
@@ -536,13 +537,20 @@ where
 
         if interface.is_property() {
             let interface_name = interface.interface_name();
-            let version_major = interface.version_major();
+            let path = path.as_str();
+            let interface_major = interface.version_major();
 
-            self.store
-                .store_prop(interface_name, path.as_str(), &data, version_major)
-                .await?;
+            let prop = StoredProp {
+                interface: interface_name,
+                path,
+                value: &data,
+                interface_major,
+                ownership: interface.ownership(),
+            };
 
-            info!("property stored {interface}:{version_major} {path} ");
+            self.store.store_prop(prop).await?;
+
+            info!("property stored {interface_name}{path}:{interface_major}");
         }
 
         Ok((Aggregation::Individual(data), timestamp))
@@ -616,22 +624,10 @@ where
     }
 
     async fn send_device_owned_properties(&self) -> Result<(), Error> {
-        let properties = self.store.load_all_props().await?;
-        // publish only device-owned properties...
-        let interfaces = self.interfaces.read().await;
-        let device_owned_properties: Vec<StoredProp> = properties
-            .into_iter()
-            .filter(|prop| match interfaces.get_property(&prop.interface) {
-                Some(interface) => {
-                    interface.ownership() == Ownership::Device
-                        && interface.version_major() == prop.interface_major
-                }
-                None => false,
-            })
-            .collect();
+        let properties = self.store.device_props().await?;
 
-        for prop in device_owned_properties {
-            let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
+        for prop in properties {
+            let topic = self.client_id() + &prop.interface + &prop.path;
 
             debug!(
                 "sending device-owned property = {}{}",
@@ -697,59 +693,13 @@ where
     ///         .unwrap();
     /// }
     /// ```
+    #[deprecated = "use the PropAccess trait"]
     pub async fn get_property(
         &self,
         interface: &str,
         path: &str,
     ) -> Result<Option<AstarteType>, Error> {
-        let path_mapping = MappingPath::try_from(path)?;
-
-        let interfaces = &self.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface, &path_mapping)?;
-
-        self.property(&mapping, &path_mapping).await
-    }
-
-    /// Get property, when present, from the allocated storage.
-    ///
-    /// This will use a [`MappingPath`] to get the property, which is an parsed endpoint.
-    pub(crate) async fn property(
-        &self,
-        mapping: &MappingRef<'_, PropertyRef<'_>>,
-        path: &MappingPath<'_>,
-    ) -> Result<Option<AstarteType>, Error> {
-        let interface = mapping.interface().interface_name();
-        let path = path.as_str();
-
-        let value = self
-            .store
-            .load_prop(interface, path, mapping.interface().version_major())
-            .await?;
-
-        let value = match value {
-            Some(AstarteType::Unset) if !mapping.allow_unset() => {
-                error!("stored property is unset, but interface doesn't allow it");
-                self.store.delete_prop(interface, path).await?;
-
-                None
-            }
-            Some(AstarteType::Unset) => Some(AstarteType::Unset),
-            Some(value) if value != mapping.mapping_type() => {
-                error!(
-                    "stored property type mismatch, expected {} got {:?}",
-                    mapping.mapping_type(),
-                    value
-                );
-                self.store.delete_prop(interface, path).await?;
-
-                None
-            }
-
-            Some(value) => Some(value),
-            None => None,
-        };
-
-        Ok(value)
+        self.property(interface, path).await.map_err(Error::from)
     }
 
     // ------------------------------------------------------------------------
@@ -854,16 +804,22 @@ where
 
         //  Store the property in the database after it has been successfully sent
         if let Some(prop_mapping) = opt_prop {
-            self.store
-                .store_prop(
-                    prop_mapping.interface().interface_name(),
-                    path.as_str(),
-                    &data,
-                    prop_mapping.interface().version_major(),
-                )
-                .await?;
+            let interface_name = prop_mapping.interface().interface_name();
+            let path = path.as_str();
+            let interface_major = prop_mapping.interface().version_major();
+            let ownership = prop_mapping.interface().ownership();
 
-            info!("Stored new property in database");
+            let prop = StoredProp {
+                interface: interface_name,
+                path,
+                value: &data,
+                interface_major,
+                ownership,
+            };
+
+            self.store.store_prop(prop).await?;
+
+            info!("property stored {interface_name}{path}:{interface_major}");
         }
 
         Ok(())
@@ -878,12 +834,52 @@ where
         new: &AstarteType,
     ) -> Result<bool, Error> {
         // Check if already in db
-        let stored = self.property(mapping, path).await?;
+        let stored = self.try_load_prop(mapping, path).await?;
 
         match stored {
             Some(value) => Ok(value.eq(new)),
             None => Ok(false),
         }
+    }
+
+    /// Get a property or deletes it if a version or type miss-match happens.
+    async fn try_load_prop(
+        &self,
+        mapping: &MappingRef<'_, PropertyRef<'_>>,
+        path: &MappingPath<'_>,
+    ) -> Result<Option<AstarteType>, Error> {
+        let interface = mapping.interface().interface_name();
+        let path = path.as_str();
+
+        let value = self
+            .store
+            .load_prop(interface, path, mapping.interface().version_major())
+            .await?;
+
+        let value = match value {
+            Some(AstarteType::Unset) if !mapping.allow_unset() => {
+                error!("stored property is unset, but interface doesn't allow it");
+                self.store.delete_prop(interface, path).await?;
+
+                None
+            }
+            Some(AstarteType::Unset) => Some(AstarteType::Unset),
+            Some(value) if value != mapping.mapping_type() => {
+                error!(
+                    "stored property type mismatch, expected {} got {:?}",
+                    mapping.mapping_type(),
+                    value
+                );
+                self.store.delete_prop(interface, path).await?;
+
+                None
+            }
+
+            Some(value) => Some(value),
+            None => None,
+        };
+
+        Ok(value)
     }
 
     async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error> {
@@ -1040,6 +1036,7 @@ mod test {
     use crate::interfaces::Interfaces;
     use crate::payload::Payload;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
+    use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::{self as astarte_device_sdk, EventReceiver, Interface, SharedDevice};
@@ -1057,11 +1054,23 @@ mod test {
     const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
     const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
 
-    fn mock_astarte_device<I>(
+    pub(crate) fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: EventLoop,
         interfaces: I,
     ) -> (AstarteDeviceSdk<MemoryStore>, EventReceiver)
+    where
+        I: IntoIterator<Item = Interface>,
+    {
+        mock_astarte_device_store(client, eventloop, interfaces, MemoryStore::new())
+    }
+
+    pub(crate) fn mock_astarte_device_store<I, S>(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        interfaces: I,
+        store: S,
+    ) -> (AstarteDeviceSdk<S>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
     {
@@ -1072,14 +1081,10 @@ mod test {
                 realm: "realm".to_string(),
                 device_id: "device_id".to_string(),
                 client,
-                events_channel: tx,
-                store: StoreWrapper::new(MemoryStore::new()),
-                interfaces: RwLock::new(Interfaces::from_iter(
-                    interfaces
-                        .into_iter()
-                        .map(|i| (i.interface_name().to_string(), i)),
-                )),
+                store: StoreWrapper::new(store),
+                interfaces: RwLock::new(Interfaces::from_iter(interfaces)),
                 eventloop: Mutex::new(eventloop),
+                events_channel: tx,
             }),
         };
 
@@ -1273,7 +1278,7 @@ mod test {
             .expect("Failed to send property");
 
         let val = device
-            .get_property(
+            .property(
                 "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                 "/1/name",
             )
@@ -1291,7 +1296,7 @@ mod test {
             .expect("Failed to unset property");
 
         let val = device
-            .get_property(
+            .property(
                 "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                 "/1/name",
             )

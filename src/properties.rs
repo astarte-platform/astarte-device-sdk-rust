@@ -18,8 +18,18 @@
 
 //! Handles the properties for the device.
 
+use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
-use log::error;
+use futures::{future, StreamExt, TryStreamExt};
+use log::{error, warn};
+
+use crate::{
+    error::Error,
+    interface::mapping::path::MappingPath,
+    store::{PropertyStore, StoredProp},
+    types::AstarteType,
+    AstarteDeviceSdk,
+};
 
 /// Error handling the properties.
 #[non_exhaustive]
@@ -34,6 +44,83 @@ pub enum PropertiesError {
     /// Error decoding the zlib compressed payload.
     #[error("error decoding the zlib compressed payload")]
     Decode(#[from] std::io::Error),
+}
+
+/// Trait to access the stored properties.
+#[async_trait]
+pub trait PropAccess {
+    /// Get the value of a property given the interface and path.
+    async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+    /// Get all the properties of the given interface.
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
+    /// Get all the stored properties, device or server owners.
+    async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
+    /// Get all the stored device properties.
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
+    /// Get all the stored server properties.
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
+}
+
+#[async_trait]
+impl<S> PropAccess for AstarteDeviceSdk<S>
+where
+    S: PropertyStore,
+{
+    async fn property(
+        &self,
+        interface_name: &str,
+        path: &str,
+    ) -> Result<Option<AstarteType>, Error> {
+        let path = MappingPath::try_from(path)?;
+
+        let interfaces = &self.interfaces.read().await;
+        let mapping = interfaces.property_mapping(interface_name, &path)?;
+
+        self.try_load_prop(&mapping, &path).await
+    }
+
+    async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
+        let interfaces = &self.interfaces.read().await;
+        let prop_if = interfaces
+            .get_property(interface_name)
+            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))?;
+
+        let stored_prop = self.store.interface_props(prop_if.interface_name()).await?;
+
+        futures::stream::iter(stored_prop)
+            .then(|p| async {
+                if p.interface_major != prop_if.version_major() {
+                    warn!(
+                        "version mismatch for property {}{} (stored {}, interface {}), deleting",
+                        p.interface,
+                        p.path,
+                        p.interface_major,
+                        prop_if.version_major()
+                    );
+
+                    self.store.delete_prop(&p.interface, &p.path).await?;
+
+                    Ok(None)
+                } else {
+                    Ok(Some(p))
+                }
+            })
+            .try_filter_map(future::ok)
+            .try_collect()
+            .await
+    }
+
+    async fn all_props(&self) -> Result<Vec<StoredProp>, Error> {
+        self.store.load_all_props().await.map_err(Error::from)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Error> {
+        self.store.device_props().await.map_err(Error::from)
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Error> {
+        self.store.server_props().await.map_err(Error::from)
+    }
 }
 
 /// Extracts the properties from a set payload.
@@ -70,6 +157,15 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::str::FromStr;
+
+    use crate::interface::Ownership;
+    use crate::store::memory::MemoryStore;
+    use crate::store::SqliteStore;
+    use crate::test::mock_astarte_device_store;
+
+    use crate::{AsyncClient, EventLoop, Interface};
+
     use super::*;
 
     pub(crate) const PROPERTIES_PAYLOAD: [u8; 66] = [
@@ -87,5 +183,138 @@ pub(crate) mod tests {
         let s = extract_set_properties(&PROPERTIES_PAYLOAD).unwrap();
 
         assert_eq!(s.join(";").as_bytes(), example);
+    }
+
+    const SERVER_PROP: &str = r#"{
+    "interface_name": "org.Foo",
+    "version_major": 1,
+    "version_minor": 0,
+    "type": "properties",
+    "aggregation": "individual",
+    "ownership": "server",
+    "description": "Generic aggregated object data.",
+    "mappings": [{
+        "endpoint": "/bar",
+        "type": "boolean",
+        "explicit_timestamp": false
+    }]
+}"#;
+    const DEVICE_PROP: &str = r#"{
+    "interface_name": "org.Bar",
+    "version_major": 1,
+    "version_minor": 0,
+    "type": "properties",
+    "aggregation": "individual",
+    "ownership": "device",
+    "description": "Generic aggregated object data.",
+    "mappings": [{
+        "endpoint": "/foo",
+        "type": "integer",
+        "explicit_timestamp": false
+    }]
+}"#;
+
+    async fn test_prop_acces_for_store<S: PropertyStore>(store: S) {
+        store
+            .store_prop(StoredProp {
+                interface: "org.Foo",
+                path: "/bar",
+                value: &AstarteType::Boolean(true),
+                interface_major: 1,
+                ownership: Ownership::Server,
+            })
+            .await
+            .unwrap();
+
+        store
+            .store_prop(StoredProp {
+                interface: "org.Bar",
+                path: "/foo",
+                value: &AstarteType::Integer(42),
+                interface_major: 1,
+                ownership: Ownership::Device,
+            })
+            .await
+            .unwrap();
+
+        let (sdk, _) = mock_astarte_device_store(
+            AsyncClient::default(),
+            EventLoop::default(),
+            [
+                Interface::from_str(SERVER_PROP).unwrap(),
+                Interface::from_str(DEVICE_PROP).unwrap(),
+            ],
+            store,
+        );
+
+        let prop = sdk.property("org.Foo", "/bar").await.unwrap();
+        assert_eq!(prop, Some(AstarteType::Boolean(true)));
+
+        let prop = sdk.property("org.Bar", "/foo").await.unwrap();
+        assert_eq!(prop, Some(AstarteType::Integer(42)));
+
+        let mut props = sdk.all_props().await.unwrap();
+        props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
+        let expected = [
+            StoredProp::<&'static str> {
+                interface: "org.Bar",
+                path: "/foo",
+                value: AstarteType::Integer(42),
+                interface_major: 1,
+                ownership: Ownership::Device,
+            },
+            StoredProp::<&'static str> {
+                interface: "org.Foo",
+                path: "/bar",
+                value: AstarteType::Boolean(true),
+                interface_major: 1,
+                ownership: Ownership::Server,
+            },
+        ];
+        assert_eq!(props, expected);
+
+        let props = sdk.device_props().await.unwrap();
+        let expected = [StoredProp {
+            interface: "org.Bar",
+            path: "/foo",
+            value: AstarteType::Integer(42),
+            interface_major: 1,
+            ownership: Ownership::Device,
+        }];
+        assert_eq!(props, expected);
+
+        let props = sdk.interface_props("org.Bar").await.unwrap();
+        assert_eq!(props, expected);
+
+        let props = sdk.server_props().await.unwrap();
+        let expected = [StoredProp::<&'static str> {
+            interface: "org.Foo",
+            path: "/bar",
+            value: AstarteType::Boolean(true),
+            interface_major: 1,
+            ownership: Ownership::Server,
+        }];
+        assert_eq!(props, expected);
+
+        let props = sdk.interface_props("org.Foo").await.unwrap();
+        assert_eq!(props, expected);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_property_access() {
+        let store = MemoryStore::new();
+
+        test_prop_acces_for_store(store).await;
+    }
+
+    #[tokio::test]
+    async fn test_in_sqlite_property_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let path = db_path.as_path().to_str().unwrap();
+
+        let store = SqliteStore::new(path).await.unwrap();
+
+        test_prop_acces_for_store(store).await;
     }
 }

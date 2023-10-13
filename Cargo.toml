@@ -31,9 +31,10 @@ bson = { version = "2.1.0", features = ["chrono-0_4"] }
 chrono = { version = "0.4.14", features = ["serde"] }
 ecdsa = { version = "0.16.7", features = ["sha2"] }
 flate2 = "1.0.0"
+futures = "0.3.0"
 http = "0.2.0"
 itertools = "0.11.0"
-log = "0.4.14"
+log = "0.4.17"
 openssl = { version = "0.10.46", optional = true }
 p384 = "0.13.0"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
@@ -42,10 +43,10 @@ rumqttc = "0.21.0"
 rustls = { version = "0.20.1", features = ["dangerous_configuration"] }
 rustls-native-certs = "0.6.0"
 rustls-pemfile = "1.0.0"
-serde = { version = "1.0.132", features = ["derive"] }
-serde_json = "1.0.73"
-sqlx = { version = "0.6.0", features = ["runtime-tokio-rustls", "sqlite", "macros", "offline", "migrate"] }
-thiserror = "1.0.30"
+serde = { version = "1.0.145", features = ["derive"] }
+serde_json = "1.0.85"
+sqlx = { version = "0.7.0", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+thiserror = "1.0.35"
 tokio = { version = "1.18.0", features = ["parking_lot", "macros"] }
 url = "2.2.2"
 uuid = { version = "1.0.0", features = ["v5", "v4"] }
@@ -59,6 +60,7 @@ env_logger = "0.10.0"
 mockall = "0.11.4"
 structopt = "0.3.26"
 tempfile = "3.6.0"
+tokio = { version = "1.18.0", features = ["rt", "rt-multi-thread"] }
 
 [dev-dependencies.cargo-husky]
 version = "1.5.0"

@@ -25,7 +25,7 @@ use log::error;
 use tokio::sync::RwLock;
 
 use super::{PropertyStore, StoredProp};
-use crate::types::AstarteType;
+use crate::{interface::Ownership, types::AstarteType};
 
 /// Error from the memory store.
 ///
@@ -58,15 +58,19 @@ impl PropertyStore for MemoryStore {
 
     async fn store_prop(
         &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
+        StoredProp {
+            interface,
+            path,
+            value,
+            interface_major,
+            ownership,
+        }: StoredProp<&str, &AstarteType>,
     ) -> Result<(), Self::Err> {
         let key = Key::new(interface, path);
         let value = Value {
             value: value.clone(),
             interface_major,
+            ownership,
         };
 
         let mut store = self.store.write().await;
@@ -128,17 +132,48 @@ impl PropertyStore for MemoryStore {
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
         let store = self.store.read().await;
 
+        let props = store.iter().map(StoredProp::from).collect();
+
+        Ok(props)
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let store = self.store.read().await;
+
         let props = store
             .iter()
-            .map(|(key, value)| StoredProp {
-                interface: key.interface.clone(),
-                path: key.path.clone(),
-                value: value.value.clone(),
-                interface_major: value.interface_major,
+            .filter_map(|(k, v)| match v.ownership {
+                Ownership::Device => None,
+                Ownership::Server => Some(StoredProp::from((k, v))),
             })
             .collect();
 
         Ok(props)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let store = self.store.read().await;
+
+        let props = store
+            .iter()
+            .filter_map(|(k, v)| match v.ownership {
+                Ownership::Device => Some(StoredProp::from((k, v))),
+                Ownership::Server => None,
+            })
+            .collect();
+
+        Ok(props)
+    }
+
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+        Ok(self
+            .store
+            .read()
+            .await
+            .iter()
+            .filter(|(k, _)| (k.interface == interface))
+            .map(StoredProp::from)
+            .collect())
     }
 }
 
@@ -171,6 +206,19 @@ impl Display for Key {
 struct Value {
     value: AstarteType,
     interface_major: i32,
+    ownership: Ownership,
+}
+
+impl From<(&Key, &Value)> for StoredProp {
+    fn from((key, value): (&Key, &Value)) -> Self {
+        StoredProp {
+            interface: key.interface.clone(),
+            path: key.path.clone(),
+            value: value.value.clone(),
+            interface_major: value.interface_major,
+            ownership: value.ownership,
+        }
+    }
 }
 
 #[cfg(test)]

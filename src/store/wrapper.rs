@@ -30,10 +30,7 @@ pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
 }
 
-impl<S> StoreWrapper<S>
-where
-    S: PropertyStore,
-{
+impl<S> StoreWrapper<S> {
     pub(crate) fn new(store: S) -> Self {
         Self { store }
     }
@@ -46,17 +43,8 @@ where
 {
     type Err = StoreError;
 
-    async fn store_prop(
-        &self,
-        interface: &str,
-        path: &str,
-        value: &AstarteType,
-        interface_major: i32,
-    ) -> Result<(), Self::Err> {
-        self.store
-            .store_prop(interface, path, value, interface_major)
-            .await
-            .map_err(StoreError::store)
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+        self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
     async fn load_prop(
@@ -87,6 +75,27 @@ where
             .load_all_props()
             .await
             .map_err(StoreError::load_all)
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .server_props()
+            .await
+            .map_err(StoreError::server_props)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .device_props()
+            .await
+            .map_err(StoreError::device_props)
+    }
+
+    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .interface_props(interface)
+            .await
+            .map_err(StoreError::interface_props)
     }
 }
 

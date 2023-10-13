@@ -40,6 +40,15 @@ pub enum StoreError {
     /// Could not load all properties.
     #[error("could not load all properties")]
     LoadAll(#[source] DynError),
+    /// Could not load device properties.
+    #[error("could not load device properties")]
+    DeviceProps(#[source] DynError),
+    /// Could not load server properties.
+    #[error("could not load server properties")]
+    ServerProps(#[source] DynError),
+    /// Could not load interface properties.
+    #[error("could not load server properties")]
+    InterfaceProps(#[source] DynError),
 }
 
 impl StoreError {
@@ -61,5 +70,17 @@ impl StoreError {
 
     pub(crate) fn load_all(err: impl Into<DynError>) -> Self {
         Self::LoadAll(err.into())
+    }
+
+    pub(crate) fn server_props(err: impl Into<DynError>) -> Self {
+        Self::ServerProps(err.into())
+    }
+
+    pub(crate) fn device_props(err: impl Into<DynError>) -> Self {
+        Self::DeviceProps(err.into())
+    }
+
+    pub(crate) fn interface_props(err: impl Into<DynError>) -> Self {
+        Self::InterfaceProps(err.into())
     }
 }

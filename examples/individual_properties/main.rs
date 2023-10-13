@@ -23,8 +23,7 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    error::Error, options::AstarteOptions, store::SqliteStore, types::AstarteType,
-    AstarteDeviceSdkSqlite,
+    error::Error, options::AstarteOptions, properties::PropAccess, store::SqliteStore,
 };
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;
@@ -38,26 +37,18 @@ struct Config {
 }
 
 // Getter function for the property "name" of a sensor.
-async fn get_name_for_sensor(
-    device: &AstarteDeviceSdkSqlite,
-    sensor_n: i32,
-) -> Result<String, String> {
+async fn get_name_for_sensor<T: PropAccess>(device: &T, sensor_n: i32) -> Result<String, DynError> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     let path = format!("/{sensor_n}/name");
 
-    if let Some(name) = device
-        .get_property(interface, &path)
-        .await
-        .map_err(|e| e.to_string())?
-    {
-        if let AstarteType::String(name) = name {
-            Ok(name)
-        } else {
-            Err("Incorrect property type".to_string())
-        }
-    } else {
-        Ok("None".to_string())
-    }
+    let name = device
+        .property(interface, &path)
+        .await?
+        .map(|t| t.try_into())
+        .transpose()?
+        .unwrap_or_else(|| "None".to_string());
+
+    Ok(name)
 }
 
 #[tokio::main]
