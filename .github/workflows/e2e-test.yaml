@@ -42,7 +42,7 @@ jobs:
         with:
           astarte_version: "1.0.4"
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
