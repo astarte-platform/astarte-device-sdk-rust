@@ -22,12 +22,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::fmt::{self, Debug, Display};
+use std::{
+    borrow::Cow,
+    fmt::{self, Debug, Display},
+};
 
 /// The different possible ways to change case of fields in a struct.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub enum RenameRule {
     /// Do not rename.
+    #[default]
     None,
     /// Rename to "lowercase" style.
     LowerCase,
@@ -72,10 +76,11 @@ impl RenameRule {
     }
 
     /// Apply a renaming rule to a struct field, returning the version expected in the source.
-    pub fn apply_to_field(&self, field: &str) -> String {
+    pub fn apply_to_field<'a>(&self, field: &'a str) -> Cow<'a, str> {
         match *self {
-            RenameRule::None | RenameRule::LowerCase | RenameRule::SnakeCase => field.to_owned(),
-            RenameRule::UpperCase => field.to_ascii_uppercase(),
+            RenameRule::None => Cow::Borrowed(field),
+            RenameRule::LowerCase | RenameRule::SnakeCase => field.to_ascii_lowercase().into(),
+            RenameRule::UpperCase => field.to_ascii_uppercase().into(),
             RenameRule::PascalCase => {
                 let mut pascal = String::new();
                 let mut capitalize = true;
@@ -89,17 +94,18 @@ impl RenameRule {
                         pascal.push(ch);
                     }
                 }
-                pascal
+                Cow::Owned(pascal)
             }
             RenameRule::CamelCase => {
                 let pascal = RenameRule::PascalCase.apply_to_field(field);
-                pascal[..1].to_ascii_lowercase() + &pascal[1..]
+                Cow::Owned(pascal[..1].to_ascii_lowercase() + &pascal[1..])
             }
-            RenameRule::ScreamingSnakeCase => field.to_ascii_uppercase(),
-            RenameRule::KebabCase => field.replace('_', "-"),
+            RenameRule::ScreamingSnakeCase => field.to_ascii_uppercase().into(),
+            RenameRule::KebabCase => field.replace('_', "-").into(),
             RenameRule::ScreamingKebabCase => RenameRule::ScreamingSnakeCase
                 .apply_to_field(field)
-                .replace('_', "-"),
+                .replace('_', "-")
+                .into(),
         }
     }
 }

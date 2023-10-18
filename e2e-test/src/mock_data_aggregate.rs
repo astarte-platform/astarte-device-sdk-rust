@@ -25,8 +25,6 @@ use chrono::{DateTime, Utc};
 
 use astarte_device_sdk::types::AstarteType;
 use astarte_device_sdk::AstarteAggregate;
-#[cfg(not(feature = "derive"))]
-use astarte_device_sdk_derive::AstarteAggregate;
 
 use crate::utils;
 

@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Install interface
         run: |
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
           astartectl realm-management interfaces ls
       - name: Register device
         run: |
@@ -65,8 +65,6 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - name: Update Cargo.lock
-        run: cargo update
       - name: Run test
         run: |
-          cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored
+          cargo e2e-test

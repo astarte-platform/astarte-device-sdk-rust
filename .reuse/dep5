@@ -50,7 +50,7 @@ Files: examples/individual_properties/configuration.json
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: tests/e2etest/interfaces/*
+Files: e2e-test/interfaces/*
 Copyright: SECO Mind Srl
 License: CC0-1.0
 

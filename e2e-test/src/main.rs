@@ -48,12 +48,6 @@ use mock_data_aggregate::MockDataAggregate;
 use mock_data_datastream::MockDataDatastream;
 use mock_data_property::MockDataProperty;
 
-#[test]
-#[ignore = "This test is only triggered manually by the CI"]
-fn run_e2etest() {
-    e2etest_impl();
-}
-
 #[derive(Clone)]
 struct TestCfg {
     realm: String,
@@ -82,8 +76,7 @@ impl TestCfg {
 
         let interfaces_fld = env::current_dir()
             .map_err(|msg| msg.to_string())?
-            .join("tests")
-            .join("e2etest")
+            .join("e2e-test")
             .join("interfaces");
 
         let interface_datastream_so =
@@ -118,7 +111,7 @@ impl TestCfg {
 }
 
 #[tokio::main]
-async fn e2etest_impl() {
+async fn main() {
     // Set custom panic hook to exit in case a subprocess panics.
     let orig_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {

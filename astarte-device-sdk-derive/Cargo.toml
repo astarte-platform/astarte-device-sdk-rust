@@ -6,15 +6,18 @@
 
 [package]
 name = "astarte-device-sdk-derive"
-version = "0.6.1"
-edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-description ="Derive macros implementation used by Astarte Device SDK"
-homepage = "https://astarte.cloud/"
+version = { workspace = true }
+categories = ["embedded", "api-bindings", "development-tools::procedural-macro-helpers"]
 documentation = "https://docs.rs/astarte-device-sdk-derive"
-readme ="README.md"
+edition = { workspace = true }
+exclude = { workspace = true }
+homepage = { workspace = true }
 keywords = ["sdk", "iot", "astarte", "derive"]
+license = { workspace = true }
+readme = "README.md"
+repository = { workspace = true }
+rust-version = { workspace = true }
+description = "Derive macros implementation used by Astarte Device SDK"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -22,5 +25,6 @@ keywords = ["sdk", "iot", "astarte", "derive"]
 proc-macro = true
 
 [dependencies]
-syn = {version = "1.0", features = ["full"]}
-quote = "1.0"
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }
