@@ -43,7 +43,7 @@ impl<'a> MappingIter<'a> {
 }
 
 impl<'a> Iterator for MappingIter<'a> {
-    type Item = Mapping<'a>;
+    type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -98,7 +98,7 @@ impl<'a> PropertiesMappingIter<'a> {
 }
 
 impl<'a> Iterator for PropertiesMappingIter<'a> {
-    type Item = Mapping<'a>;
+    type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.properties.next().map(|mapping| mapping.into())
@@ -137,7 +137,7 @@ impl<'a> IndividualMappingIter<'a> {
 }
 
 impl<'a> Iterator for IndividualMappingIter<'a> {
-    type Item = Mapping<'a>;
+    type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.properties.next().map(|mapping| mapping.into())
@@ -178,7 +178,7 @@ impl<'a> ObjectMappingIter<'a> {
 }
 
 impl<'a> Iterator for ObjectMappingIter<'a> {
-    type Item = Mapping<'a>;
+    type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.properties

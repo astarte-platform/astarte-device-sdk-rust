@@ -62,8 +62,8 @@ fn is_zero(value: &i32) -> bool {
 /// - **Optional**: the field is optional, it is wrapped in [`Option`]. It will not be serialized if
 ///   the value is [`None`].
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
-pub(super) struct InterfaceDef<'a> {
-    pub(super) interface_name: &'a str,
+pub(super) struct InterfaceDef<T> {
+    pub(super) interface_name: T,
     pub(super) version_major: i32,
     pub(super) version_minor: i32,
     #[serde(rename = "type")]
@@ -72,10 +72,10 @@ pub(super) struct InterfaceDef<'a> {
     #[serde(default, skip_serializing_if = "is_default")]
     pub(super) aggregation: Aggregation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) description: Option<&'a str>,
+    pub(super) description: Option<T>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) doc: Option<&'a str>,
-    pub(super) mappings: Vec<Mapping<'a>>,
+    pub(super) doc: Option<T>,
+    pub(super) mappings: Vec<Mapping<T>>,
 }
 
 /// Represents, the JSON of a mapping. It includes all the fields available for a mapping, but it
@@ -90,8 +90,8 @@ pub(super) struct InterfaceDef<'a> {
 /// You can find the specification here
 /// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) struct Mapping<'a> {
-    pub(super) endpoint: &'a str,
+pub(crate) struct Mapping<T> {
+    pub(super) endpoint: T,
     #[serde(rename = "type")]
     pub(super) mapping_type: MappingType,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -109,13 +109,13 @@ pub(crate) struct Mapping<'a> {
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) explicit_timestamp: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) description: Option<&'a str>,
+    pub(super) description: Option<T>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) doc: Option<&'a str>,
+    pub(super) doc: Option<T>,
 }
 
-impl<'a> Mapping<'a> {
-    pub(super) fn new(endpoint: &'a str, mapping_type: MappingType) -> Self {
+impl<T> Mapping<T> {
+    pub(super) fn new(endpoint: T, mapping_type: MappingType) -> Self {
         Mapping {
             endpoint,
             mapping_type,
@@ -131,20 +131,20 @@ impl<'a> Mapping<'a> {
         }
     }
 
-    pub(crate) fn with_description(mut self, description: Option<&'a str>) -> Self {
+    pub(crate) fn with_description(mut self, description: Option<T>) -> Self {
         self.description = description;
 
         self
     }
 
-    pub(crate) fn with_doc(mut self, doc: Option<&'a str>) -> Self {
+    pub(crate) fn with_doc(mut self, doc: Option<T>) -> Self {
         self.doc = doc;
 
         self
     }
 
-    pub(crate) fn endpoint(&self) -> &str {
-        self.endpoint
+    pub(crate) fn endpoint(&self) -> &T {
+        &self.endpoint
     }
 
     pub(crate) fn mapping_type(&self) -> MappingType {
@@ -206,16 +206,16 @@ impl<'a> Mapping<'a> {
         self.explicit_timestamp
     }
 
-    pub fn description(&self) -> Option<&str> {
-        self.description
+    pub fn description(&self) -> Option<&T> {
+        self.description.as_ref()
     }
 
-    pub fn doc(&self) -> Option<&str> {
-        self.doc
+    pub fn doc(&self) -> Option<&T> {
+        self.doc.as_ref()
     }
 }
 
-impl<'a> From<&'a Interface> for InterfaceDef<'a> {
+impl<'a> From<&'a Interface> for InterfaceDef<&'a str> {
     fn from(value: &'a Interface) -> Self {
         InterfaceDef {
             interface_name: value.interface_name(),
@@ -231,10 +231,13 @@ impl<'a> From<&'a Interface> for InterfaceDef<'a> {
     }
 }
 
-impl<'a> TryFrom<InterfaceDef<'a>> for Interface {
+impl<T> TryFrom<InterfaceDef<T>> for Interface
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(def: InterfaceDef<'a>) -> Result<Self, Self::Error> {
+    fn try_from(def: InterfaceDef<T>) -> Result<Self, Self::Error> {
         let inner = match def.interface_type {
             InterfaceTypeDef::Datastream => match def.aggregation {
                 Aggregation::Individual => {
@@ -248,12 +251,12 @@ impl<'a> TryFrom<InterfaceDef<'a>> for Interface {
         };
 
         let interface = Interface {
-            interface_name: def.interface_name.to_string(),
+            interface_name: def.interface_name.into(),
             version_major: def.version_major,
             version_minor: def.version_minor,
             ownership: def.ownership,
-            description: def.description.map(str::to_string),
-            doc: def.doc.map(str::to_string),
+            description: def.description.map(T::into),
+            doc: def.doc.map(T::into),
             inner,
         };
 

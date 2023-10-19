@@ -56,7 +56,7 @@ impl Ord for DatastreamIndividualMapping {
     }
 }
 
-impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<'a> {
+impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<&'a str> {
     fn from(value: &'a DatastreamIndividualMapping) -> Self {
         let mut mapping = Mapping::from(&value.mapping);
 
@@ -70,10 +70,13 @@ impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<'a> {
     }
 }
 
-impl TryFrom<&Mapping<'_>> for DatastreamIndividualMapping {
+impl<T> TryFrom<&Mapping<T>> for DatastreamIndividualMapping
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
+    fn try_from(value: &Mapping<T>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
 
         if value.allow_unset {
@@ -134,7 +137,7 @@ impl Ord for PropertiesMapping {
     }
 }
 
-impl<'a> From<&'a PropertiesMapping> for Mapping<'a> {
+impl<'a> From<&'a PropertiesMapping> for Mapping<&'a str> {
     fn from(value: &'a PropertiesMapping) -> Self {
         let mut mapping = Mapping::from(&value.mapping);
 
@@ -144,10 +147,13 @@ impl<'a> From<&'a PropertiesMapping> for Mapping<'a> {
     }
 }
 
-impl TryFrom<&Mapping<'_>> for PropertiesMapping {
+impl<T> TryFrom<&Mapping<T>> for PropertiesMapping
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &Mapping<'_>) -> Result<Self, Self::Error> {
+    fn try_from(value: &Mapping<T>) -> Result<Self, Self::Error> {
         let base_mapping = BaseMapping::try_from(value)?;
 
         if value.explicit_timestamp {
@@ -227,7 +233,7 @@ impl Ord for BaseMapping {
     }
 }
 
-impl<'a> From<&'a BaseMapping> for Mapping<'a> {
+impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
     fn from(value: &'a BaseMapping) -> Self {
         Self::new(value.endpoint(), value.mapping_type())
             .with_description(value.description())
@@ -235,17 +241,20 @@ impl<'a> From<&'a BaseMapping> for Mapping<'a> {
     }
 }
 
-impl<'a> TryFrom<&Mapping<'a>> for BaseMapping {
+impl<T> TryFrom<&Mapping<T>> for BaseMapping
+where
+    T: AsRef<str> + Into<String>,
+{
     type Error = InterfaceError;
 
-    fn try_from(value: &Mapping<'a>) -> Result<Self, Self::Error> {
-        let endpoint = Endpoint::try_from(value.endpoint())?;
+    fn try_from(value: &Mapping<T>) -> Result<Self, Self::Error> {
+        let endpoint = Endpoint::try_from(value.endpoint().as_ref())?;
 
         Ok(Self {
             endpoint,
             mapping_type: value.mapping_type(),
-            description: value.description().map(ToString::to_string),
-            doc: value.doc().map(ToString::to_string),
+            description: value.description().map(|t| t.as_ref().into()),
+            doc: value.doc().map(|t| t.as_ref().into()),
         })
     }
 }
