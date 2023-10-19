@@ -184,8 +184,7 @@ pub(crate) mod tests {
         options::AstarteOptions, Interface,
     };
 
-    pub(crate) const PROPERTIES_SERVER: &str = r#"
-        {
+    pub(crate) const PROPERTIES_SERVER: &str = r#"{
             "interface_name": "org.astarte-platform.test.test",
             "version_major": 12,
             "version_minor": 1,
@@ -213,8 +212,7 @@ pub(crate) mod tests {
             ]
         }"#;
 
-    pub(crate) const DEVICE_OBJECT: &str = r#"
-        {
+    pub(crate) const DEVICE_OBJECT: &str = r#"{
             "interface_name": "test.device.object",
             "version_major": 0,
             "version_minor": 1,
@@ -243,8 +241,7 @@ pub(crate) mod tests {
                     "explicit_timestamp": true
                 }
             ]
-        }
-        "#;
+        }"#;
 
     pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
         Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))
@@ -268,7 +265,7 @@ pub(crate) mod tests {
             assert_eq!(mapping.interface().interface_name(), self.name);
             assert_eq!(mapping.interface().version_major(), self.version_major);
             assert_eq!(mapping.mapping_type(), self.mapping_type);
-            assert_eq!(mapping.endpoint(), self.endpoint);
+            assert_eq!(*mapping.endpoint(), self.endpoint);
             assert_eq!(mapping.explicit_timestamp(), self.explicit_timestamp);
             assert_eq!(mapping.allow_unset(), self.allow_unset);
         }

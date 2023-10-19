@@ -38,7 +38,6 @@ pub mod types;
 mod validate;
 
 use chrono::{DateTime, Utc};
-use interface::reference::MappingRef;
 #[cfg(test)]
 pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
@@ -64,7 +63,7 @@ pub use crate::interface::Interface;
 
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
-use crate::interface::reference::PropertyRef;
+use crate::interface::reference::{MappingRef, PropertyRef};
 use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
 use crate::options::AstarteOptions;
 use crate::payload::{

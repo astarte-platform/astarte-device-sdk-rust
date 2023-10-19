@@ -20,7 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ownership field to the `StoredProp` struct.
 - The `PropertyStore::store_prop` now receives the `StoredProp` struct.
 
+### Deprecated
+- Added a warning to the `AstarteDeviceSdk::get_property` method to use the
+  `PropAccess` trait instead
+
+## [0.6.2] - 2023-10-19
+### Fixed
+- Allow escaped character in the `Interface` description and documentation.
+
 ## [0.6.1] - 2023-10-02
+### Added
 - Check if an interface exists and the type is the same of the value
   passed/received when sending or receiving data from Astarte.
 
@@ -28,10 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unset of property send empty buffer instead of document with null value.
 - Deserialize mixed integer BSON arrays from Astarte to the type specified in
   the interface (longinteger and integer)
-
-### Deprecated
-- Added a warning to the `AstarteDeviceSdk::get_property` method to use the
-  `PropAccess` trait instead
 
 ## [0.6.0] - 2023-07-05
 ### Added

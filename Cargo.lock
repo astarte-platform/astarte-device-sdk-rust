@@ -84,13 +84,12 @@ checksum = "3a30da5c5f2d5e72842e00bcb57657162cdabef0931f40e2deb9b4140440cecd"
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "astarte-device-sdk-derive",
  "async-trait",
  "base64 0.21.2",
  "bson",
- "cargo-husky",
  "chrono",
  "criterion",
  "ecdsa",
@@ -123,7 +122,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -270,12 +269,6 @@ name = "bytes"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89b2fd2a0dcf38d7971e2194b6b6eebab45ae01067456a7fd93d5547a61b70be"
-
-[[package]]
-name = "cargo-husky"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "cast"
@@ -586,7 +579,7 @@ checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
 name = "e2e-test"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "astarte-device-sdk",
  "base64 0.21.2",
