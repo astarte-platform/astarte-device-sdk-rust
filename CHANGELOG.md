@@ -20,7 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ownership field to the `StoredProp` struct.
 - The `PropertyStore::store_prop` now receives the `StoredProp` struct.
 
+## [0.6.2] - 2023-10-19
+### Fixed
+- Allow escaped character in the `Interface` description and documentation.
+
 ## [0.6.1] - 2023-10-02
+### Added
 - Check if an interface exists and the type is the same of the value
   passed/received when sending or receiving data from Astarte.
 

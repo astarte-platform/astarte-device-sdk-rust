@@ -268,7 +268,7 @@ pub(crate) mod tests {
             assert_eq!(mapping.interface().interface_name(), self.name);
             assert_eq!(mapping.interface().version_major(), self.version_major);
             assert_eq!(mapping.mapping_type(), self.mapping_type);
-            assert_eq!(mapping.endpoint(), self.endpoint);
+            assert_eq!(*mapping.endpoint(), self.endpoint);
             assert_eq!(mapping.explicit_timestamp(), self.explicit_timestamp);
             assert_eq!(mapping.allow_unset(), self.allow_unset);
         }

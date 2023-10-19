@@ -32,7 +32,7 @@ homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 rust-version = "1.66.1"
-version = "0.6.1"
+version = "0.6.2"
 exclude = [".github"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -78,11 +78,6 @@ env_logger = { workspace = true }
 mockall = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-
-[dev-dependencies.cargo-husky]
-version = "1.5.0"
-default-features = false # Disable features which are enabled by default
-features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]
 
 [features]
 derive = ["dep:astarte-device-sdk-derive"]
