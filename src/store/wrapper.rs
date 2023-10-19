@@ -18,21 +18,51 @@
 
 //! Provides functionality to wrap a generic Store to convert the error in Error.
 
-use async_trait::async_trait;
+use std::{collections::VecDeque, sync::Arc};
 
+use async_trait::async_trait;
+use tokio::sync::RwLock;
+
+use crate::interface::Retention;
 use crate::types::AstarteType;
 
-use super::{error::StoreError, PropertyStore, StoredProp};
+use super::{error::StoreError, PropertyStore, RetentionMessage, RetentionStore, StoredProp};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
 pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
+    retention_cache: Arc<RwLock<VecDeque<RetentionMessage>>>,
 }
 
-impl<S> StoreWrapper<S> {
+impl<S: PropertyStore + RetentionStore> StoreWrapper<S> {
     pub(crate) fn new(store: S) -> Self {
-        Self { store }
+        Self {
+            store,
+            retention_cache: Arc::new(Default::default()),
+        }
+    }
+
+    pub(crate) async fn store_retention_message(
+        &self,
+        retention: Retention,
+        retention_message: RetentionMessage,
+    ) -> Result<(), StoreError> {
+        match retention {
+            Retention::Discard => {}
+            Retention::Volatile { .. } => {
+                let mut retention_cache = self.retention_cache.write().await;
+                retention_cache.push_back(retention_message);
+            }
+            Retention::Stored { .. } => {
+                self.store
+                    .persist(retention_message)
+                    .await
+                    .map_err(StoreError::store)?;
+            }
+        };
+
+        Ok(())
     }
 }
 
@@ -96,6 +126,37 @@ where
             .interface_props(interface)
             .await
             .map_err(StoreError::interface_props)
+    }
+}
+
+#[async_trait]
+impl<S> RetentionStore for StoreWrapper<S>
+where
+    S: RetentionStore,
+{
+    type Err = StoreError;
+
+    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err> {
+        self.store
+            .persist(retention_message)
+            .await
+            .map_err(StoreError::store)
+    }
+
+    async fn is_empty(&self) -> bool {
+        self.store.is_empty().await
+    }
+
+    async fn peek_first(&self) -> Option<RetentionMessage> {
+        self.store.peek_first().await
+    }
+
+    async fn ack_first(&self) {
+        self.store.ack_first().await
+    }
+
+    async fn reject_first(&self) {
+        self.store.reject_first().await
     }
 }
 

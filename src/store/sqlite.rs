@@ -24,12 +24,13 @@ use async_trait::async_trait;
 use log::{debug, error, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use super::{PropertyStore, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
     payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
+
+use super::{PropertyStore, RetentionMessage, RetentionStore, StoredProp};
 
 /// Error returned by the [`SqliteStore`].
 #[non_exhaustive]
@@ -436,10 +437,36 @@ fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueErr
     value.try_into().map_err(ValueError::from)
 }
 
+#[async_trait]
+impl RetentionStore for SqliteStore {
+    type Err = SqliteError;
+
+    async fn persist(&self, _retention_message: RetentionMessage) -> Result<(), Self::Err> {
+        todo!()
+    }
+
+    async fn is_empty(&self) -> bool {
+        todo!()
+    }
+
+    async fn peek_first(&self) -> Option<RetentionMessage> {
+        todo!()
+    }
+
+    async fn ack_first(&self) {
+        todo!()
+    }
+
+    async fn reject_first(&self) {
+        todo!()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::store::tests::test_property_store;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_sqlite_store() {

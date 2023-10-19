@@ -22,8 +22,9 @@ use std::{error::Error as StdError, fmt::Debug};
 
 use async_trait::async_trait;
 
-pub use self::sqlite::SqliteStore;
 use crate::{interface::Ownership, types::AstarteType};
+
+pub use self::sqlite::SqliteStore;
 
 pub mod error;
 pub mod memory;
@@ -118,11 +119,40 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RetentionMessage {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: i32,
+}
+
+/// Trait providing compatibility with Astarte devices to databases.
+///
+/// Any database implementing this trait can be used as permanent storage for the retention message
+/// of an Astarte device.
+#[async_trait]
+pub trait RetentionStore: Debug + Send + Sync + 'static
+where
+    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
+    //       bound to further restrict the error type.
+    Self::Err: StdError + Send + Sync + 'static,
+{
+    type Err;
+
+    /// Stores a message within the store.
+    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err>;
+
+    async fn is_empty(&self) -> bool;
+    async fn peek_first(&self) -> Option<RetentionMessage>;
+    async fn ack_first(&self);
+    async fn reject_first(&self);
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
-
     use chrono::{TimeZone, Utc};
+
+    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
 
     use super::*;
 

@@ -18,14 +18,15 @@
 
 //! In memory store for the properties.
 
-use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+use std::{collections::HashMap, collections::VecDeque, fmt::Display, hash::Hash, sync::Arc};
 
 use async_trait::async_trait;
 use log::error;
 use tokio::sync::RwLock;
 
-use super::{PropertyStore, StoredProp};
 use crate::{interface::Ownership, types::AstarteType};
+
+use super::{PropertyStore, RetentionMessage, RetentionStore, StoredProp};
 
 /// Error from the memory store.
 ///
@@ -41,6 +42,7 @@ pub enum MemoryError {}
 pub struct MemoryStore {
     // Store the properties in memory
     store: Arc<RwLock<HashMap<Key, Value>>>,
+    retention_store: Arc<RwLock<VecDeque<RetentionMessage>>>,
 }
 
 impl MemoryStore {
@@ -48,6 +50,7 @@ impl MemoryStore {
     pub fn new() -> Self {
         MemoryStore {
             store: Arc::new(RwLock::new(HashMap::new())),
+            retention_store: Arc::new(Default::default()),
         }
     }
 }
@@ -221,10 +224,42 @@ impl From<(&Key, &Value)> for StoredProp {
     }
 }
 
+#[async_trait]
+impl RetentionStore for MemoryStore {
+    type Err = MemoryError;
+
+    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        retention_store.push_back(retention_message);
+
+        Ok(())
+    }
+
+    async fn is_empty(&self) -> bool {
+        let retention_store = self.retention_store.read().await;
+        retention_store.is_empty()
+    }
+
+    async fn peek_first(&self) -> Option<RetentionMessage> {
+        let retention_store = self.retention_store.read().await;
+        retention_store.front().cloned()
+    }
+
+    async fn ack_first(&self) {
+        let mut retention_store = self.retention_store.write().await;
+        retention_store.pop_front();
+    }
+
+    async fn reject_first(&self) {
+        let _ = self.ack_first();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::store::tests::test_property_store;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_memory_store() {

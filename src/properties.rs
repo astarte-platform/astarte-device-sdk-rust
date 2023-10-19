@@ -26,7 +26,7 @@ use log::{error, warn};
 use crate::{
     error::Error,
     interface::mapping::path::MappingPath,
-    store::{PropertyStore, StoredProp},
+    store::{PropertyStore, RetentionStore, StoredProp},
     types::AstarteType,
     AstarteDeviceSdk,
 };
@@ -64,7 +64,7 @@ pub trait PropAccess {
 #[async_trait]
 impl<S> PropAccess for AstarteDeviceSdk<S>
 where
-    S: PropertyStore,
+    S: PropertyStore + RetentionStore,
 {
     async fn property(
         &self,
@@ -214,7 +214,7 @@ pub(crate) mod tests {
     }]
 }"#;
 
-    async fn test_prop_acces_for_store<S: PropertyStore>(store: S) {
+    async fn test_prop_acces_for_store<S: PropertyStore + RetentionStore>(store: S) {
         store
             .store_prop(StoredProp {
                 interface: "org.Foo",

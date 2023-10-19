@@ -76,7 +76,7 @@ use crate::shared::SharedDevice;
 use crate::store::memory::MemoryStore;
 use crate::store::sqlite::SqliteStore;
 use crate::store::wrapper::StoreWrapper;
-use crate::store::{PropertyStore, StoredProp};
+use crate::store::{PropertyStore, RetentionMessage, RetentionStore, StoredProp};
 use crate::topic::parse_topic;
 use crate::types::{AstarteType, TypeError};
 use crate::validate::{validate_send_individual, validate_send_object};
@@ -193,7 +193,7 @@ pub struct AstarteDeviceDataEvent {
 
 impl<S> AstarteDeviceSdk<S>
 where
-    S: PropertyStore,
+    S: PropertyStore + RetentionStore,
 {
     /// Create a new instance of the Astarte Device SDK.
     ///
@@ -800,7 +800,10 @@ where
 
         let qos = mapping.mapping().reliability().into();
         let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
-        self.client.publish(topic, qos, false, buf).await?;
+        self.client
+            .publish(topic.clone(), qos, false, buf.clone())
+            .await?;
+        //TODO add retention message
 
         //  Store the property in the database after it has been successfully sent
         if let Some(prop_mapping) = opt_prop {
@@ -942,7 +945,25 @@ where
         let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
         let qos = object.reliability().into();
 
-        self.client.publish(topic, qos, false, buf).await?;
+        // self.client.publish(topic, qos, false, buf).await?;
+        if self
+            .client
+            .publish(topic.clone(), qos, false, buf.clone())
+            .await
+            .is_err()
+        {
+            let retention = object.mapping(path).unwrap().retention();
+            self.store
+                .store_retention_message(
+                    retention,
+                    RetentionMessage {
+                        topic,
+                        payload: buf,
+                        qos: 0,
+                    },
+                )
+                .await?
+        }
 
         Ok(())
     }
@@ -1039,6 +1060,7 @@ mod test {
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
+    use crate::store::{PropertyStore, RetentionStore};
     use crate::{self as astarte_device_sdk, EventReceiver, Interface, SharedDevice};
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
@@ -1073,6 +1095,7 @@ mod test {
     ) -> (AstarteDeviceSdk<S>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
+        S: PropertyStore + RetentionStore,
     {
         let (tx, rx) = mpsc::channel(50);
 
