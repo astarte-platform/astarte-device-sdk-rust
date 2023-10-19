@@ -6,7 +6,7 @@
 
 [package]
 name = "astarte-device-sdk"
-version = "0.6.1"
+version = "0.6.2"
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = "2021"
 homepage = "https://astarte.cloud/"
@@ -24,7 +24,7 @@ name = "benchmark"
 harness = false
 
 [dependencies]
-astarte-device-sdk-derive = { version = "0.6.1", optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = { version = "0.6.2", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
 base64 = "0.21.0"
 bson = { version = "2.1.0", features = ["chrono-0_4"] }
