@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update the `AstarteAggregate` derive macro to syn `2`, see
   [#236](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/236).
 
+## [0.6.2] - 2023-10-19
+
 ## [0.6.1] - 2023-10-02
 
 ## [0.6.0] - 2023-07-05

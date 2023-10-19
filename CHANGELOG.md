@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added ownership field to the `StoredProp` struct.
 - The `PropertyStore::store_prop` now receives the `StoredProp` struct.
 
+## [0.6.2] - 2023-10-19
 ### Fixed
 - Allow escaped character in the `Interface` description and documentation.
 
