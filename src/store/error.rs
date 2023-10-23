@@ -84,3 +84,30 @@ impl StoreError {
         Self::InterfaceProps(err.into())
     }
 }
+
+/// Error that wraps the type returned by an implementation of the [`super::RetentionStore`] trait.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RetentionStoreError {
+    /// Could not clear the store.
+    #[error("could not clear store")]
+    Clear(#[source] DynError),
+    /// Could not get front retention message.
+    #[error("could not load retention message")]
+    Front(#[source] DynError),
+    /// Could not check if store was empty
+    #[error("could not check if the store was empty")]
+    IsEmpty(#[source] DynError),
+    /// Could not load all retention messages.
+    #[error("could not load all retention messages")]
+    LoadAll(#[source] DynError),
+    /// Could not store a retention message.
+    #[error("could not store retention message")]
+    Store(#[source] DynError),
+    /// Could not remove front retention message.
+    #[error("could not remove retention message")]
+    Remove,
+    /// Could not remove front retention message.
+    #[error("could not remove front retention message")]
+    RemoveFront(#[source] DynError),
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT NOT EXISTS (SELECT 1 from retentionmessage) AS 'is_empty!: bool'\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "is_empty!: bool",
+        "ordinal": 0,
+        "type_info": "Int"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bfbc2e75d7c94910fbc794229e6108b96849dc489ffa06698a01689e6fd6ebfc"
+}

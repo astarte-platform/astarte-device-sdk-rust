@@ -245,7 +245,8 @@ pub(crate) mod tests {
                 Interface::from_str(DEVICE_PROP).unwrap(),
             ],
             store,
-        );
+        )
+        .await;
 
         let prop = sdk.property("org.Foo", "/bar").await.unwrap();
         assert_eq!(prop, Some(AstarteType::Boolean(true)));

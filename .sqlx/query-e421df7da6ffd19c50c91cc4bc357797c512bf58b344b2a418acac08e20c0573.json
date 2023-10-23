@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR\nREPLACE INTO retentionmessage (id,\n                               expiry,\n                               payload,\n                               reliability,\n                               topic)\nVALUES (?,?, ?, ?, ?)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "e421df7da6ffd19c50c91cc4bc357797c512bf58b344b2a418acac08e20c0573"
+}

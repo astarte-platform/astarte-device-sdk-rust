@@ -18,10 +18,12 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
+use chrono::Utc;
 use std::{error::Error as StdError, fmt::Debug};
 
 use async_trait::async_trait;
 
+use crate::interface::Reliability;
 use crate::{interface::Ownership, types::AstarteType};
 
 pub use self::sqlite::SqliteStore;
@@ -62,7 +64,7 @@ where
     /// Delete a property from the database.
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
     /// Removes all saved properties from the database.
-    async fn clear(&self) -> Result<(), Self::Err>;
+    async fn clear_props(&self) -> Result<(), Self::Err>;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
@@ -121,9 +123,67 @@ where
 
 #[derive(Debug, Clone)]
 pub struct RetentionMessage {
-    pub topic: String,
-    pub payload: Vec<u8>,
-    pub qos: i32,
+    pub(self) id: i64,
+    absolute_expiry: Option<i64>,
+    pub(crate) payload: Vec<u8>,
+    pub(crate) reliability: Reliability,
+    pub(crate) topic: String,
+}
+
+pub struct RetentionMessageBuilder {
+    id: i64,
+    expiry: Option<i64>,
+    payload: Vec<u8>,
+    reliability: Reliability,
+    topic: String,
+}
+
+impl RetentionMessageBuilder {
+    pub(crate) fn new(payload: Vec<u8>, reliability: Reliability, topic: String) -> Self {
+        RetentionMessageBuilder {
+            id: 0,
+            expiry: None,
+            payload,
+            reliability,
+            topic,
+        }
+    }
+
+    pub(crate) fn expiry(&mut self, expiry: i32) -> &mut Self {
+        self.expiry = if expiry <= 0 {
+            None
+        } else {
+            let now = Utc::now().timestamp();
+            Some(now + expiry as i64)
+        };
+
+        self
+    }
+
+    pub(crate) fn id(&mut self, id: i64) -> &mut Self {
+        self.id = id;
+
+        self
+    }
+
+    pub(crate) fn build(&mut self) -> RetentionMessage {
+        RetentionMessage {
+            id: self.id,
+            absolute_expiry: self.expiry.or(None),
+            payload: self.payload.clone(),
+            reliability: self.reliability,
+            topic: self.topic.clone(),
+        }
+    }
+}
+
+impl RetentionMessage {
+    pub(crate) fn is_expired(&self) -> bool {
+        match self.absolute_expiry {
+            None => false,
+            Some(expiry) => Utc::now().timestamp() > expiry,
+        }
+    }
 }
 
 /// Trait providing compatibility with Astarte devices to databases.
@@ -139,13 +199,32 @@ where
 {
     type Err;
 
-    /// Stores a message within the store.
-    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err>;
+    /// Removes all saved RetentionMessage from the store.
+    async fn clear_retention_messages(&self) -> Result<(), Self::Err>;
 
-    async fn is_empty(&self) -> bool;
-    async fn peek_first(&self) -> Option<RetentionMessage>;
-    async fn ack_first(&self);
-    async fn reject_first(&self);
+    /// Provides the first RetentionMessage, or None if the store is empty.
+    async fn front_retention_message(&self) -> Result<Option<RetentionMessage>, Self::Err>;
+
+    /// Returns `true` if the store is empty.
+    async fn is_empty_retention_message(&self) -> Result<bool, Self::Err>;
+
+    /// Returns all stored RetentionMessage.
+    async fn load_all_retention_messages(&self) -> Result<Vec<RetentionMessage>, Self::Err>;
+
+    /// Stores a message within the store.
+    async fn persist_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err>;
+
+    /// Removes the first RetentionMessage.
+    async fn remove_front_retention_message(&self) -> Result<(), Self::Err>;
+
+    /// Removes the RetentionMessage.
+    async fn remove_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err>;
 }
 
 #[cfg(test)]
@@ -162,7 +241,7 @@ mod tests {
     {
         let ty = AstarteType::Integer(23);
 
-        store.clear().await.unwrap();
+        store.clear_props().await.unwrap();
 
         // non existing
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
@@ -241,7 +320,7 @@ mod tests {
                 .unwrap(),
             ty
         );
-        store.clear().await.unwrap();
+        store.clear_props().await.unwrap();
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
         // load all props
@@ -327,7 +406,7 @@ mod tests {
     /// Test that the error is Send + Sync + 'static to be send across task boundaries.
     #[tokio::test]
     async fn erro_should_compatible_with_tokio() {
-        let mem = StoreWrapper::new(MemoryStore::new());
+        let mem = StoreWrapper::new(MemoryStore::new()).await;
 
         let exp = AstarteType::Integer(1);
         let prop = StoredProp {
@@ -345,5 +424,61 @@ mod tests {
             .unwrap();
 
         assert_eq!(res, Some(exp));
+    }
+
+    pub(crate) async fn test_retention_store<S>(store: S)
+    where
+        S: RetentionStore,
+    {
+        let ty: Vec<u8> = vec![23];
+
+        store.clear_retention_messages().await.unwrap();
+
+        // non existing
+        assert!(store.is_empty_retention_message().await.unwrap());
+
+        let retention_message = RetentionMessage {
+            id: 0,
+            topic: "/device/interface/com.test".to_string(),
+            payload: ty.clone(),
+            reliability: Reliability::Guaranteed,
+            absolute_expiry: None,
+        };
+
+        store
+            .persist_retention_message(retention_message.clone())
+            .await
+            .unwrap();
+        assert!(!store.is_empty_retention_message().await.unwrap());
+        assert_eq!(
+            store
+                .front_retention_message()
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            ty
+        );
+
+        // delete
+        store.remove_front_retention_message().await.unwrap();
+        assert!(store.is_empty_retention_message().await.unwrap());
+
+        // clear
+        store
+            .persist_retention_message(retention_message)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .front_retention_message()
+                .await
+                .unwrap()
+                .unwrap()
+                .payload,
+            ty
+        );
+        store.clear_retention_messages().await.unwrap();
+        assert!(store.is_empty_retention_message().await.unwrap());
     }
 }

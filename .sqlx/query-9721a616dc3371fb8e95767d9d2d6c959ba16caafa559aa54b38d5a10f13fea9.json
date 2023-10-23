@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM retentionmessage WHERE id = ?\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9721a616dc3371fb8e95767d9d2d6c959ba16caafa559aa54b38d5a10f13fea9"
+}

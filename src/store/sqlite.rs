@@ -24,6 +24,7 @@ use async_trait::async_trait;
 use log::{debug, error, trace};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
+use crate::interface::Reliability;
 use crate::{
     interface::{MappingType, Ownership},
     payload::{Payload, PayloadError},
@@ -62,6 +63,9 @@ pub enum SqliteError {
     /// Couldn't convert ownership value
     #[error("could not deserialize ownership")]
     Ownership(#[from] OwnershipError),
+    /// Couldn't convert reliability value
+    #[error("could not deserialize reliability")]
+    Reliability(#[from] ReliabilityError),
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct
@@ -246,6 +250,88 @@ impl TryFrom<StoredRecord> for StoredProp {
     }
 }
 
+/// Error when converting a u8 into the [`Reliability`] struct
+#[derive(Debug, thiserror::Error)]
+#[error("invalid reliability value {value}")]
+pub(crate) struct ReliabilityError {
+    value: u8,
+}
+
+/// Reliability of a message.
+///
+/// The reliability is an enum stored as an single byte integer (u8) in the SQLite database, the values
+/// for the enum are:
+/// - **Unreliable**: 0
+/// - **Guaranteed**: 1
+/// - **Unique**: 2
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum RecordReliability {
+    Unreliable = 0,
+    Guaranteed = 1,
+    Unique = 2,
+}
+
+/// Result of the retention message front query
+#[derive(Debug, Clone)]
+struct RetentionMessagedRecord {
+    id: i64,
+    expiry: i64,
+    topic: String,
+    payload: Vec<u8>,
+    reliability: u8,
+}
+
+impl TryFrom<u8> for RecordReliability {
+    type Error = ReliabilityError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(RecordReliability::Unreliable),
+            1 => Ok(RecordReliability::Guaranteed),
+            2 => Ok(RecordReliability::Unique),
+            _ => Err(ReliabilityError { value }),
+        }
+    }
+}
+
+impl From<RecordReliability> for Reliability {
+    fn from(value: RecordReliability) -> Self {
+        match value {
+            RecordReliability::Unreliable => Reliability::Unreliable,
+            RecordReliability::Guaranteed => Reliability::Guaranteed,
+            RecordReliability::Unique => Reliability::Unique,
+        }
+    }
+}
+
+impl From<Reliability> for RecordReliability {
+    fn from(value: Reliability) -> Self {
+        match value {
+            Reliability::Unreliable => RecordReliability::Unreliable,
+            Reliability::Guaranteed => RecordReliability::Guaranteed,
+            Reliability::Unique => RecordReliability::Unique,
+        }
+    }
+}
+
+impl TryFrom<RetentionMessagedRecord> for RetentionMessage {
+    type Error = SqliteError;
+
+    fn try_from(value: RetentionMessagedRecord) -> Result<Self, Self::Error> {
+        Ok(RetentionMessage {
+            id: value.id,
+            topic: value.topic,
+            payload: value.payload,
+            reliability: RecordReliability::try_from(value.reliability)?.into(),
+            absolute_expiry: match value.expiry {
+                0 => None,
+                _ => Some(value.expiry),
+            },
+        })
+    }
+}
+
 /// Data structure providing an implementation of a sqlite database.
 ///
 /// Can be used by an Astarte device to store permanently properties values.
@@ -377,8 +463,8 @@ impl PropertyStore for SqliteStore {
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
-        sqlx::query_file!("queries/clear.sql")
+    async fn clear_props(&self) -> Result<(), Self::Err> {
+        sqlx::query_file!("queries/clear_prop.sql")
             .execute(&self.db_conn)
             .await?;
 
@@ -441,35 +527,100 @@ fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueErr
 impl RetentionStore for SqliteStore {
     type Err = SqliteError;
 
-    async fn persist(&self, _retention_message: RetentionMessage) -> Result<(), Self::Err> {
-        todo!()
+    async fn clear_retention_messages(&self) -> Result<(), Self::Err> {
+        sqlx::query_file!("queries/clear_retention.sql")
+            .execute(&self.db_conn)
+            .await?;
+
+        Ok(())
     }
 
-    async fn is_empty(&self) -> bool {
-        todo!()
+    async fn front_retention_message(&self) -> Result<Option<RetentionMessage>, Self::Err> {
+        let res: Option<RetentionMessage> =
+            sqlx::query_file_as!(RetentionMessagedRecord, "queries/load_first_retention.sql")
+                .try_map(|row| {
+                    RetentionMessage::try_from(row).map_err(|err| sqlx::Error::Decode(err.into()))
+                })
+                .fetch_optional(&self.db_conn)
+                .await?;
+
+        Ok(res)
     }
 
-    async fn peek_first(&self) -> Option<RetentionMessage> {
-        todo!()
+    async fn is_empty_retention_message(&self) -> Result<bool, Self::Err> {
+        struct RetentionTable {
+            is_empty: bool,
+        }
+
+        let retention_table: RetentionTable =
+            sqlx::query_file_as!(RetentionTable, "queries/is_empty_retention.sql")
+                .fetch_one(&self.db_conn)
+                .await?;
+
+        Ok(retention_table.is_empty)
     }
 
-    async fn ack_first(&self) {
-        todo!()
+    async fn load_all_retention_messages(&self) -> Result<Vec<RetentionMessage>, Self::Err> {
+        let res: Vec<RetentionMessage> =
+            sqlx::query_file_as!(RetentionMessagedRecord, "queries/load_all_retentions.sql")
+                .try_map(|row| {
+                    RetentionMessage::try_from(row).map_err(|err| sqlx::Error::Decode(err.into()))
+                })
+                .fetch_all(&self.db_conn)
+                .await?;
+
+        Ok(res)
     }
 
-    async fn reject_first(&self) {
-        todo!()
+    async fn persist_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        let absolute_expiry = retention_message.absolute_expiry.unwrap_or(0);
+
+        let reliability = RecordReliability::from(retention_message.reliability) as u8;
+        sqlx::query_file!(
+            "queries/store_retention.sql",
+            retention_message.id,
+            absolute_expiry,
+            retention_message.payload,
+            reliability,
+            retention_message.topic,
+        )
+        .execute(&self.db_conn)
+        .await?;
+
+        Ok(())
+    }
+
+    async fn remove_front_retention_message(&self) -> Result<(), Self::Err> {
+        sqlx::query_file!("queries/delete_first_retention.sql")
+            .execute(&self.db_conn)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn remove_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        sqlx::query_file!("queries/delete_retention_by_id.sql", retention_message.id)
+            .execute(&self.db_conn)
+            .await?;
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::store::tests::test_property_store;
+    use crate::store::tests::{test_property_store, test_retention_store};
 
     use super::*;
 
     #[tokio::test]
-    async fn test_sqlite_store() {
+    async fn test_sqlite_property_store() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.sqlite");
         let path = db_path.as_path().to_str().unwrap();
@@ -477,5 +628,16 @@ mod tests {
         let db = SqliteStore::new(path).await.unwrap();
 
         test_property_store(db).await;
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_retention_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let path = db_path.as_path().to_str().unwrap();
+
+        let db = SqliteStore::new(path).await.unwrap();
+
+        test_retention_store(db).await;
     }
 }

@@ -124,7 +124,7 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
+    async fn clear_props(&self) -> Result<(), Self::Err> {
         let mut store = self.store.write().await;
 
         store.clear();
@@ -228,36 +228,72 @@ impl From<(&Key, &Value)> for StoredProp {
 impl RetentionStore for MemoryStore {
     type Err = MemoryError;
 
-    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err> {
+    async fn clear_retention_messages(&self) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        retention_store.clear();
+
+        Ok(())
+    }
+
+    async fn front_retention_message(&self) -> Result<Option<RetentionMessage>, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+        let retention_message = retention_store.front().cloned();
+
+        Ok(retention_message)
+    }
+
+    async fn is_empty_retention_message(&self) -> Result<bool, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+
+        Ok(retention_store.is_empty())
+    }
+
+    async fn load_all_retention_messages(&self) -> Result<Vec<RetentionMessage>, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+
+        Ok(retention_store.clone().into())
+    }
+
+    async fn persist_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
         let mut retention_store = self.retention_store.write().await;
         retention_store.push_back(retention_message);
 
         Ok(())
     }
 
-    async fn is_empty(&self) -> bool {
-        let retention_store = self.retention_store.read().await;
-        retention_store.is_empty()
-    }
-
-    async fn peek_first(&self) -> Option<RetentionMessage> {
-        let retention_store = self.retention_store.read().await;
-        retention_store.front().cloned()
-    }
-
-    async fn ack_first(&self) {
+    async fn remove_front_retention_message(&self) -> Result<(), Self::Err> {
         let mut retention_store = self.retention_store.write().await;
-        retention_store.pop_front();
+        let _ = retention_store.pop_front();
+
+        Ok(())
     }
 
-    async fn reject_first(&self) {
-        let _ = self.ack_first();
+    async fn remove_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        for i in 0..retention_store.len() {
+            let Some( rt ) = retention_store.get(i) else {
+                continue
+            };
+
+            if retention_message.id == rt.id {
+                retention_store.remove(i);
+                break;
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::store::tests::test_property_store;
+    use crate::store::tests::{test_property_store, test_retention_store};
 
     use super::*;
 
@@ -265,6 +301,7 @@ mod tests {
     async fn test_memory_store() {
         let db = MemoryStore::new();
 
-        test_property_store(db).await;
+        test_property_store(db.clone()).await;
+        test_retention_store(db).await;
     }
 }

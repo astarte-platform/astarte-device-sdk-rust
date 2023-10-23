@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT  id,\n        expiry ,\n        payload,\n        reliability AS 'reliability: u8',\n        topic\nFROM retentionmessage\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Int64"
+      },
+      {
+        "name": "expiry",
+        "ordinal": 1,
+        "type_info": "Int64"
+      },
+      {
+        "name": "payload",
+        "ordinal": 2,
+        "type_info": "Blob"
+      },
+      {
+        "name": "reliability: u8",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "topic",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f8f9a2a028392ef53f7062aca8323fd293a220c102ad7f1b71337fa8541896a0"
+}

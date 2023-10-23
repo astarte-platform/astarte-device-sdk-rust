@@ -23,7 +23,9 @@ use std::{collections::VecDeque, sync::Arc};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
-use crate::interface::Retention;
+use crate::interface::{Reliability, Retention};
+use crate::store::error::RetentionStoreError;
+use crate::store::RetentionMessageBuilder;
 use crate::types::AstarteType;
 
 use super::{error::StoreError, PropertyStore, RetentionMessage, RetentionStore, StoredProp};
@@ -33,32 +35,58 @@ use super::{error::StoreError, PropertyStore, RetentionMessage, RetentionStore, 
 pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
     retention_cache: Arc<RwLock<VecDeque<RetentionMessage>>>,
+    stored_messages: Arc<RwLock<i64>>,
 }
 
 impl<S: PropertyStore + RetentionStore> StoreWrapper<S> {
-    pub(crate) fn new(store: S) -> Self {
+    pub(crate) async fn new(store: S) -> Self {
+        let retention_cache: Arc<RwLock<VecDeque<RetentionMessage>>> = Arc::new(Default::default());
+        let stored_messages: Arc<RwLock<i64>> = Arc::new(Default::default());
+        let retentions_stored = store.load_all_retention_messages().await.unwrap();
+
+        {
+            let mut retention_cache_guard = retention_cache.write().await;
+            let mut stored_messages = stored_messages.write().await;
+
+            for retention_message in retentions_stored.into_iter() {
+                retention_cache_guard.push_back(retention_message);
+                *stored_messages += 1;
+            }
+        }
+
         Self {
             store,
-            retention_cache: Arc::new(Default::default()),
+            retention_cache,
+            stored_messages,
         }
     }
 
     pub(crate) async fn store_retention_message(
         &self,
         retention: Retention,
-        retention_message: RetentionMessage,
+        topic: String,
+        payload: Vec<u8>,
+        reliability: Reliability,
     ) -> Result<(), StoreError> {
+        let mut retention_message = RetentionMessageBuilder::new(payload, reliability, topic);
+
         match retention {
             Retention::Discard => {}
-            Retention::Volatile { .. } => {
+            Retention::Volatile { expiry } => {
                 let mut retention_cache = self.retention_cache.write().await;
+                let retention_message = retention_message.expiry(expiry).build();
                 retention_cache.push_back(retention_message);
             }
-            Retention::Stored { .. } => {
-                self.store
-                    .persist(retention_message)
+            Retention::Stored { expiry } => {
+                let mut stored_messages = self.stored_messages.write().await;
+                *stored_messages += 1;
+                let retention_message = retention_message
+                    .id(*stored_messages)
+                    .expiry(expiry)
+                    .build();
+                self.persist_retention_message(retention_message)
                     .await
-                    .map_err(StoreError::store)?;
+                    .map_err(|err| StoreError::Store(err.into()))?;
             }
         };
 
@@ -96,8 +124,8 @@ where
             .map_err(StoreError::delete)
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
-        self.store.clear().await.map_err(StoreError::clear)
+    async fn clear_props(&self) -> Result<(), Self::Err> {
+        self.store.clear_props().await.map_err(StoreError::clear)
     }
 
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
@@ -134,42 +162,147 @@ impl<S> RetentionStore for StoreWrapper<S>
 where
     S: RetentionStore,
 {
-    type Err = StoreError;
+    type Err = RetentionStoreError;
 
-    async fn persist(&self, retention_message: RetentionMessage) -> Result<(), Self::Err> {
+    async fn clear_retention_messages(&self) -> Result<(), Self::Err> {
+        let mut retention_cache = self.retention_cache.write().await;
+        retention_cache.clear();
+
         self.store
-            .persist(retention_message)
+            .clear_retention_messages()
             .await
-            .map_err(StoreError::store)
+            .map_err(|err| RetentionStoreError::Clear(err.into()))?;
+
+        let mut stored_messages = self.stored_messages.write().await;
+        *stored_messages = 0;
+
+        Ok(())
     }
 
-    async fn is_empty(&self) -> bool {
-        self.store.is_empty().await
+    async fn front_retention_message(&self) -> Result<Option<RetentionMessage>, Self::Err> {
+        let retention_cache = self.retention_cache.read().await;
+        let retention_message = retention_cache.front().cloned();
+
+        Ok(retention_message)
     }
 
-    async fn peek_first(&self) -> Option<RetentionMessage> {
-        self.store.peek_first().await
+    async fn is_empty_retention_message(&self) -> Result<bool, Self::Err> {
+        let retention_cache = self.retention_cache.read().await;
+
+        Ok(retention_cache.is_empty())
     }
 
-    async fn ack_first(&self) {
-        self.store.ack_first().await
+    async fn load_all_retention_messages(&self) -> Result<Vec<RetentionMessage>, Self::Err> {
+        self.store
+            .load_all_retention_messages()
+            .await
+            .map_err(|err| RetentionStoreError::LoadAll(err.into()))
     }
 
-    async fn reject_first(&self) {
-        self.store.reject_first().await
+    async fn persist_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        self.store
+            .persist_retention_message(retention_message.clone())
+            .await
+            .map_err(|err| RetentionStoreError::Store(err.into()))?;
+        let mut retention_cache = self.retention_cache.write().await;
+        retention_cache.push_back(retention_message);
+
+        Ok(())
+    }
+
+    async fn remove_front_retention_message(&self) -> Result<(), Self::Err> {
+        let mut retention_cache = self.retention_cache.write().await;
+        let retention_message = retention_cache
+            .pop_front()
+            .ok_or(RetentionStoreError::Remove)?;
+
+        if retention_message.id > 0 {
+            self.store
+                .remove_retention_message(retention_message)
+                .await
+                .map_err(|err| RetentionStoreError::RemoveFront(err.into()))?;
+        }
+
+        Ok(())
+    }
+
+    async fn remove_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        let mut retention_cache = self.retention_cache.write().await;
+        for i in 0..retention_cache.len() {
+            let Some( rt ) = retention_cache.get(i) else {
+                continue
+            };
+
+            if retention_message.id == rt.id {
+                retention_cache.remove(i);
+                break;
+            }
+        }
+
+        if retention_message.id > 0 {
+            self.store
+                .remove_retention_message(retention_message)
+                .await
+                .map_err(|err| RetentionStoreError::RemoveFront(err.into()))?;
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::tests::test_retention_store;
     use crate::store::{memory::MemoryStore, tests::test_property_store, SqliteStore};
+
+    fn generate_rt_messages() -> Vec<RetentionMessage> {
+        let rt_msgs: Vec<RetentionMessage> = vec![
+            RetentionMessage {
+                id: 1,
+                topic: "/device/interface/com.test1".to_string(),
+                payload: vec![14u8, 11u8],
+                reliability: Reliability::Guaranteed,
+                absolute_expiry: None,
+            },
+            RetentionMessage {
+                id: 2,
+                topic: "/device/interface/com.test2".to_string(),
+                payload: vec![24u8, 21u8],
+                reliability: Reliability::Guaranteed,
+                absolute_expiry: None,
+            },
+            RetentionMessage {
+                id: 3,
+                topic: "/device/interface/com.test3".to_string(),
+                payload: vec![34u8, 31u8],
+                reliability: Reliability::Guaranteed,
+                absolute_expiry: None,
+            },
+            RetentionMessage {
+                id: 4,
+                topic: "/device/interface/com.test4".to_string(),
+                payload: vec![44u8, 41u8],
+                reliability: Reliability::Guaranteed,
+                absolute_expiry: None,
+            },
+        ];
+
+        return rt_msgs;
+    }
 
     #[tokio::test]
     async fn test_memory_wrapped() {
-        let db = StoreWrapper::new(MemoryStore::new());
+        let db = StoreWrapper::new(MemoryStore::new()).await;
 
-        test_property_store(db).await;
+        test_property_store(db.clone()).await;
+        test_retention_store(db).await;
     }
 
     #[tokio::test]
@@ -178,8 +311,91 @@ mod tests {
         let db_path = dir.path().join("test.sqlite");
         let path = db_path.as_path().to_str().unwrap();
 
+        let db = StoreWrapper::new(SqliteStore::new(path).await.unwrap()).await;
+
+        test_property_store(db.clone()).await;
+        test_retention_store(db).await;
+    }
+
+    #[tokio::test]
+    async fn test_memory_with_initial_messages() {
+        let db = MemoryStore::new();
+
+        let rt_msgs = generate_rt_messages();
+
+        for i in 0..rt_msgs.len() / 2 {
+            db.persist_retention_message(rt_msgs.get(i).cloned().unwrap())
+                .await
+                .unwrap();
+        }
+
+        let store = StoreWrapper::new(db).await;
+        test_retention_store_with_initial_value(store, rt_msgs).await;
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_with_initial_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let path = db_path.as_path().to_str().unwrap();
+
         let db = SqliteStore::new(path).await.unwrap();
 
-        test_property_store(db).await;
+        let rt_msgs = generate_rt_messages();
+
+        for i in 0..rt_msgs.len() / 2 {
+            db.persist_retention_message(rt_msgs.get(i).cloned().unwrap())
+                .await
+                .unwrap();
+        }
+
+        let store = StoreWrapper::new(db).await;
+        test_retention_store_with_initial_value(store, rt_msgs).await;
+    }
+
+    async fn test_retention_store_with_initial_value<S>(
+        store: StoreWrapper<S>,
+        rt_msgs: Vec<RetentionMessage>,
+    ) where
+        S: RetentionStore + PropertyStore,
+    {
+        assert!(!store.is_empty_retention_message().await.unwrap());
+
+        for i in rt_msgs.len() / 2..rt_msgs.len() {
+            let retention = Retention::Stored { expiry: 100 };
+            let rt_msg = rt_msgs.get(i).cloned().unwrap();
+            store
+                .store_retention_message(
+                    retention,
+                    rt_msg.topic,
+                    rt_msg.payload,
+                    rt_msg.reliability,
+                )
+                .await
+                .unwrap();
+        }
+
+        assert!(!store.is_empty_retention_message().await.unwrap());
+
+        for rt_message in rt_msgs.iter() {
+            assert_eq!(
+                store
+                    .front_retention_message()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .payload,
+                rt_message.payload
+            );
+
+            store.remove_front_retention_message().await.unwrap();
+        }
+
+        assert!(store.is_empty_retention_message().await.unwrap());
+        assert!(store
+            .load_all_retention_messages()
+            .await
+            .unwrap()
+            .is_empty());
     }
 }
