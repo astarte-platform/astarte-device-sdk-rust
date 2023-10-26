@@ -85,7 +85,7 @@ openssl = ["dep:openssl"]
 
 [workspace.dependencies]
 astarte-device-sdk-derive = { version = "0.6.1", path = "./astarte-device-sdk-derive" }
-async-trait = "0.1.2"
+async-trait = "0.1.41"
 base64 = "0.21.0"
 bson = "2.1.0"
 chrono = "0.4.14"

@@ -253,7 +253,7 @@ impl TryFrom<StoredRecord> for StoredProp {
 /// Error when converting a u8 into the [`Reliability`] struct
 #[derive(Debug, thiserror::Error)]
 #[error("invalid reliability value {value}")]
-pub(crate) struct ReliabilityError {
+pub struct ReliabilityError {
     value: u8,
 }
 

@@ -277,8 +277,8 @@ impl RetentionStore for MemoryStore {
     ) -> Result<(), Self::Err> {
         let mut retention_store = self.retention_store.write().await;
         for i in 0..retention_store.len() {
-            let Some( rt ) = retention_store.get(i) else {
-                continue
+            let Some(rt) = retention_store.get(i) else {
+                continue;
             };
 
             if retention_message.id == rt.id {

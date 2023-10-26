@@ -369,7 +369,7 @@ impl Display for MappingType {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Reliability {
+pub enum Reliability {
     #[default]
     Unreliable,
     Guaranteed,

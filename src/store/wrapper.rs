@@ -33,9 +33,13 @@ use super::{error::StoreError, PropertyStore, RetentionMessage, RetentionStore, 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
 pub(crate) struct StoreWrapper<S> {
+    /// A generic store type
     pub(crate) store: S,
+    /// A cache queue of both volatile and stored type retention messages
     retention_cache: Arc<RwLock<VecDeque<RetentionMessage>>>,
-    stored_messages: Arc<RwLock<i64>>,
+    /// A count of all retention message stored  since the beginning of the instance or after a
+    /// clear operation.
+    retention_stored_messages: Arc<RwLock<i64>>,
 }
 
 impl<S: PropertyStore + RetentionStore> StoreWrapper<S> {
@@ -46,18 +50,20 @@ impl<S: PropertyStore + RetentionStore> StoreWrapper<S> {
 
         {
             let mut retention_cache_guard = retention_cache.write().await;
-            let mut stored_messages = stored_messages.write().await;
+            {
+                let mut stored_messages = stored_messages.write().await;
+                *stored_messages = retentions_stored.len() as i64;
+            }
 
             for retention_message in retentions_stored.into_iter() {
                 retention_cache_guard.push_back(retention_message);
-                *stored_messages += 1;
             }
         }
 
         Self {
             store,
             retention_cache,
-            stored_messages,
+            retention_stored_messages: stored_messages,
         }
     }
 
@@ -78,15 +84,18 @@ impl<S: PropertyStore + RetentionStore> StoreWrapper<S> {
                 retention_cache.push_back(retention_message);
             }
             Retention::Stored { expiry } => {
-                let mut stored_messages = self.stored_messages.write().await;
-                *stored_messages += 1;
+                let mut stored_messages = self.retention_stored_messages.write().await;
+                let stored_messages_tmp = *stored_messages + 1;
+
                 let retention_message = retention_message
-                    .id(*stored_messages)
+                    .id(stored_messages_tmp)
                     .expiry(expiry)
                     .build();
                 self.persist_retention_message(retention_message)
                     .await
                     .map_err(|err| StoreError::Store(err.into()))?;
+
+                *stored_messages = stored_messages_tmp;
             }
         };
 
@@ -173,7 +182,7 @@ where
             .await
             .map_err(|err| RetentionStoreError::Clear(err.into()))?;
 
-        let mut stored_messages = self.stored_messages.write().await;
+        let mut stored_messages = self.retention_stored_messages.write().await;
         *stored_messages = 0;
 
         Ok(())
@@ -235,8 +244,8 @@ where
     ) -> Result<(), Self::Err> {
         let mut retention_cache = self.retention_cache.write().await;
         for i in 0..retention_cache.len() {
-            let Some( rt ) = retention_cache.get(i) else {
-                continue
+            let Some(rt) = retention_cache.get(i) else {
+                continue;
             };
 
             if retention_message.id == rt.id {
@@ -294,7 +303,7 @@ mod tests {
             },
         ];
 
-        return rt_msgs;
+        rt_msgs
     }
 
     #[tokio::test]

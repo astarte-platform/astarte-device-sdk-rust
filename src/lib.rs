@@ -65,7 +65,7 @@ pub use crate::interface::Interface;
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::PropertyRef;
-use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
+use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError, Retention};
 use crate::options::AstarteOptions;
 use crate::payload::{
     deserialize_individual, deserialize_object, serialize_individual, serialize_object, Payload,
@@ -76,7 +76,7 @@ use crate::shared::SharedDevice;
 use crate::store::memory::MemoryStore;
 use crate::store::sqlite::SqliteStore;
 use crate::store::wrapper::StoreWrapper;
-use crate::store::{PropertyStore, RetentionMessage, RetentionStore, StoredProp};
+use crate::store::{PropertyStore, RetentionStore, StoredProp};
 use crate::topic::parse_topic;
 use crate::types::{AstarteType, TypeError};
 use crate::validate::{validate_send_individual, validate_send_object};
@@ -147,6 +147,7 @@ pub type EventReceiver = mpsc::Receiver<Result<AstarteDeviceDataEvent, Error>>;
 #[macro_use]
 extern crate astarte_device_sdk_derive;
 
+use crate::store::error::StoreError;
 /// Derive macro to implement `AstarteAggregate` trait with `feature = ["derive"]`.
 #[cfg(feature = "derive")]
 pub use astarte_device_sdk_derive::AstarteAggregate;
@@ -231,7 +232,7 @@ where
                 events_channel: tx_events,
                 eventloop: Mutex::new(eventloop),
                 interfaces: RwLock::new(opts.interfaces),
-                store: StoreWrapper::new(opts.store),
+                store: StoreWrapper::new(opts.store).await,
             }),
         };
 
@@ -266,6 +267,7 @@ where
             self.send_introspection().await?;
             self.send_emptycache().await?;
             self.send_device_owned_properties().await?;
+            self.retry_send_retention_messages().await?;
             info!("connack done");
         }
 
@@ -798,12 +800,31 @@ where
 
         let buf = serialize_individual(mapping, &data, timestamp)?;
 
-        let qos = mapping.mapping().reliability().into();
+        let reliability = mapping.mapping().reliability();
         let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
-        self.client
-            .publish(topic.clone(), qos, false, buf.clone())
-            .await?;
-        //TODO add retention message
+
+        if let Err(err) = self
+            .client
+            .publish(topic.clone(), reliability.into(), false, buf.clone())
+            .await
+        {
+            let retention = if opt_prop.is_some() {
+                // Properties are always stored and never expire
+                Retention::Stored { expiry: 0 }
+            } else {
+                mapping.retention()
+            };
+
+            if retention == Retention::Discard {
+                return Err(err)?;
+            }
+
+            warn!("Unable to publish data: {err}\n Add data to retention store");
+
+            self.store
+                .store_retention_message(retention, topic, buf, reliability)
+                .await?;
+        }
 
         //  Store the property in the database after it has been successfully sent
         if let Some(prop_mapping) = opt_prop {
@@ -943,32 +964,38 @@ where
         let buf = serialize_object(object, path, &aggregate, timestamp)?;
 
         let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
-        let qos = object.reliability().into();
+        let reliability = object.reliability();
 
-        // self.client.publish(topic, qos, false, buf).await?;
-        if self
+        if let Err(err) = self
             .client
-            .publish(topic.clone(), qos, false, buf.clone())
+            .publish(topic.clone(), reliability.into(), false, buf.clone())
             .await
-            .is_err()
         {
-            let retention = object.mapping(path).unwrap().retention();
+            // Take only the first mapping because all retention on object have the same type
+            let retention = object
+                .iter_mappings()
+                .next()
+                .ok_or(Error::MissingMapping {
+                    interface: interface.to_string(),
+                    mapping: path.to_string(),
+                })?
+                .retention();
+
+            if retention == Retention::Discard {
+                return Err(err)?;
+            }
+
+            warn!("Unable to publish data: {err}\n Add data to retention store");
+
             self.store
-                .store_retention_message(
-                    retention,
-                    RetentionMessage {
-                        topic,
-                        payload: buf,
-                        qos: 0,
-                    },
-                )
-                .await?
+                .store_retention_message(retention, topic, buf, reliability)
+                .await?;
         }
 
         Ok(())
     }
 
-    /// Send an object datastreamy on an interface, with an explicit timestamp.
+    /// Send an object datastream on an interface, with an explicit timestamp.
     ///
     /// ```no_run
     /// # use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions, AstarteAggregate};
@@ -1032,6 +1059,31 @@ where
         self.send_object_with_timestamp_impl(interface_name, &path, data, None)
             .await
     }
+
+    /// Retry to send all retention messages stored.
+    async fn retry_send_retention_messages(&self) -> Result<(), Error> {
+        while matches!(self.store.is_empty_retention_message().await, Ok(is_empty) if(!is_empty)) {
+            let retention_message = self.store.front_retention_message().await.unwrap();
+            if let Some(retention_message) = retention_message {
+                if !retention_message.is_expired() {
+                    self.client
+                        .publish(
+                            retention_message.topic,
+                            retention_message.reliability.into(),
+                            false,
+                            retention_message.payload,
+                        )
+                        .await?;
+                }
+            }
+
+            self.store
+                .remove_front_retention_message()
+                .await
+                .map_err(|err| Error::Database(StoreError::Store(err.into())))?;
+        }
+        Ok(())
+    }
 }
 
 impl<S> fmt::Debug for AstarteDeviceSdk<S> {
@@ -1048,14 +1100,15 @@ impl<S> fmt::Debug for AstarteDeviceSdk<S> {
 mod test {
     use base64::Engine;
     use mockall::predicate;
-    use rumqttc::Event;
+    use rumqttc::{Event, Request};
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, Mutex, RwLock};
 
+    use crate::interface::mapping::path::MappingPath;
     use crate::interfaces::Interfaces;
-    use crate::payload::Payload;
+    use crate::payload::{serialize_individual, Payload};
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
@@ -1073,10 +1126,11 @@ mod test {
     // Interfaces
     const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
     const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    const INDIVIDUAL_DEVICE_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream.json");
     const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
     const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
 
-    pub(crate) fn mock_astarte_device<I>(
+    pub(crate) async fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: EventLoop,
         interfaces: I,
@@ -1084,10 +1138,10 @@ mod test {
     where
         I: IntoIterator<Item = Interface>,
     {
-        mock_astarte_device_store(client, eventloop, interfaces, MemoryStore::new())
+        mock_astarte_device_store(client, eventloop, interfaces, MemoryStore::new()).await
     }
 
-    pub(crate) fn mock_astarte_device_store<I, S>(
+    pub(crate) async fn mock_astarte_device_store<I, S>(
         client: AsyncClient,
         eventloop: EventLoop,
         interfaces: I,
@@ -1104,7 +1158,7 @@ mod test {
                 realm: "realm".to_string(),
                 device_id: "device_id".to_string(),
                 client,
-                store: StoreWrapper::new(store),
+                store: StoreWrapper::new(store).await,
                 interfaces: RwLock::new(Interfaces::from_iter(interfaces)),
                 eventloop: Mutex::new(eventloop),
                 events_channel: tx,
@@ -1288,7 +1342,8 @@ mod test {
             client,
             eventloop,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
-        );
+        )
+        .await;
 
         let expected = AstarteType::String("value".to_string());
         device
@@ -1381,7 +1436,7 @@ mod test {
             Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
         ];
 
-        let (mut astarte, _rx) = mock_astarte_device(client, eventloope, interfaces);
+        let (mut astarte, _rx) = mock_astarte_device(client, eventloope, interfaces).await;
 
         astarte.wait_for_connack().await.unwrap();
     }
@@ -1429,7 +1484,7 @@ mod test {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_| Ok(()));
 
-        let (astarte, _rx) = mock_astarte_device(client, eventloope, []);
+        let (astarte, _rx) = mock_astarte_device(client, eventloope, []).await;
 
         astarte
             .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
@@ -1500,7 +1555,8 @@ mod test {
                 Interface::from_str(DEVICE_PROPERTIES).unwrap(),
                 Interface::from_str(SERVER_PROPERTIES).unwrap(),
             ],
-        );
+        )
+        .await;
 
         astarte
             .send(
@@ -1578,7 +1634,8 @@ mod test {
             client,
             eventloope,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
-        );
+        )
+        .await;
 
         astarte
             .send(
@@ -1627,7 +1684,8 @@ mod test {
             client,
             eventloope,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
-        );
+        )
+        .await;
 
         let handle_events = tokio::spawn(async move {
             astarte
@@ -1667,5 +1725,598 @@ mod test {
 
         handle_events.abort();
         let _ = handle_events.await;
+    }
+
+    #[tokio::test]
+    async fn test_resend_props_retention_messages() {
+        let eventloop = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+        let mut seq = mockall::Sequence::new();
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+
+        let prop_value = AstarteType::String("value1".to_string());
+        let prop_path1 = MappingPath::try_from("/1/name").unwrap();
+        let prop_mapping1 = interface.as_mapping_ref(&prop_path1).unwrap();
+        let buf1 = serialize_individual(prop_mapping1, &prop_value, None).unwrap();
+
+        let prop_value2 = AstarteType::String("value2".to_string());
+        let prop_path2 = MappingPath::try_from("/2/name").unwrap();
+        let prop_mapping2 = interface.as_mapping_ref(&prop_path2).unwrap();
+        let buf2 = serialize_individual(prop_mapping2, &prop_value2, None).unwrap();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .withf(
+                move |_: &String, _: &rumqttc::QoS, _: &bool, payload: &Vec<u8>| buf1.eq(payload),
+            )
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .withf(
+                move |_: &String, _: &rumqttc::QoS, _: &bool, payload: &Vec<u8>| buf2.eq(payload),
+            )
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Ok(()));
+
+        let (device, _rx) = mock_astarte_device(
+            client,
+            eventloop,
+            [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
+        )
+        .await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                prop_value.clone(),
+            )
+            .await
+            .expect("Failed to send property");
+
+        let val = device
+            .property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .expect("Failed to get property")
+            .expect("Property not found");
+        assert_eq!(prop_value, val);
+
+        device
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/2/name",
+                prop_value2.clone(),
+            )
+            .await
+            .expect("Failed to send property");
+
+        let val = device
+            .property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/2/name",
+            )
+            .await
+            .expect("Failed to get property")
+            .expect("Property not found");
+
+        assert_eq!(prop_value2, val);
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_individual_datastream_discard_retention_messages() {
+        let eventloop = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+
+        let interface = Interface::from_str(INDIVIDUAL_DEVICE_DATASTREAM).unwrap();
+
+        let ind_datastream_value1 = AstarteType::LongInteger(1);
+        let ind_datastream_path1 = MappingPath::try_from("/endpoint1").unwrap();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send(
+                "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
+                ind_datastream_path1.path,
+                ind_datastream_value1.clone(),
+            )
+            .await
+            .expect_err("Failed to send individual datastream");
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_object_datastream_discard_retention_messages() {
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+            endpoint3: Vec<bool>,
+        }
+
+        let eventloop = EventLoop::default();
+
+        let mut client = AsyncClient::default();
+
+        let interface = Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+            endpoint3: vec![true, false, true, false],
+        };
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect_err("Failed to send object datastream");
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_object_datastream_volatile_retention_messages() {
+        let interface = r#"
+        {
+            "interface_name": "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "description": "Generic aggregated object data.",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/endpoint1",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "retention": "volatile",
+                    "expiry": 100
+                },
+                {
+                    "endpoint": "/%{sensor_id}/endpoint2",
+                    "type": "string",
+                    "explicit_timestamp": true,
+                    "retention": "volatile",
+                    "expiry": 100
+                }
+            ]
+        }
+        "#;
+
+        let interface = Interface::from_str(interface).unwrap();
+
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+        }
+        let eventloop = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+        };
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Ok(()));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect("Failed to send object datastream");
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_object_datastream_volatile_expired_retention_messages() {
+        let interface = r#"
+        {
+            "interface_name": "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "description": "Generic aggregated object data.",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/endpoint1",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "retention": "volatile",
+                    "expiry": 1
+                },
+                {
+                    "endpoint": "/%{sensor_id}/endpoint2",
+                    "type": "string",
+                    "explicit_timestamp": true,
+                    "retention": "volatile",
+                    "expiry": 1
+                }
+            ]
+        }
+        "#;
+
+        let interface = Interface::from_str(interface).unwrap();
+
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+        }
+        let eventloop = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+        };
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect("Failed to send object datastream");
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_object_datastream_stored_retention_messages() {
+        let interface = r#"
+        {
+            "interface_name": "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "description": "Generic aggregated object data.",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/endpoint1",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 100
+                },
+                {
+                    "endpoint": "/%{sensor_id}/endpoint2",
+                    "type": "string",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 100
+                }
+            ]
+        }
+        "#;
+
+        let interface = Interface::from_str(interface).unwrap();
+
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+        }
+        let eventloop = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+        };
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Ok(()));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect("Failed to send object datastream");
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_object_datastream_stored_expired_retention_messages() {
+        let interface = r#"
+        {
+            "interface_name": "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "description": "Generic aggregated object data.",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/endpoint1",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 1
+                },
+                {
+                    "endpoint": "/%{sensor_id}/endpoint2",
+                    "type": "string",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 1
+                }
+            ]
+        }
+        "#;
+
+        let interface = Interface::from_str(interface).unwrap();
+
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+        }
+        let eventloop = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+        };
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        let (device, _rx) = mock_astarte_device(client, eventloop, [interface]).await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect("Failed to send object datastream");
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_resend_mixed_value_stored_retention_messages() {
+        let interface_obj_str = r#"
+        {
+            "interface_name": "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+            "version_major": 0,
+            "version_minor": 1,
+            "type": "datastream",
+            "aggregation": "object",
+            "ownership": "device",
+            "description": "Generic aggregated object data.",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/endpoint1",
+                    "type": "double",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 100
+                },
+                {
+                    "endpoint": "/%{sensor_id}/endpoint2",
+                    "type": "string",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 100
+                }
+            ]
+        }
+        "#;
+
+        let interface_obj = Interface::from_str(interface_obj_str).unwrap();
+
+        #[derive(Debug, AstarteAggregate)]
+        struct DataObject {
+            endpoint1: f64,
+            endpoint2: String,
+        }
+        let eventloop = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+        };
+
+        let mut seq = mockall::Sequence::new();
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Err(rumqttc::ClientError::Request(Request::Disconnect)));
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .returning(|_, _, _, _| Ok(()));
+
+        let interface_prop = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+
+        let prop_value = AstarteType::String("value1".to_string());
+        let prop_path1 = MappingPath::try_from("/1/name").unwrap();
+        let prop_mapping1 = interface_prop.as_mapping_ref(&prop_path1).unwrap();
+        let buf1 = serialize_individual(prop_mapping1, &prop_value, None).unwrap();
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .withf(
+                move |_: &String, _: &rumqttc::QoS, _: &bool, payload: &Vec<u8>| buf1.eq(payload),
+            )
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| Ok(()));
+
+        let (device, _rx) = mock_astarte_device(
+            client,
+            eventloop,
+            [
+                interface_obj,
+                Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+            ],
+        )
+        .await;
+
+        assert!(device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send_object(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data,
+            )
+            .await
+            .expect("Failed to send object datastream");
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+
+        device
+            .send(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                prop_value.clone(),
+            )
+            .await
+            .expect("Failed to send property");
+
+        let val = device
+            .property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+            )
+            .await
+            .expect("Failed to get property")
+            .expect("Property not found");
+        assert_eq!(prop_value, val);
+
+        assert!(!device.store.is_empty_retention_message().await.unwrap());
+
+        device.retry_send_retention_messages().await.unwrap();
+        assert!(device.store.is_empty_retention_message().await.unwrap());
     }
 }

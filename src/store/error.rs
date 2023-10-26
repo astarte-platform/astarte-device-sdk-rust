@@ -104,8 +104,8 @@ pub enum RetentionStoreError {
     /// Could not store a retention message.
     #[error("could not store retention message")]
     Store(#[source] DynError),
-    /// Could not remove front retention message.
-    #[error("could not remove retention message")]
+    /// Could not remove the retention message.
+    #[error("could not the retention message")]
     Remove,
     /// Could not remove front retention message.
     #[error("could not remove front retention message")]
