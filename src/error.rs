@@ -21,14 +21,14 @@
 use std::convert::Infallible;
 
 use crate::builder::BuilderError;
+use crate::connection::mqtt::payload::PayloadError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
-use crate::payload::PayloadError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::topic::TopicError;
 use crate::types::TypeError;
-use crate::validate::ValidationError;
+use crate::validate::UserValidationError;
 
 /// Astarte error.
 ///
@@ -102,7 +102,7 @@ pub enum Error {
 
     /// Send or receive validation failed
     #[error("validation of the payload failed")]
-    Validation(#[from] ValidationError),
+    Validation(#[from] UserValidationError),
 
     #[error("invalid aggregation, expected {exp} but got {got}")]
     Aggregation { exp: Aggregation, got: Aggregation },

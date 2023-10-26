@@ -18,6 +18,9 @@
 *
 * SPDX-License-Identifier: Apache-2.0
 */
+
+pub mod payload;
+
 use std::{collections::HashMap, fmt::Display, ops::Deref, sync::Arc};
 
 use async_trait::async_trait;
@@ -39,17 +42,31 @@ use crate::{
         Ownership,
     },
     interfaces::Interfaces,
-    payload::{self, Payload},
     properties,
     retry::DelayedPoll,
     shared::SharedDevice,
     store::{PropertyStore, StoredProp},
     topic::{parse_topic, ParsedTopic},
     types::AstarteType,
+    validate::{ValidatedIndividual, ValidatedObject},
     Interface, Timestamp,
 };
 
+use payload::Payload;
+
 use super::{Connection, ReceivedEvent, Registry};
+
+#[derive(Debug, Clone, Copy)]
+struct ClientId<'a> {
+    realm: &'a str,
+    device_id: &'a str,
+}
+
+impl<'a> Display for ClientId<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.realm, self.device_id)
+    }
+}
 
 pub struct SharedMqtt {
     realm: String,
@@ -335,43 +352,31 @@ impl<S> Connection<S> for Mqtt {
         payload::deserialize_object(object, path, payload).map_err(|err| err.into())
     }
 
-    async fn send_individual(
-        &self,
-        mapping: MappingRef<'_, &Interface>,
-        path: &MappingPath<'_>,
-        data: &AstarteType,
-        timestamp: Option<Timestamp>,
-    ) -> Result<(), crate::Error>
+    async fn send_individual(&self, validated: ValidatedIndividual<'_>) -> Result<(), crate::Error>
     where
         S: 'static,
     {
-        let buf = payload::serialize_individual(mapping, data, timestamp)?;
+        let buf = payload::serialize_individual(validated.data(), validated.timestamp())?;
 
         self.send(
-            mapping.interface(),
-            path.as_str(),
-            mapping.reliability().into(),
+            validated.mapping().interface(),
+            validated.path().as_str(),
+            validated.mapping().reliability().into(),
             buf,
         )
         .await
     }
 
-    async fn send_object(
-        &self,
-        object: ObjectRef<'_>,
-        path: &MappingPath<'_>,
-        data: &HashMap<String, AstarteType>,
-        timestamp: Option<Timestamp>,
-    ) -> Result<(), crate::Error>
+    async fn send_object(&self, validated: ValidatedObject<'_>) -> Result<(), crate::Error>
     where
         S: 'static,
     {
-        let buf = payload::serialize_object(object, path, data, timestamp)?;
+        let buf = payload::serialize_object(validated.data(), validated.timestamp())?;
 
         self.send(
-            object.interface,
-            path.as_str(),
-            object.reliability().into(),
+            validated.object().interface,
+            validated.path().as_str(),
+            validated.object().reliability().into(),
             buf,
         )
         .await
@@ -440,18 +445,6 @@ impl Introspection {
             server_interfaces,
             device_properties,
         })
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ClientId<'a> {
-    realm: &'a str,
-    device_id: &'a str,
-}
-
-impl<'a> Display for ClientId<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.realm, self.device_id)
     }
 }
 

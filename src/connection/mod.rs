@@ -30,6 +30,7 @@ use crate::{
     shared::SharedDevice,
     store::PropertyStore,
     types::AstarteType,
+    validate::{ValidatedIndividual, ValidatedObject},
     Interface, Timestamp,
 };
 
@@ -81,24 +82,12 @@ pub(crate) trait Connection<S>: Clone {
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
 
     /// Sends individual [`AstarteType`] values over this connection
-    async fn send_individual(
-        &self,
-        mapping: MappingRef<'_, &Interface>,
-        path: &MappingPath<'_>,
-        data: &AstarteType,
-        timestamp: Option<Timestamp>,
-    ) -> Result<(), crate::Error>
+    async fn send_individual(&self, data: ValidatedIndividual<'_>) -> Result<(), crate::Error>
     where
         S: 'static;
 
     /// Sends objects [`HashMap`] values over this connection
-    async fn send_object(
-        &self,
-        object: ObjectRef<'_>,
-        path: &MappingPath<'_>,
-        data: &HashMap<String, AstarteType>,
-        timestamp: Option<Timestamp>,
-    ) -> Result<(), crate::Error>
+    async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error>
     where
         S: 'static;
 }

@@ -117,6 +117,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_topic_client_id() {
+        let topic = "".to_owned();
+        let err = parse_topic(CLIENT_ID, CLIENT_ID).unwrap_err();
+
+        assert!(matches!(err, TopicError::Malformed(_)));
+    }
+
+    #[test]
     fn test_parse_topic_malformed() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test".to_owned();
         let err = parse_topic(CLIENT_ID, &topic).unwrap_err();

@@ -29,7 +29,6 @@ mod interfaces;
 #[cfg(test)]
 mod mock;
 pub mod pairing;
-pub mod payload;
 pub mod properties;
 pub mod registration;
 mod retry;
@@ -69,7 +68,7 @@ use crate::shared::SharedDevice;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoredProp};
 use crate::types::{AstarteType, TypeError};
-use crate::validate::{validate_send_individual, validate_send_object};
+use crate::validate::{validate_individual, validate_object};
 
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::AstarteDeviceSdk::send_object] and
@@ -334,27 +333,20 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         let interfaces = self.interfaces.read().await;
         let mapping = interfaces.interface_mapping(interface_name, path)?;
 
-        let data = data.try_into().map_err(|_| TypeError::Conversion)?;
+        let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
 
-        if let Err(err) = validate_send_individual(mapping, &timestamp) {
-            error!("send validation failed: {err}");
+        trace!("sending individual type {}", individual.display_type());
 
-            #[cfg(debug_assertions)]
-            return Err(Error::Validation(err));
-        }
-
-        trace!("sending individual type {}", data.display_type());
-
-        let prop_stored = self.is_property_stored(&mapping, path, &data).await?;
+        let prop_stored = self.is_property_stored(&mapping, path, &individual).await?;
 
         if prop_stored.map_or(false, |r| r.is_ok()) {
             debug!("property was already sent, no need to send it again");
             return Ok(());
         }
 
-        self.connection
-            .send_individual(mapping, path, &data, timestamp)
-            .await?;
+        let validated = validate_individual(mapping, path, &individual, timestamp)?;
+
+        self.connection.send_individual(validated).await?;
 
         // Store the property in the database after it has been successfully sent
         // We just need to handle the Err case since the Ok was handled by returning early
@@ -367,7 +359,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
             let prop = StoredProp {
                 interface: interface_name,
                 path,
-                value: &data,
+                value: &individual,
                 interface_major,
                 ownership,
             };
@@ -451,17 +443,9 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
         let aggregate = data.astarte_aggregate()?;
 
-        if let Err(err) = validate_send_object(object, &timestamp) {
-            error!("Send validation failed: {err}");
+        let validated = validate_object(object, path, &aggregate, timestamp)?;
 
-            #[cfg(debug_assertions)]
-            return Err(Error::Validation(err));
-        }
-
-        // TODO move part of the logic of the serialize_object (The validation part to it's own function under validation that returns a wrapper object, connection should only accept that wrapper object)
-        self.connection
-            .send_object(object, path, &aggregate, timestamp)
-            .await
+        self.connection.send_object(validated).await
     }
 
     async fn remove_interface_from_map(&self, interface_name: &str) -> Result<Interface, Error>
@@ -849,9 +833,9 @@ mod test {
     use std::str::FromStr;
     use tokio::sync::mpsc;
 
+    use crate::connection::mqtt::payload::Payload;
     use crate::connection::mqtt::Mqtt;
     use crate::interfaces::Interfaces;
-    use crate::payload::Payload;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
@@ -869,6 +853,13 @@ mod test {
     pub(crate) const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    // E2E Interfaces
+    pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+    );
+    pub(crate) const E2E_DEVICE_AGGREGATE: &str = include_str!(
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+    );
 
     pub(crate) fn mock_astarte_device<I>(
         client: AsyncClient,

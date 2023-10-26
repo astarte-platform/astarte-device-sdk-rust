@@ -18,54 +18,213 @@
 
 //! Validate the submission and reception of a payload.
 
+use std::collections::HashMap;
+
+use log::{debug, error, warn};
+
 use crate::{
+    connection::mqtt::payload::PayloadError,
     interface::{
+        mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
         Ownership,
     },
-    Interface,
+    types::AstarteType,
+    Interface, Timestamp,
 };
 
 /// Errors returning while validating a send or a receive
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum ValidationError {
+pub enum UserValidationError {
     /// Sending timestamp to a mapping without `explicit_timestamp`
     #[error("sending timestamp to a mapping without `explicit_timestamp`")]
     Timestamp,
     #[error("expected interface with ownership {exp}, but got {got}")]
+    /// Sending data on an interface not owned by the device
     Ownership { exp: Ownership, got: Ownership },
+    #[error("Payload error")]
+    Payload(#[from] PayloadError),
+    /// Missing mapping in send payload
+    #[error["missing mappings in the payload"]]
+    MissingMapping,
+    /// Mismatching type while serializing
+    #[error("mimatching type while serializing, expected {expected} but got {got}")]
+    SerializeType { expected: String, got: String },
+    /// Couldn't accept unset for mapping without `allow_unset`
+    #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]
+    Unset,
 }
 
 /// Optionals check on the sent individual payload.
-pub(crate) fn validate_send_individual(
+fn optional_individual_checks(
     mapping: MappingRef<&Interface>,
     timestamp: &Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<(), ValidationError> {
+) -> Result<(), UserValidationError> {
     if mapping.interface().ownership() != Ownership::Device {
-        return Err(ValidationError::Ownership {
+        return Err(UserValidationError::Ownership {
             exp: Ownership::Device,
             got: mapping.interface().ownership(),
         });
     }
 
     if !mapping.mapping().explicit_timestamp() && timestamp.is_some() {
-        return Err(ValidationError::Timestamp);
+        return Err(UserValidationError::Timestamp);
     }
 
     Ok(())
 }
 
 /// Optionals check on the sent object payload.
-pub(crate) fn validate_send_object(
+fn optional_object_checks(
     object: ObjectRef,
     timestamp: &Option<chrono::DateTime<chrono::Utc>>,
-) -> Result<(), ValidationError> {
+) -> Result<(), UserValidationError> {
     if !object.explicit_timestamp() && timestamp.is_some() {
-        return Err(ValidationError::Timestamp);
+        return Err(UserValidationError::Timestamp);
     }
 
     Ok(())
+}
+
+pub(crate) struct ValidatedIndividual<'a> {
+    mapping: MappingRef<'a, &'a Interface>,
+    path: &'a MappingPath<'a>,
+    data: &'a AstarteType,
+    timestamp: Option<Timestamp>,
+}
+
+impl<'a> ValidatedIndividual<'a> {
+    pub(crate) fn mapping(&self) -> MappingRef<'a, &'a Interface> {
+        self.mapping
+    }
+
+    pub(crate) fn path(&self) -> &'a MappingPath<'a> {
+        self.path
+    }
+
+    pub(crate) fn data(&self) -> &'a AstarteType {
+        self.data
+    }
+
+    pub(crate) fn timestamp(&self) -> Option<Timestamp> {
+        self.timestamp
+    }
+}
+
+pub(crate) fn validate_individual<'a>(
+    mapping: MappingRef<'a, &'a Interface>,
+    path: &'a MappingPath<'a>,
+    data: &'a AstarteType,
+    timestamp: Option<Timestamp>,
+) -> Result<ValidatedIndividual<'a>, UserValidationError> {
+    if let Err(err) = optional_individual_checks(mapping, &timestamp) {
+        error!("send validation failed: {err}");
+
+        #[cfg(debug_assertions)]
+        return Err(err);
+    }
+
+    match data {
+        AstarteType::Unset => {
+            if !mapping.allow_unset() {
+                return Err(UserValidationError::Unset);
+            }
+        }
+        data => {
+            if *data != mapping.mapping_type() {
+                return Err(UserValidationError::SerializeType {
+                    expected: mapping.mapping_type().to_string(),
+                    got: data.display_type().to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(ValidatedIndividual {
+        mapping,
+        path,
+        data,
+        timestamp,
+    })
+}
+
+pub(crate) struct ValidatedObject<'a> {
+    object: ObjectRef<'a>,
+    path: &'a MappingPath<'a>,
+    data: HashMap<&'a String, &'a AstarteType>,
+    timestamp: Option<Timestamp>,
+}
+
+impl<'a> ValidatedObject<'a> {
+    pub(crate) fn object(&self) -> ObjectRef<'a> {
+        self.object
+    }
+
+    pub(crate) fn path(&self) -> &'a MappingPath<'a> {
+        self.path
+    }
+
+    pub(crate) fn data(&self) -> &HashMap<&'a String, &'a AstarteType> {
+        &self.data
+    }
+
+    pub(crate) fn timestamp(&self) -> Option<Timestamp> {
+        self.timestamp
+    }
+}
+
+pub(crate) fn validate_object<'a>(
+    object: ObjectRef<'a>,
+    path: &'a MappingPath<'a>,
+    data: &'a HashMap<String, AstarteType>,
+    timestamp: Option<Timestamp>,
+) -> Result<ValidatedObject<'a>, UserValidationError> {
+    if let Err(err) = optional_object_checks(object, &timestamp) {
+        error!("Send validation failed: {err}");
+
+        #[cfg(debug_assertions)]
+        return Err(err);
+    }
+
+    // Filter only the valid fields
+    let aggregate: HashMap<&String, &AstarteType> = data
+        .iter()
+        .filter_map(|(key, value)| {
+            let Some(mapping) = object.get_field(path, key) else {
+                warn!("unrecognized mapping {path}/{key}, ignoring");
+
+                return None;
+            };
+
+            if value.is_unset() {
+                return Some(Err(UserValidationError::Unset));
+            }
+
+            if *value != mapping.mapping_type() {
+                return Some(Err(UserValidationError::SerializeType {
+                    expected: mapping.mapping_type().to_string(),
+                    got: value.display_type().to_string(),
+                }));
+            }
+
+            debug!("serialized object field {path} {}", value.display_type());
+
+            Some(Ok((key, value)))
+        })
+        .collect::<Result<_, _>>()?;
+
+    if aggregate.len() != object.len() {
+        // TODO I could copy even this field to the UserValidation Error enum
+        return Err(UserValidationError::MissingMapping);
+    }
+
+    Ok(ValidatedObject {
+        object,
+        path,
+        data: aggregate,
+        timestamp,
+    })
 }
 
 #[cfg(test)]
@@ -112,8 +271,8 @@ mod tests {
 
         // Test sending an aggregate (with and without timestamp)
         let timestamp = Some(TimeZone::timestamp_opt(&Utc, 1537449422, 0).unwrap());
-        validate_send_object(object, &None).unwrap();
-        validate_send_object(object, &timestamp).unwrap();
+        optional_object_checks(object, &None).unwrap();
+        optional_object_checks(object, &timestamp).unwrap();
     }
 
     #[test]
@@ -123,7 +282,7 @@ mod tests {
 
         // Test sending an aggregate with an non existing object field
         aggregate.insert("gibberish".to_string(), AstarteType::Boolean(false));
-        let res = validate_send_object(object, &None);
+        let res = optional_object_checks(object, &None);
         assert!(res.is_ok());
     }
 
@@ -133,10 +292,10 @@ mod tests {
 
         let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
 
-        let res = validate_send_individual(mapping, &None);
+        let res = optional_individual_checks(mapping, &None);
         assert!(res.is_ok(), "error: {}", res.unwrap_err());
 
-        let res = validate_send_individual(mapping, &Some(Utc::now()));
+        let res = optional_individual_checks(mapping, &Some(Utc::now()));
         assert!(res.is_ok());
     }
     #[test]
@@ -146,7 +305,7 @@ mod tests {
 
         let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
 
-        let res = validate_send_individual(mapping, &None);
+        let res = optional_individual_checks(mapping, &None);
         assert!(res.is_err());
     }
 }
