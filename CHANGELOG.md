@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make the reconnection attempt wait with an exponential back-off.
 - Trait `PropAccess` to access the stored properties from the
   `AstarteDeviceSdk`.
+- Add support to store messages with interface retention.
 
 ### Changed
 - Return a channel for the events when creating a device SDK.

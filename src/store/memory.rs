@@ -18,14 +18,15 @@
 
 //! In memory store for the properties.
 
-use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+use std::{collections::HashMap, collections::VecDeque, fmt::Display, hash::Hash, sync::Arc};
 
 use async_trait::async_trait;
 use log::error;
 use tokio::sync::RwLock;
 
-use super::{PropertyStore, StoredProp};
 use crate::{interface::Ownership, types::AstarteType};
+
+use super::{PropertyStore, RetentionMessage, RetentionStore, StoredProp};
 
 /// Error from the memory store.
 ///
@@ -41,6 +42,7 @@ pub enum MemoryError {}
 pub struct MemoryStore {
     // Store the properties in memory
     store: Arc<RwLock<HashMap<Key, Value>>>,
+    retention_store: Arc<RwLock<VecDeque<RetentionMessage>>>,
 }
 
 impl MemoryStore {
@@ -48,6 +50,7 @@ impl MemoryStore {
     pub fn new() -> Self {
         MemoryStore {
             store: Arc::new(RwLock::new(HashMap::new())),
+            retention_store: Arc::new(Default::default()),
         }
     }
 }
@@ -121,7 +124,7 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
+    async fn clear_props(&self) -> Result<(), Self::Err> {
         let mut store = self.store.write().await;
 
         store.clear();
@@ -221,15 +224,84 @@ impl From<(&Key, &Value)> for StoredProp {
     }
 }
 
+#[async_trait]
+impl RetentionStore for MemoryStore {
+    type Err = MemoryError;
+
+    async fn clear_retention_messages(&self) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        retention_store.clear();
+
+        Ok(())
+    }
+
+    async fn front_retention_message(&self) -> Result<Option<RetentionMessage>, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+        let retention_message = retention_store.front().cloned();
+
+        Ok(retention_message)
+    }
+
+    async fn is_empty_retention_message(&self) -> Result<bool, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+
+        Ok(retention_store.is_empty())
+    }
+
+    async fn load_all_retention_messages(&self) -> Result<Vec<RetentionMessage>, Self::Err> {
+        let retention_store = self.retention_store.read().await;
+
+        Ok(retention_store.clone().into())
+    }
+
+    async fn persist_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        retention_store.push_back(retention_message);
+
+        Ok(())
+    }
+
+    async fn remove_front_retention_message(&self) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        let _ = retention_store.pop_front();
+
+        Ok(())
+    }
+
+    async fn remove_retention_message(
+        &self,
+        retention_message: RetentionMessage,
+    ) -> Result<(), Self::Err> {
+        let mut retention_store = self.retention_store.write().await;
+        for i in 0..retention_store.len() {
+            let Some(rt) = retention_store.get(i) else {
+                continue;
+            };
+
+            if retention_message.id == rt.id {
+                retention_store.remove(i);
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::store::tests::{test_property_store, test_retention_store};
+
     use super::*;
-    use crate::store::tests::test_property_store;
 
     #[tokio::test]
     async fn test_memory_store() {
         let db = MemoryStore::new();
 
-        test_property_store(db).await;
+        test_property_store(db.clone()).await;
+        test_retention_store(db).await;
     }
 }

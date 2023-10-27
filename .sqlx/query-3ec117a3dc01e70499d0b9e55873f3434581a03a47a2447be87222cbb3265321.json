@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE\nFROM retentionmessage\nwhere ROWID IN (SELECT ROWID FROM retentionmessage LIMIT 1);\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "3ec117a3dc01e70499d0b9e55873f3434581a03a47a2447be87222cbb3265321"
+}
