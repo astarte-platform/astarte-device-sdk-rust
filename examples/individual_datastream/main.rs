@@ -25,7 +25,8 @@ use serde::Deserialize;
 use astarte_device_sdk::{
     builder::{DeviceBuilder, MqttConfig},
     error::Error,
-    Device,
+    prelude::*,
+    store::memory::MemoryStore,
 };
 
 #[derive(Deserialize)]
@@ -55,9 +56,11 @@ async fn main() -> Result<(), Error> {
     mqtt_config.ignore_ssl_errors();
 
     let (mut device, mut rx_events) = DeviceBuilder::new()
+        .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
-        .connect_mqtt(mqtt_config)
-        .await?;
+        .connect(mqtt_config)
+        .await?
+        .build();
 
     let device_cpy = device.clone();
     println!("Connection to Astarte established.");

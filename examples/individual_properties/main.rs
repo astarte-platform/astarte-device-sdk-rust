@@ -25,9 +25,8 @@ use serde::{Deserialize, Serialize};
 use astarte_device_sdk::{
     builder::{DeviceBuilder, MqttConfig},
     error::Error,
-    properties::PropAccess,
+    prelude::*,
     store::SqliteStore,
-    Device,
 };
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;
@@ -83,8 +82,9 @@ async fn main() -> Result<(), DynError> {
     let (mut device, mut rx_events) = DeviceBuilder::new()
         .interface_directory("./examples/individual_properties/interfaces")?
         .store(db)
-        .connect_mqtt(mqtt_config)
-        .await?;
+        .connect(mqtt_config)
+        .await?
+        .build();
     let device_cpy = device.clone();
 
     println!("Connection to Astarte established.");

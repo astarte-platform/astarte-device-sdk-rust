@@ -367,7 +367,7 @@ mod test {
         let mapping = interface.as_mapping_ref(path).unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
-        let validated = validate_individual(mapping, &path, &og_value, None).unwrap();
+        let validated = validate_individual(mapping, path, &og_value, None).unwrap();
         let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
         let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];

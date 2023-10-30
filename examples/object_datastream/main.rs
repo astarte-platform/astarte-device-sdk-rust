@@ -25,7 +25,8 @@ use astarte_device_sdk::AstarteAggregate;
 use astarte_device_sdk::{
     builder::{DeviceBuilder, MqttConfig},
     error::Error,
-    Device,
+    prelude::*,
+    store::memory::MemoryStore,
 };
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
@@ -64,9 +65,11 @@ async fn main() -> Result<(), Error> {
 
     // Create an Astarte Device (also performs the connection)
     let (mut device, _rx) = DeviceBuilder::new()
+        .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
-        .connect_mqtt(mqtt_config)
-        .await?;
+        .connect(mqtt_config)
+        .await?
+        .build();
 
     // Create an thread to transmit
     let device_cpy = device.clone();

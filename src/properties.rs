@@ -53,8 +53,8 @@ pub trait PropAccess {
     ///
     /// ```no_run
     /// use astarte_device_sdk::{
-    ///     AstarteDeviceSdk, properties::PropAccess, store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     builder::MqttConfig, types::AstarteType
+    ///     AstarteDeviceSdk, store::sqlite::SqliteStore, builder::DeviceBuilder,
+    ///     builder::MqttConfig, types::AstarteType, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -65,7 +65,8 @@ pub trait PropAccess {
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _rx_events) = DeviceBuilder::new().store(database)
-    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///         .connect(mqtt_config).await.unwrap()
+    ///         .build();
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .property("my.interface.name", "/endpoint/path")

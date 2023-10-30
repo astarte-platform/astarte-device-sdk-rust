@@ -21,20 +21,75 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use tokio::sync::RwLock;
 
 use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
+        Ownership,
     },
+    interfaces::Interfaces,
     shared::SharedDevice,
-    store::PropertyStore,
+    store::{wrapper::StoreWrapper, PropertyStore, StoredProp},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject},
     Interface, Timestamp,
 };
 
 pub mod mqtt;
+
+pub(crate) struct Introspection {
+    interfaces: String,
+    server_interfaces: Vec<String>,
+    device_properties: Vec<StoredProp>,
+}
+
+impl Introspection {
+    fn filter_server_interfaces(interfaces: &Interfaces) -> Vec<String> {
+        interfaces
+            .iter_interfaces()
+            .filter(|interface| interface.ownership() == Ownership::Server)
+            .map(|interface| interface.interface_name().to_owned())
+            .collect()
+    }
+
+    pub(crate) async fn from<S>(
+        interfaces: &RwLock<Interfaces>,
+        store: &StoreWrapper<S>,
+    ) -> Result<Self, crate::store::error::StoreError>
+    where
+        S: PropertyStore,
+    {
+        let device_properties = store.device_props().await?;
+        let interfaces = interfaces.read().await;
+
+        let server_interfaces = Self::filter_server_interfaces(&interfaces);
+
+        Ok(Self {
+            interfaces: interfaces.get_introspection_string(),
+            server_interfaces,
+            device_properties,
+        })
+    }
+
+    pub(crate) async fn from_unlocked<S>(
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> Result<Self, crate::store::error::StoreError>
+    where
+        S: PropertyStore,
+    {
+        let device_properties = store.device_props().await?;
+        let server_interfaces = Self::filter_server_interfaces(interfaces);
+
+        Ok(Self {
+            interfaces: interfaces.get_introspection_string(),
+            server_interfaces,
+            device_properties,
+        })
+    }
+}
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
@@ -50,7 +105,7 @@ pub(crate) trait Connection<S>: Clone {
     type Payload: Send + Sync + 'static;
 
     /// Method called imediately after the Connection gets created
-    async fn connect(&self, device: &SharedDevice<S>) -> Result<(), crate::Error>
+    async fn connect(&self, introspection: Introspection) -> Result<(), crate::Error>
     where
         S: PropertyStore;
 

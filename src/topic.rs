@@ -118,7 +118,6 @@ mod tests {
 
     #[test]
     fn test_parse_topic_client_id() {
-        let topic = "".to_owned();
         let err = parse_topic(CLIENT_ID, CLIENT_ID).unwrap_err();
 
         assert!(matches!(err, TopicError::Malformed(_)));

@@ -35,9 +35,13 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::{task, time};
 
-use astarte_device_sdk::builder::{DeviceBuilder, MqttConfig};
-use astarte_device_sdk::types::AstarteType;
-use astarte_device_sdk::Device;
+use astarte_device_sdk::{
+    builder::{DeviceBuilder, MqttConfig},
+    prelude::*,
+    store::memory::MemoryStore,
+    types::AstarteType,
+    Device,
+};
 
 mod mock_data_aggregate;
 mod mock_data_datastream;
@@ -131,16 +135,19 @@ async fn main() {
         &test_cfg.pairing_url,
     );
 
-    let device_builder = DeviceBuilder::new()
-        .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
-        .unwrap();
-
     // Ignore SSL for local testing
     if env::var("E2E_IGNORE_SSL").is_ok() {
         mqtt_config.ignore_ssl_errors();
     }
 
-    let (mut device, mut rx_events) = device_builder.connect_mqtt(mqtt_config).await.unwrap();
+    let (mut device, mut rx_events) = DeviceBuilder::new()
+        .store(MemoryStore::new())
+        .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
+        .unwrap()
+        .connect(mqtt_config)
+        .await
+        .unwrap()
+        .build();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));

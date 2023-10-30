@@ -29,6 +29,7 @@ mod interfaces;
 #[cfg(test)]
 mod mock;
 pub mod pairing;
+pub mod prelude;
 pub mod properties;
 pub mod registration;
 mod retry;
@@ -169,7 +170,11 @@ pub struct AstarteDeviceSdk<S, C> {
 }
 
 impl<S, C> AstarteDeviceSdk<S, C> {
-    pub(crate) fn new(interfaces: Interfaces, store: S, connection: C, tx: EventSender) -> Self {
+    pub(crate) fn new(interfaces: Interfaces, store: S, connection: C, tx: EventSender) -> Self
+    where
+        C: Connection<S>,
+        S: PropertyStore,
+    {
         Self {
             shared: Arc::new(SharedDevice {
                 interfaces: RwLock::new(interfaces),
@@ -178,14 +183,6 @@ impl<S, C> AstarteDeviceSdk<S, C> {
             }),
             connection,
         }
-    }
-
-    pub(crate) async fn connect(&self) -> Result<(), Error>
-    where
-        S: PropertyStore,
-        C: Connection<S> + Sync,
-    {
-        self.connection.connect(&self.shared).await
     }
 
     async fn handle_event(
@@ -514,7 +511,7 @@ pub trait Device {
     /// Send an object datastream on an interface, with an explicit timestamp.
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::{AstarteDeviceSdk, Device, builder::{DeviceBuilder, MqttConfig}, AstarteAggregate};
+    /// # use astarte_device_sdk::{AstarteDeviceSdk, builder::{DeviceBuilder, MqttConfig}, prelude::*, store::memory::MemoryStore};
     /// #[cfg(not(feature = "derive"))]
     /// use astarte_device_sdk_derive::AstarteAggregate;
     /// use chrono::{TimeZone, Utc};
@@ -529,8 +526,8 @@ pub trait Device {
     /// async fn main() {
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
-    ///     let (mut device, _rx_events) = DeviceBuilder::new()
-    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,
@@ -569,15 +566,15 @@ pub trait Device {
     /// Send an individual datastream/property on an interface, with an explicit timestamp.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, Device, builder::{DeviceBuilder, MqttConfig}};
+    /// use astarte_device_sdk::{AstarteDeviceSdk, builder::{DeviceBuilder, MqttConfig}, prelude::*, store::memory::MemoryStore};
     /// use chrono::{TimeZone, Utc};
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
-    ///     let (mut device, _rx_events) = DeviceBuilder::new()
-    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
     ///
     ///     let value: i32 = 42;
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
@@ -616,14 +613,14 @@ pub trait Device {
     /// thread.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, Device, builder::{DeviceBuilder, MqttConfig}};
+    /// use astarte_device_sdk::{AstarteDeviceSdk, builder::{DeviceBuilder, MqttConfig}, prelude::*, store::memory::MemoryStore};
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
-    ///     let (mut device, mut rx_events) = DeviceBuilder::new()
-    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///     let (mut device, mut rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
     ///
     ///     tokio::spawn(async move {
     ///         while let Some(event) = rx_events.recv().await {
@@ -639,14 +636,14 @@ pub trait Device {
     /// Unset a device property.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, Device, builder::{DeviceBuilder, MqttConfig}};
+    /// use astarte_device_sdk::{AstarteDeviceSdk, builder::{DeviceBuilder, MqttConfig}, prelude::*, store::memory::MemoryStore};
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
-    ///     let (mut device, _rx_events) = DeviceBuilder::new()
-    ///         .connect_mqtt(mqtt_config).await.unwrap();
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
     ///
     ///     device
     ///         .unset("my.interface.name", "/endpoint/path",)
@@ -839,6 +836,7 @@ mod test {
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
+    use crate::store::PropertyStore;
     use crate::{self as astarte_device_sdk, Device, EventReceiver, Interface, InterfaceRegistry};
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
@@ -880,6 +878,7 @@ mod test {
     ) -> (AstarteDeviceSdk<S, Mqtt>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
+        S: PropertyStore,
     {
         let (tx, rx) = mpsc::channel(50);
 

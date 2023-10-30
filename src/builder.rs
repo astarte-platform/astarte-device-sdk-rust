@@ -26,6 +26,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
+use async_trait::async_trait;
 use log::debug;
 use serde::Deserialize;
 use serde::Serialize;
@@ -34,16 +35,20 @@ use tokio::sync::mpsc;
 use crate::connection::mqtt::AsyncClient;
 use crate::connection::mqtt::Mqtt;
 use crate::connection::Connection;
+use crate::connection::Introspection;
 use crate::crypto::CryptoError;
 use crate::interface::{Interface, InterfaceError};
 use crate::interfaces::Interfaces;
 use crate::pairing;
-use crate::store::memory::MemoryStore;
+use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::AstarteDeviceSdk;
 use crate::EventReceiver;
 
-/// Capacity of the channel of the MQTT client
+/// Default capacity of the channels
+///
+/// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and EventLoop
+/// and the internal channel used by the [`AstarteDeviceSdk`] to send events data to the external receiver.
 pub const MQTT_CHANNEL_SIZE: usize = 50;
 
 /// Astarte options error.
@@ -80,16 +85,70 @@ pub enum BuilderError {
     PkiError(#[from] webpki::Error),
 }
 
-/// Structure used to store the configuration options for an instance of
-/// [AstarteDeviceSdk].
-#[derive(Clone, Default)]
-pub struct DeviceBuilder<S> {
-    pub(crate) interfaces: Interfaces,
-    pub(crate) store: S,
+#[async_trait]
+pub trait DeviceBuilderConnect<S, C>
+where
+    C: ConnectionConfig + Send,
+    S: PropertyStore,
+{
+    async fn connect(self, config: C) -> Result<DeviceBuilder<S, C::Con>, crate::Error>;
 }
 
-impl DeviceBuilder<MemoryStore> {
+pub trait DeviceBuilderBuild<S, C> {
+    fn build(self) -> (AstarteDeviceSdk<S, C>, EventReceiver);
+}
+
+#[async_trait]
+impl<S, C, T> DeviceBuilderConnect<S, C> for DeviceBuilder<S, T>
+where
+    S: PropertyStore + Send,
+    C: ConnectionConfig + Send + 'static,
+    C::Con: Connection<S> + Send + Sync,
+    T: Send,
+{
+    async fn connect(self, config: C) -> Result<DeviceBuilder<S, C::Con>, crate::Error> {
+        let connection = config.build().await?;
+
+        connection
+            .connect(Introspection::from_unlocked(&self.interfaces, &self.store).await?)
+            .await?;
+
+        Ok(DeviceBuilder {
+            channel_size: self.channel_size,
+            interfaces: self.interfaces,
+            connection,
+            store: self.store,
+        })
+    }
+}
+
+impl<S, C> DeviceBuilderBuild<S, C> for DeviceBuilder<S, C>
+where
+    S: PropertyStore,
+    C: Connection<S> + Send,
+{
+    fn build(self) -> (AstarteDeviceSdk<S, C>, EventReceiver) {
+        let (tx, rx) = mpsc::channel(self.channel_size);
+
+        let device = AstarteDeviceSdk::new(self.interfaces, self.store.store, self.connection, tx);
+
+        (device, rx)
+    }
+}
+
+/// Structure used to store the configuration options for an instance of
+/// [AstarteDeviceSdk].
+#[derive(Clone)]
+pub struct DeviceBuilder<S, C> {
+    pub(crate) channel_size: usize,
+    pub(crate) interfaces: Interfaces,
+    pub(crate) connection: C,
+    pub(crate) store: StoreWrapper<S>,
+}
+
+impl DeviceBuilder<(), ()> {
     /// Create a new instance of the DeviceBuilder.
+    /// Has a default [`DeviceBuilder::channel_size`] that equals to [`MQTT_CHANNEL_SIZE`].
     ///
     /// ```no_run
     /// use astarte_device_sdk::builder::{DeviceBuilder, MqttConfig};
@@ -102,62 +161,17 @@ impl DeviceBuilder<MemoryStore> {
     ///             .unwrap();
     /// }
     /// ```
-    pub fn new() -> DeviceBuilder<MemoryStore> {
-        DeviceBuilder {
-            interfaces: Interfaces::new(),
-            store: MemoryStore::new(),
-        }
-    }
-}
-
-impl<S> DeviceBuilder<S>
-where
-    S: PropertyStore,
-{
-    /// Create a new instance of the astarte builder with the specified backing store.
-    pub fn with_store(store: S) -> Self {
+    pub fn new() -> Self {
         Self {
+            channel_size: MQTT_CHANNEL_SIZE,
             interfaces: Interfaces::new(),
-            store,
+            connection: (),
+            store: StoreWrapper::new(()),
         }
-    }
-
-    /// Set the backing storage for the device.
-    ///
-    /// This will store and retrieve the device's properties.
-    pub fn store<T>(self, store: T) -> DeviceBuilder<T> {
-        DeviceBuilder {
-            interfaces: self.interfaces,
-            store,
-        }
-    }
-
-    pub async fn connect_mqtt(
-        self,
-        mqtt_config: MqttConfig,
-    ) -> Result<(AstarteDeviceSdk<S, Mqtt>, EventReceiver), crate::Error> {
-        let connection = mqtt_config.build().await?;
-        let (device, rx) = self.build(connection);
-
-        device.connect().await?;
-
-        Ok((device, rx))
-    }
-
-    pub(crate) fn build<C>(self, connection: C) -> (AstarteDeviceSdk<S, C>, EventReceiver)
-    where
-        C: Connection<S>,
-    {
-        let (tx, rx) = mpsc::channel(MQTT_CHANNEL_SIZE);
-
-        (
-            AstarteDeviceSdk::new(self.interfaces, self.store, connection, tx),
-            rx,
-        )
     }
 }
 
-impl<S> DeviceBuilder<S> {
+impl<S, C> DeviceBuilder<S, C> {
     /// Add a single interface from the provided `.json` file.
     ///
     /// It will validate that the interfaces are the same, or a newer version of the interfaces
@@ -179,15 +193,44 @@ impl<S> DeviceBuilder<S> {
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
     }
+
+    /// This method configures the bounded channel size.
+    ///
+    pub fn channel_size(mut self, size: usize) -> Self {
+        self.channel_size = size;
+
+        self
+    }
+
+    /// Set the backing storage for the device.
+    ///
+    /// This will store and retrieve the device's properties.
+    pub fn store<T>(self, store: T) -> DeviceBuilder<T, C>
+    where
+        T: PropertyStore,
+    {
+        DeviceBuilder {
+            channel_size: self.channel_size,
+            interfaces: self.interfaces,
+            connection: self.connection,
+            store: StoreWrapper::new(store),
+        }
+    }
 }
 
-impl<S> Debug for DeviceBuilder<S> {
+impl<S, C> Debug for DeviceBuilder<S, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("interfaces", &self.interfaces)
             // We manually implement Debug for the store, so we can avoid have a trait bound on
             // `S` to implement [Display].
             .finish_non_exhaustive()
+    }
+}
+
+impl Default for DeviceBuilder<(), ()> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -199,23 +242,16 @@ pub struct MqttConfig {
     pub(crate) pairing_url: String,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: std::time::Duration,
-}
-
-impl Debug for MqttConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MqttOptions")
-            .field("realm", &self.realm)
-            .field("device_id", &self.device_id)
-            .field("credentials_secret", &"REDACTED")
-            .field("pairing_url", &self.pairing_url)
-            .field("ignore_ssl_errors", &self.ignore_ssl_errors)
-            .field("keepalive", &self.keepalive)
-            .finish_non_exhaustive()
-    }
+    pub(crate) bounded_channel_size: usize,
 }
 
 impl MqttConfig {
     /// Create a new instance of MqttConfig
+    ///
+    /// As a default this configuration:
+    ///    - does not ignore SSL errors.
+    ///    - has a keepalive of 30 seconds
+    ///    - has a default bounded channel size of [`MQTT_CHANNEL_SIZE`]
     ///
     /// ```no_run
     /// use astarte_device_sdk::builder::MqttConfig;
@@ -239,6 +275,7 @@ impl MqttConfig {
             pairing_url: pairing_url.to_owned(),
             ignore_ssl_errors: false,
             keepalive: std::time::Duration::from_secs(30),
+            bounded_channel_size: MQTT_CHANNEL_SIZE,
         }
     }
 
@@ -259,12 +296,44 @@ impl MqttConfig {
         self
     }
 
-    async fn build(self) -> Result<Mqtt, crate::Error> {
+    /// Sets the size for the underlying bounded channel used by the eventloop of [`rumqttc`]
+    pub fn bounded_channel_size(&mut self, bounded_channel_size: usize) -> &mut Self {
+        self.bounded_channel_size = bounded_channel_size;
+
+        self
+    }
+}
+
+impl Debug for MqttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MqttOptions")
+            .field("realm", &self.realm)
+            .field("device_id", &self.device_id)
+            .field("credentials_secret", &"REDACTED")
+            .field("pairing_url", &self.pairing_url)
+            .field("ignore_ssl_errors", &self.ignore_ssl_errors)
+            .field("keepalive", &self.keepalive)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+pub trait ConnectionConfig {
+    type Con;
+
+    async fn build(self) -> Result<Self::Con, crate::Error>;
+}
+
+#[async_trait]
+impl ConnectionConfig for MqttConfig {
+    type Con = Mqtt;
+
+    async fn build(self) -> Result<Self::Con, crate::Error> {
         let mqtt_options = pairing::get_transport_config(&self).await?;
 
         debug!("{:#?}", mqtt_options);
 
-        let (client, eventloop) = AsyncClient::new(mqtt_options, MQTT_CHANNEL_SIZE);
+        let (client, eventloop) = AsyncClient::new(mqtt_options, self.bounded_channel_size);
 
         Ok(Mqtt::new(self.realm, self.device_id, eventloop, client))
     }

@@ -33,7 +33,7 @@ use astarte_device_sdk::{
     builder::{DeviceBuilder, MqttConfig},
     error::Error,
     AstarteDeviceSdk,
-    Device,
+    prelude::*,
 };
 
 async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
@@ -52,13 +52,12 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     let mut mqtt_config = MqttConfig::new(realm, device_id, credentials_secret, pairing_url);
     mqtt_config.ignore_ssl_errors();
 
-    let device_builder = DeviceBuilder::new()
-        .interface_directory("./examples/interfaces")?
-        .store(db);
-
     // 3. Create the device instance
-    let (mut device, mut rx_events) = device_builder
-        .connect_mqtt(mqtt_config).await?;
+    let (mut device, mut rx_events) = DeviceBuilder::new()
+        .interface_directory("./examples/interfaces")?
+        .store(db)
+        .connect(mqtt_config).await?
+        .build();
 
     // Publishing new values can be performed using the send and send_object functions.
 
