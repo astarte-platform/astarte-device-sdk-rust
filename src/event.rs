@@ -109,6 +109,7 @@ pub enum FromEventError {
 ///                 path: "name",
 ///             })?
 ///             .try_into()?;
+///
 ///         let value = object
 ///             .remove("value")
 ///             .ok_or(FromEventError::MissingField {
