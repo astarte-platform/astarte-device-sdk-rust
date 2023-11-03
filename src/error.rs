@@ -22,6 +22,7 @@ use std::convert::Infallible;
 
 use crate::builder::BuilderError;
 use crate::connection::mqtt::payload::PayloadError;
+use crate::connection::mqtt::MqttConnectionError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
 use crate::properties::PropertiesError;
@@ -101,7 +102,7 @@ pub enum Error {
     MissingMapping { interface: String, mapping: String },
 
     /// Send or receive validation failed
-    #[error("validation of the payload failed")]
+    #[error("validation of the send payload failed")]
     Validation(#[from] UserValidationError),
 
     #[error("invalid aggregation, expected {exp} but got {got}")]
@@ -112,4 +113,7 @@ pub enum Error {
         exp: InterfaceTypeDef,
         got: InterfaceTypeDef,
     },
+
+    #[error(transparent)]
+    MqttConnection(#[from] MqttConnectionError),
 }

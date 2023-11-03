@@ -54,43 +54,42 @@ pub(crate) struct ParsedTopic<'a> {
     pub(crate) path: &'a str,
 }
 
-pub(crate) fn parse_topic<'a>(
-    client_id: &str,
-    topic: &'a str,
-) -> Result<ParsedTopic<'a>, TopicError> {
-    if topic.is_empty() {
-        return Err(TopicError::Empty);
+impl<'a> ParsedTopic<'a> {
+    pub(crate) fn try_parse(client_id: &str, topic: &'a str) -> Result<Self, TopicError> {
+        if topic.is_empty() {
+            return Err(TopicError::Empty);
+        }
+
+        let rest = topic
+            .strip_prefix(client_id)
+            .ok_or(TopicError::UnkownClientId {
+                client_id: client_id.to_string(),
+                topic: topic.to_string(),
+            })?;
+
+        let rest = rest
+            .strip_prefix('/')
+            .ok_or(TopicError::Malformed(topic.to_string()))?;
+
+        trace!("rest: {}", rest);
+
+        let idx = rest
+            .find('/')
+            .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+
+        trace!("slash idx: {}", idx);
+
+        let (interface, path) = rest.split_at(idx);
+
+        trace!("interface: {}", interface);
+        trace!("path: {}", path);
+
+        if interface.is_empty() || path.is_empty() {
+            return Err(TopicError::Malformed(topic.to_string()));
+        }
+
+        Ok(ParsedTopic { interface, path })
     }
-
-    let rest = topic
-        .strip_prefix(client_id)
-        .ok_or(TopicError::UnkownClientId {
-            client_id: client_id.to_string(),
-            topic: topic.to_string(),
-        })?;
-
-    let rest = rest
-        .strip_prefix('/')
-        .ok_or(TopicError::Malformed(topic.to_string()))?;
-
-    trace!("rest: {}", rest);
-
-    let idx = rest
-        .find('/')
-        .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-    trace!("slash idx: {}", idx);
-
-    let (interface, path) = rest.split_at(idx);
-
-    trace!("interface: {}", interface);
-    trace!("path: {}", path);
-
-    if interface.is_empty() || path.is_empty() {
-        return Err(TopicError::Malformed(topic.to_string()));
-    }
-
-    Ok(ParsedTopic { interface, path })
 }
 
 #[cfg(test)]
@@ -102,7 +101,7 @@ mod tests {
     #[test]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let ParsedTopic { interface, path } = parse_topic(CLIENT_ID, &topic).unwrap();
+        let ParsedTopic { interface, path } = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap();
 
         assert_eq!(interface, "com.interface.test");
         assert_eq!(path, "/led/red");
@@ -111,14 +110,14 @@ mod tests {
     #[test]
     fn test_parse_topic_empty() {
         let topic = "".to_owned();
-        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
+        let err = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap_err();
 
         assert!(matches!(err, TopicError::Empty));
     }
 
     #[test]
     fn test_parse_topic_client_id() {
-        let err = parse_topic(CLIENT_ID, CLIENT_ID).unwrap_err();
+        let err = ParsedTopic::try_parse(CLIENT_ID, CLIENT_ID).unwrap_err();
 
         assert!(matches!(err, TopicError::Malformed(_)));
     }
@@ -126,7 +125,7 @@ mod tests {
     #[test]
     fn test_parse_topic_malformed() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test".to_owned();
-        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
+        let err = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap_err();
 
         assert!(matches!(err, TopicError::Malformed(_)));
     }
@@ -134,7 +133,7 @@ mod tests {
     #[test]
     fn test_parse_unkown_client_id() {
         let topic = "test/u-WraCwtK_G_different/com.interface.test/led/red".to_owned();
-        let err = parse_topic(CLIENT_ID, &topic).unwrap_err();
+        let err = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap_err();
 
         assert!(matches!(err, TopicError::UnkownClientId { .. }));
     }

@@ -29,11 +29,12 @@ for more information regarding Astarte and the available SDKs.
 use std::error::Error as StdError;
 
 use astarte_device_sdk::{
-    store::sqlite::SqliteStore,
-    builder::{DeviceBuilder, MqttConfig},
+    builder::DeviceBuilder,
+    connection::mqtt::MqttConfig,
     error::Error,
     AstarteDeviceSdk,
     prelude::*,
+    store::sqlite::SqliteStore,
 };
 
 async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {

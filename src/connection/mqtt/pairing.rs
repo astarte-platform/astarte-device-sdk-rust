@@ -30,9 +30,11 @@ use serde_json::json;
 use url::ParseError;
 
 use crate::{
-    builder::{BuilderError, MqttConfig},
+    connection::mqtt::MqttConfig,
     crypto::{Bundle, CryptoError},
 };
+
+use super::MqttConnectionError;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse {
@@ -195,7 +197,7 @@ fn build_mqtt_opts(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, BuilderError> {
+) -> Result<MqttOptions, MqttConnectionError> {
     let MqttConfig {
         realm, device_id, ..
     } = opts;
@@ -222,7 +224,7 @@ fn build_mqtt_opts(
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if opts.keepalive.as_secs() < 5 {
-        return Err(BuilderError::ConfigError(
+        return Err(MqttConnectionError::Config(
             "Keepalive should be >= 5 secs".into(),
         ));
     }
@@ -262,7 +264,9 @@ fn build_mqtt_opts(
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(opts: &MqttConfig) -> Result<MqttOptions, BuilderError> {
+pub(crate) async fn get_transport_config(
+    opts: &MqttConfig,
+) -> Result<MqttOptions, MqttConnectionError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

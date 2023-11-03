@@ -54,7 +54,7 @@ pub trait PropAccess {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     AstarteDeviceSdk, store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     builder::MqttConfig, types::AstarteType, prelude::*,
+    ///     connection::mqtt::MqttConfig, types::AstarteType, prelude::*,
     /// };
     ///
     /// #[tokio::main]

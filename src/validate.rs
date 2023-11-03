@@ -23,7 +23,6 @@ use std::collections::HashMap;
 use log::{debug, error, warn};
 
 use crate::{
-    connection::mqtt::payload::PayloadError,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -33,18 +32,16 @@ use crate::{
     Interface, Timestamp,
 };
 
-/// Errors returning while validating a send or a receive
+/// Errors returned while validating a send payload
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum UserValidationError {
     /// Sending timestamp to a mapping without `explicit_timestamp`
     #[error("sending timestamp to a mapping without `explicit_timestamp`")]
     Timestamp,
-    #[error("expected interface with ownership {exp}, but got {got}")]
     /// Sending data on an interface not owned by the device
+    #[error("expected interface with ownership {exp}, but got {got}")]
     Ownership { exp: Ownership, got: Ownership },
-    #[error("Payload error")]
-    Payload(#[from] PayloadError),
     /// Missing mapping in send payload
     #[error["missing mappings in the payload"]]
     MissingMapping,
@@ -215,7 +212,6 @@ pub(crate) fn validate_object<'a>(
         .collect::<Result<_, _>>()?;
 
     if aggregate.len() != object.len() {
-        // TODO I could copy even this field to the UserValidation Error enum
         return Err(UserValidationError::MissingMapping);
     }
 

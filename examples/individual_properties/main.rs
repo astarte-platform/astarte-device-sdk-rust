@@ -23,9 +23,7 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    builder::{DeviceBuilder, MqttConfig},
-    error::Error,
-    prelude::*,
+    builder::DeviceBuilder, connection::mqtt::MqttConfig, error::Error, prelude::*,
     store::SqliteStore,
 };
 

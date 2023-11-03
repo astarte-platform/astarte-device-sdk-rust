@@ -36,11 +36,8 @@ use serde_json::Value;
 use tokio::{task, time};
 
 use astarte_device_sdk::{
-    builder::{DeviceBuilder, MqttConfig},
-    prelude::*,
-    store::memory::MemoryStore,
+    builder::DeviceBuilder, connection::mqtt::MqttConfig, prelude::*, store::memory::MemoryStore,
     types::AstarteType,
-    Device,
 };
 
 mod mock_data_aggregate;
