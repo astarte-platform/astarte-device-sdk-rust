@@ -16,6 +16,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! Mapping of an interface.
+
 use std::{borrow::Borrow, ops::Deref};
 
 use log::warn;
