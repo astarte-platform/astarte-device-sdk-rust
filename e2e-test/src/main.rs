@@ -36,7 +36,7 @@ use serde_json::Value;
 use tokio::{task, time};
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, connection::mqtt::MqttConfig, prelude::*, store::memory::MemoryStore,
+    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
     types::AstarteType,
 };
 
@@ -246,7 +246,7 @@ async fn main() {
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_datastream_device_to_server(
-    device: &impl Device,
+    device: &impl Client,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataDatastream::init();
@@ -333,7 +333,7 @@ async fn test_datastream_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_aggregate_device_to_server(
-    device: &impl Device,
+    device: &impl Client,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataAggregate::init();
@@ -427,7 +427,7 @@ async fn test_aggregate_server_to_device(
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_property_device_to_server(
-    device: &impl Device,
+    device: &impl Client,
     test_cfg: &TestCfg,
 ) -> Result<(), String> {
     let mock_data = MockDataProperty::init();

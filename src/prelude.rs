@@ -18,18 +18,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-mod device {
+//! Prelude device module
+//! Re-exports common traits frequently used when using the astarte SDK API.
+
+/// Device module that exports trait commonly used when sending or receiving data.
+pub mod device {
     pub use crate::AstarteAggregate;
-    pub use crate::Device;
-    pub use crate::InterfaceRegistry;
+    pub use crate::Client;
+    pub use crate::FromEvent;
 }
 
-mod builder {
+/// Exports common trait used when constructing an instance of the [`crate::AstarteDeviceSdk`].
+pub mod builder {
     pub use crate::builder::ConnectionConfig;
     pub use crate::builder::DeviceSdkBuild;
 }
 
-mod properties {
+/// Exports common trait used when accessing stored properties.
+pub mod properties {
     pub use crate::properties::PropAccess;
     pub use crate::store::PropertyStore;
 }

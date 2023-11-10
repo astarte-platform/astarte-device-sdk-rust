@@ -23,8 +23,8 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, connection::mqtt::MqttConfig, error::Error, prelude::*,
-    store::SqliteStore,
+    builder::DeviceBuilder, error::Error, prelude::*, store::SqliteStore,
+    transport::mqtt::MqttConfig,
 };
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;

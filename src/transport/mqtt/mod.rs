@@ -70,7 +70,7 @@ pub(crate) use rumqttc::{AsyncClient, EventLoop};
 
 use payload::Payload;
 
-use super::{Connection, ReceivedEvent};
+use super::{Publish, Receive, ReceivedEvent, Register};
 
 /// Borrowing wrapper for the client id
 ///
@@ -122,25 +122,18 @@ impl Mqtt {
         Self { shared, client }
     }
 
-    /// Initializes this connection with the passed settings
+    /// Waits for mqtt connack to correctly initialize connection to astarte
+    /// by sending session data.
     ///
     /// The session parameter holds data that will be sent during the
     /// connection to the astarte server.
-    pub(crate) async fn connected(
-        realm: String,
-        device_id: String,
-        eventloop: EventLoop,
-        client: AsyncClient,
-        session: SessionData,
-    ) -> Result<Self, crate::Error> {
-        let mqtt = Self::new(realm, device_id, eventloop, client);
-
+    pub(crate) async fn wait_for_connack(&self, session: SessionData) -> Result<(), crate::Error> {
         loop {
-            match mqtt.poll().await? {
+            match self.poll().await? {
                 rumqttc::Packet::ConnAck(connack) => {
-                    mqtt.connack(session, connack).await?;
+                    self.connack(session, connack).await?;
 
-                    return Ok(mqtt);
+                    return Ok(());
                 }
                 packet => warn!("Received incoming packet while waiting for connack: {packet:?}"),
             }
@@ -363,7 +356,37 @@ impl Deref for Mqtt {
 }
 
 #[async_trait]
-impl Connection for Mqtt {
+impl Publish for Mqtt {
+    async fn send_individual(
+        &self,
+        validated: ValidatedIndividual<'_>,
+    ) -> Result<(), crate::Error> {
+        let buf = payload::serialize_individual(validated.data(), validated.timestamp())?;
+
+        self.send(
+            validated.mapping().interface(),
+            validated.path().as_str(),
+            validated.mapping().reliability().into(),
+            buf,
+        )
+        .await
+    }
+
+    async fn send_object(&self, validated: ValidatedObject<'_>) -> Result<(), crate::Error> {
+        let buf = payload::serialize_object(validated.data(), validated.timestamp())?;
+
+        self.send(
+            validated.object().interface,
+            validated.path().as_str(),
+            validated.object().reliability().into(),
+            buf,
+        )
+        .await
+    }
+}
+
+#[async_trait]
+impl Receive for Mqtt {
     type Payload = Bytes;
 
     async fn next_event<S>(
@@ -432,35 +455,11 @@ impl Connection for Mqtt {
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
         payload::deserialize_object(object, path, payload).map_err(|err| err.into())
     }
+}
 
-    async fn send_individual(
-        &self,
-        validated: ValidatedIndividual<'_>,
-    ) -> Result<(), crate::Error> {
-        let buf = payload::serialize_individual(validated.data(), validated.timestamp())?;
-
-        self.send(
-            validated.mapping().interface(),
-            validated.path().as_str(),
-            validated.mapping().reliability().into(),
-            buf,
-        )
-        .await
-    }
-
-    async fn send_object(&self, validated: ValidatedObject<'_>) -> Result<(), crate::Error> {
-        let buf = payload::serialize_object(validated.data(), validated.timestamp())?;
-
-        self.send(
-            validated.object().interface,
-            validated.path().as_str(),
-            validated.object().reliability().into(),
-            buf,
-        )
-        .await
-    }
-
-    async fn added_interface<S>(
+#[async_trait]
+impl Register for Mqtt {
+    async fn add_interface<S>(
         &self,
         device: &SharedDevice<S>,
         added_interface: &str,
@@ -484,7 +483,7 @@ impl Connection for Mqtt {
         self.send_introspection(introspection_string).await
     }
 
-    async fn removed_interface(
+    async fn remove_interface(
         &self,
         interfaces: &Interfaces,
         removed_interface: Interface,
@@ -586,7 +585,7 @@ impl MqttConfig {
     ///    - has a default bounded channel size of [`crate::builder::DEFAULT_CHANNEL_SIZE`]
     ///
     /// ```no_run
-    /// use astarte_device_sdk::connection::mqtt::MqttConfig;
+    /// use astarte_device_sdk::transport::mqtt::MqttConfig;
     ///
     /// #[tokio::main]
     /// async fn main(){
@@ -666,9 +665,9 @@ impl ConnectionConfig for MqttConfig {
 
         let session_data =
             SessionData::try_from_unlocked(&builder.interfaces, &builder.store).await?;
-        // TODO this whole implementation should be moved to a separate module to avoid that someone in the future could accidentally use `Mqtt::new` and construct a connection that won't work
-        let connection =
-            Mqtt::connected(self.realm, self.device_id, eventloop, client, session_data).await?;
+        let connection = Mqtt::new(self.realm, self.device_id, eventloop, client);
+        // to correctly initialize the connection to astarte we should wait for the connack
+        connection.wait_for_connack(session_data).await?;
 
         Ok(connection)
     }

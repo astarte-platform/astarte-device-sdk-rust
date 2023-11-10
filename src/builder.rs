@@ -30,11 +30,11 @@ use async_trait::async_trait;
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::connection::Connection;
 use crate::interface::{Interface, InterfaceError};
 use crate::interfaces::Interfaces;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
+use crate::transport::{Publish, Receive, Register};
 use crate::AstarteDeviceSdk;
 use crate::EventReceiver;
 
@@ -55,9 +55,6 @@ pub enum BuilderError {
 
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-
-    #[error("configuration error")]
-    ConfigError(String),
 }
 
 /// Declares the conclusive operation of the device builder.
@@ -73,7 +70,7 @@ pub trait DeviceSdkBuild<S, C> {
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
 where
     S: PropertyStore,
-    C: Connection + Send,
+    C: Publish + Receive + Register + Send,
 {
     fn build(self) -> (AstarteDeviceSdk<S, C>, EventReceiver) {
         let (tx, rx) = mpsc::channel(self.channel_size);
@@ -99,7 +96,7 @@ impl DeviceBuilder<(), ()> {
     /// Has a default [`DeviceBuilder::channel_size`] that equals to [`crate::builder::DEFAULT_CHANNEL_SIZE`].
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{builder::DeviceBuilder, connection::mqtt::MqttConfig};
+    /// use astarte_device_sdk::{builder::DeviceBuilder, transport::mqtt::MqttConfig};
     ///
     /// #[tokio::main]
     /// async fn main(){

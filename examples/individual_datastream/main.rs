@@ -23,8 +23,8 @@ use std::time::SystemTime;
 use serde::Deserialize;
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, connection::mqtt::MqttConfig, error::Error, prelude::*,
-    store::memory::MemoryStore,
+    builder::DeviceBuilder, error::Error, prelude::*, store::memory::MemoryStore,
+    transport::mqtt::MqttConfig,
 };
 
 #[derive(Deserialize)]

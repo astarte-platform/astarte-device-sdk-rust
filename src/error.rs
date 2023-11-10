@@ -21,13 +21,12 @@
 use std::convert::Infallible;
 
 use crate::builder::BuilderError;
-use crate::connection::mqtt::payload::PayloadError;
-use crate::connection::mqtt::MqttConnectionError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::topic::TopicError;
+use crate::transport::mqtt::{payload::PayloadError, MqttConnectionError};
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
 

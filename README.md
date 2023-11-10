@@ -30,7 +30,7 @@ use std::error::Error as StdError;
 
 use astarte_device_sdk::{
     builder::DeviceBuilder,
-    connection::mqtt::MqttConfig,
+    transport::mqtt::MqttConfig,
     error::Error,
     AstarteDeviceSdk,
     prelude::*,

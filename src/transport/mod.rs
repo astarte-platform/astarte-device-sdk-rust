@@ -55,7 +55,16 @@ pub(crate) struct ReceivedEvent<P> {
 }
 
 #[async_trait]
-pub(crate) trait Connection: Clone {
+pub(crate) trait Publish {
+    /// Sends validated individual values over this connection
+    async fn send_individual(&self, data: ValidatedIndividual<'_>) -> Result<(), crate::Error>;
+
+    /// Sends validated objects values over this connection
+    async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error>;
+}
+
+#[async_trait]
+pub(crate) trait Receive {
     type Payload: Send + Sync + 'static;
 
     /// This function returns the next event from the connection
@@ -84,16 +93,13 @@ pub(crate) trait Connection: Clone {
         path: &MappingPath<'_>,
         payload: &Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
+}
 
-    /// Sends validated individual values over this connection
-    async fn send_individual(&self, data: ValidatedIndividual<'_>) -> Result<(), crate::Error>;
-
-    /// Sends validated objects values over this connection
-    async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error>;
-
+#[async_trait]
+pub(crate) trait Register {
     /// Called when an interface gets added to the device interface list.
     /// This method should convey to the server that a new interface got added.
-    async fn added_interface<S>(
+    async fn add_interface<S>(
         &self,
         device: &SharedDevice<S>,
         added_interface: &str,
@@ -103,7 +109,7 @@ pub(crate) trait Connection: Clone {
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
-    async fn removed_interface(
+    async fn remove_interface(
         &self,
         interfaces: &Interfaces,
         removed_interface: Interface,

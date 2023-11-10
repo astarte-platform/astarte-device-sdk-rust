@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::connection::mqtt::PairingError;
+use crate::transport::mqtt::PairingError;
 
 /// Obtain a credentials secret from the astarte API
 pub async fn register_device(

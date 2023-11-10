@@ -54,7 +54,7 @@ pub trait PropAccess {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     AstarteDeviceSdk, store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     connection::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -190,7 +190,7 @@ pub(crate) mod tests {
     use crate::test::mock_astarte_device_store;
     use crate::Interface;
 
-    use crate::connection::mqtt::{AsyncClient, EventLoop};
+    use crate::transport::mqtt::{AsyncClient, EventLoop};
 
     use super::*;
 

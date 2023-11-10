@@ -30,8 +30,8 @@ use serde_json::json;
 use url::ParseError;
 
 use crate::{
-    connection::mqtt::MqttConfig,
     crypto::{Bundle, CryptoError},
+    transport::mqtt::MqttConfig,
 };
 
 use super::MqttConnectionError;
