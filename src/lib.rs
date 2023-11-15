@@ -19,6 +19,7 @@
  */
 #![doc = include_str!("../README.md")]
 
+pub mod builder;
 pub mod crypto;
 pub mod error;
 pub mod event;
@@ -26,25 +27,16 @@ pub mod interface;
 mod interfaces;
 #[cfg(test)]
 mod mock;
-pub mod options;
-pub mod pairing;
-pub mod payload;
+pub mod prelude;
 pub mod properties;
 pub mod registration;
 mod retry;
 mod shared;
 pub mod store;
 mod topic;
+pub mod transport;
 pub mod types;
 mod validate;
-
-use chrono::{DateTime, Utc};
-use interface::reference::MappingRef;
-#[cfg(test)]
-pub(crate) use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
-#[cfg(not(test))]
-pub(crate) use rumqttc::{AsyncClient, EventLoop};
-use tokio::sync::{mpsc, Mutex, RwLock};
 
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -57,8 +49,9 @@ use std::sync::Arc;
 pub use chrono;
 pub use rumqttc;
 
+use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
-use rumqttc::{Event, Publish};
+use tokio::sync::{mpsc, RwLock};
 
 /// Re-exported internal structs
 pub use crate::event::FromEvent;
@@ -66,22 +59,16 @@ pub use crate::interface::Interface;
 
 use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::MappingRef;
 use crate::interface::reference::PropertyRef;
 use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
-use crate::options::AstarteOptions;
-use crate::payload::{
-    deserialize_individual, deserialize_object, serialize_individual, serialize_object, Payload,
-};
-use crate::properties::PropAccess;
-use crate::retry::DelayedPoll;
+use crate::interfaces::Interfaces;
 use crate::shared::SharedDevice;
-use crate::store::memory::MemoryStore;
-use crate::store::sqlite::SqliteStore;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoredProp};
-use crate::topic::parse_topic;
+use crate::transport::{Publish, Receive, ReceivedEvent, Register};
 use crate::types::{AstarteType, TypeError};
-use crate::validate::{validate_send_individual, validate_send_object};
+use crate::validate::{validate_individual, validate_object};
 
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::AstarteDeviceSdk::send_object] and
@@ -129,15 +116,12 @@ impl AstarteAggregate for HashMap<String, AstarteType> {
     }
 }
 
-/// Astarte device SDK backed by an SQLite database to store the properties.
-pub type AstarteDeviceSdkSqlite = AstarteDeviceSdk<SqliteStore>;
-/// Astarte device SDK backed by an in-memory key value store for the properties.
-pub type AstarteDeviceSdkMemory = AstarteDeviceSdk<MemoryStore>;
-
 /// Sender end of the channel for the [`AstarteDeviceDataEvent`].
 pub type EventSender = mpsc::Sender<Result<AstarteDeviceDataEvent, Error>>;
 /// Receiver end of the channel for the [`AstarteDeviceDataEvent`].
 pub type EventReceiver = mpsc::Receiver<Result<AstarteDeviceDataEvent, Error>>;
+/// Timestamp returned in the astarte payload
+pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
 
 // Re-export #[derive(AstarteAggregate)].
 //
@@ -152,24 +136,6 @@ extern crate astarte_device_sdk_derive;
 /// Derive macros enable with the `feature = ["derive"]`.
 #[cfg(feature = "derive")]
 pub use astarte_device_sdk_derive::*;
-
-/// Astarte device implementation.
-///
-/// Provides functionality to transmit and receive individual and object datastreams as well
-/// as properties.
-pub struct AstarteDeviceSdk<S> {
-    shared: Arc<SharedDevice<S>>,
-}
-
-/// Manual implementation of [`Clone`] since the inner shared device doesn't requires the [`Clone`]
-/// trait since it's inside an [`Arc`].
-impl<S> Clone for AstarteDeviceSdk<S> {
-    fn clone(&self) -> Self {
-        Self {
-            shared: Arc::clone(&self.shared),
-        }
-    }
-}
 
 /// Payload format for an Astarte device event data.
 #[derive(Debug, Clone, PartialEq)]
@@ -193,313 +159,46 @@ pub struct AstarteDeviceDataEvent {
     pub data: Aggregation,
 }
 
-impl<S> AstarteDeviceSdk<S>
-where
-    S: PropertyStore,
-{
-    /// Create a new instance of the Astarte Device SDK.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let sdk_options = AstarteOptions::new("", "", "", "")
-    ///     .interface_directory("")
-    ///     .unwrap()
-    ///     .ignore_ssl_errors();
-    ///
-    ///     let mut device = AstarteDeviceSdk::new(sdk_options).await.unwrap();
-    /// }
-    /// ```
-    pub async fn new(
-        opts: AstarteOptions<S>,
-    ) -> Result<(AstarteDeviceSdk<S>, EventReceiver), Error> {
-        const MQTT_CHANNEL_SIZE: usize = 50;
+/// Astarte device implementation.
+///
+/// Provides functionality to transmit and receive individual and object datastreams as well
+/// as properties.
+pub struct AstarteDeviceSdk<S, C> {
+    connection: C,
+    shared: Arc<SharedDevice<S>>,
+}
 
-        let mqtt_options = pairing::get_transport_config(&opts).await?;
-
-        debug!("{:#?}", mqtt_options);
-
-        let (client, eventloop) = AsyncClient::new(mqtt_options, MQTT_CHANNEL_SIZE);
-
-        let (tx_events, rx_events) = mpsc::channel(MQTT_CHANNEL_SIZE);
-
-        let mut device = AstarteDeviceSdk {
+impl<S, C> AstarteDeviceSdk<S, C> {
+    pub(crate) fn new(interfaces: Interfaces, store: S, connection: C, tx: EventSender) -> Self
+    where
+        S: PropertyStore,
+    {
+        Self {
             shared: Arc::new(SharedDevice {
-                realm: opts.realm,
-                device_id: opts.device_id,
-                client,
-                events_channel: tx_events,
-                eventloop: Mutex::new(eventloop),
-                interfaces: RwLock::new(opts.interfaces),
-                store: StoreWrapper::new(opts.store),
+                interfaces: RwLock::new(interfaces),
+                store: StoreWrapper::new(store),
+                tx,
             }),
-        };
-
-        device.wait_for_connack().await?;
-
-        Ok((device, rx_events))
-    }
-
-    async fn wait_for_connack(&mut self) -> Result<(), Error> {
-        loop {
-            // keep consuming and processing packets until we have data for the user
-            match self.eventloop.lock().await.poll().await? {
-                Event::Incoming(i) => {
-                    trace!("MQTT Incoming = {i:?}");
-
-                    if let rumqttc::Packet::ConnAck(p) = i {
-                        return self.connack(p).await;
-                    } else {
-                        error!("BUG: not connack inside poll_connack {i:?}");
-                    }
-                }
-                Event::Outgoing(i) => {
-                    error!("BUG: not connack inside poll_connack {i:?}");
-                }
-            }
+            connection,
         }
     }
 
-    async fn connack(&self, p: rumqttc::ConnAck) -> Result<(), Error> {
-        if !p.session_present {
-            self.subscribe().await?;
-            self.send_introspection().await?;
-            self.send_emptycache().await?;
-            self.send_device_owned_properties().await?;
-            info!("connack done");
-        }
-
-        Ok(())
-    }
-
-    async fn subscribe(&self) -> Result<(), Error> {
-        let ifaces = &self.interfaces.read().await;
-        let server_owned_ifaces = ifaces
-            .iter_interfaces()
-            .filter(|interface| interface.ownership() == interface::Ownership::Server);
-
-        self.client
-            .subscribe(
-                self.client_id() + "/control/consumer/properties",
-                rumqttc::QoS::ExactlyOnce,
-            )
-            .await?;
-
-        for iface in server_owned_ifaces {
-            self.subscribe_server_owned_interface(iface).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn subscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
-        if iface.ownership() != interface::Ownership::Server {
-            warn!("Unable to subscribe to {} as it is not server owned", iface);
-        } else {
-            self.client
-                .subscribe(
-                    self.client_id() + "/" + iface.interface_name() + "/#",
-                    rumqttc::QoS::ExactlyOnce,
-                )
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn unsubscribe_server_owned_interface(&self, iface: &Interface) -> Result<(), Error> {
-        if iface.ownership() != interface::Ownership::Server {
-            warn!(
-                "Unable to unsubscribe to {} as it is not server owned",
-                iface
-            );
-        } else {
-            self.client
-                .unsubscribe(self.client_id() + "/" + iface.interface_name() + "/#")
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// Add a new interface from the provided file.
-    pub async fn add_interface_from_file(&self, file_path: &str) -> Result<(), Error> {
-        let path = Path::new(file_path);
-        let interface = Interface::from_file(path)?;
-        self.add_interface(interface).await
-    }
-
-    /// Add a new interface from a string. The string should contain a valid json formatted
-    /// interface.
-    pub async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
-        let interface: Interface = Interface::from_str(json_str)?;
-        self.add_interface(interface).await
-    }
-
-    /// Add a new [`Interface`] to the device interfaces.
-    pub async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
-        if interface.ownership() == interface::Ownership::Server {
-            self.subscribe_server_owned_interface(&interface).await?;
-        }
-        self.add_interface_to_introspection(interface).await?;
-        self.send_introspection().await?;
-        Ok(())
-    }
-
-    async fn add_interface_to_introspection(&self, interface: Interface) -> Result<(), Error> {
-        self.interfaces.write().await.add(interface)?;
-
-        Ok(())
-    }
-
-    /// Remove the interface with the name specified as argument.
-    pub async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
-        let interface = self.remove_interface_from_map(interface_name).await?;
-        self.remove_properties_from_store(interface_name).await?;
-        self.send_introspection().await?;
-        if interface.ownership() == interface::Ownership::Server {
-            self.unsubscribe_server_owned_interface(&interface).await?;
-        }
-        Ok(())
-    }
-
-    async fn remove_interface_from_map(&self, interface_name: &str) -> Result<Interface, Error> {
-        self.interfaces
-            .write()
-            .await
-            .remove(interface_name)
-            .ok_or_else(|| {
-                Error::Interface(InterfaceError::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })
-            })
-    }
-
-    /// Poll updates from mqtt, can be placed in a loop to receive data.
-    ///
-    /// This is a blocking function. It should be placed on a dedicated thread/task or as the main
-    /// thread.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let (mut device, mut rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
-    ///
-    ///     tokio::spawn(async move {
-    ///         while let Some(event) = rx_events.recv().await {
-    ///             assert!(event.is_ok());
-    ///         };
-    ///     });
-    ///
-    ///     device.handle_events().await;
-    /// }
-    /// ```
-    pub async fn handle_events(&mut self) -> Result<(), Error> {
-        loop {
-            // Don't keep a ref to lock so we can retry in the match bellow
-            let res = {
-                let mut lock = self.eventloop.lock().await;
-                lock.poll().await
-            };
-
-            let event = match res {
-                Ok(event) => event,
-                Err(err) => {
-                    error!("couldn't poll the event loop: {err:#?}");
-
-                    DelayedPoll::retry_poll_event(self).await?
-                }
-            };
-
-            // Keep consuming and processing packets until we have data for the user
-            match event {
-                Event::Incoming(incoming) => {
-                    trace!("MQTT Incoming = {:?}", incoming);
-
-                    match incoming {
-                        rumqttc::Packet::ConnAck(conn_ack) => {
-                            self.connack(conn_ack).await?;
-                        }
-                        rumqttc::Packet::Publish(publish) => {
-                            let mut sdk = self.clone();
-
-                            // New task for the publish to not block the event loop
-                            tokio::spawn(async move {
-                                let res = sdk.handle_publish(publish).await;
-
-                                let res = match res {
-                                    // Skip events like purge_properties
-                                    Ok(None) => return,
-                                    Ok(Some(res)) => Ok(res),
-                                    Err(err) => {
-                                        error!(
-                                            "error encountered while handling a publish: {err:#?}"
-                                        );
-
-                                        Err(err)
-                                    }
-                                };
-
-                                sdk.events_channel
-                                    .send(res)
-                                    .await
-                                    .expect("error channel dropped");
-                            });
-                        }
-                        packet => {
-                            trace!("packet received {packet:?}");
-                        }
-                    }
-                }
-                Event::Outgoing(o) => trace!("MQTT Outgoing = {:?}", o),
-            }
-        }
-    }
-
-    /// Handles an incoming publish
-    async fn handle_publish(
-        &mut self,
-        publish: Publish,
-    ) -> Result<Option<AstarteDeviceDataEvent>, Error> {
-        let (_, _, interface, path) = parse_topic(&publish.topic)?;
-
-        debug!("received publish for interface \"{interface}\" and path \"{path}\"");
-
-        // It can be borrowed as a &[u8]
-        let payload = publish.payload;
-
-        match (interface, path.as_str()) {
-            ("control", "/consumer/properties") => {
-                debug!("Purging properties");
-
-                self.purge_properties(&payload).await?;
-
-                Ok(None)
-            }
-            _ => {
-                debug!("Incoming publish = {} {:x}", publish.topic, payload);
-
-                let data = self.handle_payload(interface, &path, &payload).await?;
-
-                Ok(Some(AstarteDeviceDataEvent {
-                    interface: interface.to_string(),
-                    path: path.to_string(),
-                    data,
-                }))
-            }
-        }
-    }
-
-    /// Handles a payload received from the broker.
-    async fn handle_payload<'a>(
+    async fn handle_event(
         &self,
-        interface: &str,
-        path: &MappingPath<'a>,
-        payload: &[u8],
-    ) -> Result<Aggregation, Error> {
+        connection_event: &ReceivedEvent<C::Payload>,
+    ) -> Result<Aggregation, crate::Error>
+    where
+        S: PropertyStore,
+        C: Receive + Sync,
+    {
+        let ReceivedEvent {
+            interface,
+            path,
+            payload,
+        } = connection_event;
+
+        let path = MappingPath::try_from(path.as_str())?;
+
         let interfaces = self.interfaces.read().await;
         let interface = interfaces.get(interface).ok_or_else(|| {
             warn!("publish on missing interface {interface} ({path})");
@@ -508,11 +207,12 @@ where
 
         let (data, timestamp) = match interface.aggregation() {
             InterfaceAggregation::Individual => {
-                self.handle_payload_individual(interface, path, payload)
+                self.handle_payload_individual(interface, &path, payload)
                     .await?
             }
             InterfaceAggregation::Object => {
-                self.handle_payload_object(interface, path, payload).await?
+                self.handle_payload_object(interface, &path, payload)
+                    .await?
             }
         };
 
@@ -526,8 +226,12 @@ where
         &self,
         interface: &Interface,
         path: &MappingPath<'a>,
-        payload: &[u8],
-    ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error> {
+        payload: &C::Payload,
+    ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
+    where
+        S: PropertyStore,
+        C: Receive + Sync,
+    {
         let mapping = interface
             .as_mapping_ref(path)
             .ok_or_else(|| Error::MissingMapping {
@@ -535,7 +239,7 @@ where
                 mapping: path.to_string(),
             })?;
 
-        let (data, timestamp) = deserialize_individual(mapping, payload)?;
+        let (data, timestamp) = self.connection.deserialize_individual(mapping, payload)?;
 
         if interface.is_property() {
             let interface_name = interface.interface_name();
@@ -563,284 +267,49 @@ where
         &self,
         interface: &Interface,
         path: &MappingPath<'a>,
-        payload: &[u8],
-    ) -> Result<(Aggregation, Option<DateTime<Utc>>), Error> {
+        payload: &C::Payload,
+    ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
+    where
+        S: PropertyStore,
+        C: Receive + Sync,
+    {
         let object = interface.as_object_ref().ok_or(Error::Aggregation {
             exp: InterfaceAggregation::Object,
             got: InterfaceAggregation::Individual,
         })?;
 
-        let (data, timestamp) = deserialize_object(object, path, payload)?;
+        let (data, timestamp) = self.connection.deserialize_object(object, path, payload)?;
 
         Ok((Aggregation::Object(data), timestamp))
     }
 
-    fn client_id(&self) -> String {
-        format!("{}/{}", self.realm, self.device_id)
-    }
-
-    async fn purge_properties(&self, bdata: &[u8]) -> Result<(), Error> {
-        let stored_props = self.store.load_all_props().await?;
-
-        let paths = properties::extract_set_properties(bdata)?;
-
-        for stored_prop in stored_props {
-            if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
-                continue;
-            }
-
-            self.store
-                .delete_prop(&stored_prop.interface, &stored_prop.path)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn send_emptycache(&self) -> Result<(), Error> {
-        let url = self.client_id() + "/control/emptyCache";
-        debug!("sending emptyCache to {}", url);
-
-        self.client
-            .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
-            .await?;
-
-        Ok(())
-    }
-
-    async fn send_introspection(&self) -> Result<(), Error> {
-        let interfaces = self.interfaces.read().await;
-        let introspection = interfaces.get_introspection_string();
-
-        debug!("sending introspection = {}", introspection);
-
-        self.client
-            .publish(
-                self.client_id(),
-                rumqttc::QoS::ExactlyOnce,
-                false,
-                introspection,
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn send_device_owned_properties(&self) -> Result<(), Error> {
-        let properties = self.store.device_props().await?;
-
-        for prop in properties {
-            let topic = self.client_id() + &prop.interface + &prop.path;
-
-            debug!(
-                "sending device-owned property = {}{}",
-                prop.interface, prop.path
-            );
-
-            let payload = Payload::new(&prop.value).to_vec()?;
-
-            self.client
-                .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Unset a device property.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
-    ///
-    ///     device
-    ///         .unset("my.interface.name", "/endpoint/path",)
-    ///         .await
-    ///         .unwrap();
-    /// }
-    /// ```
-    pub async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error> {
-        trace!("unsetting {} {}", interface_name, interface_path);
-
-        let path = MappingPath::try_from(interface_path)?;
-
-        self.send_with_timestamp_impl(interface_name, &path, AstarteType::Unset, None)
-            .await?;
-
-        Ok(())
-    }
-
-    /// Get property, when present, from the allocated storage.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     AstarteDeviceSdk, store::sqlite::SqliteStore, options::AstarteOptions,
-    ///     types::AstarteType
-    /// };
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let database = SqliteStore::new("path/to/database/file.sqlite")
-    ///         .await
-    ///         .unwrap();
-    ///     let mut sdk_options = AstarteOptions::new("_","_","_","_").store(database);
-    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
-    ///
-    ///     let property_value: Option<AstarteType> = device
-    ///         .get_property("my.interface.name", "/endpoint/path",)
-    ///         .await
-    ///         .unwrap();
-    /// }
-    /// ```
-    #[deprecated = "use the PropAccess trait"]
-    pub async fn get_property(
-        &self,
-        interface: &str,
-        path: &str,
-    ) -> Result<Option<AstarteType>, Error> {
-        self.property(interface, path).await.map_err(Error::from)
-    }
-
-    // ------------------------------------------------------------------------
-    // individual types
-    // ------------------------------------------------------------------------
-
-    /// Send an individual datastream/property on an interface.
-    ///
-    /// The usage is the same of
-    /// [send_with_timestamp()][crate::AstarteDeviceSdk::send_with_timestamp],
-    /// without the timestamp.
-    pub async fn send<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-    ) -> Result<(), Error>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let path = MappingPath::try_from(interface_path)?;
-
-        self.send_with_timestamp_impl(interface_name, &path, data, None)
-            .await
-    }
-
-    /// Send an individual datastream/property on an interface, with an explicit timestamp.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions};
-    /// use chrono::{TimeZone, Utc};
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
-    ///
-    ///     let value: i32 = 42;
-    ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
-    ///     device.send_with_timestamp("my.interface.name", "/endpoint/path", value, timestamp)
-    ///         .await
-    ///         .unwrap();
-    /// }
-    /// ```
-    pub async fn send_with_timestamp<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let mapping = MappingPath::try_from(interface_path)?;
-
-        self.send_with_timestamp_impl(interface_name, &mapping, data, Some(timestamp))
-            .await
-    }
-
-    async fn send_with_timestamp_impl<'a, D>(
-        &self,
-        interface_name: &str,
-        path: &MappingPath<'a>,
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), Error>
-    where
-        D: TryInto<AstarteType>,
-    {
-        let interfaces = self.interfaces.read().await;
-        let mapping = interfaces.interface_mapping(interface_name, path)?;
-        debug!("sending {} {}", interface_name, path);
-
-        let data = data.try_into().map_err(|_| TypeError::Conversion)?;
-        if let Err(err) = validate_send_individual(mapping, &timestamp) {
-            error!("send validation failed: {err}");
-
-            #[cfg(debug_assertions)]
-            return Err(Error::Validation(err));
-        }
-
-        trace!("sending individual type {}", data.display_type());
-
-        let opt_prop = mapping.as_prop();
-        if let Some(prop_mapping) = opt_prop {
-            let stored = self
-                .check_property_already_stored(&prop_mapping, path, &data)
-                .await?;
-
-            if stored {
-                debug!("property was already sent, no need to send it again");
-                return Ok(());
-            }
-        }
-
-        let buf = serialize_individual(mapping, &data, timestamp)?;
-
-        let qos = mapping.mapping().reliability().into();
-        let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
-        self.client.publish(topic, qos, false, buf).await?;
-
-        //  Store the property in the database after it has been successfully sent
-        if let Some(prop_mapping) = opt_prop {
-            let interface_name = prop_mapping.interface().interface_name();
-            let path = path.as_str();
-            let interface_major = prop_mapping.interface().version_major();
-            let ownership = prop_mapping.interface().ownership();
-
-            let prop = StoredProp {
-                interface: interface_name,
-                path,
-                value: &data,
-                interface_major,
-                ownership,
-            };
-
-            self.store.store_prop(prop).await?;
-
-            info!("property stored {interface_name}{path}:{interface_major}");
-        }
-
-        Ok(())
-    }
-
-    /// Check if a property is already stored in the database with the same value.
+    /// Checks wether a passed interface is a property and if it is already stored with the same value.
     /// Useful to prevent sending a property twice with the same value.
-    async fn check_property_already_stored<'a, 'm, 'p>(
+    /// The returned value is [`Option::None`] if the interface is not of property type.
+    /// When the returned value is [`Option::Some`] the [`Result`] represents:
+    /// - The property is already stored [`Result::Ok`].
+    /// - The property is not stored or has a new value [`Result::Err`].
+    async fn is_property_stored<'a>(
         &self,
-        mapping: &MappingRef<'m, PropertyRef<'p>>,
-        path: &MappingPath<'a>,
+        mapping: &MappingRef<'a, &'a Interface>,
+        path: &MappingPath<'_>,
         new: &AstarteType,
-    ) -> Result<bool, Error> {
-        // Check if already in db
-        let stored = self.try_load_prop(mapping, path).await?;
+    ) -> Result<Option<Result<PropertyRef<'a>, PropertyRef<'a>>>, Error>
+    where
+        S: PropertyStore,
+    {
+        let opt_property = mapping.as_prop();
 
-        match stored {
-            Some(value) => Ok(value.eq(new)),
-            None => Ok(false),
+        if let Some(prop_mapping) = opt_property {
+            // Check if this property is already in db
+            let stored = self.try_load_prop(&prop_mapping, path).await?;
+
+            match stored {
+                Some(value) if value.eq(new) => Ok(Some(Ok(*prop_mapping.interface()))),
+                Some(_) | None => Ok(Some(Err(*prop_mapping.interface()))),
+            }
+        } else {
+            Ok(None)
         }
     }
 
@@ -849,7 +318,10 @@ where
         &self,
         mapping: &MappingRef<'_, PropertyRef<'_>>,
         path: &MappingPath<'_>,
-    ) -> Result<Option<AstarteType>, Error> {
+    ) -> Result<Option<AstarteType>, Error>
+    where
+        S: PropertyStore,
+    {
         let interface = mapping.interface().interface_name();
         let path = path.as_str();
 
@@ -884,37 +356,71 @@ where
         Ok(value)
     }
 
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error> {
+    async fn send_individual_impl<D>(
+        &self,
+        interface_name: &str,
+        path: &MappingPath<'_>,
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), Error>
+    where
+        S: PropertyStore,
+        C: Publish + Sync,
+        D: TryInto<AstarteType> + Send,
+    {
         let interfaces = self.interfaces.read().await;
-        let mappings = interfaces.get_property(interface_name);
+        let mapping = interfaces.interface_mapping(interface_name, path)?;
 
-        let property = match mappings {
-            Some(property) => property,
-            None => return Ok(()),
-        };
+        let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
 
-        for mapping in property.iter_mappings() {
-            let path = mapping.endpoint();
-            self.store.delete_prop(interface_name, path).await?;
-            debug!("Stored property {}{} deleted", interface_name, path);
+        trace!("sending individual type {}", individual.display_type());
+
+        let prop_stored = self.is_property_stored(&mapping, path, &individual).await?;
+
+        if prop_stored.map_or(false, |r| r.is_ok()) {
+            debug!("property was already sent, no need to send it again");
+            return Ok(());
+        }
+
+        let validated = validate_individual(mapping, path, &individual, timestamp)?;
+
+        self.connection.send_individual(validated).await?;
+
+        // Store the property in the database after it has been successfully sent
+        // We just need to handle the Err case since the Ok was handled by returning early
+        if let Some(Err(prop_mapping)) = prop_stored {
+            let interface_name = prop_mapping.interface_name();
+            let path = path.as_str();
+            let interface_major = prop_mapping.version_major();
+            let ownership = prop_mapping.ownership();
+
+            let prop = StoredProp {
+                interface: interface_name,
+                path,
+                value: &individual,
+                interface_major,
+                ownership,
+            };
+
+            self.store.store_prop(prop).await?;
+
+            info!("property stored {interface_name}{path}:{interface_major}");
         }
 
         Ok(())
     }
 
-    // ------------------------------------------------------------------------
-    // object types
-    // ------------------------------------------------------------------------
-
-    async fn send_object_with_timestamp_impl<'a, T>(
+    async fn send_object_impl<'a, D>(
         &self,
         interface_name: &str,
         path: &MappingPath<'a>,
-        data: T,
+        data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error>
     where
-        T: AstarteAggregate,
+        D: AstarteAggregate + Send,
+        S: PropertyStore,
+        C: Publish + Sync,
     {
         let interfaces = self.interfaces.read().await;
         let interface = interfaces
@@ -932,27 +438,67 @@ where
 
         let aggregate = data.astarte_aggregate()?;
 
-        if let Err(err) = validate_send_object(object, &timestamp) {
-            error!("send validation failed: {err}");
+        let validated = validate_object(object, path, &aggregate, timestamp)?;
 
-            #[cfg(debug_assertions)]
-            return Err(Error::Validation(err));
+        self.connection.send_object(validated).await
+    }
+
+    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error>
+    where
+        S: PropertyStore,
+    {
+        let interfaces = self.interfaces.read().await;
+        let mappings = interfaces.get_property(interface_name);
+
+        let property = match mappings {
+            Some(property) => property,
+            None => return Ok(()),
+        };
+
+        for mapping in property.iter_mappings() {
+            let path = mapping.endpoint();
+            self.store.delete_prop(interface_name, path).await?;
+            debug!("Stored property {}{} deleted", interface_name, path);
         }
-
-        let buf = serialize_object(object, path, &aggregate, timestamp)?;
-
-        let topic = self.client_id() + "/" + interface_name.trim_matches('/') + path.as_str();
-        let qos = object.reliability().into();
-
-        self.client.publish(topic, qos, false, buf).await?;
 
         Ok(())
     }
+}
 
-    /// Send an object datastreamy on an interface, with an explicit timestamp.
+/// Manual implementation of [`Clone`] since the inner shared device doesn't requires the [`Clone`]
+/// trait since it's inside an [`Arc`].
+impl<S, C> Clone for AstarteDeviceSdk<S, C>
+where
+    C: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            connection: self.connection.clone(),
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+impl<S, C> fmt::Debug for AstarteDeviceSdk<S, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AstarteDeviceSdk")
+            .field("interfaces", &self.interfaces)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A trait representing the behavior of an Astarte device client. A device client is responsible
+/// for interacting with the Astarte platform by sending properties and datastreams, handling events, and managing
+/// device interfaces.
+#[async_trait]
+pub trait Client {
+    /// Send an object datastream on an interface, with an explicit timestamp.
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::{AstarteDeviceSdk, options::AstarteOptions, AstarteAggregate};
+    /// use astarte_device_sdk::{
+    ///     AstarteDeviceSdk, store::memory::MemoryStore, builder::DeviceBuilder,
+    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    /// };
     /// #[cfg(not(feature = "derive"))]
     /// use astarte_device_sdk_derive::AstarteAggregate;
     /// use chrono::{TimeZone, Utc};
@@ -965,8 +511,10 @@ where
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mut sdk_options = AstarteOptions::new("_","_","_","_");
-    ///     let (mut device, _rx_events) = AstarteDeviceSdk::new(sdk_options).await.unwrap();
+    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,
@@ -978,50 +526,287 @@ where
     ///         .unwrap();
     /// }
     /// ```
-    pub async fn send_object_with_timestamp<T>(
+    async fn send_object_with_timestamp<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: T,
+        data: D,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), Error>
     where
-        T: AstarteAggregate,
-    {
-        let path = MappingPath::try_from(interface_path)?;
-
-        self.send_object_with_timestamp_impl(interface_name, &path, data, Some(timestamp))
-            .await
-    }
+        D: AstarteAggregate + Send;
 
     /// Send an object datastream on an interface.
     ///
     /// The usage is the same of
     /// [send_object_with_timestamp()][crate::AstarteDeviceSdk::send_object_with_timestamp],
     /// without the timestamp.
-    pub async fn send_object<T>(
+    async fn send_object<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: T,
+        data: D,
     ) -> Result<(), Error>
     where
-        T: AstarteAggregate,
+        D: AstarteAggregate + Send;
+
+    /// Send an individual datastream/property on an interface, with an explicit timestamp.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::{
+    ///     AstarteDeviceSdk, store::memory::MemoryStore, builder::DeviceBuilder,
+    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    /// };
+    /// use chrono::{TimeZone, Utc};
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
+    ///
+    ///     let value: i32 = 42;
+    ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
+    ///     device.send_with_timestamp("my.interface.name", "/endpoint/path", value, timestamp)
+    ///         .await
+    ///         .unwrap();
+    /// }
+    /// ```
+    async fn send_with_timestamp<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), Error>
+    where
+        D: TryInto<AstarteType> + Send;
+
+    /// Send an individual datastream/property on an interface.
+    ///
+    /// The usage is the same of
+    /// [send_with_timestamp()][crate::AstarteDeviceSdk::send_with_timestamp],
+    /// without the timestamp.
+    async fn send<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+    ) -> Result<(), Error>
+    where
+        D: TryInto<AstarteType> + Send;
+
+    /// Poll updates from the connection implementation, can be placed in a loop to receive data.
+    ///
+    /// This is a blocking function. It should be placed on a dedicated thread/task or as the main
+    /// thread.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::{
+    ///     AstarteDeviceSdk, store::memory::MemoryStore, builder::DeviceBuilder,
+    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///
+    ///     let (mut device, mut rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
+    ///
+    ///     tokio::spawn(async move {
+    ///         while let Some(event) = rx_events.recv().await {
+    ///             assert!(event.is_ok());
+    ///         };
+    ///     });
+    ///
+    ///     device.handle_events().await;
+    /// }
+    /// ```
+    async fn handle_events(&mut self) -> Result<(), crate::Error>;
+
+    /// Unset a device property.
+    ///
+    /// ```no_run
+    /// use astarte_device_sdk::{
+    ///     AstarteDeviceSdk, store::memory::MemoryStore, builder::DeviceBuilder,
+    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///
+    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(MemoryStore::new())
+    ///         .connect(mqtt_config).await.unwrap().build();
+    ///
+    ///     device
+    ///         .unset("my.interface.name", "/endpoint/path",)
+    ///         .await
+    ///         .unwrap();
+    /// }
+    /// ```
+    async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
+
+    /// Add a new [`Interface`] to the device interfaces.
+    async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
+
+    /// Add a new interface from the provided file.
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path> + Send;
+
+    /// Add a new interface from a string. The string should contain a valid json formatted
+    /// interface.
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
+
+    /// Remove the interface with the name specified as argument.
+    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
+}
+
+#[async_trait]
+impl<S, C> Client for AstarteDeviceSdk<S, C>
+where
+    S: PropertyStore,
+    C: Publish + Receive + Register + Clone + Send + Sync + 'static,
+{
+    async fn send_object_with_timestamp<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), Error>
+    where
+        D: AstarteAggregate + Send,
     {
         let path = MappingPath::try_from(interface_path)?;
 
-        self.send_object_with_timestamp_impl(interface_name, &path, data, None)
+        self.send_object_impl(interface_name, &path, data, Some(timestamp))
             .await
     }
-}
 
-impl<S> fmt::Debug for AstarteDeviceSdk<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AstarteDeviceSdk")
-            .field("realm", &self.realm)
-            .field("device_id", &self.device_id)
-            .field("interfaces", &self.interfaces)
-            .finish_non_exhaustive()
+    async fn send_object<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+    ) -> Result<(), Error>
+    where
+        D: AstarteAggregate + Send,
+    {
+        let path = MappingPath::try_from(interface_path)?;
+
+        self.send_object_impl(interface_name, &path, data, None)
+            .await
+    }
+
+    async fn send<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+    ) -> Result<(), Error>
+    where
+        D: TryInto<AstarteType> + Send,
+    {
+        let path = MappingPath::try_from(interface_path)?;
+
+        self.send_individual_impl(interface_name, &path, data, None)
+            .await
+    }
+
+    async fn send_with_timestamp<D>(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+        data: D,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), Error>
+    where
+        D: TryInto<AstarteType> + Send,
+    {
+        let mapping = MappingPath::try_from(interface_path)?;
+
+        self.send_individual_impl(interface_name, &mapping, data, Some(timestamp))
+            .await
+    }
+
+    async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error> {
+        trace!("unsetting {} {}", interface_name, interface_path);
+
+        let path = MappingPath::try_from(interface_path)?;
+
+        self.send_individual_impl(interface_name, &path, AstarteType::Unset, None)
+            .await
+    }
+
+    async fn handle_events(&mut self) -> Result<(), crate::Error> {
+        loop {
+            let event_payload = self.connection.next_event(&self.shared).await?;
+            let device = self.clone();
+
+            tokio::spawn(async move {
+                let data = device
+                    .handle_event(&event_payload)
+                    .await
+                    .map(|aggregation| AstarteDeviceDataEvent {
+                        interface: event_payload.interface,
+                        path: event_payload.path,
+                        data: aggregation,
+                    });
+
+                device.tx.send(data).await.expect("Channel dropped")
+            });
+        }
+    }
+
+    async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
+        let interface_name = interface.interface_name().to_owned();
+        self.interfaces.write().await.add(interface)?;
+
+        self.connection
+            .add_interface(&self.shared, &interface_name)
+            .await
+    }
+
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+    where
+        P: AsRef<Path> + Send,
+    {
+        let interface = Interface::from_file(file_path.as_ref())?;
+
+        self.add_interface(interface).await
+    }
+
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
+        let interface: Interface = Interface::from_str(json_str)?;
+
+        self.add_interface(interface).await
+    }
+
+    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
+        let interface = self
+            .interfaces
+            .write()
+            .await
+            .remove(interface_name)
+            .ok_or_else(|| {
+                Error::Interface(InterfaceError::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })
+            })?;
+
+        {
+            let interfaces = self.interfaces.read().await;
+
+            self.connection
+                .remove_interface(&interfaces, interface)
+                .await?;
+        }
+
+        self.remove_properties_from_store(interface_name).await
     }
 }
 
@@ -1032,35 +817,43 @@ mod test {
     use rumqttc::Event;
     use std::collections::HashMap;
     use std::str::FromStr;
-    use std::sync::Arc;
-    use tokio::sync::{mpsc, Mutex, RwLock};
+    use tokio::sync::mpsc;
 
     use crate::interfaces::Interfaces;
-    use crate::payload::Payload;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
-    use crate::store::wrapper::StoreWrapper;
-    use crate::{self as astarte_device_sdk, EventReceiver, Interface, SharedDevice};
+    use crate::store::PropertyStore;
+    use crate::transport::mqtt::payload::Payload;
+    use crate::transport::mqtt::test::mock_mqtt_connection;
+    use crate::transport::mqtt::Mqtt;
+    use crate::{self as astarte_device_sdk, Client, EventReceiver, Interface};
     use astarte_device_sdk::AstarteAggregate;
     use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
     use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
 
-    use super::{AsyncClient, EventLoop};
+    use crate::transport::mqtt::{AsyncClient, EventLoop};
 
     // Interfaces
-    const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
-    const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
-    const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
-    const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    pub(crate) const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
+    pub(crate) const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
+    pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    // E2E Interfaces
+    pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+    );
+    pub(crate) const E2E_DEVICE_AGGREGATE: &str = include_str!(
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+    );
 
     pub(crate) fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: EventLoop,
         interfaces: I,
-    ) -> (AstarteDeviceSdk<MemoryStore>, EventReceiver)
+    ) -> (AstarteDeviceSdk<MemoryStore, Mqtt>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
     {
@@ -1072,23 +865,19 @@ mod test {
         eventloop: EventLoop,
         interfaces: I,
         store: S,
-    ) -> (AstarteDeviceSdk<S>, EventReceiver)
+    ) -> (AstarteDeviceSdk<S, Mqtt>, EventReceiver)
     where
         I: IntoIterator<Item = Interface>,
+        S: PropertyStore,
     {
         let (tx, rx) = mpsc::channel(50);
 
-        let sdk = AstarteDeviceSdk {
-            shared: Arc::new(SharedDevice {
-                realm: "realm".to_string(),
-                device_id: "device_id".to_string(),
-                client,
-                store: StoreWrapper::new(store),
-                interfaces: RwLock::new(Interfaces::from_iter(interfaces)),
-                eventloop: Mutex::new(eventloop),
-                events_channel: tx,
-            }),
-        };
+        let sdk = AstarteDeviceSdk::new(
+            Interfaces::from_iter(interfaces),
+            store,
+            mock_mqtt_connection(client, eventloop),
+            tx,
+        );
 
         (sdk, rx)
     }
@@ -1310,62 +1099,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_wait_for_connack() {
-        let mut eventloope = EventLoop::default();
-
-        eventloope.expect_poll().once().returning(|| {
-            Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                rumqttc::ConnAck {
-                    session_present: false,
-                    code: rumqttc::ConnectReturnCode::Success,
-                },
-            )))
-        });
-
-        let mut client = AsyncClient::default();
-
-        client
-            .expect_subscribe()
-            .once()
-            .returning(|_: String, _| Ok(()));
-
-        client
-            .expect_publish::<String, String>()
-            .returning(|topic, _, _, _| {
-                // Client id
-                assert_eq!(topic, "realm/device_id");
-
-                Ok(())
-            });
-
-        client
-            .expect_publish::<String, &str>()
-            .returning(|topic, _, _, payload| {
-                // empty cache
-                assert_eq!(topic, "realm/device_id/control/emptyCache");
-
-                assert_eq!(payload, "1");
-
-                Ok(())
-            });
-
-        client.expect_subscribe::<String>().returning(|topic, _qos| {
-            assert_eq!(topic, "realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#");
-
-            Ok(())
-        });
-
-        let interfaces = [
-            Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap(),
-            Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
-        ];
-
-        let (mut astarte, _rx) = mock_astarte_device(client, eventloope, interfaces);
-
-        astarte.wait_for_connack().await.unwrap();
-    }
-
-    #[tokio::test]
     async fn test_add_remove_interface() {
         let eventloope = EventLoop::default();
 
@@ -1426,6 +1159,11 @@ mod test {
     #[tokio::test]
     async fn test_handle_event() {
         let mut client = AsyncClient::default();
+
+        client
+            .expect_clone()
+            // number of calls not limited since the clone it's inside a loop
+            .returning(AsyncClient::default);
 
         client
             .expect_publish::<String, Vec<u8>>()
@@ -1579,7 +1317,12 @@ mod test {
 
     #[tokio::test]
     async fn test_receive_object() {
-        let client = AsyncClient::default();
+        let mut client = AsyncClient::default();
+
+        client
+            .expect_clone()
+            // number of calls not limited since the clone it's inside a loop
+            .returning(AsyncClient::default);
 
         let mut eventloope = EventLoop::default();
 
@@ -1646,5 +1389,65 @@ mod test {
 
         handle_events.abort();
         let _ = handle_events.await;
+    }
+
+    #[tokio::test]
+    async fn test_send_object() {
+        struct MockObject {}
+
+        impl AstarteAggregate for MockObject {
+            fn astarte_aggregate(
+                self,
+            ) -> Result<HashMap<String, AstarteType>, astarte_device_sdk::error::Error>
+            {
+                let mut obj = HashMap::new();
+                obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+                obj.insert(
+                    "endpoint2".to_string(),
+                    AstarteType::String("obj".to_string()),
+                );
+                obj.insert(
+                    "endpoint3".to_string(),
+                    AstarteType::BooleanArray(vec![true]),
+                );
+
+                Ok(obj)
+            }
+        }
+
+        let mut client = AsyncClient::default();
+        let eventloope = EventLoop::default();
+
+        client
+            .expect_clone()
+            // number of calls not limited since the clone it's inside a loop
+            .returning(AsyncClient::default);
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1".to_string()),
+                predicate::always(),
+                predicate::always(),
+                predicate::always()
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        let (device, _rx) = mock_astarte_device(
+            client,
+            eventloope,
+            [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
+        );
+
+        device
+            .send_object_with_timestamp(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/1",
+                MockObject {},
+                chrono::offset::Utc::now(),
+            )
+            .await
+            .unwrap();
     }
 }

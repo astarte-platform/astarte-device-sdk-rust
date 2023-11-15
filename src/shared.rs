@@ -20,28 +20,24 @@
 
 use std::ops::Deref;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::interfaces::Interfaces;
 use crate::store::wrapper::StoreWrapper;
-use crate::{AstarteDeviceSdk, AsyncClient, EventLoop, EventSender};
+use crate::{AstarteDeviceSdk, EventSender};
 
 /// Shared data of the device SDK, this struct is internal of the [`AstarteDeviceSdk`] where is
 /// wrapped in an arc to share an immutable reference across tasks.
 pub struct SharedDevice<S> {
-    pub(crate) realm: String,
-    pub(crate) device_id: String,
-    pub(crate) client: AsyncClient,
-    pub(crate) events_channel: EventSender,
-    pub(crate) eventloop: Mutex<EventLoop>,
     pub(crate) interfaces: RwLock<Interfaces>,
     pub(crate) store: StoreWrapper<S>,
+    pub(crate) tx: EventSender,
 }
 
 /// Since the Arch is shared we can only expose a reference of the shared device data.
 ///
-/// Interior mutability is achieved through locking mechanisms like [`Mutex`] and [`RwLock`]
-impl<S> Deref for AstarteDeviceSdk<S> {
+/// Interior mutability is achieved through locking mechanisms like [`RwLock`]
+impl<S, C> Deref for AstarteDeviceSdk<S, C> {
     type Target = SharedDevice<S>;
 
     fn deref(&self) -> &Self::Target {

@@ -20,15 +20,15 @@
 
 use std::convert::Infallible;
 
+use crate::builder::BuilderError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
-use crate::options::OptionsError;
-use crate::payload::PayloadError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::topic::TopicError;
+use crate::transport::mqtt::{payload::PayloadError, MqttConnectionError};
 use crate::types::TypeError;
-use crate::validate::ValidationError;
+use crate::validate::UserValidationError;
 
 /// Astarte error.
 ///
@@ -55,7 +55,7 @@ pub enum Error {
     ReceiveError(String),
 
     #[error("options error")]
-    OptionsError(#[from] OptionsError),
+    Builder(#[from] BuilderError),
 
     #[error("invalid interface")]
     Interface(#[from] InterfaceError),
@@ -101,8 +101,8 @@ pub enum Error {
     MissingMapping { interface: String, mapping: String },
 
     /// Send or receive validation failed
-    #[error("validation of the payload failed")]
-    Validation(#[from] ValidationError),
+    #[error("validation of the send payload failed")]
+    Validation(#[from] UserValidationError),
 
     #[error("invalid aggregation, expected {exp} but got {got}")]
     Aggregation { exp: Aggregation, got: Aggregation },
@@ -112,4 +112,7 @@ pub enum Error {
         exp: InterfaceTypeDef,
         got: InterfaceTypeDef,
     },
+
+    #[error(transparent)]
+    MqttConnection(#[from] MqttConnectionError),
 }

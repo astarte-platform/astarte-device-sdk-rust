@@ -27,7 +27,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use super::{PropertyStore, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
-    payload::{Payload, PayloadError},
+    transport::mqtt::payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
 
