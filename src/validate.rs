@@ -84,10 +84,11 @@ fn optional_object_checks(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct ValidatedIndividual<'a> {
     mapping: MappingRef<'a, &'a Interface>,
     path: &'a MappingPath<'a>,
-    data: &'a AstarteType,
+    data: AstarteType,
     timestamp: Option<Timestamp>,
 }
 
@@ -100,56 +101,61 @@ impl<'a> ValidatedIndividual<'a> {
         self.path
     }
 
-    pub(crate) fn data(&self) -> &'a AstarteType {
+    pub(crate) fn data(&self) -> &AstarteType {
+        &self.data
+    }
+
+    pub(crate) fn into_data(self) -> AstarteType {
         self.data
     }
 
     pub(crate) fn timestamp(&self) -> Option<Timestamp> {
         self.timestamp
     }
-}
 
-pub(crate) fn validate_individual<'a>(
-    mapping: MappingRef<'a, &'a Interface>,
-    path: &'a MappingPath<'a>,
-    data: &'a AstarteType,
-    timestamp: Option<Timestamp>,
-) -> Result<ValidatedIndividual<'a>, UserValidationError> {
-    if let Err(err) = optional_individual_checks(mapping, &timestamp) {
-        error!("send validation failed: {err}");
+    pub(crate) fn validate(
+        mapping: MappingRef<'a, &'a Interface>,
+        path: &'a MappingPath<'a>,
+        data: AstarteType,
+        timestamp: Option<Timestamp>,
+    ) -> Result<ValidatedIndividual<'a>, UserValidationError> {
+        if let Err(err) = optional_individual_checks(mapping, &timestamp) {
+            error!("send validation failed: {err}");
 
-        #[cfg(debug_assertions)]
-        return Err(err);
-    }
+            #[cfg(debug_assertions)]
+            return Err(err);
+        }
 
-    match data {
-        AstarteType::Unset => {
-            if !mapping.allow_unset() {
-                return Err(UserValidationError::Unset);
+        match data {
+            AstarteType::Unset => {
+                if !mapping.allow_unset() {
+                    return Err(UserValidationError::Unset);
+                }
+            }
+            ref data => {
+                if *data != mapping.mapping_type() {
+                    return Err(UserValidationError::SerializeType {
+                        expected: mapping.mapping_type().to_string(),
+                        got: data.display_type().to_string(),
+                    });
+                }
             }
         }
-        data => {
-            if *data != mapping.mapping_type() {
-                return Err(UserValidationError::SerializeType {
-                    expected: mapping.mapping_type().to_string(),
-                    got: data.display_type().to_string(),
-                });
-            }
-        }
-    }
 
-    Ok(ValidatedIndividual {
-        mapping,
-        path,
-        data,
-        timestamp,
-    })
+        Ok(ValidatedIndividual {
+            mapping,
+            path,
+            data,
+            timestamp,
+        })
+    }
 }
 
+#[derive(Debug, Clone)]
 pub(crate) struct ValidatedObject<'a> {
     object: ObjectRef<'a>,
     path: &'a MappingPath<'a>,
-    data: HashMap<&'a String, &'a AstarteType>,
+    data: HashMap<String, AstarteType>,
     timestamp: Option<Timestamp>,
 }
 
@@ -162,65 +168,70 @@ impl<'a> ValidatedObject<'a> {
         self.path
     }
 
-    pub(crate) fn data(&self) -> &HashMap<&'a String, &'a AstarteType> {
+    pub(crate) fn data(&self) -> &HashMap<String, AstarteType> {
         &self.data
+    }
+
+    #[cfg(feature = "message-hub")]
+    pub(crate) fn into_data(self) -> HashMap<String, AstarteType> {
+        self.data
     }
 
     pub(crate) fn timestamp(&self) -> Option<Timestamp> {
         self.timestamp
     }
-}
 
-pub(crate) fn validate_object<'a>(
-    object: ObjectRef<'a>,
-    path: &'a MappingPath<'a>,
-    data: &'a HashMap<String, AstarteType>,
-    timestamp: Option<Timestamp>,
-) -> Result<ValidatedObject<'a>, UserValidationError> {
-    if let Err(err) = optional_object_checks(object, &timestamp) {
-        error!("Send validation failed: {err}");
+    pub(crate) fn validate(
+        object: ObjectRef<'a>,
+        path: &'a MappingPath<'a>,
+        data: HashMap<String, AstarteType>,
+        timestamp: Option<Timestamp>,
+    ) -> Result<ValidatedObject<'a>, UserValidationError> {
+        if let Err(err) = optional_object_checks(object, &timestamp) {
+            error!("Send validation failed: {err}");
 
-        #[cfg(debug_assertions)]
-        return Err(err);
-    }
+            #[cfg(debug_assertions)]
+            return Err(err);
+        }
 
-    // Filter only the valid fields
-    let aggregate: HashMap<&String, &AstarteType> = data
-        .iter()
-        .filter_map(|(key, value)| {
-            let Some(mapping) = object.get_field(path, key) else {
-                warn!("unrecognized mapping {path}/{key}, ignoring");
+        // Filter only the valid fields
+        let aggregate: HashMap<String, AstarteType> = data
+            .into_iter()
+            .filter_map(|(key, value)| {
+                let Some(mapping) = object.get_field(path, &key) else {
+                    warn!("unrecognized mapping {path}/{key}, ignoring");
 
-                return None;
-            };
+                    return None;
+                };
 
-            if value.is_unset() {
-                return Some(Err(UserValidationError::Unset));
-            }
+                if value.is_unset() {
+                    return Some(Err(UserValidationError::Unset));
+                }
 
-            if *value != mapping.mapping_type() {
-                return Some(Err(UserValidationError::SerializeType {
-                    expected: mapping.mapping_type().to_string(),
-                    got: value.display_type().to_string(),
-                }));
-            }
+                if value != mapping.mapping_type() {
+                    return Some(Err(UserValidationError::SerializeType {
+                        expected: mapping.mapping_type().to_string(),
+                        got: value.display_type().to_string(),
+                    }));
+                }
 
-            debug!("serialized object field {path} {}", value.display_type());
+                debug!("serialized object field {path} {}", value.display_type());
 
-            Some(Ok((key, value)))
+                Some(Ok((key, value)))
+            })
+            .collect::<Result<_, _>>()?;
+
+        if aggregate.len() != object.len() {
+            return Err(UserValidationError::MissingMapping);
+        }
+
+        Ok(ValidatedObject {
+            object,
+            path,
+            data: aggregate,
+            timestamp,
         })
-        .collect::<Result<_, _>>()?;
-
-    if aggregate.len() != object.len() {
-        return Err(UserValidationError::MissingMapping);
     }
-
-    Ok(ValidatedObject {
-        object,
-        path,
-        data: aggregate,
-        timestamp,
-    })
 }
 
 #[cfg(test)]

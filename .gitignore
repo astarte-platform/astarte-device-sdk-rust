@@ -9,3 +9,9 @@
 astarte-example-db.*
 
 /.pre-commit-config.yaml
+
+# Tarpaulin report
+tarpaulin-report.html
+
+# Configuration directories
+.helix

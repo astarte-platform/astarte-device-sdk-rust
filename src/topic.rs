@@ -69,7 +69,7 @@ impl<'a> ParsedTopic<'a> {
 
         let rest = rest
             .strip_prefix('/')
-            .ok_or(TopicError::Malformed(topic.to_string()))?;
+            .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
 
         trace!("rest: {}", rest);
 

@@ -90,9 +90,6 @@ pub enum AstarteType {
     DateTimeArray(Vec<Timestamp>),
 
     Unset,
-
-    #[deprecated = "this will never be constructed, was kept for API compatibility but will removed in future versions"]
-    EmptyArray,
 }
 
 macro_rules! check_astype_match {
@@ -109,29 +106,6 @@ impl PartialEq<MappingType> for AstarteType {
         if other == &MappingType::LongInteger || other == &MappingType::Double {
             if let AstarteType::Integer(_) = self {
                 return true;
-            }
-        }
-
-        // Will be removed in a future version.
-        #[allow(deprecated)]
-        if self == &AstarteType::EmptyArray {
-            match other {
-                // The empty array should be equal to any other array
-                MappingType::DoubleArray
-                | MappingType::IntegerArray
-                | MappingType::BooleanArray
-                | MappingType::LongIntegerArray
-                | MappingType::StringArray
-                | MappingType::BinaryBlobArray
-                | MappingType::DateTimeArray => return true,
-                // Not an array, continue
-                MappingType::Double
-                | MappingType::Integer
-                | MappingType::Boolean
-                | MappingType::LongInteger
-                | MappingType::String
-                | MappingType::BinaryBlob
-                | MappingType::DateTime => {}
             }
         }
 
@@ -338,9 +312,6 @@ impl From<AstarteType> for Bson {
                 .collect(),
             AstarteType::DateTimeArray(d) => d.into_iter().collect(),
             AstarteType::Unset => Bson::Null,
-            // Will be removed in a future version
-            #[allow(deprecated)]
-            AstarteType::EmptyArray => Bson::Array(Vec::new()),
         }
     }
 }
@@ -443,8 +414,6 @@ impl AstarteType {
             AstarteType::BinaryBlobArray(_) => "binary blob array",
             AstarteType::DateTimeArray(_) => "datetime array",
             AstarteType::Unset => "unset",
-            #[allow(deprecated)]
-            AstarteType::EmptyArray => "empty array",
         }
     }
 }

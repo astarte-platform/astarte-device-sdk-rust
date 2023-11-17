@@ -43,11 +43,14 @@ use crate::{
     Interface, Timestamp,
 };
 
+#[cfg(feature = "message-hub")]
+pub mod grpc;
 pub mod mqtt;
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
 /// specific [`Connection::deserialize_individual`] or [`Connection::serialize_individual`]
+#[derive(Debug, Clone)]
 pub(crate) struct ReceivedEvent<P> {
     pub(crate) interface: String,
     pub(crate) path: String,
@@ -83,7 +86,7 @@ pub(crate) trait Receive {
     fn deserialize_individual(
         &self,
         mapping: MappingRef<'_, &Interface>,
-        payload: &Self::Payload,
+        payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), crate::Error>;
 
     /// Deserializes a received payload to an aggregate object
@@ -91,7 +94,7 @@ pub(crate) trait Receive {
         &self,
         object: ObjectRef,
         path: &MappingPath<'_>,
-        payload: &Self::Payload,
+        payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
 }
 
@@ -114,4 +117,72 @@ pub(crate) trait Register {
         interfaces: &Interfaces,
         removed_interface: Interface,
     ) -> Result<(), crate::Error>;
+}
+
+#[async_trait]
+pub trait Disconnect {
+    /// User callable api to gracefully disconnect from the transport
+    async fn disconnect(self) -> Result<(), crate::Error>;
+}
+
+#[cfg(test)]
+mod test {
+    use tokio::sync::RwLock;
+
+    use crate::{
+        interface::{mapping::path::MappingPath, reference::MappingRef},
+        interfaces::Interfaces,
+        shared::SharedDevice,
+        store::memory::MemoryStore,
+        types::{AstarteType, TypeError},
+        validate::{ValidatedIndividual, ValidatedObject},
+        AstarteAggregate, EventSender, Interface,
+    };
+
+    pub(crate) fn mock_shared_device(
+        interfaces: Interfaces,
+        tx: EventSender,
+    ) -> SharedDevice<MemoryStore> {
+        SharedDevice {
+            interfaces: RwLock::new(interfaces),
+            store: crate::store::wrapper::StoreWrapper::new(MemoryStore::new()),
+            tx,
+        }
+    }
+
+    pub(crate) fn mock_validate_object<'a, D>(
+        interface: &'a Interface,
+        path: &'a MappingPath<'a>,
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<ValidatedObject<'a>, crate::Error>
+    where
+        D: AstarteAggregate + Send,
+    {
+        let object = interface
+            .as_object_ref()
+            .ok_or_else(|| crate::Error::Aggregation {
+                exp: crate::interface::Aggregation::Object,
+                got: interface.aggregation(),
+            })?;
+
+        let aggregate = data.astarte_aggregate()?;
+
+        ValidatedObject::validate(object, path, aggregate, timestamp).map_err(|uve| uve.into())
+    }
+
+    pub(crate) fn mock_validate_individual<'a, D>(
+        mapping_ref: MappingRef<'a, &'a Interface>,
+        path: &'a MappingPath<'a>,
+        data: D,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<ValidatedIndividual<'a>, crate::Error>
+    where
+        D: TryInto<AstarteType> + Send,
+    {
+        let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
+
+        ValidatedIndividual::validate(mapping_ref, path, individual, timestamp)
+            .map_err(|uve| uve.into())
+    }
 }
