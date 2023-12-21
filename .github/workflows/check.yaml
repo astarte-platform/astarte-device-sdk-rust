@@ -97,12 +97,10 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      - name: remove dev-deps
-        run: cargo hack --remove-dev-deps
-      - name: update to minimal deps
-        run: cargo update -Z direct-minimal-versions
-      - name: cargo check
-        run: cargo check --all-features
+      - name: cargo install cargo-hack
+        uses: taiki-e/install-action@cargo-minimal-versions
+      - name: check minimal deps
+        run: cargo minimal-versions check --direct --workspace --ignore-private --detach-path-deps
         env:
           RUSTDOCFLAGS: -D warnings
   msrv:
