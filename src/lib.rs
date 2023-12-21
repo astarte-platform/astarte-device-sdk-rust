@@ -283,7 +283,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         Ok((Aggregation::Object(data), timestamp))
     }
 
-    /// Checks wether a passed interface is a property and if it is already stored with the same value.
+    /// Checks whether a passed interface is a property and if it is already stored with the same value.
     /// Useful to prevent sending a property twice with the same value.
     /// The returned value is [`Option::None`] if the interface is not of property type.
     /// When the returned value is [`Option::Some`] the [`Result`] represents:

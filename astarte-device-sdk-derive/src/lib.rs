@@ -148,7 +148,7 @@ impl AggregateDerive {
             let name = i.to_string();
             let name = rename_rule.apply_to_field(&name);
             quote_spanned! {i.span() =>
-                // TODO *Temporarely* ignore this new lint will be fixed in a new pr
+                // TODO *Temporarily* ignore this new lint will be fixed in a new pr
                 #[allow(unknown_lints)]
                 #[allow(clippy::unnecessary_fallible_conversions)]
                 let value: astarte_device_sdk::types::AstarteType = std::convert::TryInto::try_into(self.#i)?;

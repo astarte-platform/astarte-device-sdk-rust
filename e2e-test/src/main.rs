@@ -570,7 +570,7 @@ async fn test_property_server_to_device(
                 .any(|(_, value)| value != &AstarteType::Unset)
         {
             return Err(format!(
-                "Uncorrect received data. Server data: {rx_data_rw_acc:?}."
+                "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));
         }
     }

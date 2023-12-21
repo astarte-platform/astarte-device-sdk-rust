@@ -17,5 +17,5 @@ If you have not already done so, make sure that you satisfy the
 
 Once the example has been started it will automatically attempt to register the device to the remote
 instance of Astarte.
-The retreived credential secret will be displayed in the terminal. Make sure to copy and store it
-somewhere safe as there is no way to retreive it later.
+The retrieved credential secret will be displayed in the terminal. Make sure to copy and store it
+somewhere safe as there is no way to retrieve it later.

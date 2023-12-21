@@ -56,7 +56,7 @@ astartectl appengine
 ```
 Where `<REALM>` is your realm name, `<DEVICE_ID>` is the device ID to send the data to,
 `<ENDPOINT_TYPE>` is the Astarte type of the chosen endpoint, `<ENDPOINT>` is the endpoint
-to send data to, which in this example shold be composed by a sensor id and one of the two endpoints
+to send data to, which in this example should be composed by a sensor id and one of the two endpoints
 (e.g. `/42/enable`), and `<VALUE>` is the value to send.
 
 On you device console you should see a message confirming the correct sensor has been enabled or

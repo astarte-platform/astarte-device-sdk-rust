@@ -50,7 +50,7 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
-    #[error("expected object, individual data deserialized intead {0}")]
+    #[error("expected object, individual data deserialized instead {0}")]
     Object(Bson),
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]

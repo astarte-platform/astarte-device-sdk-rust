@@ -240,7 +240,7 @@ pub(crate) mod tests {
     }]
 }"#;
 
-    async fn test_prop_acces_for_store<S: PropertyStore>(store: S) {
+    async fn test_prop_access_for_store<S: PropertyStore>(store: S) {
         store
             .store_prop(StoredProp {
                 interface: "org.Foo",
@@ -330,7 +330,7 @@ pub(crate) mod tests {
     async fn test_in_memory_property_access() {
         let store = MemoryStore::new();
 
-        test_prop_acces_for_store(store).await;
+        test_prop_access_for_store(store).await;
     }
 
     #[tokio::test]
@@ -341,6 +341,6 @@ pub(crate) mod tests {
 
         let store = SqliteStore::new(path).await.unwrap();
 
-        test_prop_acces_for_store(store).await;
+        test_prop_access_for_store(store).await;
     }
 }

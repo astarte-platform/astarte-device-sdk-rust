@@ -22,7 +22,7 @@ The following examples are available to get you started with the Rust Astarte De
 # Common prerequisites
 
 All the examples above have some common prerequisites:
-- An up to date installation fo the [rust toolchain](https://www.rust-lang.org/tools/install) for
+- An up to date installation of the [rust toolchain](https://www.rust-lang.org/tools/install) for
 your system of choice.
 - A local instance of Astarte. See
 [Astarte in 5 minutes](https://docs.astarte-platform.org/astarte/latest/010-astarte_in_5_minutes.html)
