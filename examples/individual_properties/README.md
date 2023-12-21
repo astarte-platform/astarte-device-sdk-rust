@@ -75,7 +75,7 @@ At its next startup the device will query the value of the properties to the ser
 to screen the enable/disable value of the sensors you updated before.
 
 For device owned interfaces the properties values are stored in a local database.
-We can observe the "name" property for sensor 1 and we will notice how each 5 seconds this property
+We can observe the "name" property for sensor 1, and we will notice how each 5 seconds this property
 value is updated using an incremental counter.
 We can terminate the device execution and then start a new instance.
 We will notice how the last value of our property is printed to screen and the "name" property

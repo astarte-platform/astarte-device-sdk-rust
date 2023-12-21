@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_endopint() {
+    fn test_parse_endpoint() {
         let res = parse_endpoint("/a/%{b}/c");
 
         assert!(
@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_endopint_first() {
+    fn test_parse_endpoint_first() {
         let res = parse_endpoint("/%{a}/b/c");
 
         assert!(
@@ -604,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_endopint_multi() {
+    fn test_parse_endpoint_multi() {
         let res = parse_endpoint("/a/%{b}/c/%{d}/e");
 
         assert!(
@@ -635,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_endopint_parameters() {
+    fn test_parse_endpoint_parameters() {
         let cases = [
             (
                 "/%{sensor_id}/boolean_endpoint",

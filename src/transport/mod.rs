@@ -82,7 +82,7 @@ pub(crate) trait Receive {
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
-        mappig: MappingRef<'_, &Interface>,
+        mapping: MappingRef<'_, &Interface>,
         payload: &Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), crate::Error>;
 

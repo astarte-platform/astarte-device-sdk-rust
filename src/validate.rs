@@ -241,7 +241,7 @@ mod tests {
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
-    fn inititialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {
+    fn initialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {
         let aggregate = HashMap::from_iter([
             (
                 "double_endpoint".to_string(),
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_validate_send_for_aggregate_datastream() {
-        let (interface, _aggregate) = inititialize_aggregate();
+        let (interface, _aggregate) = initialize_aggregate();
         let object = interface.as_object_ref().unwrap();
 
         // Test sending an aggregate (with and without timestamp)
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_validate_send_for_aggregate_datastream_extra_field() {
-        let (interface, mut aggregate) = inititialize_aggregate();
+        let (interface, mut aggregate) = initialize_aggregate();
         let object = interface.as_object_ref().unwrap();
 
         // Test sending an aggregate with an non existing object field

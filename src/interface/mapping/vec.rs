@@ -40,7 +40,7 @@ impl<T> MappingVec<T> {
         }
     }
 
-    /// Get's the mapping searching the [`Endpoint`]'s for the one matching the path.
+    /// Gets the mapping searching the [`Endpoint`]'s for the one matching the path.
     pub(crate) fn get<U>(&self, path: &U) -> Option<&T>
     where
         T: InterfaceMapping + Debug,

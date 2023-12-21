@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 //! Provides Astarte specific types to be used by the
-//! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receivedata to/from the Astarte cluster.
+//! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receive data to/from the Astarte cluster.
 
 use std::convert::TryFrom;
 
@@ -33,7 +33,7 @@ use crate::{interface::MappingType, Timestamp};
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TypeError {
     /// Invalid floating point value
-    #[error("forbidden floating point number, Nan, Infinite or subnormals are invalid")]
+    #[error("forbidden floating point number, Nan, Infinite or subnormal numbers are invalid")]
     FloatError,
     /// Conversion error
     #[error("conversion error")]
