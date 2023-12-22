@@ -78,8 +78,8 @@ jobs:
         run: cargo generate-lockfile
       - name: cargo test
         run: cargo test --locked --all-features --all-targets --workspace
-  code_coverage_tarpauline:
-    name: Code coverage tarpauline based
+  code_coverage_tarpaulin:
+    name: Code coverage tarpaulin based
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -93,7 +93,7 @@ jobs:
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
       - name: Run cargo-tarpaulin with xml output
-        run: cargo tarpaulin --engine llvm --ignore-tests --lib --out xml -- --test-threads 1
+        run: cargo tarpaulin --engine llvm --ignore-tests --lib --all-features --out xml -- --test-threads 1
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
         with:
