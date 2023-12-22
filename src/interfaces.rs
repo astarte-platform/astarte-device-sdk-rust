@@ -350,7 +350,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_get_instrospection_string() {
+    fn test_get_introspection_string() {
         let mut options = DeviceBuilder::new();
         options = options
             .interface_directory("examples/individual_datastream/interfaces")

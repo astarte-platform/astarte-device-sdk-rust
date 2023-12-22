@@ -151,7 +151,7 @@ impl Mqtt {
     /// Method that gets called when a [`rumqttc::ConnAck`] is received.
     /// Following the astarte protocol it performs the following tasks:
     ///  - Subscribes to the server owned interfaces in the interface list
-    ///  - Sends the instrospection
+    ///  - Sends the introspection
     ///  - Sends the emptycache command
     ///  - Sends the device owned properties stored locally
     async fn connack(
@@ -612,7 +612,7 @@ impl MqttConfig {
 
     /// Configure the keep alive timeout.
     ///
-    /// The MQTT broker will be pinged when no data exchange has appened
+    /// The MQTT broker will be pinged when no data exchange has append
     /// for the duration of the keep alive timeout.
     pub fn keepalive(&mut self, duration: std::time::Duration) -> &mut Self {
         self.keepalive = duration;

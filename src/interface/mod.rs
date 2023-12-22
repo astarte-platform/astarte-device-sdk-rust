@@ -198,7 +198,7 @@ impl Interface {
     }
 
     /// Getter function for the interface name.
-    #[deprecated = "Use `interface_name` instead, and manualy convert it to `String` if needed"]
+    #[deprecated = "Use `interface_name` instead, and manually convert it to `String` if needed"]
     pub fn get_name(&self) -> String {
         self.interface_name.clone()
     }

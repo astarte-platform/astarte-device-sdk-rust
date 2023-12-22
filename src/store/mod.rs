@@ -296,7 +296,7 @@ mod tests {
 
     /// Test that the error is Send + Sync + 'static to be send across task boundaries.
     #[tokio::test]
-    async fn erro_should_compatible_with_tokio() {
+    async fn error_should_compatible_with_tokio() {
         let mem = StoreWrapper::new(MemoryStore::new());
 
         let exp = AstarteType::Integer(1);

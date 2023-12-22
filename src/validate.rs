@@ -46,7 +46,7 @@ pub enum UserValidationError {
     #[error["missing mappings in the payload"]]
     MissingMapping,
     /// Mismatching type while serializing
-    #[error("mimatching type while serializing, expected {expected} but got {got}")]
+    #[error("mismatching type while serializing, expected {expected} but got {got}")]
     SerializeType { expected: String, got: String },
     /// Couldn't accept unset for mapping without `allow_unset`
     #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]

@@ -31,7 +31,7 @@ pub enum TopicError {
     #[error(
         "the topic should start with <realm>/<device_id> equal to {client_id}, received: {topic}"
     )]
-    UnkownClientId { client_id: String, topic: String },
+    UnknownClientId { client_id: String, topic: String },
     #[error(
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]
@@ -42,7 +42,7 @@ impl TopicError {
     pub fn topic(&self) -> &str {
         match self {
             TopicError::Empty => "",
-            TopicError::UnkownClientId { topic, .. } => topic,
+            TopicError::UnknownClientId { topic, .. } => topic,
             TopicError::Malformed(topic) => topic,
         }
     }
@@ -62,7 +62,7 @@ impl<'a> ParsedTopic<'a> {
 
         let rest = topic
             .strip_prefix(client_id)
-            .ok_or(TopicError::UnkownClientId {
+            .ok_or(TopicError::UnknownClientId {
                 client_id: client_id.to_string(),
                 topic: topic.to_string(),
             })?;
@@ -131,10 +131,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_unkown_client_id() {
+    fn test_parse_unknown_client_id() {
         let topic = "test/u-WraCwtK_G_different/com.interface.test/led/red".to_owned();
         let err = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap_err();
 
-        assert!(matches!(err, TopicError::UnkownClientId { .. }));
+        assert!(matches!(err, TopicError::UnknownClientId { .. }));
     }
 }
