@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Trait `PropAccess` to access the stored properties from the
   `AstarteDeviceSdk`.
 - Trait `FromEvent` to convert a generic object aggregate into a Rust struct.
+- Implementation of the connection over GRPC to the message hub.
 
 ### Changed
 - Return a channel for the events when creating a device SDK.

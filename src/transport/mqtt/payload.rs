@@ -126,7 +126,7 @@ pub(super) fn serialize_individual(
 
 /// Serialize an aggregate to a [`Bson`] buffer
 pub(super) fn serialize_object(
-    aggregate: &HashMap<&String, &AstarteType>,
+    aggregate: &HashMap<String, AstarteType>,
     timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
     Payload::with_timestamp(aggregate, timestamp).to_vec()
@@ -225,7 +225,8 @@ mod test {
     use crate::{
         interface::MappingType,
         mapping,
-        validate::{validate_individual, validate_object},
+        transport::test::{mock_validate_individual, mock_validate_object},
+        validate::ValidatedIndividual,
     };
 
     use super::*;
@@ -249,8 +250,7 @@ mod test {
             AstarteType::StringArray(_) => MappingType::StringArray,
             AstarteType::BinaryBlobArray(_) => MappingType::BinaryBlobArray,
             AstarteType::DateTimeArray(_) => MappingType::DateTimeArray,
-            #[allow(deprecated)]
-            AstarteType::Unset | AstarteType::EmptyArray => {
+            AstarteType::Unset => {
                 panic!("Mapping doesn't exists for those type")
             }
         }
@@ -285,10 +285,11 @@ mod test {
             println!("checking {ty:?}");
             let mapping_type = mapping_type(&ty);
             let endpoint = format!("/{mapping_type}_endpoint");
+
             let path = mapping!(endpoint.as_str());
             let mapping = interface.as_mapping_ref(path).unwrap();
 
-            let validated = validate_individual(mapping, path, &ty, None).unwrap();
+            let validated = mock_validate_individual(mapping, path, ty.clone(), None).unwrap();
             let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
             let (res, _) = deserialize_individual(mapping, &buf).unwrap();
@@ -334,13 +335,12 @@ mod test {
             })
             .collect();
 
-        let object = interface.as_object_ref().unwrap();
         let path = mapping!(base_path);
 
-        let validated = validate_object(object, path, &data, None).unwrap();
+        let validated = mock_validate_object(&interface, path, data.clone(), None).unwrap();
         let buf = serialize_object(validated.data(), validated.timestamp()).unwrap();
 
-        let (res, _) = deserialize_object(object, path, &buf).unwrap();
+        let (res, _) = deserialize_object(validated.object(), validated.path(), &buf).unwrap();
 
         assert_eq!(res, data)
     }
@@ -367,7 +367,8 @@ mod test {
         let mapping = interface.as_mapping_ref(path).unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
-        let validated = validate_individual(mapping, path, &og_value, None).unwrap();
+        let validated =
+            ValidatedIndividual::validate(mapping, path, og_value.clone(), None).unwrap();
         let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
         let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];

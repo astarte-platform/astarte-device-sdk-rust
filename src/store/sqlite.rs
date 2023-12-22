@@ -192,10 +192,6 @@ fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
         AstarteType::StringArray(_) => 12,
         AstarteType::BinaryBlobArray(_) => 13,
         AstarteType::DateTimeArray(_) => 14,
-        #[allow(deprecated)]
-        AstarteType::EmptyArray => {
-            return Err(ValueError::UnsupportedType(value.display_type()));
-        }
     };
 
     Ok(mapping_type)

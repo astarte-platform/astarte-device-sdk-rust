@@ -115,4 +115,8 @@ pub enum Error {
 
     #[error(transparent)]
     MqttConnection(#[from] MqttConnectionError),
+
+    #[cfg(feature = "message-hub")]
+    #[error(transparent)]
+    GrpcTransport(#[from] crate::transport::grpc::GrpcTransportError),
 }
