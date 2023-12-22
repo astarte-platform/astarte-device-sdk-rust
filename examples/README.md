@@ -22,7 +22,7 @@ The following examples are available to get you started with the Rust Astarte De
 # Common prerequisites
 
 All the examples above have some common prerequisites:
-- An up to date installation of the [rust toolchain](https://www.rust-lang.org/tools/install) for
+- An up-to-date installation of the [rust toolchain](https://www.rust-lang.org/tools/install) for
 your system of choice.
 - A local instance of Astarte. See
 [Astarte in 5 minutes](https://docs.astarte-platform.org/astarte/latest/010-astarte_in_5_minutes.html)
@@ -77,7 +77,7 @@ for more information regarding accepted values.
 
 ## Generating the Pairing JWT (only when auto registering a device)
 
-We will now generate a Parining JWT from our Astarte local instance. This JWT will be used
+We will now generate a Pairing JWT from our Astarte local instance. This JWT will be used
 by the device during the initial device registration.
 
 The command to generate a Pairing JWT is:
@@ -97,7 +97,7 @@ Each field can be configured as follows:
 credential secret generated in the previous step.
 - *pairing_token* - (only when auto registering a device) Place here the pairing token generated
 in the previous step.
-- *pairing_url* - Place here the the Base API URL for your local Astarte instance.
+- *pairing_url* - Place here the Base API URL for your local Astarte instance.
 (e.g.: `http://localhost:4003`).
 
 ## Build and run the example

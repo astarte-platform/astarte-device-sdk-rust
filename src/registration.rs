@@ -104,9 +104,9 @@ mod test {
         let uuid = uuid::Uuid::parse_str("f79ad91f-c638-4889-ae74-9d001a3b4cf8").unwrap();
         let expected_device_id = "AJInS0w3VpWpuOqkXhgZdA";
 
-        let deviceid = generate_uuid(uuid, "myidentifierdata");
+        let device_id = generate_uuid(uuid, "myidentifierdata");
 
-        assert_eq!(deviceid, expected_device_id);
+        assert_eq!(device_id, expected_device_id);
     }
 
     #[test]
@@ -114,15 +114,15 @@ mod test {
         let uuid = uuid::Uuid::parse_str("b068931c-c450-342b-a3f5-b3d276ea4297").unwrap();
         let expected_device_id = "dvt9mLDaWb2vW7bdBJwKCg";
 
-        let deviceid = generate_uuid(uuid, "0099112233");
+        let device_id = generate_uuid(uuid, "0099112233");
 
-        assert_eq!(deviceid, expected_device_id);
+        assert_eq!(device_id, expected_device_id);
     }
 
     #[test]
     fn test_random_uuid() {
-        let deviceid = generate_random_uuid();
+        let device_id = generate_random_uuid();
 
-        assert!(!deviceid.is_empty());
+        assert!(!device_id.is_empty());
     }
 }

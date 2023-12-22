@@ -27,10 +27,10 @@ use super::Interface;
 pub enum VersionChangeError {
     /// The major version cannot be decreased.
     #[error("the major version decreased: {0}")]
-    MajorDecresed(VersionChange),
+    MajorDecreased(VersionChange),
     /// The minor version cannot be decreased.
     #[error("the minor version decreased: {0}")]
-    MinorDecresed(VersionChange),
+    MinorDecreased(VersionChange),
     // The interface is different but the version did not change.
     #[error("the version did not change: {0}")]
     SameVersion(VersionChange),
@@ -82,8 +82,8 @@ impl VersionChange {
         let minor = self.next_minor.cmp(&self.prev_minor);
 
         match (major, minor) {
-            (Ordering::Less, _) => Err(VersionChangeError::MajorDecresed(self)),
-            (Ordering::Equal, Ordering::Less) => Err(VersionChangeError::MinorDecresed(self)),
+            (Ordering::Less, _) => Err(VersionChangeError::MajorDecreased(self)),
+            (Ordering::Equal, Ordering::Less) => Err(VersionChangeError::MinorDecreased(self)),
             (Ordering::Equal, Ordering::Equal) => Err(VersionChangeError::SameVersion(self)),
             _ => Ok(self),
         }

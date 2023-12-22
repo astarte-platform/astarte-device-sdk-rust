@@ -1100,7 +1100,7 @@ mod test {
 
     #[tokio::test]
     async fn test_add_remove_interface() {
-        let eventloope = EventLoop::default();
+        let eventloop = EventLoop::default();
 
         let mut client = AsyncClient::default();
 
@@ -1141,7 +1141,7 @@ mod test {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_| Ok(()));
 
-        let (astarte, _rx) = mock_astarte_device(client, eventloope, []);
+        let (astarte, _rx) = mock_astarte_device(client, eventloop, []);
 
         astarte
             .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
@@ -1182,14 +1182,14 @@ mod test {
             )
             .returning(|_, _, _, _| Ok(()));
 
-        let mut eventloope = EventLoop::default();
+        let mut eventloop = EventLoop::default();
 
         let data = bson::doc! {
             "v": true
         };
 
         // Purge properties
-        eventloope.expect_poll().once().returning(|| {
+        eventloop.expect_poll().once().returning(|| {
             Ok(Event::Incoming(rumqttc::Packet::Publish(
                 rumqttc::Publish::new(
                     "realm/device_id/control/consumer/properties",
@@ -1200,7 +1200,7 @@ mod test {
         });
 
         // Send properties
-        eventloope.expect_poll().once().returning(move || {
+        eventloop.expect_poll().once().returning(move || {
             Ok(Event::Incoming(rumqttc::Packet::Publish(
                 rumqttc::Publish::new(
                     "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
@@ -1212,7 +1212,7 @@ mod test {
 
         let (mut astarte, mut rx) = mock_astarte_device(
             client,
-            eventloope,
+            eventloop,
             [
                 Interface::from_str(DEVICE_PROPERTIES).unwrap(),
                 Interface::from_str(SERVER_PROPERTIES).unwrap(),
@@ -1289,11 +1289,11 @@ mod test {
             )
             .returning(|_, _, _, _| Ok(()));
 
-        let eventloope = EventLoop::default();
+        let eventloop = EventLoop::default();
 
         let (astarte, _rx) = mock_astarte_device(
             client,
-            eventloope,
+            eventloop,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
         );
 
@@ -1324,7 +1324,7 @@ mod test {
             // number of calls not limited since the clone it's inside a loop
             .returning(AsyncClient::default);
 
-        let mut eventloope = EventLoop::default();
+        let mut eventloop = EventLoop::default();
 
         let data = bson::doc! {
             "v": {
@@ -1335,7 +1335,7 @@ mod test {
         };
 
         // Send object
-        eventloope.expect_poll().returning(move || {
+        eventloop.expect_poll().returning(move || {
             Ok(Event::Incoming(rumqttc::Packet::Publish(
                 rumqttc::Publish::new(
                     "realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1",
@@ -1347,7 +1347,7 @@ mod test {
 
         let (mut astarte, mut rx) = mock_astarte_device(
             client,
-            eventloope,
+            eventloop,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
         );
 
@@ -1416,7 +1416,7 @@ mod test {
         }
 
         let mut client = AsyncClient::default();
-        let eventloope = EventLoop::default();
+        let eventloop = EventLoop::default();
 
         client
             .expect_clone()
@@ -1436,7 +1436,7 @@ mod test {
 
         let (device, _rx) = mock_astarte_device(
             client,
-            eventloope,
+            eventloop,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
         );
 
