@@ -16,7 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use astarte_device_sdk::crypto::bench;
+use astarte_device_sdk::transport::mqtt::crypto::bench;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 pub fn crypto_benchmark(c: &mut Criterion) {

@@ -29,12 +29,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
 
-use crate::{
+use super::{
     crypto::{Bundle, CryptoError},
-    transport::mqtt::MqttConfig,
+    error::MqttError,
+    MqttConfig,
 };
-
-use super::error::MqttError;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse {

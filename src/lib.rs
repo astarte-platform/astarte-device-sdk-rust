@@ -20,7 +20,6 @@
 #![doc = include_str!("../README.md")]
 
 pub mod builder;
-pub mod crypto;
 pub mod error;
 pub mod event;
 pub mod interface;
@@ -29,7 +28,6 @@ mod interfaces;
 mod mock;
 pub mod prelude;
 pub mod properties;
-pub mod registration;
 mod retry;
 mod shared;
 pub mod store;

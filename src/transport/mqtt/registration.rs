@@ -95,7 +95,7 @@ pub fn generate_uuid(namespace: uuid::Uuid, unique_data: &str) -> String {
 
 #[cfg(test)]
 mod test {
-    use crate::registration::generate_random_uuid;
+    use super::*;
 
     use super::generate_uuid;
 

@@ -24,9 +24,11 @@
 //! It defines the `Mqtt` struct, which represents an MQTT connection, along with traits for publishing,
 //! receiving, and registering interfaces.
 
+pub mod crypto;
 pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
+pub mod registration;
 
 use std::{
     collections::HashMap,
