@@ -55,10 +55,10 @@ use tokio::sync::{mpsc, RwLock};
 use transport::Disconnect;
 
 /// Re-exported internal structs
+pub use crate::error::Error;
 pub use crate::event::FromEvent;
 pub use crate::interface::Interface;
 
-use crate::error::Error;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::MappingRef;
 use crate::interface::reference::PropertyRef;
