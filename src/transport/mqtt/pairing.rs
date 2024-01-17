@@ -34,7 +34,7 @@ use crate::{
     transport::mqtt::MqttConfig,
 };
 
-use super::MqttConnectionError;
+use super::error::MqttError;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ApiResponse {
@@ -197,7 +197,7 @@ fn build_mqtt_opts(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, MqttConnectionError> {
+) -> Result<MqttOptions, MqttError> {
     let MqttConfig {
         realm, device_id, ..
     } = opts;
@@ -224,9 +224,7 @@ fn build_mqtt_opts(
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if opts.keepalive.as_secs() < 5 {
-        return Err(MqttConnectionError::Config(
-            "Keepalive should be >= 5 secs".into(),
-        ));
+        return Err(MqttError::Config("Keepalive should be >= 5 secs".into()));
     }
 
     mqtt_opts.set_keep_alive(opts.keepalive);
@@ -264,9 +262,7 @@ fn build_mqtt_opts(
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(
-    opts: &MqttConfig,
-) -> Result<MqttOptions, MqttConnectionError> {
+pub(crate) async fn get_transport_config(opts: &MqttConfig) -> Result<MqttOptions, MqttError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

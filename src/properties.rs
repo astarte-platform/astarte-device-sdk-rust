@@ -106,9 +106,12 @@ where
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
         let interfaces = &self.interfaces.read().await;
-        let prop_if = interfaces
-            .get_property(interface_name)
-            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))?;
+        let prop_if =
+            interfaces
+                .get_property(interface_name)
+                .ok_or_else(|| Error::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })?;
 
         let stored_prop = self.store.interface_props(prop_if.interface_name()).await?;
 

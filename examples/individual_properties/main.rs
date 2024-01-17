@@ -133,9 +133,7 @@ async fn main() -> Result<(), DynError> {
                         let sensor_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or_else(|| {
-                                Error::ReceiveError("Incorrect error received.".to_string())
-                            })?;
+                            .ok_or("Incorrect error received.")?;
 
                         match iter.next() {
                             Some("enable") => {

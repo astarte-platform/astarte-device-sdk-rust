@@ -197,24 +197,6 @@ impl Interface {
         ObjectRef::new(self)
     }
 
-    /// Getter function for the interface name.
-    #[deprecated = "Use `interface_name` instead, and manually convert it to `String` if needed"]
-    pub fn get_name(&self) -> String {
-        self.interface_name.clone()
-    }
-
-    #[deprecated = "Renamed to `version_major`"]
-    /// Getter function for the interface major version.
-    pub fn get_version_major(&self) -> i32 {
-        self.version_major()
-    }
-
-    #[deprecated = "Renamed to `version_minor`"]
-    /// Getter function for the interface minor version.
-    pub fn get_version_minor(&self) -> i32 {
-        self.version_minor()
-    }
-
     /// Validate if an interface is valid
     pub fn validate(&self) -> Result<(), InterfaceError> {
         if self.version() == (0, 0) {

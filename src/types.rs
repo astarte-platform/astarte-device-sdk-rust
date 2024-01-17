@@ -329,22 +329,6 @@ where
 }
 
 impl AstarteType {
-    #[deprecated = "this method will be removed in the next major update"]
-    pub fn from_bson_vec(d: Vec<Bson>) -> Result<Vec<Self>, TypeError> {
-        d.into_iter()
-            .map(|b| match b {
-                Bson::Double(v) => v.try_into(),
-                Bson::String(v) => Ok(v.into()),
-                Bson::Boolean(v) => Ok(v.into()),
-                Bson::Int32(v) => Ok(v.into()),
-                Bson::Int64(v) => Ok(v.into()),
-                Bson::Binary(v) => Ok(v.bytes.into()),
-                Bson::DateTime(v) => Ok(v.to_chrono().into()),
-                _ => Err(TypeError::FromBsonArrayError),
-            })
-            .collect()
-    }
-
     /// Check if the variant is [`AstarteType::Unset`].
     pub fn is_unset(&self) -> bool {
         matches!(self, AstarteType::Unset)

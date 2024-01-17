@@ -36,9 +36,6 @@ pub enum InterfaceError {
     /// Both major and minor are 0.
     #[error("wrong major and minor")]
     MajorMinor,
-    /// Couldn't find an interface with the given name.
-    #[error("couldn't find interface '{name}'")]
-    InterfaceNotFound { name: String },
     /// The interface has no mapping with the given path.
     #[error("couldn't find the mapping '{path}' in the interface")]
     MappingNotFound { path: String },

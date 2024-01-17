@@ -62,7 +62,7 @@ pub use crate::interface::Interface;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::MappingRef;
 use crate::interface::reference::PropertyRef;
-use crate::interface::{Aggregation as InterfaceAggregation, InterfaceError};
+use crate::interface::Aggregation as InterfaceAggregation;
 use crate::interfaces::Interfaces;
 use crate::shared::SharedDevice;
 use crate::store::wrapper::StoreWrapper;
@@ -199,7 +199,9 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         let interfaces = self.interfaces.read().await;
         let interface = interfaces.get(interface).ok_or_else(|| {
             warn!("publish on missing interface {interface} ({path})");
-            Error::MissingInterface(interface.to_string())
+            Error::InterfaceNotFound {
+                name: interface.to_string(),
+            }
         })?;
 
         let (data, timestamp) = match interface.aggregation() {
@@ -231,7 +233,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
     {
         let mapping = interface
             .as_mapping_ref(path)
-            .ok_or_else(|| Error::MissingMapping {
+            .ok_or_else(|| Error::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
             })?;
@@ -422,7 +424,9 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         let interfaces = self.interfaces.read().await;
         let interface = interfaces
             .get(interface_name)
-            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))?;
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
         let object = interface
             .as_object_ref()
@@ -802,10 +806,8 @@ where
             .write()
             .await
             .remove(interface_name)
-            .ok_or_else(|| {
-                Error::Interface(InterfaceError::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
             })?;
 
         {

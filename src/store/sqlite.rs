@@ -54,10 +54,6 @@ pub enum SqliteError {
     /// Couldn't convert the stored value.
     #[error("couldn't convert the stored value")]
     Value(#[from] ValueError),
-    /// Error returned when the decode of the bson fails
-    #[error("could not decode property from bson")]
-    #[deprecated = "moved to the ValueError"]
-    Decode(#[from] PayloadError),
     /// Couldn't convert ownership value
     #[error("could not deserialize ownership")]
     Ownership(#[from] OwnershipError),
@@ -122,7 +118,9 @@ pub enum ValueError {
     Conversion(#[from] TypeError),
     /// Couldn't decode the BSON buffer.
     #[error("couldn't decode property from bson")]
-    Decode(#[from] PayloadError),
+    Decode(#[source] PayloadError),
+    #[error("couldn't encode property from bson")]
+    Encode(#[source] PayloadError),
     /// Unsupported [`AstarteType`].
     #[error("unsupported property type {0}")]
     UnsupportedType(&'static str),
@@ -310,7 +308,7 @@ impl PropertyStore for SqliteStore {
         );
 
         let mapping_type = into_stored_type(value)?;
-        let buf = Payload::new(value).to_vec()?;
+        let buf = Payload::new(value).to_vec().map_err(ValueError::Encode)?;
 
         let own = RecordOwnership::from(ownership) as u8;
 
@@ -426,7 +424,7 @@ fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueErr
         return Ok(AstarteType::Unset);
     };
 
-    let payload = Payload::from_slice(buf)?;
+    let payload = Payload::from_slice(buf).map_err(ValueError::Decode)?;
     let value = BsonConverter::new(mapping_type, payload.value);
 
     value.try_into().map_err(ValueError::from)

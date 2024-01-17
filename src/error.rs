@@ -25,8 +25,7 @@ use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
-use crate::topic::TopicError;
-use crate::transport::mqtt::{payload::PayloadError, MqttConnectionError};
+use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
 
@@ -36,87 +35,51 @@ use crate::validate::UserValidationError;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[deprecated = "The error is unused and will be removed in a future version"]
-    #[error("bson client error")]
-    BsonClientError(#[from] rumqttc::ClientError),
-
-    #[error("mqtt connection error")]
-    ConnectionError(#[from] rumqttc::ConnectionError),
-
     /// The connection poll reached the max number of retries.
-    #[error("mqtt connection reached max retries")]
+    #[error("connection reached max retries")]
     ConnectionTimeout,
-
-    #[deprecated = "The error is unused and will be removed in a future version"]
-    #[error("send error ({0})")]
-    SendError(String),
-
-    #[error("receive error ({0})")]
-    ReceiveError(String),
-
+    /// Error returned by the builder
     #[error("options error")]
     Builder(#[from] BuilderError),
-
+    /// Failed to parse the interface
     #[error("invalid interface")]
     Interface(#[from] InterfaceError),
-
-    #[deprecated = "The error is unused and will be removed in a future version"]
-    #[error("generic error ({0})")]
-    Reported(String),
-
-    #[error("generic error")]
-    Unreported,
-
-    #[error("infallible error")]
-    Infallible(#[from] Infallible),
-
-    #[error("invalid topic {}",.0.topic())]
-    InvalidTopic(#[from] TopicError),
-
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
-
-    /// Errors when converting between Astarte types.
-    #[error("couldn't convert to Astarte Type")]
-    Types(#[from] TypeError),
-
-    /// Errors that can occur handling the payload.
-    #[error("couldn't process payload")]
-    Payload(#[from] PayloadError),
-
-    /// Error while parsing the /control/consumer/properties payload.
-    #[error("couldn't handle properties")]
-    Properties(#[from] PropertiesError),
-
-    /// Error returned by a store operation.
-    #[error("couldn't complete store operation")]
-    Database(#[from] StoreError),
-
-    /// Error missing interface
-    #[error("couldn't find the interface {0}")]
-    MissingInterface(String),
-
-    /// Error missing mapping in interface
-    #[error("couldn't find mapping {mapping} in interface {interface}")]
-    MissingMapping { interface: String, mapping: String },
-
-    /// Send or receive validation failed
-    #[error("validation of the send payload failed")]
-    Validation(#[from] UserValidationError),
-
-    #[error("invalid aggregation, expected {exp} but got {got}")]
-    Aggregation { exp: Aggregation, got: Aggregation },
-
     #[error("invalid interface type, expected {exp} but got {got}")]
     InterfaceType {
         exp: InterfaceTypeDef,
         got: InterfaceTypeDef,
     },
-
+    /// Couldn't find an interface with the given name.
+    #[error("couldn't find interface '{name}'")]
+    InterfaceNotFound { name: String },
+    /// Error missing mapping in interface
+    #[error("couldn't find mapping {mapping} in interface {interface}")]
+    MappingNotFound { interface: String, mapping: String },
+    /// Couldn't parse the mapping path
+    #[error("invalid mapping path '{}'", .0.path())]
+    InvalidEndpoint(#[from] MappingError),
+    /// Errors when converting between Astarte types.
+    #[error("couldn't convert to Astarte Type")]
+    Types(#[from] TypeError),
+    /// Error while parsing the /control/consumer/properties payload.
+    #[error("couldn't handle properties")]
+    Properties(#[from] PropertiesError),
+    /// Error returned by a store operation.
+    #[error("couldn't complete store operation")]
+    Store(#[from] StoreError),
+    /// Send or receive validation failed
+    #[error("validation of the send payload failed")]
+    Validation(#[from] UserValidationError),
+    #[error("invalid aggregation, expected {exp} but got {got}")]
+    Aggregation { exp: Aggregation, got: Aggregation },
+    /// Infallible conversion
     #[error(transparent)]
-    MqttConnection(#[from] MqttConnectionError),
-
+    Infallible(#[from] Infallible),
+    /// Error returned by the MQTT connection
+    #[error(transparent)]
+    Mqtt(#[from] MqttError),
+    /// Error returned by the GRpc transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]
-    GrpcTransport(#[from] crate::transport::grpc::GrpcTransportError),
+    Grpc(#[from] crate::transport::grpc::GrpcTransportError),
 }

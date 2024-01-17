@@ -65,7 +65,7 @@ pub enum MessageHubProtoError {
 /// Unwraps a variable chain of nested optionals by calling the [`Option::and_then`] assoctiated function
 /// The optional items can be properties or function that do not take parameters.
 /// Terminates the chain with an [`Option::ok_or`] method that returns a result
-/// # Examle:
+/// # Example:
 /// `optional_chain!(payload.take_data().take_individual().individual_data);`
 ///
 /// This would compile to code similar to:

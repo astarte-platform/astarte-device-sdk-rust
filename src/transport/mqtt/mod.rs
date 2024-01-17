@@ -24,6 +24,7 @@
 //! It defines the `Mqtt` struct, which represents an MQTT connection, along with traits for publishing,
 //! receiving, and registering interfaces.
 
+pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 
@@ -49,7 +50,7 @@ use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
-        InterfaceError, Ownership,
+        Ownership,
     },
     interfaces::Interfaces,
     properties,
@@ -59,7 +60,7 @@ use crate::{
     topic::ParsedTopic,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject},
-    Interface, Timestamp,
+    Error, Interface, Timestamp,
 };
 
 #[cfg(not(test))]
@@ -67,6 +68,7 @@ pub(crate) use rumqttc::{AsyncClient, EventLoop};
 
 use super::{Publish, Receive, ReceivedEvent, Register};
 
+use self::error::MqttError;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 
@@ -127,7 +129,7 @@ impl Mqtt {
     ///
     /// The session parameter holds data that will be sent during the
     /// connection to the astarte server.
-    pub(crate) async fn wait_for_connack(&self, session: SessionData) -> Result<(), crate::Error> {
+    pub(crate) async fn wait_for_connack(&self, session: SessionData) -> Result<(), Error> {
         loop {
             match self.poll().await? {
                 rumqttc::Packet::ConnAck(connack) => {
@@ -162,7 +164,7 @@ impl Mqtt {
             device_properties,
         }: SessionData,
         connack: rumqttc::ConnAck,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         if connack.session_present {
             return Ok(());
         }
@@ -181,13 +183,14 @@ impl Mqtt {
     async fn subscribe_server_interfaces(
         &self,
         server_interfaces: &[String],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), MqttError> {
         self.client
             .subscribe(
                 format!("{}/control/consumer/properties", self.client_id()),
                 rumqttc::QoS::ExactlyOnce,
             )
-            .await?;
+            .await
+            .map_err(MqttError::Subscribe)?;
 
         for iface in server_interfaces {
             self.client
@@ -195,20 +198,22 @@ impl Mqtt {
                     format!("{}/{iface}/#", self.client_id()),
                     rumqttc::QoS::ExactlyOnce,
                 )
-                .await?;
+                .await
+                .map_err(MqttError::Subscribe)?;
         }
 
         Ok(())
     }
 
     /// Sends the emptycache command as per the astarte protocol definition
-    async fn send_emptycache(&self) -> Result<(), crate::Error> {
+    async fn send_emptycache(&self) -> Result<(), Error> {
         let url = format!("{}/control/emptyCache", self.client_id());
         debug!("sending emptyCache to {}", url);
 
         self.client
             .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
-            .await?;
+            .await
+            .map_err(|err| MqttError::publish("emptycache", err))?;
 
         Ok(())
     }
@@ -217,7 +222,7 @@ impl Mqtt {
     async fn send_device_properties(
         &self,
         device_properties: &[StoredProp],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), MqttError> {
         for prop in device_properties {
             let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
 
@@ -230,18 +235,15 @@ impl Mqtt {
 
             self.client
                 .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
-                .await?;
+                .await
+                .map_err(|err| MqttError::publish("device properties", err))?;
         }
 
         Ok(())
     }
 
     /// Purges local properties defined in the passed binary data
-    async fn purge_properties<S>(
-        &self,
-        device: &SharedDevice<S>,
-        bdata: &[u8],
-    ) -> Result<(), crate::Error>
+    async fn purge_properties<S>(&self, device: &SharedDevice<S>, bdata: &[u8]) -> Result<(), Error>
     where
         S: PropertyStore,
     {
@@ -266,7 +268,7 @@ impl Mqtt {
     /// Polls mqtt events from the [`rumqttc:EventLoop`].
     ///
     /// Errors are handled using the [`DelayedPoll::retry_poll_event`] method.
-    async fn poll_mqtt_event(&self) -> Result<MqttEvent, crate::Error> {
+    async fn poll_mqtt_event(&self) -> Result<MqttEvent, Error> {
         let mut lock = self.eventloop.lock().await;
 
         match lock.poll().await {
@@ -283,7 +285,7 @@ impl Mqtt {
     ///
     /// This method internally calls [`Mqtt::poll_mqtt_event`] but ignores
     /// outgoing packets by logging them.
-    async fn poll(&self) -> Result<Packet, crate::Error> {
+    async fn poll(&self) -> Result<Packet, Error> {
         loop {
             match self.poll_mqtt_event().await? {
                 MqttEvent::Incoming(packet) => return Ok(packet),
@@ -299,7 +301,7 @@ impl Mqtt {
         path: &str,
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         self.client
             .publish(
                 format!(
@@ -312,30 +314,31 @@ impl Mqtt {
                 false,
                 payload,
             )
-            .await?;
+            .await
+            .map_err(|err| MqttError::publish("send", err))?;
 
         Ok(())
     }
 
-    async fn subscribe(&self, interface_name: &str) -> Result<(), crate::Error> {
+    async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
         self.client
             .subscribe(
                 format!("{}/{interface_name}/#", self.client_id()),
                 rumqttc::QoS::ExactlyOnce,
             )
             .await
-            .map_err(crate::Error::from)
+            .map_err(MqttError::Subscribe)
     }
 
-    async fn unsubscribe(&self, interface_name: &str) -> Result<(), crate::Error> {
+    async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
         self.client
             .unsubscribe(format!("{}/{interface_name}/#", self.client_id()))
             .await
-            .map_err(crate::Error::from)
+            .map_err(MqttError::Unsubscribe)
     }
 
     /// Sends the introspection [`String`].
-    async fn send_introspection(&self, introspection: String) -> Result<(), crate::Error> {
+    async fn send_introspection(&self, introspection: String) -> Result<(), MqttError> {
         debug!("sending introspection = {}", introspection);
 
         let path = self.client_id().to_string();
@@ -343,7 +346,7 @@ impl Mqtt {
         self.client
             .publish(path, rumqttc::QoS::ExactlyOnce, false, introspection)
             .await
-            .map_err(crate::Error::from)
+            .map_err(|error| MqttError::publish("introspection", error))
     }
 }
 
@@ -357,11 +360,9 @@ impl Deref for Mqtt {
 
 #[async_trait]
 impl Publish for Mqtt {
-    async fn send_individual(
-        &self,
-        validated: ValidatedIndividual<'_>,
-    ) -> Result<(), crate::Error> {
-        let buf = payload::serialize_individual(validated.data(), validated.timestamp())?;
+    async fn send_individual(&self, validated: ValidatedIndividual<'_>) -> Result<(), Error> {
+        let buf = payload::serialize_individual(validated.data(), validated.timestamp())
+            .map_err(MqttError::Payload)?;
 
         self.send(
             validated.mapping().interface(),
@@ -372,8 +373,9 @@ impl Publish for Mqtt {
         .await
     }
 
-    async fn send_object(&self, validated: ValidatedObject<'_>) -> Result<(), crate::Error> {
-        let buf = payload::serialize_object(validated.data(), validated.timestamp())?;
+    async fn send_object(&self, validated: ValidatedObject<'_>) -> Result<(), Error> {
+        let buf = payload::serialize_object(validated.data(), validated.timestamp())
+            .map_err(MqttError::Payload)?;
 
         self.send(
             validated.object().interface,
@@ -392,7 +394,7 @@ impl Receive for Mqtt {
     async fn next_event<S>(
         &self,
         device: &SharedDevice<S>,
-    ) -> Result<ReceivedEvent<Self::Payload>, crate::Error>
+    ) -> Result<ReceivedEvent<Self::Payload>, Error>
     where
         S: PropertyStore,
     {
@@ -423,7 +425,8 @@ impl Receive for Mqtt {
                     } else {
                         let client_id = CLIENT_ID.get_or_init(|| self.client_id().to_string());
                         let ParsedTopic { interface, path } =
-                            ParsedTopic::try_parse(client_id, &publish.topic)?;
+                            ParsedTopic::try_parse(client_id, &publish.topic)
+                                .map_err(MqttError::Topic)?;
 
                         return Ok(ReceivedEvent {
                             interface: interface.to_string(),
@@ -443,8 +446,9 @@ impl Receive for Mqtt {
         &self,
         mapping: MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), crate::Error> {
-        payload::deserialize_individual(mapping, &payload).map_err(|err| err.into())
+    ) -> Result<(AstarteType, Option<Timestamp>), Error> {
+        payload::deserialize_individual(mapping, &payload)
+            .map_err(|err| MqttError::Payload(err).into())
     }
 
     fn deserialize_object(
@@ -452,8 +456,9 @@ impl Receive for Mqtt {
         object: ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
-        payload::deserialize_object(object, path, &payload).map_err(|err| err.into())
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
+        payload::deserialize_object(object, path, &payload)
+            .map_err(|err| MqttError::Payload(err).into())
     }
 }
 
@@ -463,14 +468,14 @@ impl Register for Mqtt {
         &self,
         device: &SharedDevice<S>,
         added_interface: &str,
-    ) -> Result<(), crate::Error>
+    ) -> Result<(), Error>
     where
         S: Send + Sync,
     {
         let interfaces = device.interfaces.read().await;
         let interface_ownership = interfaces
             .get(added_interface)
-            .ok_or(InterfaceError::InterfaceNotFound {
+            .ok_or(Error::InterfaceNotFound {
                 name: added_interface.to_string(),
             })?
             .ownership();
@@ -480,14 +485,16 @@ impl Register for Mqtt {
             self.subscribe(added_interface).await?
         }
 
-        self.send_introspection(introspection_string).await
+        self.send_introspection(introspection_string)
+            .await
+            .map_err(MqttError::into)
     }
 
     async fn remove_interface(
         &self,
         interfaces: &Interfaces,
         removed_interface: Interface,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), Error> {
         self.send_introspection(interfaces.get_introspection_string())
             .await?;
 
@@ -551,20 +558,6 @@ impl SessionData {
             device_properties,
         })
     }
-}
-
-/// Errors raised during construction of the [`Mqtt`] struct
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum MqttConnectionError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    #[error(transparent)]
-    Pairing(#[from] PairingError),
-    #[error(transparent)]
-    Pki(#[from] webpki::Error),
-    #[error("Error while loading session data to perform the mqtt connection: {0}")]
-    PropLoad(#[from] StoreError),
 }
 
 /// Configuration for the mqtt connection
@@ -654,7 +647,7 @@ impl Debug for MqttConfig {
 #[async_trait]
 impl ConnectionConfig for MqttConfig {
     type Con = Mqtt;
-    type Err = crate::Error;
+    type Err = Error;
 
     async fn connect<S, C>(self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
     where
