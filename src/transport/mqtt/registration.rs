@@ -73,10 +73,12 @@ pub async fn register_device(
 
             Ok(credentials_secret)
         }
-
         status_code => {
             let raw_response = response.text().await?;
-            Err(PairingError::ApiError(status_code, raw_response))
+            Err(PairingError::Api {
+                status: status_code,
+                body: raw_response,
+            })
         }
     }
 }

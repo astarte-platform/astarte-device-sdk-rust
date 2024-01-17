@@ -28,12 +28,9 @@ use super::{PairingError, PayloadError};
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum MqttError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    #[error(transparent)]
+    /// Error while pairing with Astarte
+    #[error("couldn't pair with Astarte")]
     Pairing(#[from] PairingError),
-    #[error(transparent)]
-    Pki(#[from] webpki::Error),
     #[error("Error while loading session data to perform the mqtt connection: {0}")]
     PropLoad(#[from] StoreError),
     /// Failed to subscribe to topic
