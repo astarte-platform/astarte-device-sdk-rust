@@ -25,9 +25,9 @@ use log::debug;
 
 use crate::{
     interface::{
+        error::InterfaceError,
         mapping::path::MappingPath,
         reference::{MappingRef, PropertyRef},
-        InterfaceError,
     },
     Error, Interface,
 };

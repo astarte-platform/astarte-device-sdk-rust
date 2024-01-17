@@ -21,8 +21,9 @@
 use std::convert::Infallible;
 
 use crate::builder::BuilderError;
+use crate::interface::error::InterfaceFileError;
 use crate::interface::mapping::path::MappingError;
-use crate::interface::{Aggregation, InterfaceError, InterfaceTypeDef};
+use crate::interface::{error::InterfaceError, Aggregation, InterfaceTypeDef};
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
@@ -42,8 +43,12 @@ pub enum Error {
     #[error("options error")]
     Builder(#[from] BuilderError),
     /// Failed to parse the interface
-    #[error("invalid interface")]
+    #[error("couldn't add interface")]
     Interface(#[from] InterfaceError),
+    /// Failed to parse interface file
+    #[error("couldn't parse interface file")]
+    InterfaceFile(#[from] InterfaceFileError),
+    /// Invalid interface type when sending or receiving
     #[error("invalid interface type, expected {exp} but got {got}")]
     InterfaceType {
         exp: InterfaceTypeDef,

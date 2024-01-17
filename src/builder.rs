@@ -25,12 +25,15 @@ use std::fmt::Debug;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::interface::{Interface, InterfaceError};
+use crate::interface::error::InterfaceError;
+use crate::interface::error::InterfaceFileError;
+use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -50,11 +53,19 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum BuilderError {
-    #[error("error creating interface")]
+    /// Couldn't add the interface
+    #[error("error adding interface")]
     Interface(#[from] InterfaceError),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    /// Couldn't add the interface from the file
+    #[error("error adding interface file")]
+    InterfaceFile(#[from] InterfaceFileError),
+    /// Failed to read interface directory
+    #[error("couldn't read interface path {}", .path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        backtrace: std::io::Error,
+    },
 }
 
 /// Declares the conclusive operation of the device builder.
@@ -125,10 +136,23 @@ impl<S, C> DeviceBuilder<S, C> {
     where
         P: AsRef<Path>,
     {
-        let interface = Interface::from_file(file_path)?;
+        let interface = Interface::from_file(&file_path)?;
         let name = interface.interface_name();
 
         debug!("Added interface {}", name);
+
+        self.interfaces
+            .add(interface)
+            .map_err(|err| InterfaceFileError::Interface {
+                path: file_path.as_ref().to_path_buf(),
+                backtrace: err,
+            })?;
+
+        Ok(self)
+    }
+
+    pub fn interface(mut self, interface: &str) -> Result<Self, BuilderError> {
+        let interface = Interface::from_str(interface)?;
 
         self.interfaces.add(interface)?;
 
@@ -140,7 +164,11 @@ impl<S, C> DeviceBuilder<S, C> {
     where
         P: AsRef<Path>,
     {
-        walk_dir_json(interfaces_directory)?
+        walk_dir_json(&interfaces_directory)
+            .map_err(|err| BuilderError::Io {
+                path: interfaces_directory.as_ref().to_path_buf(),
+                backtrace: err,
+            })?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
     }
