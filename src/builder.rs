@@ -121,7 +121,10 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, BuilderError> {
+    pub fn interface_file<P>(mut self, file_path: P) -> Result<Self, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
         let interface = Interface::from_file(file_path)?;
         let name = interface.interface_name();
 
@@ -133,7 +136,10 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory(self, interfaces_directory: &str) -> Result<Self, BuilderError> {
+    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
         walk_dir_json(interfaces_directory)?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
@@ -222,7 +228,10 @@ pub trait ConnectionConfig {
 }
 
 /// Walks a directory returning an array of json files
-fn walk_dir_json<P: AsRef<Path>>(path: P) -> Result<Vec<PathBuf>, io::Error> {
+fn walk_dir_json<P>(path: P) -> Result<Vec<PathBuf>, io::Error>
+where
+    P: AsRef<Path>,
+{
     std::fs::read_dir(path)?
         .map(|res| {
             res.and_then(|entry| {

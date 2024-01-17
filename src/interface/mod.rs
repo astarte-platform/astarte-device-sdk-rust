@@ -93,7 +93,10 @@ pub struct Interface {
 
 impl Interface {
     /// Instantiate a new `Interface` from a file.
-    pub fn from_file(path: &Path) -> Result<Self, InterfaceError> {
+    pub fn from_file<P>(path: P) -> Result<Self, InterfaceError>
+    where
+        P: AsRef<Path>,
+    {
         let file = fs::read_to_string(path)?;
 
         Self::from_str(&file)
