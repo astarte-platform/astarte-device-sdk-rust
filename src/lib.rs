@@ -19,6 +19,7 @@
  */
 #![doc = include_str!("../README.md")]
 
+pub mod aggregate;
 pub mod builder;
 pub mod error;
 pub mod event;
@@ -36,7 +37,6 @@ pub mod transport;
 pub mod types;
 mod validate;
 
-use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::path::Path;
@@ -56,6 +56,7 @@ use transport::Disconnect;
 pub use crate::error::Error;
 pub use crate::event::FromEvent;
 pub use crate::interface::Interface;
+pub use aggregate::{Aggregation, AstarteAggregate};
 
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::MappingRef;
@@ -68,52 +69,6 @@ use crate::store::{PropertyStore, StoredProp};
 use crate::transport::{Publish, Receive, ReceivedEvent, Register};
 use crate::types::{AstarteType, TypeError};
 use crate::validate::{ValidatedIndividual, ValidatedObject};
-
-/// A **trait** required by all data to be sent using
-/// [send_object()][crate::AstarteDeviceSdk::send_object] and
-/// [send_object_with_timestamp()][crate::AstarteDeviceSdk::send_object_with_timestamp].
-/// It ensures correct parsing of the data.
-///
-/// The returned hash map should have as values the data to transmit for each
-/// object endpoint and as keys the endpoints themselves.
-///
-/// The Astarte Device SDK provides a procedural macro that can be used to automatically
-/// generate `AstarteAggregate` implementations for Structs.
-/// To use the procedural macro enable the feature `derive`.
-pub trait AstarteAggregate {
-    /// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
-    /// ```
-    /// use std::collections::HashMap;
-    /// use std::convert::TryInto;
-    ///
-    /// use astarte_device_sdk::{types::AstarteType, error::Error, AstarteAggregate};
-    ///
-    /// struct Person {
-    ///     name: String,
-    ///     age: i32,
-    ///     phones: Vec<String>,
-    /// }
-    ///
-    /// // This is what #[derive(AstarteAggregate)] would generate.
-    /// impl AstarteAggregate for Person {
-    ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>
-    ///     {
-    ///         let mut r = HashMap::new();
-    ///         r.insert("name".to_string(), self.name.try_into()?);
-    ///         r.insert("age".to_string(), self.age.try_into()?);
-    ///         r.insert("phones".to_string(), self.phones.try_into()?);
-    ///         Ok(r)
-    ///     }
-    /// }
-    /// ```
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>;
-}
-
-impl AstarteAggregate for HashMap<String, AstarteType> {
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error> {
-        Ok(self)
-    }
-}
 
 /// Sender end of the channel for the [`AstarteDeviceDataEvent`].
 pub type EventSender = mpsc::Sender<Result<AstarteDeviceDataEvent, Error>>;
@@ -135,15 +90,6 @@ extern crate astarte_device_sdk_derive;
 /// Derive macros enable with the `feature = ["derive"]`.
 #[cfg(feature = "derive")]
 pub use astarte_device_sdk_derive::*;
-
-/// Payload format for an Astarte device event data.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Aggregation {
-    /// Individual data, can be both from a datastream or property.
-    Individual(AstarteType),
-    /// Object data, also called aggregate. Can only be from a datastream.
-    Object(HashMap<String, AstarteType>),
-}
 
 /// Astarte device event data structure.
 ///
