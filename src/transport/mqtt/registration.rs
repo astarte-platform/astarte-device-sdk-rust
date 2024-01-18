@@ -73,10 +73,12 @@ pub async fn register_device(
 
             Ok(credentials_secret)
         }
-
         status_code => {
             let raw_response = response.text().await?;
-            Err(PairingError::ApiError(status_code, raw_response))
+            Err(PairingError::Api {
+                status: status_code,
+                body: raw_response,
+            })
         }
     }
 }
@@ -95,7 +97,7 @@ pub fn generate_uuid(namespace: uuid::Uuid, unique_data: &str) -> String {
 
 #[cfg(test)]
 mod test {
-    use crate::registration::generate_random_uuid;
+    use super::*;
 
     use super::generate_uuid;
 

@@ -25,12 +25,15 @@ use std::fmt::Debug;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::interface::{Interface, InterfaceError};
+use crate::interface::error::InterfaceError;
+use crate::interface::error::InterfaceFileError;
+use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -50,11 +53,19 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum BuilderError {
-    #[error("error creating interface")]
+    /// Couldn't add the interface
+    #[error("error adding interface")]
     Interface(#[from] InterfaceError),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    /// Couldn't add the interface from the file
+    #[error("error adding interface file")]
+    InterfaceFile(#[from] InterfaceFileError),
+    /// Failed to read interface directory
+    #[error("couldn't read interface path {}", .path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        backtrace: std::io::Error,
+    },
 }
 
 /// Declares the conclusive operation of the device builder.
@@ -121,11 +132,27 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface_file(mut self, file_path: &Path) -> Result<Self, BuilderError> {
-        let interface = Interface::from_file(file_path)?;
+    pub fn interface_file<P>(mut self, file_path: P) -> Result<Self, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
+        let interface = Interface::from_file(&file_path)?;
         let name = interface.interface_name();
 
         debug!("Added interface {}", name);
+
+        self.interfaces
+            .add(interface)
+            .map_err(|err| InterfaceFileError::Interface {
+                path: file_path.as_ref().to_path_buf(),
+                backtrace: err,
+            })?;
+
+        Ok(self)
+    }
+
+    pub fn interface(mut self, interface: &str) -> Result<Self, BuilderError> {
+        let interface = Interface::from_str(interface)?;
 
         self.interfaces.add(interface)?;
 
@@ -133,8 +160,15 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory(self, interfaces_directory: &str) -> Result<Self, BuilderError> {
-        walk_dir_json(interfaces_directory)?
+    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
+        walk_dir_json(&interfaces_directory)
+            .map_err(|err| BuilderError::Io {
+                path: interfaces_directory.as_ref().to_path_buf(),
+                backtrace: err,
+            })?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
     }
@@ -222,7 +256,10 @@ pub trait ConnectionConfig {
 }
 
 /// Walks a directory returning an array of json files
-fn walk_dir_json<P: AsRef<Path>>(path: P) -> Result<Vec<PathBuf>, io::Error> {
+fn walk_dir_json<P>(path: P) -> Result<Vec<PathBuf>, io::Error>
+where
+    P: AsRef<Path>,
+{
     std::fs::read_dir(path)?
         .map(|res| {
             res.and_then(|entry| {

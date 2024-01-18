@@ -25,9 +25,9 @@ use log::debug;
 
 use crate::{
     interface::{
+        error::InterfaceError,
         mapping::path::MappingPath,
         reference::{MappingRef, PropertyRef},
-        InterfaceError,
     },
     Error, Interface,
 };
@@ -121,9 +121,11 @@ impl Interfaces {
     ) -> Result<MappingRef<&Interface>, Error> {
         self.interfaces
             .get(interface_name)
-            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })
             .and_then(|interface| {
-                MappingRef::new(interface, interface_path).ok_or_else(|| Error::MissingMapping {
+                MappingRef::new(interface, interface_path).ok_or_else(|| Error::MappingNotFound {
                     interface: interface_name.to_string(),
                     mapping: interface_path.to_string(),
                 })
@@ -142,7 +144,9 @@ impl Interfaces {
     ) -> Result<MappingRef<PropertyRef>, Error> {
         self.interfaces
             .get(interface_name)
-            .ok_or_else(|| Error::MissingInterface(interface_name.to_string()))
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })
             .and_then(|interface| {
                 interface.as_prop_ref().ok_or_else(|| Error::InterfaceType {
                     exp: crate::interface::InterfaceTypeDef::Properties,
@@ -151,7 +155,7 @@ impl Interfaces {
             })
             .and_then(|interface| {
                 MappingRef::with_prop(interface, interface_path).ok_or_else(|| {
-                    Error::MissingMapping {
+                    Error::MappingNotFound {
                         interface: interface_name.to_string(),
                         mapping: interface_path.to_string(),
                     }
@@ -304,15 +308,15 @@ pub(crate) mod tests {
 
         assert!(matches!(
             ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/button/foo")),
-            Err(Error::MissingMapping { .. })
+            Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
             ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/foo/button")),
-            Err(Error::MissingMapping { .. })
+            Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
             ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/obj")),
-            Err(Error::MissingMapping { .. })
+            Err(Error::MappingNotFound { .. })
         ));
     }
 
@@ -341,11 +345,11 @@ pub(crate) mod tests {
                 "org.astarte-platform.test.test",
                 mapping!("/foo/bar/enable")
             ),
-            Err(Error::MissingMapping { .. })
+            Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
             ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/obj")),
-            Err(Error::MissingMapping { .. })
+            Err(Error::MappingNotFound { .. })
         ));
     }
 

@@ -27,6 +27,8 @@ use astarte_device_sdk::{
     transport::mqtt::MqttConfig,
 };
 
+type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
 #[derive(Deserialize)]
 struct Config {
     realm: String,
@@ -105,9 +107,7 @@ async fn main() -> Result<(), Error> {
                         let led_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or_else(|| {
-                                Error::ReceiveError("Incorrect error received.".to_string())
-                            })?;
+                            .ok_or("Incorrect error received.")?;
 
                         match iter.next() {
                             Some("enable") => {
@@ -132,7 +132,7 @@ async fn main() -> Result<(), Error> {
             }
         }
 
-        Ok::<_, Error>(())
+        Ok::<_, DynError>(())
     });
 
     device.handle_events().await?;

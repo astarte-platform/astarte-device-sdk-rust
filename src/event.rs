@@ -28,7 +28,7 @@ pub enum FromEventError {
     #[error("couldn't parse request from interface {0}")]
     Interface(String),
     /// object has wrong base path
-    #[error("object has wrong base path ({interface}) {base_path}")]
+    #[error("object {interface} has wrong base path {base_path}")]
     Path {
         /// Interface that generated the error
         interface: &'static str,
@@ -36,7 +36,7 @@ pub enum FromEventError {
         base_path: String,
     },
     /// individual data passed to object
-    #[error("individual data passed to object ({interface}/{base_path})")]
+    #[error("individual data passed to object {interface}{base_path}")]
     Individual {
         /// Interface that generated the error
         interface: &'static str,
@@ -44,7 +44,7 @@ pub enum FromEventError {
         base_path: &'static str,
     },
     /// object missing field
-    #[error("object missing field ({interface}/{base_path}) {path}")]
+    #[error("object {interface} missing field {base_path}/{path}")]
     MissingField {
         /// Interface that generated the error
         interface: &'static str,

@@ -139,7 +139,7 @@ async fn main() {
 
     let (mut device, mut rx_events) = DeviceBuilder::new()
         .store(MemoryStore::new())
-        .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
+        .interface_directory(&test_cfg.interfaces_fld)
         .unwrap()
         .connect(mqtt_config)
         .await

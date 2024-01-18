@@ -694,10 +694,10 @@ mod test {
 
             let mock_shared_device = mock_shared_device(Interfaces::new(), mpsc::channel(1).0); // the channel won't be used
 
-            // poll the three messages the frist two received errors will simply reconnect without returning
+            // poll the three messages the first two received errors will simply reconnect without returning
             assert!(matches!(
                 connection.next_event(&mock_shared_device).await,
-                Err(error::Error::GrpcTransport(GrpcTransportError::Status(_)))
+                Err(error::Error::Grpc(GrpcTransportError::Status(_)))
             ));
 
             // manually calling detach

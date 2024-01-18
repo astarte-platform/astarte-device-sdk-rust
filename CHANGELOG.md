@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make the `DynError` trait bound shareable across threads.
 - Added ownership field to the `StoredProp` struct.
 - The `PropertyStore::store_prop` now receives the `StoredProp` struct.
+- Improve the errors with more contexts.
+- Remove the deprecated and unused Errors.
+- Pass `AsRef<Path>` for paths instead of `&str`.
 
 ## [0.6.2] - 2023-10-19
 ### Fixed

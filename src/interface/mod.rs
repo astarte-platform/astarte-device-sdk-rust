@@ -38,7 +38,8 @@ use std::str::FromStr;
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
-pub use self::error::InterfaceError;
+use self::error::InterfaceError;
+use self::error::InterfaceFileError;
 use self::mapping::vec::Item;
 use self::mapping::InterfaceMapping;
 use self::reference::{MappingRef, ObjectRef, PropertyRef};
@@ -93,10 +94,19 @@ pub struct Interface {
 
 impl Interface {
     /// Instantiate a new `Interface` from a file.
-    pub fn from_file(path: &Path) -> Result<Self, InterfaceError> {
-        let file = fs::read_to_string(path)?;
+    pub fn from_file<P>(path: P) -> Result<Self, InterfaceFileError>
+    where
+        P: AsRef<Path>,
+    {
+        let file = fs::read_to_string(path.as_ref()).map_err(|err| InterfaceFileError::Io {
+            path: path.as_ref().to_path_buf(),
+            backtrace: err,
+        })?;
 
-        Self::from_str(&file)
+        Self::from_str(&file).map_err(|err| InterfaceFileError::Interface {
+            path: path.as_ref().to_path_buf(),
+            backtrace: err,
+        })
     }
 
     /// Returns the interface name.
@@ -195,24 +205,6 @@ impl Interface {
     /// Returns a [`ObjectRef`] if the interface is an object.
     pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
         ObjectRef::new(self)
-    }
-
-    /// Getter function for the interface name.
-    #[deprecated = "Use `interface_name` instead, and manually convert it to `String` if needed"]
-    pub fn get_name(&self) -> String {
-        self.interface_name.clone()
-    }
-
-    #[deprecated = "Renamed to `version_major`"]
-    /// Getter function for the interface major version.
-    pub fn get_version_major(&self) -> i32 {
-        self.version_major()
-    }
-
-    #[deprecated = "Renamed to `version_minor`"]
-    /// Getter function for the interface minor version.
-    pub fn get_version_minor(&self) -> i32 {
-        self.version_minor()
     }
 
     /// Validate if an interface is valid

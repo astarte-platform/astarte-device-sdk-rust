@@ -29,29 +29,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
 
-use crate::{
+use super::{
     crypto::{Bundle, CryptoError},
-    transport::mqtt::MqttConfig,
+    error::MqttError,
+    MqttConfig,
 };
 
-use super::MqttConnectionError;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ApiResponse {
-    data: ResponseContents,
+/// Api response from astarte
+#[derive(Debug, Serialize, Deserialize)]
+struct ApiResponse<C> {
+    data: C,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-enum ResponseContents {
-    AstarteMqttV1Credentials {
-        client_crt: String,
-    },
-    StatusInfo {
-        version: String,
-        status: String,
-        protocols: ProtocolsInfo,
-    },
+/// Response to the pairing request
+#[derive(Debug, Serialize, Deserialize)]
+struct MqttV1Credentials {
+    client_crt: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StatusInfo {
+    version: String,
+    status: String,
+    protocols: ProtocolsInfo,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,15 +73,22 @@ pub enum PairingError {
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
     #[error("error while sending or receiving request")]
-    RequestError(#[from] reqwest::Error),
-    #[error("API response can't be deserialized")]
-    UnexpectedResponse,
-    #[error("API returned an error code")]
-    ApiError(StatusCode, String),
+    Request(#[from] reqwest::Error),
+    #[error("API returned an error code {status}")]
+    Api { status: StatusCode, body: String },
     #[error("crypto error")]
     Crypto(#[from] CryptoError),
-    #[error("configuration error")]
-    ConfigError(String),
+    /// Couldn't configure the TLS store
+    #[error("failed to configure TLS")]
+    Tls(#[from] rustls::Error),
+    /// Couldn't add certificate to the TLS store
+    #[error("failed to add certificate")]
+    Pki(#[from] webpki::Error),
+    /// Couldn't load native certs
+    #[error("couldn't load native certificates")]
+    Native(#[source] std::io::Error),
+    #[error("configuration error, {0}")]
+    Config(&'static str),
 }
 
 async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, PairingError> {
@@ -89,7 +96,7 @@ async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, Pairi
     // We have to do this this way to avoid inconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
-        .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
+        .map_err(|()| ParseError::RelativeUrlWithCannotBeABaseBase)?
         .push("v1")
         .push(&opts.realm)
         .push("devices")
@@ -114,18 +121,17 @@ async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, Pairi
 
     match response.status() {
         StatusCode::CREATED => {
-            if let ResponseContents::AstarteMqttV1Credentials { client_crt } =
-                response.json::<ApiResponse>().await?.data
-            {
-                Ok(client_crt)
-            } else {
-                Err(PairingError::UnexpectedResponse)
-            }
-        }
+            let res: ApiResponse<MqttV1Credentials> = response.json().await?;
 
+            Ok(res.data.client_crt)
+        }
         status_code => {
             let raw_response = response.text().await?;
-            Err(PairingError::ApiError(status_code, raw_response))
+
+            Err(PairingError::Api {
+                status: status_code,
+                body: raw_response,
+            })
         }
     }
 }
@@ -150,23 +156,17 @@ async fn fetch_broker_url(opts: &MqttConfig) -> Result<String, PairingError> {
 
     match response.status() {
         StatusCode::OK => {
-            if let ResponseContents::StatusInfo {
-                protocols:
-                    ProtocolsInfo {
-                        astarte_mqtt_v1: AstarteMqttV1Info { broker_url },
-                    },
-                ..
-            } = response.json::<ApiResponse>().await?.data
-            {
-                Ok(broker_url)
-            } else {
-                Err(PairingError::UnexpectedResponse)
-            }
-        }
+            let res: ApiResponse<StatusInfo> = response.json().await?;
 
+            Ok(res.data.protocols.astarte_mqtt_v1.broker_url)
+        }
         status_code => {
             let raw_response = response.text().await?;
-            Err(PairingError::ApiError(status_code, raw_response))
+
+            Err(PairingError::Api {
+                status: status_code,
+                body: raw_response,
+            })
         }
     }
 }
@@ -197,7 +197,7 @@ fn build_mqtt_opts(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, MqttConnectionError> {
+) -> Result<MqttOptions, PairingError> {
     let MqttConfig {
         realm, device_id, ..
     } = opts;
@@ -205,33 +205,31 @@ fn build_mqtt_opts(
     let client_id = format!("{realm}/{device_id}");
     let host = broker_url
         .host_str()
-        .ok_or_else(|| PairingError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| PairingError::Config("missing host in url"))?;
     let port = broker_url
         .port()
-        .ok_or_else(|| PairingError::ConfigError("bad broker url".into()))?;
+        .ok_or_else(|| PairingError::Config("missing port in url"))?;
 
     let mut root_cert_store = rustls::RootCertStore::empty();
-    for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs") {
+    let native_certs = rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
+    for cert in native_certs {
         root_cert_store.add(&rustls::Certificate(cert.0))?;
     }
 
     let mut tls_client_config = rumqttc::tokio_rustls::rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_root_certificates(root_cert_store)
-        .with_single_cert(certificate, private_key)
-        .map_err(|err| PairingError::ConfigError(format!("cannot setup client auth: {}", err)))?;
+        .with_single_cert(certificate, private_key)?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
     if opts.keepalive.as_secs() < 5 {
-        return Err(MqttConnectionError::Config(
-            "Keepalive should be >= 5 secs".into(),
-        ));
+        return Err(PairingError::Config("Keepalive should be >= 5 secs"));
     }
 
     mqtt_opts.set_keep_alive(opts.keepalive);
 
-    if opts.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
+    if opts.ignore_ssl_errors || is_env_ignore_ssl() {
         struct OkVerifier {}
         impl rustls::client::ServerCertVerifier for OkVerifier {
             fn verify_server_cert(
@@ -263,10 +261,15 @@ fn build_mqtt_opts(
     Ok(mqtt_opts)
 }
 
+fn is_env_ignore_ssl() -> bool {
+    matches!(
+        std::env::var("IGNORE_SSL_ERRORS").as_deref(),
+        Ok("1" | "true")
+    )
+}
+
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(
-    opts: &MqttConfig,
-) -> Result<MqttOptions, MqttConnectionError> {
+pub(crate) async fn get_transport_config(opts: &MqttConfig) -> Result<MqttOptions, MqttError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;

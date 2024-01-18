@@ -42,11 +42,11 @@ harness = false
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
-astarte-message-hub-proto = { workspace = true, optional = true } 
+astarte-message-hub-proto = { workspace = true, optional = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
-bytes = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
+bytes = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 ecdsa = { workspace = true, features = ["sha2"] }
 flate2 = { workspace = true }

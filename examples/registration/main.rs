@@ -40,7 +40,7 @@ async fn main() {
         cfg.device_id
     );
 
-    let credentials_secret = astarte_device_sdk::registration::register_device(
+    let credentials_secret = astarte_device_sdk::transport::mqtt::registration::register_device(
         &cfg.pairing_token,
         &cfg.pairing_url,
         &cfg.realm,
