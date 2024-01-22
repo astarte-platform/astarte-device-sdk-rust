@@ -100,7 +100,7 @@ jobs:
       - name: rustup default stable
         run: rustup default stable
       - name: Check minimal versions
-        run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps --direct
+        run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps=skip-exact --direct
         env:
           RUSTFLAGS: -D warnings
   msrv:
