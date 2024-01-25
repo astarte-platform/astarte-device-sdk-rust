@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use log::debug;
 use openssl::error::ErrorStack;
@@ -34,6 +35,11 @@ use crate::pairing;
 
 use interface::traits::Interface as InterfaceTrait;
 pub use interface::Interface;
+
+/// Default keep alive interval in seconds for the MQTT connection.
+pub const DEFAULT_KEEP_ALIVE: u64 = 30;
+/// Default connection timeout in seconds for the MQTT connection.
+pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 
 /// Astarte options error.
 ///
@@ -79,7 +85,8 @@ pub struct AstarteOptions {
     pub(crate) interfaces: HashMap<String, Interface>,
     pub(crate) database: Option<Arc<dyn AstarteDatabase + Sync + Send>>,
     pub(crate) ignore_ssl_errors: bool,
-    pub(crate) keepalive: std::time::Duration,
+    pub(crate) keepalive: Duration,
+    pub(crate) conn_timeout: Duration,
 }
 
 impl AstarteOptions {
@@ -111,7 +118,8 @@ impl AstarteOptions {
             interfaces: HashMap::new(),
             database: None,
             ignore_ssl_errors: false,
-            keepalive: std::time::Duration::from_secs(30),
+            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
+            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
         }
     }
 
@@ -125,7 +133,7 @@ impl AstarteOptions {
     ///
     /// The MQTT broker will be pinged when no data exchange has appened
     /// for the duration of the keep alive timeout.
-    pub fn keepalive(mut self, duration: std::time::Duration) -> Self {
+    pub fn keepalive(mut self, duration: Duration) -> Self {
         self.keepalive = duration;
 
         self
@@ -166,5 +174,12 @@ impl AstarteOptions {
         }
 
         Ok(self)
+    }
+
+    /// Sets the MQTT connection timeout
+    pub fn connection_timeout(mut self, timeout: Duration) -> Self {
+        self.conn_timeout = timeout;
+
+        self
     }
 }
