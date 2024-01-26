@@ -131,7 +131,7 @@ impl AstarteOptions {
 
     /// Configure the keep alive timeout.
     ///
-    /// The MQTT broker will be pinged when no data exchange has appened
+    /// The MQTT broker will be pinged when no data exchange has happened
     /// for the duration of the keep alive timeout.
     pub fn keepalive(mut self, duration: Duration) -> Self {
         self.keepalive = duration;

@@ -287,7 +287,7 @@ impl Interface {
 
     /// Getter function for the the endpoint paths for each property contained in the interface.
     ///
-    /// Return a vector of touples. Each touple contains the endpoint as a `String` and the
+    /// Return a vector of touples. Each tuple contains the endpoint as a `String` and the
     /// major version of the interface as a `i32`.
     pub fn get_properties_paths(&self) -> Vec<(String, i32)> {
         if let Interface::Properties(iface) = self {

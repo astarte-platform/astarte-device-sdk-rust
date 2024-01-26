@@ -872,12 +872,12 @@ mod test {
             (aggr_intf_name.clone(), aggr_intf),
         ]));
 
-        // Test non existant interface
+        // Test non existent interface
         interfaces
             .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
             .unwrap_err();
 
-        // Test non existant path for property
+        // Test non existent path for property
         interfaces
             .validate_receive(&prop_intf_name, "/gibberish", &Vec::new())
             .unwrap_err();
@@ -906,7 +906,7 @@ mod test {
             .validate_receive(&prop_intf_name, "/boolean_endpoint", &integer_endpoint_data)
             .unwrap_err();
 
-        // Test non existant path for aggregate
+        // Test non existent path for aggregate
         interfaces
             .validate_receive(&aggr_intf_name, "/gibberish", &Vec::new())
             .unwrap_err();
