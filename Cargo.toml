@@ -6,7 +6,7 @@
 
 [package]
 name = "astarte-device-sdk"
-version = "0.5.1"
+version = "0.5.2"
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = "2021"
 homepage = "https://astarte.cloud/"
@@ -20,7 +20,7 @@ description = "A library that provides communication and pairing primitives to a
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-astarte-device-sdk-derive = { version = "=0.5.1", optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = { version = "=0.5.2", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.51"
 base64 = "0.21.0"
 bson = { version = "2.0.0", features = ["chrono-0_4"] }
