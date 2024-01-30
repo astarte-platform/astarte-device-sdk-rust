@@ -30,7 +30,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, panic, process};
 
-use colored::Colorize;
+use http::StatusCode;
+use log::{debug, info};
 use serde_json::Value;
 use tokio::{task, time};
 
@@ -77,7 +78,7 @@ impl TestCfg {
         let credentials_secret =
             env::var("E2E_CREDENTIALS_SECRET").map_err(|msg| msg.to_string())?;
         let api_url = env::var("E2E_API_URL").map_err(|msg| msg.to_string())?;
-        let pairing_url = format!("{api_url}/pairing");
+        let pairing_url = env::var("E2E_PAIRING_URL").map_err(|msg| msg.to_string())?;
 
         let interfaces_fld = env::current_dir()
             .map_err(|msg| msg.to_string())?
@@ -118,17 +119,31 @@ impl TestCfg {
 
 #[tokio::main]
 async fn e2etest_impl() {
+    // Set custom panic hook to exit in case a subprocess panics.
+    let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // invoke the default handler and exit the process
+        orig_hook(panic_info);
+        process::exit(1);
+    }));
+
+    env_logger::init();
+
     let test_cfg = TestCfg::init().expect("Failed configuration initialization");
 
-    let sdk_options = AstarteOptions::new(
+    let mut sdk_options = AstarteOptions::new(
         &test_cfg.realm,
         &test_cfg.device_id,
         &test_cfg.credentials_secret,
         &test_cfg.pairing_url,
     )
     .interface_directory(&test_cfg.interfaces_fld.to_string_lossy())
-    .unwrap()
-    .ignore_ssl_errors();
+    .unwrap();
+
+    // Ignore SSL for local testing
+    if env::var("E2E_IGNORE_SSL").is_ok() {
+        sdk_options = sdk_options.ignore_ssl_errors();
+    }
 
     let mut device = AstarteDeviceSdk::new(&sdk_options).await.unwrap();
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
@@ -163,7 +178,7 @@ async fn e2etest_impl() {
             .await
             .unwrap();
 
-        println!("\nTest datastreams completed successfully");
+        info!("Test datastreams completed successfully");
         process::exit(0);
     });
 
@@ -228,8 +243,7 @@ async fn test_datastream_device_to_server(
     let tx_data = mock_data.get_device_to_server_data_as_astarte();
 
     // Send all the mock test data
-    let msg = "\nSending device owned datastreams from device to server.".cyan();
-    println!("{msg}");
+    debug!("Sending device owned datastreams from device to server.");
     for (key, value) in tx_data.clone() {
         device
             .send(&test_cfg.interface_datastream_do, &format!("/{key}"), value)
@@ -241,7 +255,7 @@ async fn test_datastream_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_datastream_do).await?;
 
     // Check if the sent and received data match
@@ -277,8 +291,7 @@ async fn test_datastream_server_to_device(
     let mock_data = MockDataDatastream::init();
 
     // Send the data using http requests
-    let msg = "\nSending server owned datastreams from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned datastreams from server to device.");
     for (key, value) in mock_data.get_server_to_device_data_as_json() {
         http_post_to_intf(test_cfg, &test_cfg.interface_datastream_so, &key, value).await?;
     }
@@ -287,7 +300,7 @@ async fn test_datastream_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
 
-    println!("{}", "\nChecking data received by the device.".cyan());
+    debug!("Checking data received by the device.");
     let rx_data_rw_acc = rx_data
         .lock()
         .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -318,8 +331,7 @@ async fn test_aggregate_device_to_server(
     let sensor_number: i8 = 45;
 
     // Send all the mock test data
-    let msg = "\nSending device owned aggregate from device to server.".cyan();
-    println!("{msg}");
+    debug!("Sending device owned aggregate from device to server");
     device
         .send_object(
             &test_cfg.interface_aggregate_do,
@@ -332,7 +344,7 @@ async fn test_aggregate_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_aggregate_do).await?;
 
     // Check if the sent and received data match
@@ -369,8 +381,7 @@ async fn test_aggregate_server_to_device(
     let sensor_number: i8 = 11;
 
     // Send the data using http requests
-    let msg = "\nSending server owned aggregate from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned aggregate from server to device.");
     http_post_to_intf(
         test_cfg,
         &test_cfg.interface_aggregate_so,
@@ -382,7 +393,7 @@ async fn test_aggregate_server_to_device(
     time::sleep(Duration::from_secs(1)).await;
 
     // Lock the shared data and check if everything sent has been correctly received
-    println!("{}", "\nChecking data received by the device.".cyan());
+    debug!("Checking data received by the device.");
     let rx_data_rw_acc = rx_data
         .lock()
         .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -414,8 +425,7 @@ async fn test_property_device_to_server(
     let sensor_number = 1;
 
     // Send all the mock test data
-    let msg = "\nSet device owned property (will be also sent to server).".cyan();
-    println!("{msg}");
+    debug!("Set device owned property (will be also sent to server).");
     for (key, value) in tx_data.clone() {
         device
             .send(
@@ -430,7 +440,7 @@ async fn test_property_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     // Check if the sent and received data match
@@ -450,8 +460,7 @@ async fn test_property_device_to_server(
     }
 
     // Unset one specific property
-    let msg = "\nUnset all the device owned property (will be also sent to server).".cyan();
-    println!("{msg}");
+    debug!("Unset all the device owned property (will be also sent to server).");
     for (key, _) in tx_data.clone() {
         device
             .unset(
@@ -465,7 +474,7 @@ async fn test_property_device_to_server(
     time::sleep(Duration::from_secs(1)).await;
 
     // Get the stored data using http requests
-    println!("{}", "\nChecking data stored on the server.".cyan());
+    debug!("Checking data stored on the server.");
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     if http_get_response != "{\"data\":{}}" {
@@ -494,8 +503,7 @@ async fn test_property_server_to_device(
     let sensor_number: i8 = 42;
 
     // Send the data using http requests
-    let msg = "\nSending server owned properties from server to device.".cyan();
-    println!("{msg}");
+    debug!("Sending server owned properties from server to device.");
     for (key, value) in mock_data.get_server_to_device_data_as_json() {
         http_post_to_intf(
             test_cfg,
@@ -510,7 +518,7 @@ async fn test_property_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
     {
-        println!("{}", "\nChecking data received by the device.".cyan());
+        debug!("Checking data received by the device.");
         let rx_data_rw_acc = rx_data
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -526,8 +534,7 @@ async fn test_property_server_to_device(
     }
 
     // Unset all the properties
-    let msg = "\nUnsetting all the server owned properties (will be also sent to device).".cyan();
-    println!("{msg}");
+    debug!("Unsetting all the server owned properties (will be also sent to device).");
     for (key, _) in mock_data.get_server_to_device_data_as_json() {
         http_delete_to_intf(
             test_cfg,
@@ -541,7 +548,7 @@ async fn test_property_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
     {
-        println!("{}", "\nChecking data received by the device.".cyan());
+        debug!("Checking data received by the device.");
         let rx_data_rw_acc = rx_data
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
@@ -553,7 +560,7 @@ async fn test_property_server_to_device(
                 .any(|(_, value)| value != &AstarteType::Unset)
         {
             return Err(format!(
-                "Uncorrect received data. Server data: {rx_data_rw_acc:?}."
+                "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));
         }
     }
@@ -567,10 +574,10 @@ async fn test_property_server_to_device(
 /// - *interface*: interface for which to perform the GET request.
 async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, String> {
     let get_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface
     );
-    println!("Sending HTTP GET request: {get_cmd}");
+    debug!("Sending HTTP GET request: {get_cmd}");
     reqwest::Client::new()
         .get(get_cmd)
         .header(
@@ -599,10 +606,10 @@ async fn http_post_to_intf(
     value_json: String,
 ) -> Result<(), String> {
     let post_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
-    println!("Sending HTTP POST request: {post_cmd} {value_json}");
+    debug!("Sending HTTP POST request: {post_cmd} {value_json}");
     let response = reqwest::Client::new()
         .post(post_cmd)
         .header(
@@ -613,12 +620,15 @@ async fn http_post_to_intf(
         .body(value_json.clone())
         .send()
         .await
-        .map_err(|e| format!("HTTP POST failure: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
-    if response != value_json {
-        println!("Server response: {response}");
+        .map_err(|e| format!("HTTP POST failure: {e}"))?;
+    if response.status() != StatusCode::OK {
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
+        return Err(format!(
+            "Failure in POST command. Server response: {response_text}"
+        ));
     }
     Ok(())
 }
@@ -635,10 +645,10 @@ async fn http_delete_to_intf(
     path: &str,
 ) -> Result<(), String> {
     let post_cmd = format!(
-        "{}/appengine/v1/{}/devices/{}/interfaces/{}/{}",
+        "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
     );
-    println!("Sending HTTP DELETE request: {post_cmd}");
+    debug!("Sending HTTP DELETE request: {post_cmd}");
     let response = reqwest::Client::new()
         .delete(post_cmd)
         .header(
@@ -647,12 +657,15 @@ async fn http_delete_to_intf(
         )
         .send()
         .await
-        .map_err(|e| format!("HTTP POST failure: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
-    if !response.is_empty() {
-        println!("Server response: {response}");
+        .map_err(|e| format!("HTTP DELETE failure: {e}"))?;
+    if response.status() != StatusCode::NO_CONTENT {
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failure in parsing the HTTP DELETE result: {e}"))?;
+        return Err(format!(
+            "Failure in DELETE command. Server response: {response_text}"
+        ));
     }
     Ok(())
 }

@@ -16,15 +16,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: End to End test
-
+name: e2e-test
 on:
-  push:
-  # Run on branch/tag creation
-  create:
-  # Run on pull requests
-  pull_request:
-
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 jobs:
   e2e-test:
     runs-on: ubuntu-latest
@@ -32,8 +33,9 @@ jobs:
       - name: Create Astarte Cluster
         id: astarte
         uses: astarte-platform/astarte-cluster-action@v1
-      - name: Checkout sources
-        uses: actions/checkout@v2
+        with:
+          astarte_version: "1.1.1"
+      - uses: actions/checkout@v4
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/tests/e2etest/interfaces/*.json --non-interactive
@@ -48,13 +50,12 @@ jobs:
           echo "RUST_LOG=debug" >> $GITHUB_ENV
           TOKEN=$(astartectl utils gen-jwt appengine)
           echo "E2E_TOKEN=$TOKEN" >> $GITHUB_ENV
-          echo "E2E_API_URL=https://api.autotest.astarte-platform.org" >> $GITHUB_ENV
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+          echo "E2E_API_URL=https://api.autotest.astarte-platform.org/appengine" >> $GITHUB_ENV
+          echo "E2E_PAIRING_URL=https://api.autotest.astarte-platform.org/pairing" >> $GITHUB_ENV
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: Run test
         run: |
           cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored

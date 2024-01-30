@@ -82,7 +82,7 @@ pub enum PairingError {
 
 pub async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid unconsistent behaviour depending
+    // We have to do this this way to avoid inconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
@@ -128,7 +128,7 @@ pub async fn fetch_credentials(opts: &AstarteOptions, csr: &str) -> Result<Strin
 
 pub async fn fetch_broker_url(opts: &AstarteOptions) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid unconsistent behaviour depending
+    // We have to do this this way to avoid inconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
@@ -228,13 +228,17 @@ fn build_mqtt_opts(
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
-    if options.keepalive.as_secs() < 5 {
-        return Err(AstarteOptionsError::ConfigError(
-            "Keepalive should be >= 5 secs".into(),
-        ));
+    let keep_alive = options.keepalive.as_secs();
+    let conn_timeout = options.conn_timeout.as_secs();
+    if keep_alive <= conn_timeout {
+        return Err(AstarteOptionsError::ConfigError(format!(
+            "Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)"
+        )));
     }
 
-    mqtt_opts.set_keep_alive(options.keepalive);
+    mqtt_opts
+        .set_keep_alive(options.keepalive)
+        .set_connection_timeout(conn_timeout);
 
     if options.ignore_ssl_errors || std::env::var("IGNORE_SSL_ERRORS") == Ok("true".to_string()) {
         struct OkVerifier {}

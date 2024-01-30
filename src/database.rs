@@ -202,15 +202,19 @@ impl AstarteSqliteDatabase {
 
 #[cfg(test)]
 mod test {
+    use tempdir::TempDir;
+
     use crate::database::AstarteDatabase;
     use crate::AstarteDeviceSdk;
     use crate::{database::AstarteSqliteDatabase, database::StoredProp, types::AstarteType};
 
     #[tokio::test]
     async fn test_db() {
-        let db = AstarteSqliteDatabase::new("/tmp/test.sqlite")
-            .await
-            .unwrap();
+        let dir = TempDir::new("test_db").unwrap();
+        let db_path = dir.path().join("test.sqlite");
+        let db_path = db_path.to_string_lossy();
+
+        let db = AstarteSqliteDatabase::new(&db_path).await.unwrap();
 
         let ty = AstarteType::Integer(23);
         let ser = AstarteDeviceSdk::serialize_individual(ty.clone(), None).unwrap();

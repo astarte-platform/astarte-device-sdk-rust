@@ -18,8 +18,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
+use crate::interface::traits::Interface as InterfaceTrait;
 use crate::{interface::traits::Mapping, types::AstarteType, AstarteError, Interface};
 
 #[derive(Clone, Debug)]
@@ -33,15 +34,10 @@ impl Interfaces {
     }
 
     pub fn get_introspection_string(&self) -> String {
-        use crate::interface::traits::Interface;
-
-        let mut introspection: String = self
-            .interfaces
-            .iter()
-            .map(|f| format!("{}:{}:{};", f.0, f.1.version().0, f.1.version().1))
-            .collect();
-        introspection.pop(); // remove last ";"
-        introspection
+        Introspection {
+            interfaces: &self.interfaces,
+        }
+        .to_string()
     }
 
     /// gets mapping from the json description, given the path
@@ -282,6 +278,30 @@ impl Interfaces {
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+}
+
+struct Introspection<'a> {
+    interfaces: &'a HashMap<String, Interface>,
+}
+
+impl<'a> Display for Introspection<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut iter = self.interfaces.iter();
+
+        if let Some((name, interface)) = iter.next() {
+            let (major, minor) = interface.version();
+            write!(f, "{}:{}:{}", name, major, minor)?;
+        } else {
+            return Ok(());
+        }
+
+        for (name, interface) in iter {
+            let (major, minor) = interface.version();
+            write!(f, ";{}:{}:{}", name, major, minor)?;
         }
 
         Ok(())
@@ -852,12 +872,12 @@ mod test {
             (aggr_intf_name.clone(), aggr_intf),
         ]));
 
-        // Test non existant interface
+        // Test non existent interface
         interfaces
             .validate_receive("gibberish", "/boolean_endpoint", &Vec::new())
             .unwrap_err();
 
-        // Test non existant path for property
+        // Test non existent path for property
         interfaces
             .validate_receive(&prop_intf_name, "/gibberish", &Vec::new())
             .unwrap_err();
@@ -886,7 +906,7 @@ mod test {
             .validate_receive(&prop_intf_name, "/boolean_endpoint", &integer_endpoint_data)
             .unwrap_err();
 
-        // Test non existant path for aggregate
+        // Test non existent path for aggregate
         interfaces
             .validate_receive(&aggr_intf_name, "/gibberish", &Vec::new())
             .unwrap_err();
