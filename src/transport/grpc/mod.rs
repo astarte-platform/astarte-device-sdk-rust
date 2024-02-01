@@ -510,11 +510,10 @@ mod test {
     ) -> impl Future<Output = MessageHubClient<tonic::transport::Channel>> {
         async move {
             let channel = loop {
-                let channel_res =
-                    tonic::transport::Endpoint::try_from(dbg!(format!("http://{}", addr)))
-                        .unwrap()
-                        .connect()
-                        .await;
+                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
+                    .unwrap()
+                    .connect()
+                    .await;
 
                 match channel_res {
                     Ok(channel) => break channel,

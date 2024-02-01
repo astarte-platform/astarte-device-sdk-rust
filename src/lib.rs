@@ -18,6 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #![doc = include_str!("../README.md")]
+#![warn(clippy::dbg_macro)]
 
 pub mod aggregate;
 pub mod builder;
