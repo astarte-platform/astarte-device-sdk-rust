@@ -25,6 +25,7 @@
 pub mod device {
     pub use crate::AstarteAggregate;
     pub use crate::Client;
+    pub use crate::ClientDisconnect;
     pub use crate::FromEvent;
 }
 

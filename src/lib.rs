@@ -611,6 +611,7 @@ pub trait Client {
     async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
 }
 
+/// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
 #[async_trait]
 pub trait ClientDisconnect {
     async fn disconnect(self);
