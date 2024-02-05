@@ -41,7 +41,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
@@ -62,7 +62,7 @@ jobs:
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       # Setup vcpkg binary cache
       # https://learn.microsoft.com/en-us/vcpkg/users/binarycaching#gha-quickstart
       - uses: actions/github-script@v6
@@ -89,7 +89,7 @@ jobs:
         with:
           components: llvm-tools-preview
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: cargo install cargo-tarpaulin
         uses: taiki-e/install-action@cargo-tarpaulin
       - name: cargo generate-lockfile
