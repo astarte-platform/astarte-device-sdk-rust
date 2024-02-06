@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 SECO Mind Srl
+# Copyright 2022-2024 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,107 +17,105 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: check
+on:
+  workflow_call:
+  workflow_dispatch:
 permissions:
   contents: read
-on:
-  push:
-    branches:
-      - master
-      - release-*
-  pull_request:
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 jobs:
   fmt:
-    name: Check formatting
     runs-on: ubuntu-latest
+    name: stable / fmt
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v3
-      - name: Install toolchain
+      - uses: actions/checkout@v4
+      - name: Install stable
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check --all
   clippy:
     runs-on: ubuntu-latest
     name: ${{ matrix.toolchain }} / clippy
-    permissions:
-      contents: read
-      checks: write
     strategy:
       fail-fast: false
       matrix:
         toolchain: [stable, beta]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install ${{ matrix.toolchain }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: cargo clippy
-        uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features --workspace -- -D warnings
   doc:
     runs-on: ubuntu-latest
     name: nightly / doc
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: cargo doc
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --no-deps --all-features --workspace
         env:
           RUSTDOCFLAGS: --cfg docsrs -D warnings
   hack:
     runs-on: ubuntu-latest
     name: ubuntu / stable / features
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      # intentionally no target specifier; see https://github.com/jonhoo/rust-ci-conf/pull/4
       - name: cargo hack
-        run: cargo hack --feature-powerset check
+        run: cargo hack --workspace --feature-powerset check
   minimal-versions:
     runs-on: ubuntu-latest
-    name: ubuntu / nightly / minimal-versions
+    name: ubuntu / stable / minimal-versions
     steps:
-      - uses: actions/checkout@v3
-      - name: Install nightly
+      - uses: actions/checkout@v4
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nightly for -Zminimal-versions
         uses: dtolnay/rust-toolchain@nightly
-      - name: cargo install cargo-hack
+      - name: Install cargo hack
         uses: taiki-e/install-action@cargo-hack
-      - name: remove dev-deps
-        run: cargo hack --remove-dev-deps
-      - name: update to minimal deps
-        run: cargo update -Z direct-minimal-versions
-      - name: cargo check
-        run: cargo check --all-features
+      - name: Install cargo minimal-versions
+        uses: taiki-e/install-action@cargo-minimal-versions
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+      - name: rustup default stable
+        run: rustup default stable
+      - name: Check minimal versions
+        run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps --direct
         env:
-          RUSTDOCFLAGS: -D warnings
+          RUSTFLAGS: -D warnings
   msrv:
     runs-on: ubuntu-latest
-    # we use a matrix here just because env can't be used in job names
-    # https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability
     strategy:
       matrix:
         msrv: [1.66.1]
     name: ubuntu / ${{ matrix.msrv }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install ${{ matrix.msrv }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.msrv }}
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo check --all-features
+        run: cargo check --all-features --workspace

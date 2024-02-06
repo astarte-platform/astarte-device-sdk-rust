@@ -24,6 +24,7 @@ use std::fmt::Debug;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use log::debug;
 use pairing::PairingError;
@@ -34,6 +35,11 @@ use crate::interfaces::Interfaces;
 use crate::pairing;
 use crate::store::memory::MemoryStore;
 use crate::store::PropertyStore;
+
+/// Default keep alive interval in seconds for the MQTT connection.
+pub const DEFAULT_KEEP_ALIVE: u64 = 30;
+/// Default connection timeout in seconds for the MQTT connection.
+pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 
 /// Astarte options error.
 ///
@@ -80,7 +86,8 @@ pub struct AstarteOptions<S> {
     pub(crate) interfaces: Interfaces,
     pub(crate) store: S,
     pub(crate) ignore_ssl_errors: bool,
-    pub(crate) keepalive: std::time::Duration,
+    pub(crate) keepalive: Duration,
+    pub(crate) conn_timeout: Duration,
 }
 
 impl<S> Debug for AstarteOptions<S> {
@@ -133,7 +140,8 @@ impl AstarteOptions<MemoryStore> {
             interfaces: Interfaces::new(),
             store: MemoryStore::new(),
             ignore_ssl_errors: false,
-            keepalive: std::time::Duration::from_secs(30),
+            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
+            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
         }
     }
 }
@@ -155,6 +163,7 @@ where
             store,
             ignore_ssl_errors: self.ignore_ssl_errors,
             keepalive: self.keepalive,
+            conn_timeout: self.conn_timeout,
         }
     }
 }
@@ -162,9 +171,9 @@ where
 impl<S> AstarteOptions<S> {
     /// Configure the keep alive timeout.
     ///
-    /// The MQTT broker will be pinged when no data exchange has appened
+    /// The MQTT broker will be pinged when no data exchange has happened
     /// for the duration of the keep alive timeout.
-    pub fn keepalive(mut self, duration: std::time::Duration) -> Self {
+    pub fn keepalive(mut self, duration: Duration) -> Self {
         self.keepalive = duration;
 
         self
@@ -173,6 +182,13 @@ impl<S> AstarteOptions<S> {
     /// Ignore TLS/SSL certificate errors.
     pub fn ignore_ssl_errors(mut self) -> Self {
         self.ignore_ssl_errors = true;
+
+        self
+    }
+
+    /// Sets the MQTT connection timeout.
+    pub fn connection_timeout(mut self, conn_timeout: Duration) -> Self {
+        self.conn_timeout = conn_timeout;
 
         self
     }

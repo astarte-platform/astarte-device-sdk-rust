@@ -30,8 +30,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, panic, process};
 
+use http::StatusCode;
 use log::{debug, info};
-use reqwest::StatusCode;
 use serde_json::Value;
 use tokio::{task, time};
 
@@ -560,7 +560,7 @@ async fn test_property_server_to_device(
                 .any(|(_, value)| value != &AstarteType::Unset)
         {
             return Err(format!(
-                "Uncorrect received data. Server data: {rx_data_rw_acc:?}."
+                "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));
         }
     }
