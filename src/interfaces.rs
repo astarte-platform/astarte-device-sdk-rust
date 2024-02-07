@@ -272,13 +272,13 @@ impl<'a> Display for Introspection<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut iter = self.interfaces.iter();
 
-        if let Some((name, interface)) = iter.next() {
-            let major = interface.version_major();
-            let minor = interface.version_minor();
-            write!(f, "{}:{}:{}", name, major, minor)?;
-        } else {
+        let Some((name, interface)) = iter.next() else {
             return Ok(());
-        }
+        };
+
+        let major = interface.version_major();
+        let minor = interface.version_minor();
+        write!(f, "{}:{}:{}", name, major, minor)?;
 
         for (name, interface) in iter {
             let major = interface.version_major();
