@@ -35,6 +35,7 @@ use std::{
     fmt::{Debug, Display},
     ops::Deref,
     sync::Arc,
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -570,7 +571,7 @@ pub struct MqttConfig {
     pub(crate) credentials_secret: String,
     pub(crate) pairing_url: String,
     pub(crate) ignore_ssl_errors: bool,
-    pub(crate) keepalive: std::time::Duration,
+    pub(crate) keepalive: Duration,
     pub(crate) bounded_channel_size: usize,
 }
 
@@ -593,17 +594,22 @@ impl MqttConfig {
     ///     let pairing_url = "astarte_cluster_pairing_url";
     ///
     ///     let mut mqtt_options =
-    ///         MqttConfig::new(&realm, &device_id, &credentials_secret, &pairing_url);
+    ///         MqttConfig::new(realm, device_id, credentials_secret, pairing_url);
     /// }
     /// ```
-    pub fn new(realm: &str, device_id: &str, credentials_secret: &str, pairing_url: &str) -> Self {
+    pub fn new(
+        realm: impl Into<String>,
+        device_id: impl Into<String>,
+        credentials_secret: impl Into<String>,
+        pairing_url: impl Into<String>,
+    ) -> Self {
         Self {
-            realm: realm.to_owned(),
-            device_id: device_id.to_owned(),
-            credentials_secret: credentials_secret.to_owned(),
-            pairing_url: pairing_url.to_owned(),
+            realm: realm.into(),
+            device_id: device_id.into(),
+            credentials_secret: credentials_secret.into(),
+            pairing_url: pairing_url.into(),
             ignore_ssl_errors: false,
-            keepalive: std::time::Duration::from_secs(30),
+            keepalive: Duration::from_secs(30),
             bounded_channel_size: DEFAULT_CHANNEL_SIZE,
         }
     }
@@ -612,7 +618,7 @@ impl MqttConfig {
     ///
     /// The MQTT broker will be pinged when no data exchange has append
     /// for the duration of the keep alive timeout.
-    pub fn keepalive(&mut self, duration: std::time::Duration) -> &mut Self {
+    pub fn keepalive(&mut self, duration: Duration) -> &mut Self {
         self.keepalive = duration;
 
         self
