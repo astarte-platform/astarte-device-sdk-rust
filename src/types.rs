@@ -785,7 +785,7 @@ mod test {
     fn test_empty_array() {
         let astarte_type_double = AstarteType::DoubleArray(vec![]);
 
-        let bson: Bson = astarte_type_double.try_into().expect("Failed to convert");
+        let bson: Bson = astarte_type_double.into();
 
         assert_eq!(bson, Bson::Array(vec![]));
 

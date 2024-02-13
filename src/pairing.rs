@@ -23,7 +23,7 @@
 use std::sync::Arc;
 
 use reqwest::{StatusCode, Url};
-use rumqttc::MqttOptions;
+use rumqttc::{MqttOptions, NetworkOptions};
 use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -84,7 +84,7 @@ pub enum PairingError {
 
 async fn fetch_credentials<S>(opts: &AstarteOptions<S>, csr: &str) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid unconsistent behaviour depending
+    // We have to do this this way to avoid inconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
@@ -130,7 +130,7 @@ async fn fetch_credentials<S>(opts: &AstarteOptions<S>, csr: &str) -> Result<Str
 
 async fn fetch_broker_url<S>(opts: &AstarteOptions<S>) -> Result<String, PairingError> {
     let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid unconsistent behaviour depending
+    // We have to do this this way to avoid inconsistent behaviour depending
     // on the user putting the trailing slash or not
     url.path_segments_mut()
         .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
@@ -195,7 +195,7 @@ fn build_mqtt_opts<S>(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, OptionsError> {
+) -> Result<(MqttOptions, NetworkOptions), OptionsError> {
     let AstarteOptions {
         realm, device_id, ..
     } = options;
@@ -221,11 +221,16 @@ fn build_mqtt_opts<S>(
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
-    if options.keepalive.as_secs() < 5 {
-        return Err(OptionsError::ConfigError(
-            "Keepalive should be >= 5 secs".into(),
-        ));
+    let keep_alive = options.keepalive.as_secs();
+    let conn_timeout = options.conn_timeout.as_secs();
+    if keep_alive <= conn_timeout {
+        return Err(OptionsError::ConfigError(format!(
+            "Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)"
+        )));
     }
+
+    let mut net_opts = NetworkOptions::new();
+    net_opts.set_connection_timeout(conn_timeout);
 
     mqtt_opts.set_keep_alive(options.keepalive);
 
@@ -258,18 +263,16 @@ fn build_mqtt_opts<S>(
         ));
     }
 
-    Ok(mqtt_opts)
+    Ok((mqtt_opts, net_opts))
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
 pub(crate) async fn get_transport_config<S>(
     opts: &AstarteOptions<S>,
-) -> Result<MqttOptions, OptionsError> {
+) -> Result<(MqttOptions, NetworkOptions), OptionsError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;
 
-    let mqtt_opts = build_mqtt_opts(opts, certificate, private_key, &broker_url)?;
-
-    Ok(mqtt_opts)
+    build_mqtt_opts(opts, certificate, private_key, &broker_url)
 }

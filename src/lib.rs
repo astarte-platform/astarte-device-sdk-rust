@@ -196,11 +196,13 @@ where
     /// }
     /// ```
     pub async fn new(opts: AstarteOptions<S>) -> Result<AstarteDeviceSdk<S>, Error> {
-        let mqtt_options = pairing::get_transport_config(&opts).await?;
+        let (mqtt_options, net_opts) = pairing::get_transport_config(&opts).await?;
 
-        debug!("{:#?}", mqtt_options);
+        debug!("{:?}", mqtt_options);
 
-        let (client, eventloop) = AsyncClient::new(mqtt_options, 50);
+        let (client, mut eventloop) = AsyncClient::new(mqtt_options, 50);
+
+        eventloop.set_network_options(net_opts);
 
         let mut device = AstarteDeviceSdk {
             realm: opts.realm,
