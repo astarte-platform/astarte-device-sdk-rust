@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Changed
 - `MqttConfig` now receives `Into<String>` instead of `&str`
 
+## [0.6.3] - 2024-02-13
+
+## [0.5.2] - 2024-01-30
+### Added
+- Expose the MQTT connection timeout option.
+
+
 ## [0.7.0] - 2024-01-22
 ### Added
 - Handle MQTT connection errors by trying to reconnect.

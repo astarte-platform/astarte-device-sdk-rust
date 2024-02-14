@@ -77,6 +77,11 @@ pub use self::payload::PayloadError;
 
 use payload::Payload;
 
+/// Default keep alive interval in seconds for the MQTT connection.
+pub const DEFAULT_KEEP_ALIVE: u64 = 30;
+/// Default connection timeout in seconds for the MQTT connection.
+pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
+
 /// Borrowing wrapper for the client id
 ///
 /// To avoid directly allocating and returning a [`String`] each time
@@ -572,6 +577,7 @@ pub struct MqttConfig {
     pub(crate) pairing_url: String,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: Duration,
+    pub(crate) conn_timeout: Duration,
     pub(crate) bounded_channel_size: usize,
 }
 
@@ -609,7 +615,8 @@ impl MqttConfig {
             credentials_secret: credentials_secret.into(),
             pairing_url: pairing_url.into(),
             ignore_ssl_errors: false,
-            keepalive: Duration::from_secs(30),
+            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
+            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
             bounded_channel_size: DEFAULT_CHANNEL_SIZE,
         }
     }
@@ -627,6 +634,13 @@ impl MqttConfig {
     /// Ignore TLS/SSL certificate errors.
     pub fn ignore_ssl_errors(&mut self) -> &mut Self {
         self.ignore_ssl_errors = true;
+
+        self
+    }
+
+    /// Sets the MQTT connection timeout.
+    pub fn connection_timeout(&mut self, conn_timeout: Duration) -> &mut Self {
+        self.conn_timeout = conn_timeout;
 
         self
     }
@@ -662,11 +676,15 @@ impl ConnectionConfig for MqttConfig {
         S: PropertyStore,
         C: Send + Sync,
     {
-        let mqtt_options = pairing::get_transport_config(&self).await?;
+        let (mqtt_opts, net_opts) = pairing::get_transport_config(&self)
+            .await
+            .map_err(MqttError::Pairing)?;
 
-        debug!("{:#?}", mqtt_options);
+        debug!("{:?}", mqtt_opts);
 
-        let (client, eventloop) = AsyncClient::new(mqtt_options, self.bounded_channel_size);
+        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, self.bounded_channel_size);
+
+        eventloop.set_network_options(net_opts);
 
         let session_data =
             SessionData::try_from_unlocked(&builder.interfaces, &builder.store).await?;

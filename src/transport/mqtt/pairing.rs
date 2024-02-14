@@ -23,7 +23,7 @@
 use std::sync::Arc;
 
 use reqwest::{StatusCode, Url};
-use rumqttc::MqttOptions;
+use rumqttc::{MqttOptions, NetworkOptions};
 use rustls::{Certificate, PrivateKey};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,7 +31,6 @@ use url::ParseError;
 
 use super::{
     crypto::{Bundle, CryptoError},
-    error::MqttError,
     MqttConfig,
 };
 
@@ -88,7 +87,7 @@ pub enum PairingError {
     #[error("couldn't load native certificates")]
     Native(#[source] std::io::Error),
     #[error("configuration error, {0}")]
-    Config(&'static str),
+    Config(String),
 }
 
 async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, PairingError> {
@@ -197,7 +196,7 @@ fn build_mqtt_opts(
     certificate: Vec<Certificate>,
     private_key: PrivateKey,
     broker_url: &Url,
-) -> Result<MqttOptions, PairingError> {
+) -> Result<(MqttOptions, NetworkOptions), PairingError> {
     let MqttConfig {
         realm, device_id, ..
     } = opts;
@@ -205,10 +204,10 @@ fn build_mqtt_opts(
     let client_id = format!("{realm}/{device_id}");
     let host = broker_url
         .host_str()
-        .ok_or_else(|| PairingError::Config("missing host in url"))?;
+        .ok_or_else(|| PairingError::Config("missing host in url".to_string()))?;
     let port = broker_url
         .port()
-        .ok_or_else(|| PairingError::Config("missing port in url"))?;
+        .ok_or_else(|| PairingError::Config("missing port in url".to_string()))?;
 
     let mut root_cert_store = rustls::RootCertStore::empty();
     let native_certs = rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
@@ -223,9 +222,16 @@ fn build_mqtt_opts(
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
-    if opts.keepalive.as_secs() < 5 {
-        return Err(PairingError::Config("Keepalive should be >= 5 secs"));
+    let keep_alive = opts.keepalive.as_secs();
+    let conn_timeout = opts.conn_timeout.as_secs();
+    if keep_alive <= conn_timeout {
+        return Err(PairingError::Config(
+            format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
+        ));
     }
+
+    let mut net_opts = NetworkOptions::new();
+    net_opts.set_connection_timeout(conn_timeout);
 
     mqtt_opts.set_keep_alive(opts.keepalive);
 
@@ -258,7 +264,7 @@ fn build_mqtt_opts(
         ));
     }
 
-    Ok(mqtt_opts)
+    Ok((mqtt_opts, net_opts))
 }
 
 fn is_env_ignore_ssl() -> bool {
@@ -269,12 +275,12 @@ fn is_env_ignore_ssl() -> bool {
 }
 
 /// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(opts: &MqttConfig) -> Result<MqttOptions, MqttError> {
+pub(crate) async fn get_transport_config(
+    opts: &MqttConfig,
+) -> Result<(MqttOptions, NetworkOptions), PairingError> {
     let (certificate, private_key) = populate_credentials(opts).await?;
 
     let broker_url = populate_broker_url(opts).await?;
 
-    let mqtt_opts = build_mqtt_opts(opts, certificate, private_key, &broker_url)?;
-
-    Ok(mqtt_opts)
+    build_mqtt_opts(opts, certificate, private_key, &broker_url)
 }

@@ -18,9 +18,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    fmt::Display,
+};
 
-use itertools::Itertools;
 use log::debug;
 
 use crate::{
@@ -86,17 +88,10 @@ impl Interfaces {
     }
 
     pub(crate) fn get_introspection_string(&self) -> String {
-        self.interfaces
-            .iter()
-            .map(|(name, interface)| {
-                format!(
-                    "{}:{}:{}",
-                    name,
-                    interface.version_major(),
-                    interface.version_minor()
-                )
-            })
-            .join(";")
+        Introspection {
+            interfaces: &self.interfaces,
+        }
+        .to_string()
     }
 
     pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
@@ -176,6 +171,32 @@ impl FromIterator<Interface> for Interfaces {
                 .map(|i| (i.interface_name().to_string(), i))
                 .collect(),
         }
+    }
+}
+
+struct Introspection<'a> {
+    interfaces: &'a HashMap<String, Interface>,
+}
+
+impl<'a> Display for Introspection<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut iter = self.interfaces.iter();
+
+        let Some((name, interface)) = iter.next() else {
+            return Ok(());
+        };
+
+        let major = interface.version_major();
+        let minor = interface.version_minor();
+        write!(f, "{}:{}:{}", name, major, minor)?;
+
+        for (name, interface) in iter {
+            let major = interface.version_major();
+            let minor = interface.version_minor();
+            write!(f, ";{}:{}:{}", name, major, minor)?;
+        }
+
+        Ok(())
     }
 }
 
