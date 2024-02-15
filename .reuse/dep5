@@ -14,10 +14,6 @@ Files: migrations/*
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: sqlx-data.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
 Files: examples/registration/interfaces/*
 Copyright: SECO Mind Srl
 License: CC0-1.0
@@ -55,10 +51,6 @@ Copyright: SECO Mind Srl
 License: CC0-1.0
 
 Files: Cargo.lock
-Copyright: 2023 SECO Mind Srl
-License: CC0-1.0
-
-Files: astarte-device-sdk-derive/Cargo.lock
 Copyright: 2023 SECO Mind Srl
 License: CC0-1.0
 

@@ -612,7 +612,7 @@ pub trait Client {
 }
 
 #[async_trait]
-trait ClientDisconnect {
+pub trait ClientDisconnect {
     async fn disconnect(self);
 }
 
