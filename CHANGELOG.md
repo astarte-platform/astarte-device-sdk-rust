@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 ## Changed
 - `MqttConfig` now receives `Into<String>` instead of `&str`
+- Bump MSRV to 1.72.0.
 
 ## [0.6.3] - 2024-02-13
 

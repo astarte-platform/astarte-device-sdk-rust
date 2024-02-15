@@ -31,7 +31,7 @@ edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.66.1"
+rust-version = "1.72.0"
 version = "0.7.0"
 exclude = [".github"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
