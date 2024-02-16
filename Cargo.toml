@@ -26,15 +26,16 @@ members = [
   "e2e-test",
 ]
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [workspace.package]
+version = "0.7.1"
 edition = "2021"
+exclude = [".github"]
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
 rust-version = "1.72.0"
-version = "0.7.0"
-exclude = [".github"]
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bench]]
 name = "benchmark"
@@ -88,7 +89,7 @@ openssl = ["dep:openssl"]
 message-hub = ["dep:astarte-message-hub-proto"]
 
 [workspace.dependencies]
-astarte-device-sdk-derive = { version = "=0.7.0", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = { version = "=0.7.1", path = "./astarte-device-sdk-derive" }
 astarte-message-hub-proto = "0.6.1"
 async-trait = "0.1.43"
 base64 = "0.21.0"
