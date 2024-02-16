@@ -4,7 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.1] - 2024-02-16
+## Changed
+- `MqttConfig` now receives `Into<String>` instead of `&str`
+- Bump MSRV to 1.72.0.
+
+## [0.6.3] - 2024-02-13
+
+## [0.5.2] - 2024-01-30
+### Added
+- Expose the MQTT connection timeout option.
+
+
+## [0.7.0] - 2024-01-22
 ### Added
 - Handle MQTT connection errors by trying to reconnect.
 - Make the reconnection attempt wait with an exponential back-off.

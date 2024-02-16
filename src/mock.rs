@@ -19,7 +19,7 @@
 //! Mocks for the Astarte Device SDK.
 
 use mockall::mock;
-use rumqttc::{ClientError, ConnectionError, Event, MqttOptions, QoS};
+use rumqttc::{ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, QoS};
 
 mock!(
     pub AsyncClient {
@@ -36,5 +36,6 @@ mock!(
 mock! {
     pub EventLoop{
         pub async fn poll(&mut self) -> Result<Event, ConnectionError>;
+        pub fn set_network_options(&mut self, network_options: NetworkOptions) -> &mut Self;
     }
 }
