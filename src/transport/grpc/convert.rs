@@ -34,7 +34,7 @@ use crate::{
     Timestamp,
 };
 
-use super::GrpcTransportError;
+use super::GrpcError;
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
@@ -249,7 +249,7 @@ impl TryFrom<astarte_message_hub_proto::types::InterfaceJson> for crate::Interfa
     ) -> Result<Self, Self::Error> {
         let interface_str = std::str::from_utf8(&interface.0)
             .map_err(MessageHubProtoError::from)
-            .map_err(GrpcTransportError::from)?;
+            .map_err(GrpcError::from)?;
 
         crate::Interface::from_str(interface_str).map_err(Self::Error::Interface)
     }

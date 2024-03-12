@@ -37,6 +37,7 @@ use astarte_message_hub_proto::{
     astarte_message::Payload, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
 };
 use async_trait::async_trait;
+use itertools::Itertools;
 use log::trace;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -62,7 +63,7 @@ use self::convert::{map_values_to_astarte_type, MessageHubProtoError};
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
-pub enum GrpcTransportError {
+pub enum GrpcError {
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
     #[error("Status error {0}")]
@@ -144,18 +145,18 @@ impl Grpc {
     async fn attach(
         client: &mut MessageHubClientWithInterceptor,
         data: NodeData,
-    ) -> Result<tonic::codec::Streaming<AstarteMessage>, GrpcTransportError> {
+    ) -> Result<tonic::codec::Streaming<AstarteMessage>, GrpcError> {
         client
             .attach(tonic::Request::new(data.node))
             .await
             .map(|r| r.into_inner())
-            .map_err(GrpcTransportError::from)
+            .map_err(GrpcError::from)
     }
 
     async fn detach(
         mut client: MessageHubClientWithInterceptor,
         uuid: &Uuid,
-    ) -> Result<(), GrpcTransportError> {
+    ) -> Result<(), GrpcError> {
         // During the detach phase only the uuid is needed we can pass an empty array
         // as the interface_json since the interfaces are already known to the message hub
         // this api will change in the future
@@ -163,10 +164,10 @@ impl Grpc {
             .detach(Node::new(uuid, &Vec::<Vec<u8>>::new()))
             .await
             .map(|_| ())
-            .map_err(GrpcTransportError::from)
+            .map_err(GrpcError::from)
     }
 
-    async fn reattach(&self, data: NodeData) -> Result<(), GrpcTransportError> {
+    async fn reattach(&self, data: NodeData) -> Result<(), GrpcError> {
         // the lock on stream is actually intended since we are detaching and re-attaching
         // we want to make sure no one uses the stream while the client is detached
         let mut stream = self.stream.lock().await;
@@ -198,11 +199,11 @@ impl Publish for Grpc {
             .lock()
             .await
             .send(tonic::Request::new(
-                data.try_into().map_err(GrpcTransportError::from)?,
+                data.try_into().map_err(GrpcError::from)?,
             ))
             .await
             .map(|_| ())
-            .map_err(|e| GrpcTransportError::from(e).into())
+            .map_err(|e| GrpcError::from(e).into())
     }
 
     async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error> {
@@ -210,11 +211,11 @@ impl Publish for Grpc {
             .lock()
             .await
             .send(tonic::Request::new(
-                data.try_into().map_err(GrpcTransportError::from)?,
+                data.try_into().map_err(GrpcError::from)?,
             ))
             .await
             .map(|_| ())
-            .map_err(|e| GrpcTransportError::from(e).into())
+            .map_err(|e| GrpcError::from(e).into())
     }
 }
 
@@ -241,20 +242,22 @@ impl Receive for Grpc {
             match self.next_message().await {
                 Ok(Some(message)) => {
                     let event: ReceivedEvent<Self::Payload> =
-                        message.try_into().map_err(GrpcTransportError::from)?;
+                        message.try_into().map_err(GrpcError::from)?;
 
                     return Ok(event);
                 }
                 Err(s)
                     if s.code() != tonic::Code::Unavailable && s.code() != tonic::Code::Unknown =>
                 {
-                    return Err(GrpcTransportError::from(s).into());
+                    return Err(GrpcError::from(s).into());
                 }
                 Ok(None) | Err(_) => {
                     // try reattaching
 
-                    let data =
-                        NodeData::try_from_unlocked(self.uuid, &*device.interfaces.read().await)?;
+                    let data = {
+                        let interfaces = device.interfaces.read().await;
+                        NodeData::try_from_interfaces(&self.uuid, &interfaces)?
+                    };
 
                     let mut stream = self.stream.lock().await;
                     let mut client = self.client.lock().await;
@@ -282,11 +285,11 @@ impl Receive for Grpc {
         trace!("unset received");
         let individual = data
             .take_individual()
-            .ok_or(GrpcTransportError::DeserializationExpectedIndividual)?;
+            .ok_or(GrpcError::DeserializationExpectedIndividual)?;
 
         let data: AstarteType = individual
             .try_into()
-            .map_err(GrpcTransportError::MessageHubProtoConversion)?;
+            .map_err(GrpcError::MessageHubProtoConversion)?;
 
         trace!("received {}", data.display_type());
 
@@ -303,10 +306,10 @@ impl Receive for Grpc {
             .data
             .take_data()
             .and_then(|d| d.take_object())
-            .ok_or(GrpcTransportError::DeserializationExpectedObject)?;
+            .ok_or(GrpcError::DeserializationExpectedObject)?;
 
         let data = map_values_to_astarte_type(object.object_data)
-            .map_err(GrpcTransportError::MessageHubProtoConversion)?;
+            .map_err(GrpcError::MessageHubProtoConversion)?;
 
         trace!("object received");
 
@@ -324,7 +327,7 @@ impl Register for Grpc {
     where
         S: PropertyStore,
     {
-        let data = NodeData::try_from_unlocked(self.uuid, &*device.interfaces.read().await)?;
+        let data = NodeData::try_from_interfaces(&self.uuid, &*device.interfaces.read().await)?;
 
         self.reattach(data).await.map_err(crate::Error::from)
     }
@@ -334,7 +337,19 @@ impl Register for Grpc {
         interfaces: &Interfaces,
         _removed_interface: Interface,
     ) -> Result<(), crate::Error> {
-        let data = NodeData::try_from_unlocked(self.uuid, interfaces)?;
+        let data = NodeData::try_from_interfaces(&self.uuid, interfaces)?;
+
+        self.reattach(data).await.map_err(crate::Error::from)
+    }
+
+    async fn extend_interfaces(
+        &self,
+        interfaces: &Interfaces,
+        added: &HashMap<String, Interface>,
+    ) -> Result<(), crate::Error> {
+        let iter = interfaces.iter_with_added(added);
+
+        let data = NodeData::try_from_iter(&self.uuid, iter)?;
 
         self.reattach(data).await.map_err(crate::Error::from)
     }
@@ -347,7 +362,7 @@ impl Disconnect for Grpc {
             client,
             stream: _stream,
             uuid,
-        } = Arc::into_inner(self.shared).ok_or(GrpcTransportError::GracefulClose)?;
+        } = Arc::into_inner(self.shared).ok_or(GrpcError::GracefulClose)?;
 
         let client = client.into_inner();
 
@@ -384,7 +399,7 @@ impl GrpcConfig {
 #[async_trait]
 impl ConnectionConfig for GrpcConfig {
     type Con = Grpc;
-    type Err = GrpcTransportError;
+    type Err = GrpcError;
 
     async fn connect<S, C>(self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
     where
@@ -399,7 +414,7 @@ impl ConnectionConfig for GrpcConfig {
 
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from_unlocked(self.uuid, &builder.interfaces)?;
+        let node_data = NodeData::try_from_interfaces(&self.uuid, &builder.interfaces)?;
         let stream = Grpc::attach(&mut client, node_data).await?;
 
         Ok(Grpc::new(client, stream, self.uuid))
@@ -412,15 +427,25 @@ struct NodeData {
 }
 
 impl NodeData {
-    fn try_from_unlocked(uuid: Uuid, interfaces: &Interfaces) -> Result<Self, GrpcTransportError> {
-        let interfaces_defs: Vec<Vec<u8>> = interfaces
-            .iter_interfaces()
-            .map(|i| serde_json::to_string(i).map(|s| s.into_bytes()))
-            .collect::<Result<_, serde_json::Error>>()?;
+    fn try_from_iter<'a, I>(uuid: &Uuid, interfaces: I) -> Result<Self, GrpcError>
+    where
+        I: IntoIterator<Item = &'a Interface>,
+    {
+        let interface_jsons = interfaces
+            .into_iter()
+            .map(serde_json::to_vec)
+            .try_collect()?;
 
         Ok(Self {
-            node: Node::new(uuid, &interfaces_defs),
+            node: Node {
+                uuid: uuid.to_string(),
+                interface_jsons,
+            },
         })
+    }
+
+    fn try_from_interfaces(uuid: &Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
+        Self::try_from_iter(uuid, interfaces.iter())
     }
 }
 
@@ -449,6 +474,16 @@ mod test {
         Attach(Node),
         Send(AstarteMessage),
         Detach(Node),
+    }
+
+    impl ServerReceivedRequest {
+        fn as_attach(&self) -> Option<&Node> {
+            if let Self::Attach(v) = self {
+                Some(v)
+            } else {
+                None
+            }
+        }
     }
 
     type ServerSenderValuesVec = Vec<Result<AstarteMessage, tonic::Status>>;
@@ -585,7 +620,7 @@ mod test {
         mut message_hub_client: MessageHubClientWithInterceptor,
         interfaces: &Interfaces,
     ) -> Result<Grpc, Box<dyn std::error::Error>> {
-        let node_data = NodeData::try_from_unlocked(ID, interfaces)?;
+        let node_data = NodeData::try_from_interfaces(&ID, interfaces)?;
         let stream = Grpc::attach(&mut message_hub_client, node_data).await?;
 
         Ok(Grpc::new(message_hub_client, stream, ID))
@@ -729,7 +764,7 @@ mod test {
             // poll the three messages the first two received errors will simply reconnect without returning
             assert!(matches!(
                 connection.next_event(&mock_shared_device).await,
-                Err(error::Error::Grpc(GrpcTransportError::Status(_)))
+                Err(error::Error::Grpc(GrpcError::Status(_)))
             ));
 
             // manually calling detach
@@ -1072,5 +1107,75 @@ mod test {
                 && path == exp_path
                 && data == proto_payload
         );
+    }
+
+    #[tokio::test]
+    async fn should_extend_interfaces() {
+        let (server_impl, mut channels) = build_test_message_hub_server();
+        let (server_future, client_future) = mock_grpc_actors(server_impl)
+            .await
+            .expect("Could not construct test client and server");
+
+        // no messages are read as responses by the server so we pass an empty vec
+        channels.server_response_sender.send(vec![]).await.unwrap();
+        channels.server_response_sender.send(vec![]).await.unwrap();
+
+        let itfs: HashMap<String, Interface> = [
+            Interface::from_str(include_str!(
+                "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+            ))
+            .unwrap(),
+            Interface::from_str(include_str!(
+                "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerProperty.json"
+            ))
+            .unwrap(),
+        ]
+        .into_iter()
+        .map(|i| (i.interface_name().to_string(), i))
+        .collect();
+
+        let interfaces = Interfaces::new();
+
+        let i_cl = itfs.clone();
+        let client_operations = async move {
+            let client = client_future.await;
+            // When the grpc connection gets created the attach methods is called
+            let connection = mock_astarte_grpc_client(client, &Interfaces::new())
+                .await
+                .unwrap();
+
+            // manually calling detach
+            connection
+                .extend_interfaces(&interfaces, &i_cl)
+                .await
+                .unwrap();
+        };
+
+        tokio::select! {
+            _ = server_future => panic!("The server closed before the client could complete sending the data"),
+            _ = client_operations => println!("Client sent its data"),
+        }
+
+        expect_messages!(channels.server_request_receiver.try_recv();
+            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Detach(a) if a.uuid == ID.to_string()
+        );
+
+        let recv = channels.server_request_receiver.try_recv().unwrap();
+        let recv = recv.as_attach().unwrap();
+
+        let id = Uuid::parse_str(&recv.uuid).unwrap();
+        assert_eq!(id, ID);
+
+        let interfaces: HashMap<String, Interface> = recv
+            .interface_jsons
+            .iter()
+            .map(|i| {
+                serde_json::from_slice(i).map(|i: Interface| (i.interface_name().to_string(), i))
+            })
+            .try_collect()
+            .unwrap();
+
+        assert_eq!(interfaces, itfs);
     }
 }

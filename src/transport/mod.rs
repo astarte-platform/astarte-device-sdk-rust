@@ -117,6 +117,17 @@ pub(crate) trait Register {
         interfaces: &Interfaces,
         removed_interface: Interface,
     ) -> Result<(), crate::Error>;
+
+    /// Called when multiple interfaces are added.
+    ///
+    /// This method should convey to the server that one or more interfaces have been added.
+    ///
+    /// The added interfaces are still not present in the [`Interfaces`]
+    async fn extend_interfaces(
+        &self,
+        interfaces: &Interfaces,
+        added_interface: &HashMap<String, Interface>,
+    ) -> Result<(), crate::Error>;
 }
 
 #[async_trait]

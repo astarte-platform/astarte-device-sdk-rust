@@ -297,6 +297,16 @@ pub enum Ownership {
     Server,
 }
 
+impl Ownership {
+    /// Returns `true` if the ownership is [`Server`].
+    ///
+    /// [`Server`]: Ownership::Server
+    #[must_use]
+    pub fn is_server(&self) -> bool {
+        matches!(self, Self::Server)
+    }
+}
+
 impl Display for Ownership {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

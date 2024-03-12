@@ -597,6 +597,11 @@ pub trait Client {
     /// Add a new [`Interface`] to the device interfaces.
     async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
 
+    /// Add one ore more [`Interface`] to the device introspection.
+    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = Interface> + Send;
+
     /// Add a new interface from the provided file.
     async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
     where
@@ -728,6 +733,24 @@ where
         self.connection
             .add_interface(&self.shared, &interface_name)
             .await
+    }
+
+    async fn extend_interfaces<I>(&self, added: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = Interface> + Send,
+    {
+        // Lock for writing for the whole scope, even the checks
+        let mut interfaces = self.interfaces.write().await;
+
+        let to_add = interfaces.validate_many(added)?;
+
+        self.connection
+            .extend_interfaces(&interfaces, &to_add)
+            .await?;
+
+        interfaces.extend(to_add);
+
+        Ok(())
     }
 
     async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>

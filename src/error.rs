@@ -86,5 +86,5 @@ pub enum Error {
     /// Error returned by the GRpc transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]
-    Grpc(#[from] crate::transport::grpc::GrpcTransportError),
+    Grpc(#[from] crate::transport::grpc::GrpcError),
 }
