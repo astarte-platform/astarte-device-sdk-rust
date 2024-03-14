@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 SECO Mind Srl
+# Copyright 2022-2024 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -100,14 +100,14 @@ jobs:
       - name: rustup default stable
         run: rustup default stable
       - name: Check minimal versions
-        run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps --direct
+        run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps=skip-exact --direct
         env:
           RUSTFLAGS: -D warnings
   msrv:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        msrv: [1.66.1]
+        msrv: [1.72.0]
     name: ubuntu / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v4
