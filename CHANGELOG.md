@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Introduce Node ID into gRPC metadata.
+- Add one or more interfaces at once with `extend_interfaces`
+  [#293](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/293)
 
 ## [0.7.2] - 2024-03-21
 ### Fixed
