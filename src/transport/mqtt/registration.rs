@@ -99,8 +99,6 @@ pub fn generate_uuid(namespace: uuid::Uuid, unique_data: &str) -> String {
 mod test {
     use super::*;
 
-    use super::generate_uuid;
-
     #[test]
     fn test_uuid() {
         let uuid = uuid::Uuid::parse_str("f79ad91f-c638-4889-ae74-9d001a3b4cf8").unwrap();

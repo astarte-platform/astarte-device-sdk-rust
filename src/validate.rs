@@ -236,9 +236,9 @@ impl<'a> ValidatedObject<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr};
+    use std::str::FromStr;
 
-    use crate::{interfaces::tests::DEVICE_OBJECT, mapping, types::AstarteType};
+    use crate::{interfaces::tests::DEVICE_OBJECT, mapping};
 
     use super::*;
 

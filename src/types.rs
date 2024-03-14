@@ -20,8 +20,6 @@
 //! Provides Astarte specific types to be used by the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receive data to/from the Astarte cluster.
 
-use std::convert::TryFrom;
-
 use bson::{Binary, Bson};
 use log::debug;
 use serde::Serialize;
@@ -517,13 +515,8 @@ impl TryFrom<BsonConverter> for AstarteType {
 
 #[cfg(test)]
 mod test {
-    use std::convert::TryFrom;
-    use std::convert::TryInto;
-
-    use chrono::{DateTime, TimeZone, Utc};
-
-    use crate::interface::MappingType;
     use crate::Aggregation;
+    use chrono::{DateTime, TimeZone, Utc};
 
     use super::*;
 

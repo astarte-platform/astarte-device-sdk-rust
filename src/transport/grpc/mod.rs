@@ -26,14 +26,13 @@
 
 pub mod convert;
 
-use std::str::FromStr;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
 use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::Channel;
-use astarte_message_hub_proto::tonic::{Code, Request, Status};
+use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_data_type, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
 };
@@ -79,9 +78,14 @@ pub enum GrpcTransportError {
     MessageHubProtoConversion(#[from] MessageHubProtoError),
 }
 
+type MessageHubClientWithInterceptor =
+    MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
+
 pub(crate) struct NodeIdInterceptor(Uuid);
 
 impl NodeIdInterceptor {
+    const NODE_ID_METADATA_KEY: &'static str = "node-id-bin";
+
     pub(crate) fn new(uuid: Uuid) -> Self {
         Self(uuid)
     }
@@ -89,9 +93,9 @@ impl NodeIdInterceptor {
 
 impl Interceptor for NodeIdInterceptor {
     fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
-        let val = MetadataValue::from_str(&self.0.to_string())
-            .map_err(|_| Status::new(Code::InvalidArgument, "invalid metadata value"))?;
-        req.metadata_mut().insert("node_id", val);
+        let val = MetadataValue::from_bytes(self.0.as_bytes());
+        req.metadata_mut()
+            .insert_bin(Self::NODE_ID_METADATA_KEY, val);
         Ok(req)
     }
 }
@@ -100,7 +104,7 @@ impl Interceptor for NodeIdInterceptor {
 /// where is wrapped in an arc to share an immutable reference across tasks.
 #[derive(Debug)]
 pub struct SharedGrpc {
-    client: Mutex<MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>>,
+    client: Mutex<MessageHubClientWithInterceptor>,
     stream: Mutex<tonic::codec::Streaming<AstarteMessage>>,
     uuid: Uuid,
 }
@@ -115,7 +119,7 @@ pub struct Grpc {
 
 impl Grpc {
     pub(crate) fn new(
-        client: MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>,
+        client: MessageHubClientWithInterceptor,
         stream: tonic::codec::Streaming<AstarteMessage>,
         uuid: Uuid,
     ) -> Self {
@@ -137,7 +141,7 @@ impl Grpc {
     }
 
     async fn attach(
-        client: &mut MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>,
+        client: &mut MessageHubClientWithInterceptor,
         data: NodeData,
     ) -> Result<tonic::codec::Streaming<AstarteMessage>, GrpcTransportError> {
         client
@@ -147,9 +151,9 @@ impl Grpc {
             .map_err(GrpcTransportError::from)
     }
 
-    // TODO this should be consuming the client but Arc::into_inner is not stsable in version 1.66.1
+    // TODO this should be consuming the client but Arc::into_inner is not stable in version 1.66.1
     async fn detach(
-        client: &mut MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>,
+        client: &mut MessageHubClientWithInterceptor,
         uuid: &Uuid,
     ) -> Result<(), GrpcTransportError> {
         // During the detach phase only the uuid is needed we can pass an empty array
@@ -414,8 +418,6 @@ impl NodeData {
 mod test {
     use std::{collections::HashMap, future::Future, net::SocketAddr, str::FromStr};
 
-    use astarte_message_hub_proto::tonic::codegen::InterceptedService;
-    use astarte_message_hub_proto::tonic::transport::Channel;
     use astarte_message_hub_proto::{
         message_hub_client::MessageHubClient,
         message_hub_server::{MessageHub, MessageHubServer},
@@ -442,7 +444,10 @@ mod test {
 
     use super::super::{test::mock_shared_device, Publish, Receive, ReceivedEvent};
 
-    use super::{Grpc, GrpcReceivePayload, GrpcTransportError, NodeData, NodeIdInterceptor};
+    use super::{
+        Grpc, GrpcReceivePayload, GrpcTransportError, MessageHubClientWithInterceptor, NodeData,
+        NodeIdInterceptor,
+    };
 
     #[derive(Debug)]
     enum ServerReceivedRequest {
@@ -478,9 +483,8 @@ mod test {
 
     #[async_trait]
     impl MessageHub for TestMessageHubServer {
-        type AttachStream = futures::stream::Iter<
-            std::vec::IntoIter<std::result::Result<AstarteMessage, tonic::Status>>,
-        >;
+        type AttachStream =
+            futures::stream::Iter<std::vec::IntoIter<Result<AstarteMessage, tonic::Status>>>;
 
         async fn attach(
             &self,
@@ -539,8 +543,7 @@ mod test {
     async fn make_client(
         addr: SocketAddr,
         interceptor: NodeIdInterceptor,
-    ) -> impl Future<Output = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>>
-    {
+    ) -> impl Future<Output = MessageHubClientWithInterceptor> {
         async move {
             let channel = loop {
                 let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
@@ -563,7 +566,7 @@ mod test {
     ) -> Result<
         (
             impl Future<Output = ()>,
-            impl Future<Output = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>>,
+            impl Future<Output = MessageHubClientWithInterceptor>,
         ),
         Box<dyn std::error::Error>,
     > {
@@ -584,7 +587,7 @@ mod test {
     const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
     async fn mock_astarte_grpc_client(
-        mut message_hub_client: MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>,
+        mut message_hub_client: MessageHubClientWithInterceptor,
         interfaces: &Interfaces,
     ) -> Result<Grpc, Box<dyn std::error::Error>> {
         let node_data = NodeData::try_from_unlocked(ID, interfaces)?;
