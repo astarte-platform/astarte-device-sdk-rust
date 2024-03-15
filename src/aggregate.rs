@@ -73,6 +73,8 @@ pub enum Aggregation {
     Individual(AstarteType),
     /// Object data, also called aggregate. Can only be from a datastream.
     Object(HashMap<String, AstarteType>),
+    /// Unset of a property
+    Unset,
 }
 
 impl Aggregation {
@@ -109,5 +111,34 @@ impl Aggregation {
         } else {
             None
         }
+    }
+
+    /// Returns `true` if the aggregation is [`Unset`].
+    ///
+    /// [`Unset`]: Aggregation::Unset
+    #[must_use]
+    pub fn is_unset(&self) -> bool {
+        matches!(self, Self::Unset)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_increase_coverage() {
+        let individual = AstarteType::Integer(42);
+        let val = Aggregation::Individual(AstarteType::Integer(42));
+        assert!(val.is_individual());
+        assert_eq!(val.as_individual(), Some(&individual));
+        assert_eq!(val.as_object(), None);
+
+        let val = Aggregation::Object(HashMap::new());
+        assert!(val.is_object());
+        assert_eq!(val.as_individual(), None);
+        assert_eq!(val.as_object(), Some(&HashMap::new()));
+
+        assert!(Aggregation::Unset.is_unset());
     }
 }

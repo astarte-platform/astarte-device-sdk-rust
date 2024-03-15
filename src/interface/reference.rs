@@ -84,37 +84,45 @@ impl<'a> Deref for ObjectRef<'a> {
 
 /// Reference to an [`Interface`] and a [`Mapping`] that is guaranty to belong to the interface.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MappingRef<'m, I> {
+pub(crate) struct MappingRef<'a, I: 'a> {
+    path: &'a MappingPath<'a>,
+    mapping: Mapping<&'a str>,
     interface: I,
-    mapping: Mapping<&'m str>,
 }
 
 impl<'a> MappingRef<'a, &'a Interface> {
-    pub(crate) fn new(interface: &'a Interface, path: &MappingPath) -> Option<Self> {
-        interface
-            .mapping(path)
-            .map(|mapping| Self { interface, mapping })
+    pub(crate) fn new(interface: &'a Interface, path: &'a MappingPath) -> Option<Self> {
+        interface.mapping(path).map(|mapping| Self {
+            interface,
+            path,
+            mapping,
+        })
     }
 
     pub(crate) fn as_prop(&self) -> Option<MappingRef<'a, PropertyRef<'a>>> {
-        self.interface().as_prop_ref().map(|interface| MappingRef {
+        self.interface.as_prop_ref().map(|interface| MappingRef {
             interface,
+            path: self.path,
             mapping: self.mapping,
         })
     }
 }
 
 impl<'a> MappingRef<'a, PropertyRef<'a>> {
-    pub(crate) fn with_prop(interface: PropertyRef<'a>, path: &MappingPath) -> Option<Self> {
+    pub(crate) fn with_prop(interface: PropertyRef<'a>, path: &'a MappingPath) -> Option<Self> {
         let mapping = interface.0.mapping(path)?;
 
-        Some(Self { interface, mapping })
+        Some(Self {
+            interface,
+            path,
+            mapping,
+        })
     }
 }
 
 impl<'a, I> MappingRef<'a, I> {
     #[inline]
-    pub(crate) fn mapping(&self) -> &Mapping<&'a str> {
+    pub(crate) fn mapping(&self) -> &Mapping<&str> {
         &self.mapping
     }
 
@@ -122,9 +130,14 @@ impl<'a, I> MappingRef<'a, I> {
     pub(crate) fn interface(&self) -> &I {
         &self.interface
     }
+
+    #[inline]
+    pub(crate) fn path(&self) -> &MappingPath {
+        self.path
+    }
 }
 
-impl<'a, I> Deref for MappingRef<'a, I> {
+impl<'a, I: 'a> Deref for MappingRef<'a, I> {
     type Target = Mapping<&'a str>;
 
     fn deref(&self) -> &Self::Target {

@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, panic, process};
 
+use astarte_device_sdk::Aggregation;
 use log::{debug, info};
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -188,7 +189,7 @@ async fn main() {
         match event {
             Ok(data) => {
                 if data.interface == test_cfg.interface_datastream_so {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                    if let Aggregation::Individual(var) = data.data {
                         let mut rx_data = rx_data_ind_datastream.lock().unwrap();
                         let mut key = data.path.clone();
                         key.remove(0);
@@ -197,7 +198,7 @@ async fn main() {
                         panic!("Received unexpected message!");
                     }
                 } else if data.interface == test_cfg.interface_aggregate_so {
-                    if let astarte_device_sdk::Aggregation::Object(var) = data.data {
+                    if let Aggregation::Object(var) = data.data {
                         let mut rx_data = rx_data_agg_datastream.lock().unwrap();
                         let mut sensor_n = data.path.clone();
                         sensor_n.remove(0);
@@ -209,17 +210,25 @@ async fn main() {
                         panic!("Received unexpected message!");
                     }
                 } else if data.interface == test_cfg.interface_property_so {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.clone().data {
-                        let mut rx_data = rx_data_ind_prop.lock().unwrap();
-                        let mut path = data.path.clone();
-                        path.remove(0); // Remove first forward slash
-                        let panic_msg = format!("Incorrect path in message {:?}", &data);
-                        let (sensor_n, key) = path.split_once('/').expect(&panic_msg);
-                        rx_data.0 = sensor_n.to_string();
-                        rx_data.1.insert(key.to_string(), var);
-                    } else {
-                        panic!("Received unexpected message!");
-                    }
+                    let mut rx_data = rx_data_ind_prop.lock().unwrap();
+
+                    let mut path = data.path.clone();
+                    path.remove(0); // Remove first forward slash
+                    let (sensor_n, key) = path
+                        .split_once('/')
+                        .unwrap_or_else(|| panic!("Incorrect path in message {:?}", data));
+
+                    rx_data.0 = sensor_n.to_string();
+
+                    match data.clone().data {
+                        Aggregation::Individual(var) => {
+                            rx_data.1.insert(key.to_string(), var);
+                        }
+                        Aggregation::Unset => {
+                            rx_data.1.remove(key);
+                        }
+                        _ => panic!("Received unexpected message!"),
+                    };
                 } else {
                     panic!("Received unexpected message!");
                 }
@@ -563,12 +572,7 @@ async fn test_property_server_to_device(
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
 
-        if (sensor_number.to_string() != rx_data_rw_acc.0)
-            || rx_data_rw_acc
-                .1
-                .iter()
-                .any(|(_, value)| value != &AstarteType::Unset)
-        {
+        if sensor_number.to_string() != rx_data_rw_acc.0 {
             return Err(format!(
                 "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));
