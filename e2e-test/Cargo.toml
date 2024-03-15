@@ -32,7 +32,9 @@ rust-version = { workspace = true }
 astarte-device-sdk = { path = "../", features = ["derive"] }
 base64 = { workspace = true }
 chrono = { workspace = true }
+color-eyre = { workspace = true }
 env_logger = { workspace = true }
+eyre = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 reqwest = { workspace = true }

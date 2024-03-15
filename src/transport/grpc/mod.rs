@@ -1122,11 +1122,11 @@ mod test {
 
         let itfs: HashMap<String, Interface> = [
             Interface::from_str(include_str!(
-                "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+                "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
             ))
             .unwrap(),
             Interface::from_str(include_str!(
-                "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerProperty.json"
+                "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
             ))
             .unwrap(),
         ]
