@@ -48,7 +48,7 @@ use crate::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
     },
-    interfaces::Interfaces,
+    interfaces::{self, Interfaces},
     shared::SharedDevice,
     store::PropertyStore,
     types::AstarteType,
@@ -319,15 +319,13 @@ impl Receive for Grpc {
 
 #[async_trait]
 impl Register for Grpc {
-    async fn add_interface<S>(
+    async fn add_interface(
         &self,
-        device: &SharedDevice<S>,
-        _added_interface: &str,
-    ) -> Result<(), crate::Error>
-    where
-        S: PropertyStore,
-    {
-        let data = NodeData::try_from_interfaces(&self.uuid, &*device.interfaces.read().await)?;
+        interfaces: &Interfaces,
+        added: &interfaces::Validated,
+    ) -> Result<(), crate::Error> {
+        let iter = interfaces.iter_with_added(added);
+        let data = NodeData::try_from_iter(&self.uuid, iter)?;
 
         self.reattach(data).await.map_err(crate::Error::from)
     }
@@ -335,9 +333,11 @@ impl Register for Grpc {
     async fn remove_interface(
         &self,
         interfaces: &Interfaces,
-        _removed_interface: Interface,
+        removed: &Interface,
     ) -> Result<(), crate::Error> {
-        let data = NodeData::try_from_interfaces(&self.uuid, interfaces)?;
+        let iter = interfaces.iter_with_removed(removed);
+
+        let data = NodeData::try_from_iter(&self.uuid, iter)?;
 
         self.reattach(data).await.map_err(crate::Error::from)
     }
@@ -345,9 +345,9 @@ impl Register for Grpc {
     async fn extend_interfaces(
         &self,
         interfaces: &Interfaces,
-        added: &HashMap<String, Interface>,
+        added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
-        let iter = interfaces.iter_with_added(added);
+        let iter = interfaces.iter_with_added_many(added);
 
         let data = NodeData::try_from_iter(&self.uuid, iter)?;
 
@@ -808,31 +808,19 @@ mod test {
                 .await
                 .unwrap();
 
-            let mut mock_shared_device = mock_shared_device(Interfaces::new(), mpsc::channel(1).0); // the channel won't be used
+            let mock_shared_device = mock_shared_device(Interfaces::new(), mpsc::channel(1).0); // the channel won't be used
 
-            const INTERFACE_NAME: &str =
-                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
             let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+            let interfaces = mock_shared_device.interfaces.read().await;
+            let validated = interfaces.validate(interface).unwrap().unwrap();
 
-            // add interface
-            mock_shared_device
-                .interfaces
-                .get_mut()
-                .add(interface.clone())
-                .unwrap();
             connection
-                .add_interface(&mock_shared_device, INTERFACE_NAME)
+                .add_interface(&interfaces, &validated)
                 .await
                 .unwrap();
 
-            // remove interface
-            mock_shared_device
-                .interfaces
-                .get_mut()
-                .remove(INTERFACE_NAME)
-                .unwrap();
             connection
-                .remove_interface(mock_shared_device.interfaces.get_mut(), interface)
+                .remove_interface(&interfaces, &validated)
                 .await
                 .unwrap();
 
@@ -1120,7 +1108,7 @@ mod test {
         channels.server_response_sender.send(vec![]).await.unwrap();
         channels.server_response_sender.send(vec![]).await.unwrap();
 
-        let itfs: HashMap<String, Interface> = [
+        let to_add = [
             Interface::from_str(include_str!(
                 "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
             ))
@@ -1129,14 +1117,17 @@ mod test {
                 "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
             ))
             .unwrap(),
-        ]
-        .into_iter()
-        .map(|i| (i.interface_name().to_string(), i))
-        .collect();
+        ];
+
+        let map = to_add
+            .iter()
+            .cloned()
+            .map(|i| (i.interface_name().to_string(), i))
+            .collect();
 
         let interfaces = Interfaces::new();
 
-        let i_cl = itfs.clone();
+        let validated = interfaces.validate_many(to_add).unwrap();
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
@@ -1146,7 +1137,7 @@ mod test {
 
             // manually calling detach
             connection
-                .extend_interfaces(&interfaces, &i_cl)
+                .extend_interfaces(&interfaces, &validated)
                 .await
                 .unwrap();
         };
@@ -1176,6 +1167,6 @@ mod test {
             .try_collect()
             .unwrap();
 
-        assert_eq!(interfaces, itfs);
+        assert_eq!(interfaces, map);
     }
 }

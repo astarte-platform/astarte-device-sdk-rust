@@ -35,7 +35,7 @@ use crate::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
     },
-    interfaces::Interfaces,
+    interfaces::{self, Interfaces},
     shared::SharedDevice,
     store::PropertyStore,
     types::AstarteType,
@@ -102,20 +102,18 @@ pub(crate) trait Receive {
 pub(crate) trait Register {
     /// Called when an interface gets added to the device interface list.
     /// This method should convey to the server that a new interface got added.
-    async fn add_interface<S>(
+    async fn add_interface(
         &self,
-        device: &SharedDevice<S>,
-        added_interface: &str,
-    ) -> Result<(), crate::Error>
-    where
-        S: PropertyStore;
+        interfaces: &Interfaces,
+        added_interface: &interfaces::Validated,
+    ) -> Result<(), crate::Error>;
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
     async fn remove_interface(
         &self,
         interfaces: &Interfaces,
-        removed_interface: Interface,
+        removed_interface: &Interface,
     ) -> Result<(), crate::Error>;
 
     /// Called when multiple interfaces are added.
@@ -126,7 +124,7 @@ pub(crate) trait Register {
     async fn extend_interfaces(
         &self,
         interfaces: &Interfaces,
-        added_interface: &HashMap<String, Interface>,
+        added_interface: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error>;
 }
 

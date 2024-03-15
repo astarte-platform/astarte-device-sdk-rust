@@ -26,6 +26,7 @@ pub mod error;
 pub mod event;
 pub mod interface;
 mod interfaces;
+pub mod introspection;
 #[cfg(test)]
 mod mock;
 pub mod prelude;
@@ -39,13 +40,7 @@ pub mod types;
 mod validate;
 
 use std::fmt::{self, Debug};
-use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
-
-// Re-export rumqttc since we return its types in some methods
-pub use chrono;
-pub use rumqttc;
 
 use async_trait::async_trait;
 use log::{debug, error, info, trace, warn};
@@ -69,6 +64,10 @@ use crate::store::{PropertyStore, StoredProp};
 use crate::transport::{Publish, Receive, ReceivedEvent, Register};
 use crate::types::{AstarteType, TypeError};
 use crate::validate::{ValidatedIndividual, ValidatedObject};
+
+// Re-export rumqttc since we return its types in some methods
+pub use chrono;
+pub use rumqttc;
 
 /// Sender end of the channel for the [`AstarteDeviceDataEvent`].
 pub type EventSender = mpsc::Sender<Result<AstarteDeviceDataEvent, Error>>;
@@ -388,22 +387,21 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         self.connection.send_object(validated).await
     }
 
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error>
+    async fn remove_properties_from_store<'a>(&self, property: PropertyRef<'a>) -> Result<(), Error>
     where
         S: PropertyStore,
     {
-        let interfaces = self.interfaces.read().await;
-        let mappings = interfaces.get_property(interface_name);
-
-        let property = match mappings {
-            Some(property) => property,
-            None => return Ok(()),
-        };
-
         for mapping in property.iter_mappings() {
             let path = mapping.endpoint();
-            self.store.delete_prop(interface_name, path).await?;
-            debug!("Stored property {}{} deleted", interface_name, path);
+            self.store
+                .delete_prop(property.interface_name(), path)
+                .await?;
+
+            debug!(
+                "Stored property {}{} deleted",
+                property.interface_name(),
+                path
+            );
         }
 
         Ok(())
@@ -593,26 +591,6 @@ pub trait Client {
     /// }
     /// ```
     async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
-
-    /// Add a new [`Interface`] to the device interfaces.
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
-
-    /// Add one ore more [`Interface`] to the device introspection.
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = Interface> + Send;
-
-    /// Add a new interface from the provided file.
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
-    where
-        P: AsRef<Path> + Send;
-
-    /// Add a new interface from a string. The string should contain a valid json formatted
-    /// interface.
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
-
-    /// Remove the interface with the name specified as argument.
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
 }
 
 /// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
@@ -724,78 +702,6 @@ where
                 }
             });
         }
-    }
-
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
-        let interface_name = interface.interface_name().to_owned();
-        self.interfaces.write().await.add(interface)?;
-
-        self.connection
-            .add_interface(&self.shared, &interface_name)
-            .await
-    }
-
-    async fn extend_interfaces<I>(&self, added: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = Interface> + Send,
-    {
-        // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.interfaces.write().await;
-
-        let to_add = interfaces.validate_many(added)?;
-
-        if to_add.is_empty() {
-            debug!("All interfaces already present");
-            return Ok(());
-        }
-
-        debug!("Adding {} interfaces", to_add.len());
-
-        self.connection
-            .extend_interfaces(&interfaces, &to_add)
-            .await?;
-
-        interfaces.extend(to_add);
-
-        debug!("Interfaces added");
-
-        Ok(())
-    }
-
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
-    where
-        P: AsRef<Path> + Send,
-    {
-        let interface = Interface::from_file(file_path.as_ref())?;
-
-        self.add_interface(interface).await
-    }
-
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
-        let interface: Interface = Interface::from_str(json_str)?;
-
-        self.add_interface(interface).await
-    }
-
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
-        let interface = self
-            .interfaces
-            .write()
-            .await
-            .remove(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
-
-        {
-            let interfaces = self.interfaces.read().await;
-
-            self.connection
-                .remove_interface(&interfaces, interface)
-                .await?;
-        }
-
-        self.remove_properties_from_store(interface_name).await
     }
 }
 
@@ -1098,64 +1004,6 @@ mod test {
             .expect("Property not found");
 
         assert_eq!(AstarteType::Unset, val);
-    }
-
-    #[tokio::test]
-    async fn test_add_remove_interface() {
-        let eventloop = EventLoop::default();
-
-        let mut client = AsyncClient::default();
-
-        client
-            .expect_subscribe::<String>()
-            .once()
-            .with(
-                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
-                predicate::always()
-            )
-            .returning(|_, _| { Ok(()) });
-
-        client
-            .expect_publish::<String, String>()
-            .with(
-                predicate::eq("realm/device_id".to_string()),
-                predicate::always(),
-                predicate::eq(false),
-                predicate::eq(
-                    "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1"
-                        .to_string(),
-                ),
-            )
-            .returning(|_, _, _, _| Ok(()));
-
-        client
-            .expect_publish::<String, String>()
-            .with(
-                predicate::eq("realm/device_id".to_string()),
-                predicate::always(),
-                predicate::eq(false),
-                predicate::eq(String::new()),
-            )
-            .returning(|_, _, _, _| Ok(()));
-
-        client
-            .expect_unsubscribe::<String>()
-            .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
-            .returning(|_| Ok(()));
-
-        let (astarte, _rx) = mock_astarte_device(client, eventloop, []);
-
-        astarte
-            .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
-            .await
-            .unwrap();
-
-        astarte
-            .remove_interface(
-                "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream",
-            )
-            .await
-            .unwrap();
     }
 
     #[tokio::test]

@@ -56,7 +56,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
         Ownership,
     },
-    interfaces::{Interfaces, Introspection},
+    interfaces::{self, Interfaces, Introspection},
     properties,
     retry::DelayedPoll,
     shared::SharedDevice,
@@ -491,28 +491,18 @@ impl Receive for Mqtt {
 
 #[async_trait]
 impl Register for Mqtt {
-    async fn add_interface<S>(
+    async fn add_interface(
         &self,
-        device: &SharedDevice<S>,
-        added_interface: &str,
-    ) -> Result<(), Error>
-    where
-        S: Send + Sync,
-    {
-        let interfaces = device.interfaces.read().await;
-        let interface_ownership = interfaces
-            .get(added_interface)
-            .ok_or(Error::InterfaceNotFound {
-                name: added_interface.to_string(),
-            })?
-            .ownership();
-        let introspection_string = interfaces.get_introspection_string();
-
-        if interface_ownership.is_server() {
-            self.subscribe(added_interface).await?
+        interfaces: &Interfaces,
+        added: &interfaces::Validated,
+    ) -> Result<(), Error> {
+        if added.ownership().is_server() {
+            self.subscribe(added.interface_name()).await?
         }
 
-        self.send_introspection(introspection_string)
+        let introspection = Introspection::new(interfaces.iter_with_added(added)).to_string();
+
+        self.send_introspection(introspection)
             .await
             .map_err(MqttError::into)
     }
@@ -520,13 +510,15 @@ impl Register for Mqtt {
     async fn remove_interface(
         &self,
         interfaces: &Interfaces,
-        removed_interface: Interface,
+        removed: &Interface,
     ) -> Result<(), Error> {
-        self.send_introspection(interfaces.get_introspection_string())
-            .await?;
+        let iter = interfaces.iter_with_removed(removed);
+        let introspection = Introspection::new(iter).to_string();
 
-        if removed_interface.ownership().is_server() {
-            self.unsubscribe(removed_interface.interface_name()).await?;
+        self.send_introspection(introspection).await?;
+
+        if removed.ownership().is_server() {
+            self.unsubscribe(removed.interface_name()).await?;
         }
 
         Ok(())
@@ -538,7 +530,7 @@ impl Register for Mqtt {
     async fn extend_interfaces(
         &self,
         interfaces: &Interfaces,
-        added: &HashMap<String, Interface>,
+        added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
         let server_interfaces = added
             .values()
@@ -553,7 +545,7 @@ impl Register for Mqtt {
 
         self.subscribe_many(&server_interfaces).await?;
 
-        let introspection = Introspection::new(interfaces.iter_with_added(added)).to_string();
+        let introspection = Introspection::new(interfaces.iter_with_added_many(added)).to_string();
 
         let subscribe_res = self
             .send_introspection(introspection)
@@ -965,10 +957,9 @@ pub(crate) mod test {
 
         introspection.sort_unstable();
 
-        let to_add = to_add
-            .into_iter()
-            .map(|i| (i.interface_name().to_string(), i))
-            .collect();
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
 
         client
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
@@ -987,7 +978,6 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| Ok(()));
 
-        let interfaces = Interfaces::new();
         let mqtt_connection = mock_mqtt_connection(client, eventl);
 
         mqtt_connection
@@ -1005,10 +995,9 @@ pub(crate) mod test {
 
         let introspection = Introspection::new(to_add.iter()).to_string();
 
-        let to_add = to_add
-            .into_iter()
-            .map(|i| (i.interface_name().to_string(), i))
-            .collect();
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
 
         client
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
@@ -1035,7 +1024,6 @@ pub(crate) mod test {
                 Err(ClientError::Request(rumqttc::Request::Disconnect))
             });
 
-        let interfaces = Interfaces::new();
         let mqtt_connection = mock_mqtt_connection(client, eventl);
 
         mqtt_connection

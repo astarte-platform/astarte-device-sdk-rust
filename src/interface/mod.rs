@@ -31,15 +31,12 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeSet;
 use std::fmt::Display;
-use std::fs;
-use std::path::Path;
 use std::str::FromStr;
 
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
 use self::error::InterfaceError;
-use self::error::InterfaceFileError;
 use self::mapping::vec::Item;
 use self::mapping::InterfaceMapping;
 use self::reference::{MappingRef, ObjectRef, PropertyRef};
@@ -93,22 +90,6 @@ pub struct Interface {
 }
 
 impl Interface {
-    /// Instantiate a new `Interface` from a file.
-    pub fn from_file<P>(path: P) -> Result<Self, InterfaceFileError>
-    where
-        P: AsRef<Path>,
-    {
-        let file = fs::read_to_string(path.as_ref()).map_err(|err| InterfaceFileError::Io {
-            path: path.as_ref().to_path_buf(),
-            backtrace: err,
-        })?;
-
-        Self::from_str(&file).map_err(|err| InterfaceFileError::Interface {
-            path: path.as_ref().to_path_buf(),
-            backtrace: err,
-        })
-    }
-
     /// Returns the interface name.
     pub fn interface_name(&self) -> &str {
         &self.interface_name
