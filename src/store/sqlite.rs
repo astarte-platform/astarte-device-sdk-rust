@@ -175,7 +175,6 @@ struct StoredRecord {
 
 fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
     let mapping_type = match value {
-        AstarteType::Unset => 0,
         AstarteType::Double(_) => 1,
         AstarteType::Integer(_) => 2,
         AstarteType::Boolean(_) => 3,
@@ -195,12 +194,8 @@ fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
     Ok(mapping_type)
 }
 
-fn from_stored_type(value: u8) -> Result<Option<MappingType>, ValueError> {
+fn from_stored_type(value: u8) -> Result<MappingType, ValueError> {
     let mapping_type = match value {
-        // Property is unset
-        0 => {
-            return Ok(None);
-        }
         1 => MappingType::Double,
         2 => MappingType::Integer,
         3 => MappingType::Boolean,
@@ -215,12 +210,12 @@ fn from_stored_type(value: u8) -> Result<Option<MappingType>, ValueError> {
         12 => MappingType::StringArray,
         13 => MappingType::BinaryBlobArray,
         14 => MappingType::DateTimeArray,
-        15.. => {
+        0 | 15.. => {
             return Err(ValueError::StoredType(value));
         }
     };
 
-    Ok(Some(mapping_type))
+    Ok(mapping_type)
 }
 
 impl TryFrom<StoredRecord> for StoredProp {
@@ -420,9 +415,7 @@ impl PropertyStore for SqliteStore {
 
 /// Deserialize a property from the store.
 fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueError> {
-    let Some(mapping_type) = from_stored_type(stored_type)? else {
-        return Ok(AstarteType::Unset);
-    };
+    let mapping_type = from_stored_type(stored_type)?;
 
     let payload = Payload::from_slice(buf).map_err(ValueError::Decode)?;
     let value = BsonConverter::new(mapping_type, payload.value);

@@ -32,6 +32,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use astarte_device_sdk::Aggregation;
 use astarte_device_sdk::Interface;
 use eyre::WrapErr;
 use itertools::Itertools;
@@ -201,7 +202,7 @@ async fn main() -> eyre::Result<()> {
             match event {
                 Ok(data) => {
                     if data.interface == test_cfg.interface_datastream_so {
-                        if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                        if let Aggregation::Individual(var) = data.data {
                             let mut rx_data = rx_data_ind_datastream.lock().unwrap();
                             let mut key = data.path.clone();
                             key.remove(0);
@@ -222,8 +223,7 @@ async fn main() -> eyre::Result<()> {
                             panic!("Received unexpected message!");
                         }
                     } else if data.interface == test_cfg.interface_property_so {
-                        if let astarte_device_sdk::Aggregation::Individual(var) = data.clone().data
-                        {
+                        if let Aggregation::Individual(var) = data.clone().data {
                             let mut rx_data = rx_data_ind_prop.lock().unwrap();
                             let mut path = data.path.clone();
                             path.remove(0); // Remove first forward slash
@@ -609,12 +609,7 @@ async fn test_property_server_to_device(
             .lock()
             .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
 
-        if (sensor_number.to_string() != rx_data_rw_acc.0)
-            || rx_data_rw_acc
-                .1
-                .iter()
-                .any(|(_, value)| value != &AstarteType::Unset)
-        {
+        if sensor_number.to_string() != rx_data_rw_acc.0 {
             return Err(format!(
                 "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));

@@ -57,13 +57,14 @@ use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::MappingRef;
 use crate::interface::reference::PropertyRef;
 use crate::interface::Aggregation as InterfaceAggregation;
+use crate::interface::InterfaceTypeDef;
 use crate::interfaces::Interfaces;
 use crate::shared::SharedDevice;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoredProp};
 use crate::transport::{Publish, Receive, ReceivedEvent, Register};
 use crate::types::{AstarteType, TypeError};
-use crate::validate::{ValidatedIndividual, ValidatedObject};
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
 
 // Re-export rumqttc since we return its types in some methods
 pub use chrono;
@@ -181,27 +182,40 @@ impl<S, C> AstarteDeviceSdk<S, C> {
                 mapping: path.to_string(),
             })?;
 
-        let (data, timestamp) = self.connection.deserialize_individual(mapping, payload)?;
+        let individual = self.connection.deserialize_individual(&mapping, payload)?;
 
-        if interface.is_property() {
-            let interface_name = interface.interface_name();
-            let path = path.as_str();
-            let interface_major = interface.version_major();
+        match individual {
+            Some((value, timestamp)) => {
+                if let Some(prop) = mapping.as_prop() {
+                    let prop = StoredProp::from_mapping(&prop, &value);
 
-            let prop = StoredProp {
-                interface: interface_name,
-                path,
-                value: &data,
-                interface_major,
-                ownership: interface.ownership(),
-            };
+                    self.store.store_prop(prop).await?;
 
-            self.store.store_prop(prop).await?;
+                    info!(
+                        "property stored {}{path}:{}",
+                        interface.interface_name(),
+                        interface.version_major()
+                    );
+                }
 
-            info!("property stored {interface_name}{path}:{interface_major}");
+                Ok((Aggregation::Individual(value), timestamp))
+            }
+            None => {
+                if interface.is_property() {
+                    self.store
+                        .delete_prop(interface.interface_name(), path.as_str())
+                        .await?;
+
+                    info!(
+                        "property unset {}{path}:{}",
+                        interface.interface_name(),
+                        interface.version_major()
+                    );
+                }
+
+                Ok((Aggregation::Unset, None))
+            }
         }
-
-        Ok((Aggregation::Individual(data), timestamp))
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
@@ -220,7 +234,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
             got: InterfaceAggregation::Individual,
         })?;
 
-        let (data, timestamp) = self.connection.deserialize_object(object, path, payload)?;
+        let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
         Ok((Aggregation::Object(data), timestamp))
     }
@@ -273,13 +287,6 @@ impl<S, C> AstarteDeviceSdk<S, C> {
             .await?;
 
         let value = match value {
-            Some(AstarteType::Unset) if !mapping.allow_unset() => {
-                error!("stored property is unset, but interface doesn't allow it");
-                self.store.delete_prop(interface, path).await?;
-
-                None
-            }
-            Some(AstarteType::Unset) => Some(AstarteType::Unset),
             Some(value) if value != mapping.mapping_type() => {
                 error!(
                     "stored property type mismatch, expected {} got {:?}",
@@ -290,7 +297,6 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
                 None
             }
-
             Some(value) => Some(value),
             None => None,
         };
@@ -403,6 +409,49 @@ impl<S, C> AstarteDeviceSdk<S, C> {
                 path
             );
         }
+
+        Ok(())
+    }
+
+    async fn unset_prop<'a>(
+        &self,
+        interface_name: &str,
+        path: &MappingPath<'a>,
+    ) -> Result<(), Error>
+    where
+        C: Publish + Sync,
+        S: PropertyStore,
+    {
+        let interfaces = self.interfaces.read().await;
+        let interface = interfaces
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
+
+        let mapping = interface
+            .as_mapping_ref(path)
+            .ok_or_else(|| Error::MappingNotFound {
+                interface: interface.to_string(),
+                mapping: path.to_string(),
+            })?;
+
+        let mapping = mapping.as_prop().ok_or_else(|| Error::InterfaceType {
+            exp: InterfaceTypeDef::Properties,
+            got: interface.interface_type(),
+        })?;
+
+        let validated = ValidatedUnset::validate(mapping, path)?;
+
+        debug!("unsetting property {interface_name}{path}");
+
+        self.connection.unset(validated).await?;
+
+        debug!("deleting property {interface_name}{path} from store");
+
+        self.store
+            .delete_prop(interface.interface_name(), path.as_str())
+            .await?;
 
         Ok(())
     }
@@ -672,8 +721,7 @@ where
 
         let path = MappingPath::try_from(interface_path)?;
 
-        self.send_individual_impl(interface_name, &path, AstarteType::Unset, None)
-            .await
+        self.unset_prop(interface_name, &path).await
     }
 
     async fn handle_events(&mut self) -> Result<(), crate::Error> {
@@ -1000,10 +1048,9 @@ mod test {
                 "/1/name",
             )
             .await
-            .expect("Failed to get property")
-            .expect("Property not found");
+            .expect("Failed to get property");
 
-        assert_eq!(AstarteType::Unset, val);
+        assert_eq!(None, val);
     }
 
     #[tokio::test]
