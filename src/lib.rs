@@ -744,11 +744,20 @@ where
 
         let to_add = interfaces.validate_many(added)?;
 
+        if to_add.is_empty() {
+            debug!("All interfaces already present");
+            return Ok(());
+        }
+
+        debug!("Adding {} interfaces", to_add.len());
+
         self.connection
             .extend_interfaces(&interfaces, &to_add)
             .await?;
 
         interfaces.extend(to_add);
+
+        debug!("Interfaces added");
 
         Ok(())
     }
