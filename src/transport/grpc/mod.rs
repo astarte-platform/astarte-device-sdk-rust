@@ -151,9 +151,8 @@ impl Grpc {
             .map_err(GrpcTransportError::from)
     }
 
-    // TODO this should be consuming the client but Arc::into_inner is not stable in version 1.66.1
     async fn detach(
-        client: &mut MessageHubClientWithInterceptor,
+        mut client: MessageHubClientWithInterceptor,
         uuid: &Uuid,
     ) -> Result<(), GrpcTransportError> {
         // During the detach phase only the uuid is needed we can pass an empty array
@@ -336,12 +335,11 @@ impl Disconnect for Grpc {
             client,
             stream: _stream,
             uuid,
-        } = Arc::get_mut(&mut self.shared)
-            .ok_or::<crate::Error>(GrpcTransportError::GracefulClose.into())?;
+        } = Arc::into_inner(self.shared).ok_or(GrpcTransportError::GracefulClose)?;
 
-        Self::detach(client.get_mut(), uuid)
-            .await
-            .map_err(|e| e.into())
+        let client = client.into_inner();
+
+        Self::detach(client, &uuid).await.map_err(|e| e.into())
     }
 }
 
@@ -416,38 +414,23 @@ impl NodeData {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, future::Future, net::SocketAddr, str::FromStr};
+    use std::{future::Future, net::SocketAddr, str::FromStr};
 
     use astarte_message_hub_proto::{
-        message_hub_client::MessageHubClient,
         message_hub_server::{MessageHub, MessageHubServer},
-        pbjson_types, tonic, AstarteMessage, Node,
+        pbjson_types,
     };
     use async_trait::async_trait;
-    use tokio::{
-        net::TcpListener,
-        sync::{mpsc, Mutex},
-    };
-    use uuid::{uuid, Uuid};
+    use tokio::{net::TcpListener, sync::mpsc};
+    use uuid::uuid;
 
     use crate::{
         error,
-        interface::mapping::path::MappingPath,
-        interfaces::Interfaces,
-        transport::{
-            test::{mock_validate_individual, mock_validate_object},
-            Disconnect, Register,
-        },
-        types::AstarteType,
-        Aggregation, AstarteAggregate, AstarteDeviceDataEvent, Interface,
+        transport::test::{mock_shared_device, mock_validate_individual, mock_validate_object},
+        Aggregation, AstarteAggregate, AstarteDeviceDataEvent,
     };
 
-    use super::super::{test::mock_shared_device, Publish, Receive, ReceivedEvent};
-
-    use super::{
-        Grpc, GrpcReceivePayload, GrpcTransportError, MessageHubClientWithInterceptor, NodeData,
-        NodeIdInterceptor,
-    };
+    use super::*;
 
     #[derive(Debug)]
     enum ServerReceivedRequest {
