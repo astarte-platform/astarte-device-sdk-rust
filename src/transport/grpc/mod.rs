@@ -28,6 +28,11 @@ pub mod convert;
 
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
+use astarte_message_hub_proto::tonic::codegen::InterceptedService;
+use astarte_message_hub_proto::tonic::metadata::MetadataValue;
+use astarte_message_hub_proto::tonic::service::Interceptor;
+use astarte_message_hub_proto::tonic::transport::Channel;
+use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_data_type, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
 };
@@ -73,11 +78,33 @@ pub enum GrpcTransportError {
     MessageHubProtoConversion(#[from] MessageHubProtoError),
 }
 
+type MessageHubClientWithInterceptor =
+    MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
+
+pub(crate) struct NodeIdInterceptor(Uuid);
+
+impl NodeIdInterceptor {
+    const NODE_ID_METADATA_KEY: &'static str = "node-id-bin";
+
+    pub(crate) fn new(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
+impl Interceptor for NodeIdInterceptor {
+    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
+        let val = MetadataValue::from_bytes(self.0.as_bytes());
+        req.metadata_mut()
+            .insert_bin(Self::NODE_ID_METADATA_KEY, val);
+        Ok(req)
+    }
+}
+
 /// Shared data of the grpc connection, this struct is internal to the [`Grpc`] connection
 /// where is wrapped in an arc to share an immutable reference across tasks.
 #[derive(Debug)]
 pub struct SharedGrpc {
-    client: Mutex<MessageHubClient<tonic::transport::Channel>>,
+    client: Mutex<MessageHubClientWithInterceptor>,
     stream: Mutex<tonic::codec::Streaming<AstarteMessage>>,
     uuid: Uuid,
 }
@@ -92,7 +119,7 @@ pub struct Grpc {
 
 impl Grpc {
     pub(crate) fn new(
-        client: MessageHubClient<tonic::transport::Channel>,
+        client: MessageHubClientWithInterceptor,
         stream: tonic::codec::Streaming<AstarteMessage>,
         uuid: Uuid,
     ) -> Self {
@@ -114,7 +141,7 @@ impl Grpc {
     }
 
     async fn attach(
-        client: &mut MessageHubClient<tonic::transport::Channel>,
+        client: &mut MessageHubClientWithInterceptor,
         data: NodeData,
     ) -> Result<tonic::codec::Streaming<AstarteMessage>, GrpcTransportError> {
         client
@@ -124,9 +151,8 @@ impl Grpc {
             .map_err(GrpcTransportError::from)
     }
 
-    // TODO this should be consuming the client but Arc::into_inner is not stsable in version 1.66.1
     async fn detach(
-        client: &mut MessageHubClient<tonic::transport::Channel>,
+        mut client: MessageHubClientWithInterceptor,
         uuid: &Uuid,
     ) -> Result<(), GrpcTransportError> {
         // During the detach phase only the uuid is needed we can pass an empty array
@@ -309,12 +335,11 @@ impl Disconnect for Grpc {
             client,
             stream: _stream,
             uuid,
-        } = Arc::get_mut(&mut self.shared)
-            .ok_or::<crate::Error>(GrpcTransportError::GracefulClose.into())?;
+        } = Arc::into_inner(self.shared).ok_or(GrpcTransportError::GracefulClose)?;
 
-        Self::detach(client.get_mut(), uuid)
-            .await
-            .map_err(|e| e.into())
+        let client = client.into_inner();
+
+        Self::detach(client, &uuid).await.map_err(|e| e.into())
     }
 }
 
@@ -354,7 +379,13 @@ impl ConnectionConfig for GrpcConfig {
         S: PropertyStore,
         C: Send + Sync,
     {
-        let mut client = MessageHubClient::connect(self.endpoint).await?;
+        let channel = tonic::transport::Endpoint::new(self.endpoint)?
+            .connect()
+            .await?;
+
+        let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
+
+        let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
         let node_data = NodeData::try_from_unlocked(self.uuid, &builder.interfaces)?;
         let stream = Grpc::attach(&mut client, node_data).await?;
@@ -383,35 +414,23 @@ impl NodeData {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, future::Future, net::SocketAddr, str::FromStr};
+    use std::{future::Future, net::SocketAddr, str::FromStr};
 
     use astarte_message_hub_proto::{
-        message_hub_client::MessageHubClient,
         message_hub_server::{MessageHub, MessageHubServer},
-        pbjson_types, tonic, AstarteMessage, Node,
+        pbjson_types,
     };
     use async_trait::async_trait;
-    use tokio::{
-        net::TcpListener,
-        sync::{mpsc, Mutex},
-    };
-    use uuid::{uuid, Uuid};
+    use tokio::{net::TcpListener, sync::mpsc};
+    use uuid::uuid;
 
     use crate::{
         error,
-        interface::mapping::path::MappingPath,
-        interfaces::Interfaces,
-        transport::{
-            test::{mock_validate_individual, mock_validate_object},
-            Disconnect, Register,
-        },
-        types::AstarteType,
-        Aggregation, AstarteAggregate, AstarteDeviceDataEvent, Interface,
+        transport::test::{mock_shared_device, mock_validate_individual, mock_validate_object},
+        Aggregation, AstarteAggregate, AstarteDeviceDataEvent,
     };
 
-    use super::super::{test::mock_shared_device, Publish, Receive, ReceivedEvent};
-
-    use super::{Grpc, GrpcReceivePayload, GrpcTransportError, NodeData};
+    use super::*;
 
     #[derive(Debug)]
     enum ServerReceivedRequest {
@@ -447,9 +466,8 @@ mod test {
 
     #[async_trait]
     impl MessageHub for TestMessageHubServer {
-        type AttachStream = futures::stream::Iter<
-            std::vec::IntoIter<std::result::Result<AstarteMessage, tonic::Status>>,
-        >;
+        type AttachStream =
+            futures::stream::Iter<std::vec::IntoIter<Result<AstarteMessage, tonic::Status>>>;
 
         async fn attach(
             &self,
@@ -507,7 +525,8 @@ mod test {
 
     async fn make_client(
         addr: SocketAddr,
-    ) -> impl Future<Output = MessageHubClient<tonic::transport::Channel>> {
+        interceptor: NodeIdInterceptor,
+    ) -> impl Future<Output = MessageHubClientWithInterceptor> {
         async move {
             let channel = loop {
                 let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
@@ -521,7 +540,7 @@ mod test {
                 }
             };
 
-            MessageHubClient::new(channel)
+            MessageHubClient::with_interceptor(channel, interceptor)
         }
     }
 
@@ -530,7 +549,7 @@ mod test {
     ) -> Result<
         (
             impl Future<Output = ()>,
-            impl Future<Output = MessageHubClient<tonic::transport::Channel>>,
+            impl Future<Output = MessageHubClientWithInterceptor>,
         ),
         Box<dyn std::error::Error>,
     > {
@@ -541,7 +560,9 @@ mod test {
 
         let server = make_server(socket, server_impl)?;
 
-        let client = make_client(addr).await;
+        let interceptor = NodeIdInterceptor::new(ID);
+
+        let client = make_client(addr, interceptor).await;
 
         Ok((server, client))
     }
@@ -549,7 +570,7 @@ mod test {
     const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
     async fn mock_astarte_grpc_client(
-        mut message_hub_client: MessageHubClient<tonic::transport::Channel>,
+        mut message_hub_client: MessageHubClientWithInterceptor,
         interfaces: &Interfaces,
     ) -> Result<Grpc, Box<dyn std::error::Error>> {
         let node_data = NodeData::try_from_unlocked(ID, interfaces)?;

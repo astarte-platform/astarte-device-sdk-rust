@@ -25,7 +25,6 @@ use std::collections::HashMap;
 use std::num::TryFromIntError;
 use std::str::{FromStr, Utf8Error};
 
-use astarte_message_hub_proto;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
 use chrono::DateTime;
 
