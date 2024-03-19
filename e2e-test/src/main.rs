@@ -163,6 +163,7 @@ async fn main() -> eyre::Result<()> {
 
     // Add the remaining interfaces
     let additional_interfaces = read_additional_interfaces()?;
+    debug!("adding {} interfaces", additional_interfaces.len());
     device_cpy.extend_interfaces(additional_interfaces).await?;
 
     tasks.spawn(async move {

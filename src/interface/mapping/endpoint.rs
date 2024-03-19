@@ -23,7 +23,7 @@ use std::{
 };
 
 use itertools::{EitherOrBoth, Itertools};
-use log::{debug, error, info, trace};
+use log::{error, trace};
 
 use super::path::MappingPath;
 
@@ -398,7 +398,7 @@ pub enum LevelError {
 /// - We allow ending the level with a '%' since we can peek
 ///
 fn parse_endpoint(input: &str) -> Result<Endpoint<&str>, EndpointError> {
-    debug!("parsing endpoint: {}", input);
+    trace!("parsing endpoint: {}", input);
 
     let endpoint = input
         .strip_prefix('/')
@@ -417,7 +417,7 @@ fn parse_endpoint(input: &str) -> Result<Endpoint<&str>, EndpointError> {
         return Err(EndpointError::Empty(input.to_string()));
     }
 
-    info!("levels: {:?}", levels);
+    trace!("levels: {:?}", levels);
 
     Ok(Endpoint {
         path: input,

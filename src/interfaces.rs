@@ -24,7 +24,7 @@ use std::fmt::Display;
 use std::ops::Deref;
 
 use itertools::Itertools;
-use log::debug;
+use log::{debug, trace};
 
 use crate::{
     interface::{
@@ -65,7 +65,7 @@ impl Interfaces {
     ) -> Result<Option<Validated>, InterfaceError> {
         match self.interfaces.get(interface.interface_name()) {
             Some(prev) => {
-                debug!(
+                trace!(
                     "Interface {} already present, validating new version",
                     interface.interface_name()
                 );
@@ -80,7 +80,7 @@ impl Interfaces {
                 interface.validate_with(prev)?;
             }
             None => {
-                debug!("Interface {} not present", interface.interface_name());
+                trace!("Interface {} not present", interface.interface_name());
             }
         }
 
