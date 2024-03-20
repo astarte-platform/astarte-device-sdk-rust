@@ -141,6 +141,8 @@ impl<'a> From<&'a PropertiesMapping> for Mapping<&'a str> {
     fn from(value: &'a PropertiesMapping) -> Self {
         let mut mapping = Mapping::from(&value.mapping);
 
+        // Properties must have have Reliability Unique
+        mapping.reliability = Reliability::Unique;
         mapping.allow_unset = value.allow_unset;
 
         mapping

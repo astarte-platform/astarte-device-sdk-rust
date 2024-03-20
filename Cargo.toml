@@ -24,7 +24,7 @@ name = "benchmark"
 harness = false
 
 [dependencies]
-astarte-device-sdk-derive = { version = "0.6.2", optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = { version = "=0.6.3", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
 base64 = "0.21.0"
 bson = { version = "2.1.0", features = ["chrono-0_4"] }
