@@ -125,7 +125,7 @@ jobs:
   # Run semver-check on release branch push or PR
   semver:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
-    name: ubuntu / nightly / semver
+    name: stable / semver
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

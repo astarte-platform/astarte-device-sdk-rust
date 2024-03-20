@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "astarte-device-sdk-derive",
  "async-trait",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "quote",
  "syn 1.0.109",
