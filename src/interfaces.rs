@@ -59,6 +59,7 @@ impl Interfaces {
 
         let reliability = match mapping {
             Some(crate::interface::Mapping::Datastream(m)) => m.reliability,
+            Some(crate::interface::Mapping::Properties(_)) => crate::interface::Reliability::Unique,
             _ => Default::default(),
         };
 

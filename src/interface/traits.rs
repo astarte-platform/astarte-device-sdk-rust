@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::{BaseInterface, BaseMapping, MappingType, Ownership};
+use super::{BaseInterface, BaseMapping, MappingType};
 use itertools::{EitherOrBoth::*, Itertools};
 
 pub(crate) trait Interface {
@@ -35,18 +35,6 @@ pub(crate) trait Interface {
 
         (major, minor)
     }
-
-    fn ownership(&self) -> Ownership {
-        self.base_interface().ownership
-    }
-
-    fn description(&self) -> Option<&str> {
-        self.base_interface().description.as_deref()
-    }
-
-    fn doc(&self) -> Option<&str> {
-        self.base_interface().doc.as_deref()
-    }
 }
 
 pub(crate) trait Mapping {
@@ -58,14 +46,6 @@ pub(crate) trait Mapping {
 
     fn mapping_type(&self) -> MappingType {
         self.base_mapping().mapping_type
-    }
-
-    fn description(&self) -> Option<&str> {
-        self.base_mapping().description.as_deref()
-    }
-
-    fn doc(&self) -> Option<&str> {
-        self.base_mapping().doc.as_deref()
     }
 
     fn is_compatible(&self, path: &str) -> bool {

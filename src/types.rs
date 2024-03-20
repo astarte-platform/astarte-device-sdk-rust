@@ -20,8 +20,6 @@
 //! Provides Astarte specific types to be used by the
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receivedata to/from the Astarte cluster.
 
-use std::convert::TryInto;
-
 use bson::{Binary, Bson};
 use chrono::{DateTime, Utc};
 
@@ -392,9 +390,6 @@ impl AstarteType {
 #[cfg(test)]
 
 mod test {
-    use std::convert::TryFrom;
-    use std::convert::TryInto;
-
     use chrono::{DateTime, TimeZone, Utc};
 
     use crate::interface::MappingType;
