@@ -477,8 +477,11 @@ mod tests {
         assert!(!other_value_mapping.is_compatible("/foo/value/otherValue"));
         assert_eq!(value_mapping.endpoint(), "/%{sensor_id}/value");
         assert_eq!(value_mapping.mapping_type(), MappingType::Double);
-        assert_eq!(value_mapping.description(), Some("Mapping description"));
-        assert_eq!(value_mapping.doc(), Some("Mapping doc"));
+        assert_eq!(
+            value_mapping.base.description,
+            Some("Mapping description".to_string())
+        );
+        assert_eq!(value_mapping.base.doc, Some("Mapping doc".to_string()));
 
         let interface_name = "org.astarte-platform.genericsensors.Values".to_owned();
         let version_major = 1;
@@ -513,9 +516,15 @@ mod tests {
             "org.astarte-platform.genericsensors.Values"
         );
         assert_eq!(interface.version(), (1, 0));
-        assert_eq!(interface.ownership(), Ownership::Device);
-        assert_eq!(interface.description(), Some("Interface description"));
-        assert_eq!(interface.doc(), Some("Interface doc"));
+        assert_eq!(interface.base_interface().ownership, Ownership::Device);
+        assert_eq!(
+            interface.base_interface().description,
+            Some("Interface description".to_string())
+        );
+        assert_eq!(
+            interface.base_interface().doc,
+            Some("Interface doc".to_string())
+        );
     }
 
     #[test]

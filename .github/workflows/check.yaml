@@ -122,3 +122,16 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: cargo +${{ matrix.msrv }} check
         run: cargo check --all-features --workspace
+  # Run semver-check on release branch push or PR
+  semver:
+    if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
+    name: ubuntu / nightly / semver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          release-type: patch
