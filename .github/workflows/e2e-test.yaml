@@ -55,7 +55,7 @@ jobs:
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Run test
         run: |
           cargo test --package astarte-device-sdk --test e2etest -- run_e2etest --exact --nocapture --ignored
