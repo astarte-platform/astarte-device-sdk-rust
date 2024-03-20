@@ -164,7 +164,6 @@ mod tests {
     use p384::{
         ecdsa::{signature::Verifier, Signature, VerifyingKey},
         pkcs8::DecodePrivateKey,
-        SecretKey,
     };
     use x509_cert::{
         der::{DecodePem, Encode},
