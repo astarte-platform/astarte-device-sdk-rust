@@ -29,9 +29,10 @@ pub mod convert;
 use std::{collections::HashMap, ops::Deref, sync::Arc};
 
 use astarte_message_hub_proto::{
-    astarte_data_type, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
+    astarte_message::Payload, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
 };
 use async_trait::async_trait;
+use log::trace;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -243,18 +244,27 @@ impl Receive for Grpc {
         _mapping: MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), crate::Error> {
-        let astarte_data_type::Data::AstarteIndividual(individual_data) = payload.data else {
-            return Err(crate::Error::from(
-                GrpcTransportError::DeserializationExpectedIndividual,
-            ));
+        let data = match payload.data {
+            Payload::AstarteData(data) => data,
+            Payload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
+                trace!("unset received");
+
+                return Ok((AstarteType::Unset, payload.timestamp));
+            }
         };
 
-        Ok((
-            individual_data
-                .try_into()
-                .map_err(GrpcTransportError::from)?,
-            payload.timestamp,
-        ))
+        trace!("unset received");
+        let individual = data
+            .take_individual()
+            .ok_or(GrpcTransportError::DeserializationExpectedIndividual)?;
+
+        let data: AstarteType = individual
+            .try_into()
+            .map_err(GrpcTransportError::MessageHubProtoConversion)?;
+
+        trace!("received {}", data.display_type());
+
+        Ok((data, payload.timestamp))
     }
 
     fn deserialize_object(
@@ -263,16 +273,18 @@ impl Receive for Grpc {
         _path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
-        let astarte_data_type::Data::AstarteObject(object) = payload.data else {
-            return Err(crate::Error::from(
-                GrpcTransportError::DeserializationExpectedObject,
-            ));
-        };
+        let object = payload
+            .data
+            .take_data()
+            .and_then(|d| d.take_object())
+            .ok_or(GrpcTransportError::DeserializationExpectedObject)?;
 
-        Ok((
-            map_values_to_astarte_type(object.object_data).map_err(GrpcTransportError::from)?,
-            payload.timestamp,
-        ))
+        let data = map_values_to_astarte_type(object.object_data)
+            .map_err(GrpcTransportError::MessageHubProtoConversion)?;
+
+        trace!("object received");
+
+        Ok((data, payload.timestamp))
     }
 }
 
@@ -321,12 +333,12 @@ impl Disconnect for Grpc {
 /// Internal struct holding the received grpc message
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GrpcReceivePayload {
-    data: astarte_data_type::Data,
+    data: Payload,
     timestamp: Option<Timestamp>,
 }
 
 impl GrpcReceivePayload {
-    pub(crate) fn new(data: astarte_data_type::Data, timestamp: Option<Timestamp>) -> Self {
+    pub(crate) fn new(data: Payload, timestamp: Option<Timestamp>) -> Self {
         Self { data, timestamp }
     }
 }
@@ -966,15 +978,6 @@ mod test {
 
         let mock_shared_device = mock_shared_device(interfaces, mpsc::channel(1).0); // the channel won't be used
 
-        let astarte_message_hub_proto::astarte_message::Payload::AstarteData(
-            astarte_message_hub_proto::AstarteDataType {
-                data: Some(expected_data),
-            },
-        ) = proto_payload.clone()
-        else {
-            panic!("Unexpected data format");
-        };
-
         expect_messages!(connection.next_event(&mock_shared_device).await;
             ReceivedEvent {
                 ref interface,
@@ -985,7 +988,68 @@ mod test {
                 },
             } if interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
                 && path == "/1"
-                && data == expected_data
+                && data == proto_payload
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connection_receive_unset() {
+        let (server_impl, channels) = build_test_message_hub_server();
+        let (server_future, client_future) = mock_grpc_actors(server_impl)
+            .await
+            .expect("Could not construct test client and server");
+
+        let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
+            AstarteType::Unset.try_into().unwrap();
+
+        let exp_interface =
+            "org.astarte-platform.rust.examples.individual-properties.ServerProperties";
+        let exp_path = "/1/enable";
+        let astarte_message = AstarteMessage {
+            interface_name: exp_interface.to_string(),
+            path: exp_path.to_string(),
+            timestamp: None,
+            payload: Some(proto_payload.clone()),
+        };
+
+        // Send object from server
+        channels
+            .server_response_sender
+            .send(vec![Ok(astarte_message)])
+            .await
+            .unwrap();
+
+        let interfaces =
+            Interfaces::from_iter([Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()]);
+
+        let client_connection = async {
+            let client = client_future.await;
+
+            mock_astarte_grpc_client(client, &interfaces).await
+        };
+
+        let connection = tokio::select! {
+            _ = server_future => panic!("The server closed before the client could complete sending the data"),
+            res = client_connection => {
+                println!("Client connected correctly: {}", res.is_ok());
+
+                res.expect("Expected correct connection in test")
+            },
+        };
+
+        let mock_shared_device = mock_shared_device(interfaces, mpsc::channel(1).0); // the channel won't be used
+
+        expect_messages!(connection.next_event(&mock_shared_device).await;
+            ReceivedEvent {
+                ref interface,
+                ref path,
+                payload: GrpcReceivePayload {
+                    data,
+                    timestamp: None,
+                },
+            } if interface == exp_interface
+                && path == exp_path
+                && data == proto_payload
         );
     }
 }
