@@ -65,7 +65,9 @@ async fn main() -> Result<(), DynError> {
     let cfg: Config = serde_json::from_str(&file).unwrap();
 
     // Open the database, create it if it does not exists
-    let db = SqliteStore::new("./examples/individual_properties/astarte-example-db.sqlite").await?;
+    let db =
+        SqliteStore::from_uri("sqlite:://examples/individual_properties/astarte-example-db.sqlite")
+            .await?;
 
     let mut mqtt_config = MqttConfig::new(
         &cfg.realm,

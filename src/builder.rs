@@ -39,8 +39,10 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
+use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
+use crate::store::SqliteStore;
 use crate::transport::{Publish, Receive, Register};
 
 /// Default capacity of the channels
@@ -49,6 +51,41 @@ use crate::transport::{Publish, Receive, Register};
 /// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
 /// events data to the external receiver and between each component.
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
+
+/// Astarte builder error.
+///
+/// Possible errors used by the Astarte builder module.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum BuilderError {
+    /// Failed to read interface directory
+    #[error("couldn't read interface path {}", .path.display())]
+    Io {
+        /// Path to the interface file.
+        path: PathBuf,
+        /// Reason why the file couldn't be read.
+        #[source]
+        backtrace: io::Error,
+    },
+    /// Couldn't get the metadata of the writable directory
+    #[error("couldn't get metadata for {}", .path.display())]
+    DirectoryMetadata {
+        /// Path to the interface directory.
+        path: PathBuf,
+        /// Reason why the directory or file couldn't be read.
+        #[source]
+        backtrace: io::Error,
+    },
+    /// Provided path is not a directory
+    #[error("invalid directory at {}", .0.display())]
+    NotADirectory(PathBuf),
+    /// The provided directory is read only
+    #[error("directory is read only {}", .0.display())]
+    DirectoryReadonly(PathBuf),
+    /// Couldn't connect to the SQLite store
+    #[error("couldn't connect to the SQLite store")]
+    Sqlite(#[from] SqliteError),
+}
 
 /// Declares the conclusive operation of the device builder.
 ///
@@ -98,6 +135,7 @@ pub struct DeviceBuilder<S, C> {
     pub(crate) interfaces: Interfaces,
     pub(crate) connection: C,
     pub(crate) store: StoreWrapper<S>,
+    pub(crate) writable_dir: Option<PathBuf>,
 }
 
 impl DeviceBuilder<(), ()> {
@@ -121,6 +159,7 @@ impl DeviceBuilder<(), ()> {
             interfaces: Interfaces::new(),
             connection: (),
             store: StoreWrapper::new(()),
+            writable_dir: None,
         }
     }
 }
@@ -188,11 +227,53 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// This method configures the bounded channel size.
-    ///
     pub fn channel_size(mut self, size: usize) -> Self {
         self.channel_size = size;
 
         self
+    }
+
+    /// Configure a writable directory for the device.
+    pub fn writable_dir<P>(mut self, path: P) -> Result<Self, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref();
+        let metadata = path
+            .metadata()
+            .map_err(|err| BuilderError::DirectoryMetadata {
+                path: path.to_owned(),
+                backtrace: err,
+            })?;
+
+        if !metadata.is_dir() {
+            return Err(BuilderError::NotADirectory(path.to_owned()));
+        }
+
+        if metadata.permissions().readonly() {
+            return Err(BuilderError::DirectoryReadonly(path.to_owned()));
+        }
+
+        self.writable_dir = Some(path.to_owned());
+
+        Ok(self)
+    }
+
+    /// Configure a writable directory and initializes the [`SqliteStore`] in it.
+    pub async fn store_dir<P>(
+        mut self,
+        path: P,
+    ) -> Result<DeviceBuilder<SqliteStore, C>, BuilderError>
+    where
+        P: AsRef<Path>,
+    {
+        let path = path.as_ref();
+
+        self = self.writable_dir(path)?;
+
+        let store = SqliteStore::connect(path).await?;
+
+        Ok(self.store(store))
     }
 
     /// Set the backing storage for the device.
@@ -207,6 +288,7 @@ impl<S, C> DeviceBuilder<S, C> {
             interfaces: self.interfaces,
             connection: self.connection,
             store: StoreWrapper::new(store),
+            writable_dir: self.writable_dir,
         }
     }
 
@@ -228,6 +310,7 @@ impl<S, C> DeviceBuilder<S, C> {
             interfaces: self.interfaces,
             connection,
             store: self.store,
+            writable_dir: self.writable_dir,
         })
     }
 }
@@ -235,7 +318,9 @@ impl<S, C> DeviceBuilder<S, C> {
 impl<S, C> Debug for DeviceBuilder<S, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
+            .field("channel_size", &self.channel_size)
             .field("interfaces", &self.interfaces)
+            .field("writable_dir", &self.writable_dir)
             // We manually implement Debug for the store, so we can avoid have a trait bound on
             // `S` to implement [Display].
             .finish_non_exhaustive()
@@ -298,6 +383,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use tempfile::TempDir;
+
     use super::DeviceBuilder;
 
     #[test]
@@ -324,5 +411,23 @@ mod test {
             "Failed to load interfaces from directory: {:?}",
             res
         );
+    }
+
+    #[test]
+    fn should_get_writable_path() {
+        let dir = TempDir::new().unwrap();
+
+        let builder = DeviceBuilder::new().writable_dir(dir.path()).unwrap();
+
+        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
+    }
+
+    #[tokio::test]
+    async fn should_dir_with_store() {
+        let dir = TempDir::new().unwrap();
+
+        let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
+
+        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
     }
 }

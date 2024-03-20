@@ -59,7 +59,7 @@ pub trait PropAccess {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let database = SqliteStore::new("path/to/database/file.sqlite")
+    ///     let database = SqliteStore::from_uri("sqlite://path/to/database/file.sqlite")
     ///         .await
     ///         .unwrap();
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
@@ -336,12 +336,21 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn test_in_sqlite_from_str() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let uri = format!("sqlite://{}/prop-cache.db", dir.path().display());
+
+        let store = SqliteStore::from_uri(&uri).await.unwrap();
+
+        test_prop_access_for_store(store).await;
+    }
+
+    #[tokio::test]
     async fn test_in_sqlite_property_access() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.sqlite");
-        let path = db_path.as_path().to_str().unwrap();
 
-        let store = SqliteStore::new(path).await.unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         test_prop_access_for_store(store).await;
     }

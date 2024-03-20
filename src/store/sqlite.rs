@@ -18,11 +18,14 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{fmt::Debug, str::FromStr};
+use std::{fmt::Debug, path::Path, str::FromStr};
 
 use async_trait::async_trait;
 use log::{debug, error, trace};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
 
 use super::{PropertyStore, StoredProp};
 use crate::{
@@ -250,6 +253,17 @@ pub struct SqliteStore {
 
 impl SqliteStore {
     /// Creates a sqlite database for the Astarte device.
+    pub async fn new(pool: SqlitePool) -> Result<Self, SqliteError> {
+        // Run the migrations if needed
+        sqlx::migrate!()
+            .run(&pool)
+            .await
+            .map_err(SqliteError::Migration)?;
+
+        Ok(SqliteStore { db_conn: pool })
+    }
+
+    /// Creates a sqlite database for the Astarte device.
     ///
     /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details.
     ///
@@ -258,31 +272,45 @@ impl SqliteStore {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let database = SqliteStore::new("path/to/database/file.sqlite")
+    ///     let database = SqliteStore::from_uri("sqlite://path/to/database/file.db")
     ///         .await
     ///         .unwrap();
     /// }
     /// ```
-    pub async fn new(uri: &str) -> Result<Self, SqliteError> {
+    pub async fn from_uri(uri: &str) -> Result<Self, SqliteError> {
         let options = SqliteConnectOptions::from_str(uri)
             .map_err(|err| SqliteError::Uri {
                 backtrace: err,
                 uri: uri.to_string(),
             })?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .foreign_keys(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
-        let conn = SqlitePoolOptions::new()
+        let pool = SqlitePoolOptions::new()
             .connect_with(options)
             .await
             .map_err(SqliteError::Connection)?;
 
-        // Run the migrations if needed
-        sqlx::migrate!()
-            .run(&conn)
-            .await
-            .map_err(SqliteError::Migration)?;
+        Self::new(pool).await
+    }
 
-        Ok(SqliteStore { db_conn: conn })
+    /// Connect to the SQLite store with the default option for the sdk
+    pub(crate) async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
+        let db = writable_path.as_ref().join("prop-cache.db");
+
+        let options = SqliteConnectOptions::new()
+            .filename(db)
+            .foreign_keys(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .connect_with(options)
+            .await
+            .map_err(SqliteError::Connection)?;
+
+        Self::new(pool).await
     }
 }
 
@@ -442,10 +470,10 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_store() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.sqlite");
+        let db_path = dir.path().join("test.db");
         let path = db_path.as_path().to_str().unwrap();
 
-        let db = SqliteStore::new(path).await.unwrap();
+        let db = SqliteStore::from_uri(path).await.unwrap();
 
         test_property_store(db).await;
     }
@@ -454,21 +482,21 @@ mod tests {
     async fn should_parse_uri() {
         let dir = tempfile::tempdir().unwrap();
 
-        SqliteStore::new(&format!(
+        SqliteStore::from_uri(&format!(
             "sqlite://{}",
             dir.path().join("success.sqlite").display()
         ))
         .await
         .expect("should parse the correct uri");
 
-        SqliteStore::new(&format!(
+        SqliteStore::from_uri(&format!(
             "sqlite:://{}",
             dir.path().join("error.sqlite").display()
         ))
         .await
         .expect_err("should error for the uri");
 
-        SqliteStore::new(&format!(
+        SqliteStore::from_uri(&format!(
             "sqlite:///{}",
             dir.path().join("error.sqlite").display()
         ))

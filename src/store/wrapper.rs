@@ -121,10 +121,8 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_wrapped() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.sqlite");
-        let path = db_path.as_path().to_str().unwrap();
 
-        let db = SqliteStore::new(path).await.unwrap();
+        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
 
         test_property_store(db).await;
     }
