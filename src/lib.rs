@@ -42,7 +42,6 @@ use mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 use rumqttc::{AsyncClient, EventLoop};
 
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::fmt::{self, Debug};
 use std::path::Path;
 use std::str::FromStr;
