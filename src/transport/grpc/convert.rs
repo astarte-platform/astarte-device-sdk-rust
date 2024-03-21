@@ -276,7 +276,11 @@ impl TryFrom<astarte_message_hub_proto::AstarteMessage> for ReceivedEvent<GrpcRe
     fn try_from(message: astarte_message_hub_proto::AstarteMessage) -> Result<Self, Self::Error> {
         let interface = message.interface_name;
         let path = message.path;
-        let data = optional_chain!(message.payload.take_data().data)?;
+
+        let data = message
+            .payload
+            .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
+
         let timestamp: Option<Timestamp> =
             message
                 .timestamp

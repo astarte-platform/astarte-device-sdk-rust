@@ -515,8 +515,9 @@ impl TryFrom<BsonConverter> for AstarteType {
 
 #[cfg(test)]
 mod test {
-    use crate::Aggregation;
     use chrono::{DateTime, TimeZone, Utc};
+
+    use crate::Aggregation;
 
     use super::*;
 

@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Introduce Node ID into gRPC metadata.
 
+## [0.7.2] - 2024-03-21
+### Fixed
+- Handle Unset from gRPC correctly
+
+## [0.6.4] - 2024-03-20
+
+## [0.5.3] - 2024-03-20
+### Added
+- Add semver-check for release
+
+### Fixed
+- Property reliability as Unique
+
 ## [0.7.1] - 2024-02-16
 ## Changed
 - `MqttConfig` now receives `Into<String>` instead of `&str`
