@@ -55,6 +55,11 @@ pub enum MqttError {
     /// Couldn't parse the topic
     #[error("couldn't parse the topic")]
     Topic(#[from] TopicError),
+    /// Couldn't authenticate with the pairing token, because we are missing a writable directory
+    ///
+    /// See the [`ParingToken`](super::Credential::ParingToken) for more information.
+    #[error("missing writable directory to store credentials to use the pairing token")]
+    NoStorePairintToken,
 }
 
 impl MqttError {

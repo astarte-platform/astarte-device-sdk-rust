@@ -55,7 +55,7 @@ pub trait EventLoop {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (client, mut connection) = DeviceBuilder::new()
     ///         .store(MemoryStore::new())

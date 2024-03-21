@@ -143,7 +143,7 @@ mod tests {
         mock_astarte_device, E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY,
         INDIVIDUAL_SERVER_DATASTREAM,
     };
-    use crate::transport::mqtt::{AsyncClient, EventLoop as MqttEventLoop};
+    use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
 
     #[tokio::test]
     async fn test_add_remove_interface() {

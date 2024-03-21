@@ -29,8 +29,6 @@ pub mod event;
 pub mod interface;
 mod interfaces;
 pub mod introspection;
-#[cfg(test)]
-mod mock;
 pub mod prelude;
 pub mod properties;
 mod retry;
@@ -98,7 +96,7 @@ mod test {
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
 
-    use crate::transport::mqtt::{AsyncClient, EventLoop as MqttEventLoop};
+    use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
 
     // Interfaces
     pub(crate) const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");

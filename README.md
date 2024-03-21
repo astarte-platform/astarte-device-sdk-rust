@@ -51,7 +51,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     let db = SqliteStore::from_uri("sqlite::memory:").await?;
 
     // 2. Initialize device options and mqtt config (the ".database(db)" is not needed if 1 was skipped)
-    let mut mqtt_config = MqttConfig::new(realm, device_id, credentials_secret, pairing_url);
+    let mut mqtt_config = MqttConfig::with_credential_secret(realm, device_id, credentials_secret, pairing_url);
     mqtt_config.ignore_ssl_errors();
 
     // 3. Create the device instance

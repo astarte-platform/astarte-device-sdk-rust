@@ -23,8 +23,7 @@ use std::time::Duration;
 use log::{debug, error};
 use rumqttc::Event;
 
-use crate::transport::mqtt::EventLoop;
-use crate::Error;
+use crate::{transport::mqtt::client::EventLoop, Error};
 
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +57,7 @@ impl DelayedPoll {
 impl Default for DelayedPoll {
     fn default() -> Self {
         Self {
-            max: 16,
+            max: 360,
             delay: 0,
             exp: 0,
             base: 2,
@@ -89,8 +88,8 @@ mod tests {
 
     #[test]
     fn iter_delays() {
-        let expected = [1, 2, 4, 8, 16, 16, 16];
-        let delay: Vec<u32> = DelayedPoll::default().take(7).collect();
+        let expected = [1, 2, 4, 8, 16];
+        let delay: Vec<u32> = DelayedPoll::default().take(5).collect();
 
         assert_eq!(delay, expected);
     }

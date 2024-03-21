@@ -62,7 +62,7 @@ pub trait PropAccess {
     ///     let database = SqliteStore::from_uri("sqlite://path/to/database/file.sqlite")
     ///         .await
     ///         .unwrap();
-    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
     ///         .connect(mqtt_config).await.unwrap()
@@ -192,7 +192,7 @@ pub(crate) mod tests {
     use crate::test::mock_astarte_device_store;
     use crate::Interface;
 
-    use crate::transport::mqtt::{AsyncClient, EventLoop};
+    use crate::transport::mqtt::client::{AsyncClient, EventLoop};
 
     use super::*;
 

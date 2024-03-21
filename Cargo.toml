@@ -74,7 +74,7 @@ openssl = { workspace = true, optional = true }
 p384 = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-rumqttc = { workspace = true }
+rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
@@ -84,7 +84,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "mig
 sync_wrapper = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["parking_lot", "macros"] }
-url = { workspace = true }
+url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v5", "v4"] }
 x509-cert = { workspace = true, features = ["builder"] }
 

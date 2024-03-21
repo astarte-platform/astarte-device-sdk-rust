@@ -69,7 +69,7 @@ async fn main() -> Result<(), DynError> {
         SqliteStore::from_uri("sqlite:://examples/individual_properties/astarte-example-db.sqlite")
             .await?;
 
-    let mut mqtt_config = MqttConfig::new(
+    let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
         &cfg.device_id,
         &cfg.credentials_secret,

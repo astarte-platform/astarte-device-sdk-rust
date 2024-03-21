@@ -67,7 +67,7 @@ pub trait Client {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connect(mqtt_config).await.unwrap().build();
@@ -117,7 +117,7 @@ pub trait Client {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connect(mqtt_config).await.unwrap().build();
@@ -162,7 +162,7 @@ pub trait Client {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connect(mqtt_config).await.unwrap().build();

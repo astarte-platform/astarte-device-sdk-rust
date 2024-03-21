@@ -127,7 +127,7 @@ async fn main() -> eyre::Result<()> {
 
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 
-    let mut mqtt_config = MqttConfig::new(
+    let mut mqtt_config = MqttConfig::with_credential_secret(
         &test_cfg.realm,
         &test_cfg.device_id,
         &test_cfg.credentials_secret,
