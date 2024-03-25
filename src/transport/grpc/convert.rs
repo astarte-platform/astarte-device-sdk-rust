@@ -312,7 +312,7 @@ mod test {
     };
     use chrono::{DateTime, Utc};
 
-    use crate::{Aggregation, AstarteDeviceDataEvent};
+    use crate::{AstarteDeviceDataEvent, Value};
 
     use super::*;
 
@@ -327,16 +327,16 @@ mod test {
             let data = match payload {
                 // Unset
                 ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
-                    Aggregation::Unset
+                    Value::Unset
                 }
                 // Individual
                 ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
                     data: Some(ProtoData::AstarteIndividual(individual)),
-                }) => Aggregation::Individual(individual.try_into()?),
+                }) => Value::Individual(individual.try_into()?),
                 // Object
                 ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
                     data: Some(ProtoData::AstarteObject(obj)),
-                }) => Aggregation::Object(map_values_to_astarte_type(obj)?),
+                }) => Value::Object(map_values_to_astarte_type(obj)?),
                 // Error case
                 ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
                     data: None,
@@ -364,24 +364,24 @@ mod test {
         }
     }
 
-    impl From<Aggregation> for ProtoPayload {
-        fn from(value: Aggregation) -> Self {
+    impl From<Value> for ProtoPayload {
+        fn from(value: Value) -> Self {
             use astarte_message_hub_proto::astarte_data_type::Data;
 
             match value {
-                Aggregation::Individual(val) => {
+                Value::Individual(val) => {
                     ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
                         data: Some(Data::AstarteIndividual(val.into())),
                     })
                 }
-                Aggregation::Object(val) => {
+                Value::Object(val) => {
                     let object_data = val.into_iter().map(|(k, v)| (k, v.into())).collect();
 
                     ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
                         data: Some(Data::AstarteObject(AstarteDataTypeObject { object_data })),
                     })
                 }
-                Aggregation::Unset => {
+                Value::Unset => {
                     ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {})
                 }
             }
@@ -667,7 +667,7 @@ mod test {
         let interface_name = "test.name.json".to_string();
         let interface_path = "test".to_string();
 
-        let astarte_type = Aggregation::Unset;
+        let astarte_type = Value::Unset;
         let payload: ProtoPayload = astarte_type.into();
 
         let astarte_message = AstarteMessage {
@@ -682,7 +682,7 @@ mod test {
         assert_eq!(interface_name, astarte_device_data_event.interface);
         assert_eq!(interface_path, astarte_device_data_event.path);
 
-        assert_eq!(Aggregation::Unset, astarte_device_data_event.data);
+        assert_eq!(Value::Unset, astarte_device_data_event.data);
     }
 
     #[test]
@@ -786,7 +786,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Unset,
+            data: Value::Unset,
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -821,7 +821,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -844,7 +844,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -867,7 +867,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -889,7 +889,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -912,7 +912,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -935,7 +935,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -958,7 +958,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -981,7 +981,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1004,7 +1004,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1027,7 +1027,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1050,7 +1050,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1074,7 +1074,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1097,7 +1097,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1120,7 +1120,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Individual(expected_data.clone()),
+            data: Value::Individual(expected_data.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1147,7 +1147,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Object(expected_map.clone()),
+            data: Value::Object(expected_map.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1188,7 +1188,7 @@ mod test {
         let astarte_device_data_event = AstarteDeviceDataEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
-            data: Aggregation::Object(expected_map.clone()),
+            data: Value::Object(expected_map.clone()),
         };
 
         let astarte_message: AstarteMessage = astarte_device_data_event.clone().into();
@@ -1237,7 +1237,7 @@ mod test {
     fn from_sdk_astarte_aggregate_to_astarte_message_payload_success() {
         let expected_data: f64 = 15.5;
         use std::collections::HashMap;
-        let astarte_type_map = Aggregation::Object(HashMap::from([(
+        let astarte_type_map = Value::Object(HashMap::from([(
             "key1".to_string(),
             AstarteType::Double(expected_data),
         )]));

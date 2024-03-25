@@ -501,7 +501,7 @@ impl TryFrom<BsonConverter> for AstarteType {
 mod test {
     use chrono::{DateTime, TimeZone, Utc};
 
-    use crate::Aggregation;
+    use crate::Value;
 
     use super::*;
 
@@ -688,9 +688,9 @@ mod test {
     #[test]
     fn test_conversion_from_astarte_integer_to_f64() {
         let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Aggregation::Individual(astarte_type_double);
+        let astarte_ind = Value::Individual(astarte_type_double);
 
-        if let Aggregation::Individual(var) = astarte_ind {
+        if let Value::Individual(var) = astarte_ind {
             let value: f64 = var.try_into().unwrap();
             assert_eq!(5.0, value);
         } else {
@@ -701,9 +701,9 @@ mod test {
     #[test]
     fn test_conversion_from_astarte_integer_to_i64() {
         let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Aggregation::Individual(astarte_type_double);
+        let astarte_ind = Value::Individual(astarte_type_double);
 
-        if let Aggregation::Individual(var) = astarte_ind {
+        if let Value::Individual(var) = astarte_ind {
             let value: i64 = var.try_into().unwrap();
             assert_eq!(5, value);
         } else {

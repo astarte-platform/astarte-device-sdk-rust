@@ -314,7 +314,7 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::AstarteDeviceDataEvent) -> Result<Self, Self::Err> {
-                    use astarte_device_sdk::Aggregation;
+                    use astarte_device_sdk::Value;
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
 
@@ -333,7 +333,7 @@ impl FromEventDerive {
                         });
                     }
 
-                    let Aggregation::Object(mut object) = event.data else {
+                    let Value::Object(mut object) = event.data else {
                         return Err(FromEventError::Individual {
                             interface,
                             base_path,
