@@ -473,7 +473,7 @@ mod test {
     use crate::{
         error,
         transport::test::{mock_shared_device, mock_validate_individual, mock_validate_object},
-        Aggregation, AstarteAggregate, AstarteDeviceDataEvent,
+        AstarteAggregate, AstarteDeviceDataEvent, Value,
     };
 
     use super::*;
@@ -910,7 +910,7 @@ mod test {
             => data_event = AstarteDeviceDataEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.individual-properties.DeviceProperties"
                 && data_event.path == "/1/name"
-                && matches!(data_event.data, Aggregation::Individual(AstarteType::String(v)) if v == STRING_VALUE),
+                && matches!(data_event.data, Value::Individual(AstarteType::String(v)) if v == STRING_VALUE),
             ServerReceivedRequest::Detach(d) if d.uuid == ID.to_string()
         );
     }
@@ -975,7 +975,7 @@ mod test {
             => data_event = AstarteDeviceDataEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
                     && data_event.path == "/1",
-            => object_value = {  let Aggregation::Object(v) = data_event.data else { panic!("Expected object") }; v };
+            => object_value = {  let Value::Object(v) = data_event.data else { panic!("Expected object") }; v };
                 if object_value["endpoint1"] == AstarteType::Double(4.2)
                     && object_value["endpoint2"] == AstarteType::String("obj".to_string())
                     && object_value["endpoint3"] == AstarteType::BooleanArray(vec![true])
@@ -989,7 +989,7 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        let expected_object = Aggregation::Object((MockObject {}).astarte_aggregate().unwrap());
+        let expected_object = Value::Object((MockObject {}).astarte_aggregate().unwrap());
 
         let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
             expected_object.into();

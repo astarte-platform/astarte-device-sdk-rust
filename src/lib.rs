@@ -48,10 +48,10 @@ use tokio::sync::{mpsc, RwLock};
 use transport::Disconnect;
 
 /// Re-exported internal structs
+pub use crate::aggregate::{AstarteAggregate, Value};
 pub use crate::error::Error;
 pub use crate::event::FromEvent;
 pub use crate::interface::Interface;
-pub use aggregate::{Aggregation, AstarteAggregate};
 
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::MappingRef;
@@ -100,8 +100,8 @@ pub struct AstarteDeviceDataEvent {
     pub interface: String,
     /// Path to the endpoint for which the event has been triggered
     pub path: String,
-    /// Payload of the event
-    pub data: Aggregation,
+    /// Value of the event
+    pub data: Value,
 }
 
 /// Astarte device implementation.
@@ -133,7 +133,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Aggregation, crate::Error>
+    ) -> Result<Value, crate::Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -150,13 +150,9 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
         let (data, timestamp) = match interface.aggregation() {
             InterfaceAggregation::Individual => {
-                self.handle_payload_individual(interface, &path, payload)
-                    .await?
+                self.handle_individual(interface, &path, payload).await?
             }
-            InterfaceAggregation::Object => {
-                self.handle_payload_object(interface, &path, payload)
-                    .await?
-            }
+            InterfaceAggregation::Object => self.handle_object(interface, &path, payload).await?,
         };
 
         debug!("received {{v: {data:?}, t: {timestamp:?}}}");
@@ -165,12 +161,12 @@ impl<S, C> AstarteDeviceSdk<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
-    async fn handle_payload_individual<'a>(
+    async fn handle_individual<'a>(
         &self,
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -198,7 +194,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
                     );
                 }
 
-                Ok((Aggregation::Individual(value), timestamp))
+                Ok((Value::Individual(value), timestamp))
             }
             None => {
                 if interface.is_property() {
@@ -213,18 +209,18 @@ impl<S, C> AstarteDeviceSdk<S, C> {
                     );
                 }
 
-                Ok((Aggregation::Unset, None))
+                Ok((Value::Unset, None))
             }
         }
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
-    async fn handle_payload_object<'a>(
+    async fn handle_object<'a>(
         &self,
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
@@ -236,7 +232,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
-        Ok((Aggregation::Object(data), timestamp))
+        Ok((Value::Object(data), timestamp))
     }
 
     /// Checks whether a passed interface is a property and if it is already stored with the same value.
@@ -780,12 +776,12 @@ mod test {
     use crate::properties::PropAccess;
     use crate::store::memory::MemoryStore;
     use crate::store::PropertyStore;
-    use crate::transport::mqtt::payload::Payload;
+    use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::mock_mqtt_connection;
     use crate::transport::mqtt::Mqtt;
     use crate::{self as astarte_device_sdk, Client, EventReceiver, Interface};
     use astarte_device_sdk::AstarteAggregate;
-    use astarte_device_sdk::{types::AstarteType, Aggregation, AstarteDeviceSdk};
+    use astarte_device_sdk::{types::AstarteType, AstarteDeviceSdk, Value};
     use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
@@ -1145,7 +1141,7 @@ mod test {
         assert_eq!("/1/enable", event.path);
 
         match event.data {
-            Aggregation::Individual(AstarteType::Boolean(val)) => {
+            Value::Individual(AstarteType::Boolean(val)) => {
                 assert!(val);
             }
             _ => panic!("Wrong data type {:?}", event.data),
@@ -1160,7 +1156,7 @@ mod test {
         let mut client = AsyncClient::default();
 
         let value = AstarteType::String(String::from("name number 1"));
-        let buf = Payload::new(&value).to_vec().unwrap();
+        let buf = MqttPayload::new(&value).to_vec().unwrap();
 
         let unset = Vec::new();
 
@@ -1275,7 +1271,7 @@ mod test {
             "endpoint3".to_string(),
             AstarteType::BooleanArray(vec![true]),
         );
-        let expected = Aggregation::Object(obj);
+        let expected = Value::Object(obj);
 
         assert_eq!(
             "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",

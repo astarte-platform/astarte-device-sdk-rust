@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
     builder::DeviceBuilder, error::Error, prelude::*, store::SqliteStore,
-    transport::mqtt::MqttConfig,
+    transport::mqtt::MqttConfig, Value,
 };
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;
@@ -128,7 +128,7 @@ async fn main() -> Result<(), DynError> {
         while let Some(event) = rx_events.recv().await {
             match event {
                 Ok(data) => {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                    if let Value::Individual(var) = data.data {
                         let mut iter = data.path.splitn(3, '/').skip(1);
                         let sensor_id = iter
                             .next()

@@ -32,13 +32,12 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use astarte_device_sdk::Aggregation;
-use astarte_device_sdk::Interface;
+use astarte_device_sdk::{Interface, Value};
 use eyre::WrapErr;
 use itertools::Itertools;
 use log::{debug, error, info};
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde_json::Value as JsonValue;
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -202,7 +201,7 @@ async fn main() -> eyre::Result<()> {
             match event {
                 Ok(data) => {
                     if data.interface == test_cfg.interface_datastream_so {
-                        if let Aggregation::Individual(var) = data.data {
+                        if let Value::Individual(var) = data.data {
                             let mut rx_data = rx_data_ind_datastream.lock().unwrap();
                             let mut key = data.path.clone();
                             key.remove(0);
@@ -211,7 +210,7 @@ async fn main() -> eyre::Result<()> {
                             panic!("Received unexpected message!");
                         }
                     } else if data.interface == test_cfg.interface_aggregate_so {
-                        if let astarte_device_sdk::Aggregation::Object(var) = data.data {
+                        if let Value::Object(var) = data.data {
                             let mut rx_data = rx_data_agg_datastream.lock().unwrap();
                             let mut sensor_n = data.path.clone();
                             sensor_n.remove(0);
@@ -223,17 +222,25 @@ async fn main() -> eyre::Result<()> {
                             panic!("Received unexpected message!");
                         }
                     } else if data.interface == test_cfg.interface_property_so {
-                        if let Aggregation::Individual(var) = data.clone().data {
-                            let mut rx_data = rx_data_ind_prop.lock().unwrap();
-                            let mut path = data.path.clone();
-                            path.remove(0); // Remove first forward slash
-                            let panic_msg = format!("Incorrect path in message {:?}", &data);
-                            let (sensor_n, key) = path.split_once('/').expect(&panic_msg);
-                            rx_data.0 = sensor_n.to_string();
-                            rx_data.1.insert(key.to_string(), var);
-                        } else {
-                            panic!("Received unexpected message!");
-                        }
+                        let mut rx_data = rx_data_ind_prop.lock().unwrap();
+
+                        let mut path = data.path.clone();
+                        path.remove(0); // Remove first forward slash
+                        let (sensor_n, key) = path
+                            .split_once('/')
+                            .unwrap_or_else(|| panic!("Incorrect path in message {:?}", data));
+
+                        rx_data.0 = sensor_n.to_string();
+
+                        match data.clone().data {
+                            Value::Individual(var) => {
+                                rx_data.1.insert(key.to_string(), var);
+                            }
+                            Value::Unset => {
+                                rx_data.1.remove(key);
+                            }
+                            _ => panic!("Received unexpected message!"),
+                        };
                     } else {
                         panic!("Received unexpected message!");
                     }
@@ -315,7 +322,7 @@ async fn test_datastream_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_datastream_do).await?;
 
     // Check if the sent and received data match
-    let data_json: Value = serde_json::from_str(&http_get_response)
+    let data_json: JsonValue = serde_json::from_str(&http_get_response)
         .map_err(|_| "Reply from server is a bad json.".to_string())?;
 
     let rx_data = MockDataDatastream::init()
@@ -404,7 +411,7 @@ async fn test_aggregate_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_aggregate_do).await?;
 
     // Check if the sent and received data match
-    let data_json: Value = serde_json::from_str(&http_get_response)
+    let data_json: JsonValue = serde_json::from_str(&http_get_response)
         .map_err(|_| "Reply from server is a bad json.".to_string())?;
 
     let rx_data = MockDataAggregate::init()
@@ -500,7 +507,7 @@ async fn test_property_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     // Check if the sent and received data match
-    let data_json: Value = serde_json::from_str(&http_get_response)
+    let data_json: JsonValue = serde_json::from_str(&http_get_response)
         .map_err(|_| "Reply from server is a bad json.".to_string())?;
 
     let rx_data = MockDataProperty::init()

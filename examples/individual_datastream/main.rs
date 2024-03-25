@@ -102,7 +102,7 @@ async fn main() -> Result<(), Error> {
         while let Some(event) = rx_events.recv().await {
             match event {
                 Ok(data) => {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                    if let astarte_device_sdk::Value::Individual(var) = data.data {
                         let mut iter = data.path.splitn(3, '/').skip(1);
                         let led_id = iter
                             .next()

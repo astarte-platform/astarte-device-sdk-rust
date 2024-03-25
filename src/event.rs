@@ -66,7 +66,7 @@ pub enum FromEventError {
 /// # Example
 ///
 /// ```rust
-/// use astarte_device_sdk::{Aggregation, AstarteDeviceDataEvent};
+/// use astarte_device_sdk::{Value, AstarteDeviceDataEvent};
 /// use astarte_device_sdk::event::{FromEvent, FromEventError};
 /// use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
 ///
@@ -94,7 +94,7 @@ pub enum FromEventError {
 ///             });
 ///         }
 ///
-///         let Aggregation::Object(mut object) = event.data else {
+///         let Value::Object(mut object) = event.data else {
 ///             return Err(FromEventError::Individual {
 ///                 interface: "com.example.Sensor",
 ///                 base_path: "sensor",
@@ -136,7 +136,7 @@ mod tests {
     fn should_derive_form_event() {
         use std::collections::HashMap;
 
-        use crate::{Aggregation, FromEvent};
+        use crate::{FromEvent, Value};
 
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk, AstarteDeviceDataEvent};
@@ -155,7 +155,7 @@ mod tests {
         let event = AstarteDeviceDataEvent {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor".to_string(),
-            data: Aggregation::Object(data),
+            data: Value::Object(data),
         };
 
         let sensor = Sensor::from_event(event).expect("couldn't parse the event");
