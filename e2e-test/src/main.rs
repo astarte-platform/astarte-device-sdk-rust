@@ -29,15 +29,16 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_device_sdk::{Interface, Value};
-use eyre::WrapErr;
+use eyre::{eyre, OptionExt, WrapErr};
 use itertools::Itertools;
 use log::{debug, error, info};
 use reqwest::StatusCode;
 use serde_json::Value as JsonValue;
+use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
 
@@ -140,11 +141,9 @@ async fn main() -> eyre::Result<()> {
 
     let (mut device, mut rx_events) = DeviceBuilder::new()
         .store(MemoryStore::new())
-        .interface_directory(&test_cfg.interfaces_fld)
-        .unwrap()
+        .interface_directory(&test_cfg.interfaces_fld)?
         .connect(mqtt_config)
-        .await
-        .unwrap()
+        .await?
         .build();
 
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
@@ -157,9 +156,10 @@ async fn main() -> eyre::Result<()> {
     let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
     let rx_data_ind_prop_cpy = rx_data_ind_prop.clone();
 
-    let mut tasks = JoinSet::new();
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    let handle_events = tasks.spawn(async move { device.handle_events().await });
+    let handle_events =
+        tasks.spawn(async move { device.handle_events().await.map_err(Into::into) });
 
     // Add the remaining interfaces
     let additional_interfaces = read_additional_interfaces()?;
@@ -168,26 +168,14 @@ async fn main() -> eyre::Result<()> {
 
     tasks.spawn(async move {
         // Run datastream tests
-        test_datastream_device_to_server(&device_cpy, &test_cfg_cpy)
-            .await
-            .unwrap();
-        test_datastream_server_to_device(&test_cfg_cpy, &rx_data_ind_datastream_cpy)
-            .await
-            .unwrap();
+        test_datastream_device_to_server(&device_cpy, &test_cfg_cpy).await?;
+        test_datastream_server_to_device(&test_cfg_cpy, &rx_data_ind_datastream_cpy).await?;
         // Run aggregate tests
-        test_aggregate_device_to_server(&device_cpy, &test_cfg_cpy)
-            .await
-            .unwrap();
-        test_aggregate_server_to_device(&test_cfg_cpy, &rx_data_agg_datastream_cpy)
-            .await
-            .unwrap();
+        test_aggregate_device_to_server(&device_cpy, &test_cfg_cpy).await?;
+        test_aggregate_server_to_device(&test_cfg_cpy, &rx_data_agg_datastream_cpy).await?;
         // Run properties tests
-        test_property_device_to_server(&device_cpy, &test_cfg_cpy)
-            .await
-            .unwrap();
-        test_property_server_to_device(&test_cfg_cpy, &rx_data_ind_prop_cpy)
-            .await
-            .unwrap();
+        test_property_device_to_server(&device_cpy, &test_cfg_cpy).await?;
+        test_property_server_to_device(&test_cfg_cpy, &rx_data_ind_prop_cpy).await?;
 
         info!("Test datastreams completed successfully");
         handle_events.abort();
@@ -198,56 +186,54 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         // Poll any astarte message and store its content in the correct shared data structure
         while let Some(event) = rx_events.recv().await {
-            match event {
-                Ok(data) => {
-                    if data.interface == test_cfg.interface_datastream_so {
-                        if let Value::Individual(var) = data.data {
-                            let mut rx_data = rx_data_ind_datastream.lock().unwrap();
-                            let mut key = data.path.clone();
-                            key.remove(0);
-                            rx_data.insert(key, var);
-                        } else {
-                            panic!("Received unexpected message!");
-                        }
-                    } else if data.interface == test_cfg.interface_aggregate_so {
-                        if let Value::Object(var) = data.data {
-                            let mut rx_data = rx_data_agg_datastream.lock().unwrap();
-                            let mut sensor_n = data.path.clone();
-                            sensor_n.remove(0);
-                            rx_data.0 = sensor_n;
-                            for (key, value) in var {
-                                rx_data.1.insert(key, value);
-                            }
-                        } else {
-                            panic!("Received unexpected message!");
-                        }
-                    } else if data.interface == test_cfg.interface_property_so {
-                        let mut rx_data = rx_data_ind_prop.lock().unwrap();
+            let event = event.wrap_err("error received")?;
 
-                        let mut path = data.path.clone();
-                        path.remove(0); // Remove first forward slash
-                        let (sensor_n, key) = path
-                            .split_once('/')
-                            .unwrap_or_else(|| panic!("Incorrect path in message {:?}", data));
+            if event.interface == test_cfg.interface_datastream_so {
+                let var = event
+                    .data
+                    .take_individual()
+                    .ok_or_eyre("Received unexpected message!")?;
 
-                        rx_data.0 = sensor_n.to_string();
+                let mut rx_data = rx_data_ind_datastream.lock().await;
+                let mut key = event.path.clone();
+                key.remove(0);
+                rx_data.insert(key, var);
+            } else if event.interface == test_cfg.interface_aggregate_so {
+                let var = event
+                    .data
+                    .take_object()
+                    .ok_or_eyre("Received unexpected message!")?;
 
-                        match data.clone().data {
-                            Value::Individual(var) => {
-                                rx_data.1.insert(key.to_string(), var);
-                            }
-                            Value::Unset => {
-                                rx_data.1.remove(key);
-                            }
-                            _ => panic!("Received unexpected message!"),
-                        };
-                    } else {
-                        panic!("Received unexpected message!");
+                let mut rx_data = rx_data_agg_datastream.lock().await;
+                let mut sensor_n = event.path.clone();
+                sensor_n.remove(0);
+                rx_data.0 = sensor_n;
+
+                for (key, value) in var {
+                    rx_data.1.insert(key, value);
+                }
+            } else if event.interface == test_cfg.interface_property_so {
+                let mut rx_data = rx_data_ind_prop.lock().await;
+
+                let mut path = event.path.clone();
+                path.remove(0); // Remove first forward slash
+                let (sensor_n, key) = path
+                    .split_once('/')
+                    .ok_or_else(|| eyre!("Incorrect path in message {:?}", event))?;
+
+                rx_data.0 = sensor_n.to_string();
+
+                match event.clone().data {
+                    Value::Individual(var) => {
+                        rx_data.1.insert(key.to_string(), var);
                     }
-                }
-                Err(err) => {
-                    panic!("poll error {err:?}");
-                }
+                    Value::Unset => {
+                        rx_data.1.remove(key);
+                    }
+                    _ => panic!("Received unexpected message!"),
+                };
+            } else {
+                panic!("Received unexpected message!");
             }
         }
 
@@ -266,7 +252,7 @@ async fn main() -> eyre::Result<()> {
             Ok(Err(err)) => {
                 error!("Task returned an error {err}");
 
-                return Err(err.into());
+                return Err(err);
             }
         }
     }
@@ -301,7 +287,7 @@ fn read_additional_interfaces() -> eyre::Result<Vec<Interface>> {
 async fn test_datastream_device_to_server(
     device: &impl Client,
     test_cfg: &TestCfg,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataDatastream::init();
     let tx_data = mock_data.get_device_to_server_data_as_astarte();
 
@@ -310,8 +296,7 @@ async fn test_datastream_device_to_server(
     for (key, value) in tx_data.clone() {
         device
             .send(&test_cfg.interface_datastream_do, &format!("/{key}"), value)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
         time::sleep(Duration::from_millis(5)).await;
     }
 
@@ -322,19 +307,16 @@ async fn test_datastream_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_datastream_do).await?;
 
     // Check if the sent and received data match
-    let data_json: JsonValue = serde_json::from_str(&http_get_response)
-        .map_err(|_| "Reply from server is a bad json.".to_string())?;
+    let data_json: JsonValue =
+        serde_json::from_str(&http_get_response).wrap_err("Reply from server is a bad json.")?;
 
     let rx_data = MockDataDatastream::init()
-        .fill_device_to_server_data_from_json(&data_json)?
+        .fill_device_to_server_data_from_json(&data_json)
+        .map_err(|err| eyre!("{err}"))?
         .get_device_to_server_data_as_astarte();
 
     if tx_data != rx_data {
-        Err([
-            "Mismatch between server and device.",
-            &format!("Expected data: {tx_data:?}. Server data: {rx_data:?}."),
-        ]
-        .join(" "))
+        Err(eyre!( "Mismatch between server and device. Expected data: {tx_data:?}. Server data: {rx_data:?}."))
     } else {
         Ok(())
     }
@@ -350,7 +332,7 @@ async fn test_datastream_device_to_server(
 async fn test_datastream_server_to_device(
     test_cfg: &TestCfg,
     rx_data: &Arc<Mutex<HashMap<String, AstarteType>>>,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataDatastream::init();
 
     // Send the data using http requests
@@ -364,17 +346,11 @@ async fn test_datastream_server_to_device(
     // Lock the shared data and check if everything sent has been correctly received
 
     debug!("Checking data received by the device.");
-    let rx_data_rw_acc = rx_data
-        .lock()
-        .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+    let rx_data_rw_acc = rx_data.lock().await;
 
     let exp_data = mock_data.get_server_to_device_data_as_astarte();
     if exp_data != *rx_data_rw_acc {
-        Err([
-            "Mismatch between expected and received data.",
-            &format!("Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}."),
-        ]
-        .join(" "))
+        Err(eyre!( "Mismatch between expected and received data. Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}."))
     } else {
         Ok(())
     }
@@ -388,7 +364,7 @@ async fn test_datastream_server_to_device(
 async fn test_aggregate_device_to_server(
     device: &impl Client,
     test_cfg: &TestCfg,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataAggregate::init();
     let tx_data = mock_data.get_device_to_server_data_as_struct();
     let sensor_number: i8 = 45;
@@ -401,8 +377,7 @@ async fn test_aggregate_device_to_server(
             &format!("/{sensor_number}"),
             tx_data.clone(),
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
     time::sleep(Duration::from_secs(1)).await;
 
@@ -411,19 +386,18 @@ async fn test_aggregate_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_aggregate_do).await?;
 
     // Check if the sent and received data match
-    let data_json: JsonValue = serde_json::from_str(&http_get_response)
-        .map_err(|_| "Reply from server is a bad json.".to_string())?;
+    let data_json: JsonValue =
+        serde_json::from_str(&http_get_response).wrap_err("Reply from server is a bad json.")?;
 
     let rx_data = MockDataAggregate::init()
-        .fill_device_to_server_data_from_json(&data_json, sensor_number)?
+        .fill_device_to_server_data_from_json(&data_json, sensor_number)
+        .map_err(|err| eyre!(err))?
         .get_device_to_server_data_as_struct();
 
     if tx_data != rx_data {
-        Err([
-            "Mismatch between server and device.",
-            &format!("Expected data: {tx_data:?}. Server data: {rx_data:?}."),
-        ]
-        .join(" "))
+        Err(eyre!(
+            "Mismatch between server and device. Expected data: {tx_data:?}. Server data: {rx_data:?}.")
+        )
     } else {
         Ok(())
     }
@@ -439,7 +413,7 @@ async fn test_aggregate_device_to_server(
 async fn test_aggregate_server_to_device(
     test_cfg: &TestCfg,
     rx_data: &Arc<Mutex<(String, HashMap<String, AstarteType>)>>,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataAggregate::init();
     let sensor_number: i8 = 11;
 
@@ -457,18 +431,14 @@ async fn test_aggregate_server_to_device(
 
     // Lock the shared data and check if everything sent has been correctly received
     debug!("Checking data received by the device.");
-    let rx_data_rw_acc = rx_data
-        .lock()
-        .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+    let rx_data_rw_acc = rx_data.lock().await;
 
     let exp_data = mock_data.get_server_to_device_data_as_astarte();
 
     if (sensor_number.to_string() != rx_data_rw_acc.0) || (exp_data != rx_data_rw_acc.1) {
-        Err([
-            "Mismatch between expected and received data.",
-            &format!("Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}."),
-        ]
-        .join(" "))
+        Err(eyre!(
+            "Mismatch between expected and received data. Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}.")
+        )
     } else {
         Ok(())
     }
@@ -482,7 +452,7 @@ async fn test_aggregate_server_to_device(
 async fn test_property_device_to_server(
     device: &impl Client,
     test_cfg: &TestCfg,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataProperty::init();
     let tx_data = mock_data.get_device_to_server_data_as_astarte();
     let sensor_number = 1;
@@ -496,8 +466,7 @@ async fn test_property_device_to_server(
                 &format!("/{sensor_number}/{key}"),
                 value,
             )
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
     }
 
     time::sleep(Duration::from_secs(1)).await;
@@ -507,19 +476,17 @@ async fn test_property_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     // Check if the sent and received data match
-    let data_json: JsonValue = serde_json::from_str(&http_get_response)
-        .map_err(|_| "Reply from server is a bad json.".to_string())?;
+    let data_json: JsonValue =
+        serde_json::from_str(&http_get_response).wrap_err("Reply from server is a bad json.")?;
 
     let rx_data = MockDataProperty::init()
         .fill_device_to_server_data_from_json(&data_json, sensor_number)?
         .get_device_to_server_data_as_astarte();
 
     if tx_data != rx_data {
-        return Err([
-            "Mismatch between server and device.",
-            &format!("Expected data: {tx_data:?}. Server data: {rx_data:?}."),
-        ]
-        .join(" "));
+        return Err(eyre!(
+            "Mismatch between server and device. Expected data: {tx_data:?}. Server data: {rx_data:?}."
+    ));
     }
 
     // Unset one specific property
@@ -530,8 +497,7 @@ async fn test_property_device_to_server(
                 &test_cfg.interface_property_do,
                 &format!("/{sensor_number}/{key}"),
             )
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
     }
 
     time::sleep(Duration::from_secs(1)).await;
@@ -541,11 +507,8 @@ async fn test_property_device_to_server(
     let http_get_response = http_get_intf(test_cfg, &test_cfg.interface_property_do).await?;
 
     if http_get_response != "{\"data\":{}}" {
-        Err([
-            "Mismatch between server and device.",
-            &format!("Expected data: {{\"data\":{{}}}}. Server data: {http_get_response:?}."),
-        ]
-        .join(" "))
+        Err(eyre!(
+            "Mismatch between server and device. Expected data: {{\"data\":{{}}}}. Server data: {http_get_response:?}."))
     } else {
         Ok(())
     }
@@ -561,7 +524,7 @@ async fn test_property_device_to_server(
 async fn test_property_server_to_device(
     test_cfg: &TestCfg,
     rx_data: &Arc<Mutex<(String, HashMap<String, AstarteType>)>>,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let mock_data = MockDataProperty::init();
     let sensor_number: i8 = 42;
 
@@ -582,17 +545,13 @@ async fn test_property_server_to_device(
     // Lock the shared data and check if everything sent has been correctly received
     {
         debug!("Checking data received by the device.");
-        let rx_data_rw_acc = rx_data
-            .lock()
-            .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+        let rx_data_rw_acc = rx_data.lock().await;
 
         let exp_data = mock_data.get_server_to_device_data_as_astarte();
         if (sensor_number.to_string() != rx_data_rw_acc.0) || (exp_data != rx_data_rw_acc.1) {
-            return Err([
-                "Mismatch between expected and received data.",
-                &format!("Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}."),
-            ]
-            .join(" "));
+            return Err(eyre!(
+                "Mismatch between expected and received data. Expected data: {exp_data:?}. Server data: {rx_data_rw_acc:?}."
+            ));
         }
     }
 
@@ -612,12 +571,10 @@ async fn test_property_server_to_device(
     // Lock the shared data and check if everything sent has been correctly received
     {
         debug!("Checking data received by the device.");
-        let rx_data_rw_acc = rx_data
-            .lock()
-            .map_err(|e| format!("Failed to lock the shared data. {e}"))?;
+        let rx_data_rw_acc = rx_data.lock().await;
 
         if sensor_number.to_string() != rx_data_rw_acc.0 {
-            return Err(format!(
+            return Err(eyre!(
                 "Incorrect received data. Server data: {rx_data_rw_acc:?}."
             ));
         }
@@ -630,7 +587,7 @@ async fn test_property_server_to_device(
 /// # Arguments
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface for which to perform the GET request.
-async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, String> {
+async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> eyre::Result<String> {
     let get_cmd = format!(
         "{}/v1/{}/devices/{}/interfaces/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface
@@ -644,10 +601,10 @@ async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> Result<String, St
         )
         .send()
         .await
-        .map_err(|e| format!("HTTP GET failure: {e}"))?
+        .wrap_err("HTTP GET failure")?
         .text()
         .await
-        .map_err(|e| format!("Failure in parsing the HTTP GET result: {e}"))
+        .wrap_err("Failure in parsing the HTTP GET result")
 }
 
 /// Perform an HTTP POST request to an Astarte interface.
@@ -662,7 +619,7 @@ async fn http_post_to_intf(
     interface: &str,
     path: &str,
     value_json: String,
-) -> Result<(), String> {
+) -> eyre::Result<()> {
     let post_cmd = format!(
         "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
@@ -678,16 +635,17 @@ async fn http_post_to_intf(
         .body(value_json.clone())
         .send()
         .await
-        .map_err(|e| format!("HTTP POST failure: {e}"))?;
+        .wrap_err("HTTP POST failure")?;
     if response.status() != StatusCode::OK {
         let response_text = response
             .text()
             .await
-            .map_err(|e| format!("Failure in parsing the HTTP POST result: {e}"))?;
-        return Err(format!(
+            .wrap_err("Failure in parsing the HTTP POST result")?;
+        return Err(eyre!(
             "Failure in POST command. Server response: {response_text}"
         ));
     }
+
     Ok(())
 }
 
@@ -697,11 +655,7 @@ async fn http_post_to_intf(
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface on which to perform the DELETE request.
 /// - *path*: path for the endpoint for which the data should be deleted.
-async fn http_delete_to_intf(
-    test_cfg: &TestCfg,
-    interface: &str,
-    path: &str,
-) -> Result<(), String> {
+async fn http_delete_to_intf(test_cfg: &TestCfg, interface: &str, path: &str) -> eyre::Result<()> {
     let post_cmd = format!(
         "{}/v1/{}/devices/{}/interfaces/{}/{}",
         test_cfg.api_url, test_cfg.realm, test_cfg.device_id, interface, path
@@ -715,13 +669,13 @@ async fn http_delete_to_intf(
         )
         .send()
         .await
-        .map_err(|e| format!("HTTP DELETE failure: {e}"))?;
+        .wrap_err("HTTP DELETE failure")?;
     if response.status() != StatusCode::NO_CONTENT {
         let response_text = response
             .text()
             .await
-            .map_err(|e| format!("Failure in parsing the HTTP DELETE result: {e}"))?;
-        return Err(format!(
+            .wrap_err("Failure in parsing the HTTP DELETE result")?;
+        return Err(eyre!(
             "Failure in DELETE command. Server response: {response_text}"
         ));
     }

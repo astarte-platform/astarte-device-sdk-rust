@@ -24,6 +24,7 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 
 use astarte_device_sdk::types::AstarteType;
+use eyre::{eyre, OptionExt};
 
 use crate::utils;
 
@@ -197,21 +198,21 @@ impl MockDataProperty {
         mut self,
         json_obj: &serde_json::Value,
         sensor_number: i8,
-    ) -> Result<Self, String> {
-        let err = format!("Incorrectly formatted json: {json_obj:#?}.");
+    ) -> eyre::Result<Self> {
         let json_map = json_obj
             .get("data")
-            .ok_or(&err)?
-            .get(sensor_number.to_string())
-            .ok_or(&err)?
-            .as_object()
-            .ok_or(&err)?;
+            .and_then(|data| data.get(sensor_number.to_string()))
+            .and_then(|sensor| sensor.as_object())
+            .ok_or_else(|| eyre!("Incorrectly formatted json: {json_obj:#?}."))?;
+
         let mut data = HashMap::new();
         for (key, value) in json_map {
             let astarte_value = utils::astarte_type_from_json_value(
-                key.strip_suffix("_endpoint").ok_or(&err)?,
+                key.strip_suffix("_endpoint")
+                    .ok_or_eyre("Invalid endpoint")?,
                 value.clone(),
-            )?;
+            )
+            .map_err(|err| eyre!("{err}"))?;
             data.insert(key.to_string(), astarte_value);
         }
         self.device_to_server = data;

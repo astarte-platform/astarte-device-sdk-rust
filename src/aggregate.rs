@@ -96,6 +96,16 @@ impl Value {
         }
     }
 
+    /// Take out of the enum an [`AstarteType`] if the aggregate is
+    /// [`Individual`](Value::Individual).
+    pub fn take_individual(self) -> Option<AstarteType> {
+        if let Self::Individual(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
     /// Returns `true` if the aggregation is [`Object`].
     ///
     /// [`Object`]: Value::Object
@@ -106,6 +116,15 @@ impl Value {
 
     /// Get a reference to the [`HashMap`] if the aggregate is [`Object`](Value::Object).
     pub fn as_object(&self) -> Option<&HashMap<String, AstarteType>> {
+        if let Self::Object(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Take out of the enum an [`HashMap`] if the aggregate is [`Object`](Value::Object).
+    pub fn take_object(self) -> Option<HashMap<String, AstarteType>> {
         if let Self::Object(v) = self {
             Some(v)
         } else {
