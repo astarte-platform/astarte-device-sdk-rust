@@ -23,6 +23,7 @@
 
 /// Device module that exports trait commonly used when sending or receiving data.
 pub mod device {
+    pub use crate::introspection::DynamicIntrospection;
     pub use crate::AstarteAggregate;
     pub use crate::Client;
     pub use crate::ClientDisconnect;

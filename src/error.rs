@@ -20,10 +20,10 @@
 
 use std::convert::Infallible;
 
-use crate::builder::BuilderError;
-use crate::interface::error::InterfaceFileError;
+use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
-use crate::interface::{error::InterfaceError, Aggregation, InterfaceTypeDef};
+use crate::interface::{Aggregation, InterfaceTypeDef};
+use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
@@ -39,15 +39,12 @@ pub enum Error {
     /// The connection poll reached the max number of retries.
     #[error("connection reached max retries")]
     ConnectionTimeout,
-    /// Error returned by the builder
-    #[error("options error")]
-    Builder(#[from] BuilderError),
-    /// Failed to parse the interface
-    #[error("couldn't add interface")]
+    /// Error while parsing interface
+    #[error("couldn't parse interface")]
     Interface(#[from] InterfaceError),
-    /// Failed to parse interface file
-    #[error("couldn't parse interface file")]
-    InterfaceFile(#[from] InterfaceFileError),
+    /// Error while operating on the device introspection
+    #[error("couldn't complete introspection operation")]
+    AddInterface(#[from] AddInterfaceError),
     /// Invalid interface type when sending or receiving
     #[error("invalid interface type, expected {exp} but got {got}")]
     InterfaceType {
@@ -86,5 +83,5 @@ pub enum Error {
     /// Error returned by the GRpc transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]
-    Grpc(#[from] crate::transport::grpc::GrpcTransportError),
+    Grpc(#[from] crate::transport::grpc::GrpcError),
 }

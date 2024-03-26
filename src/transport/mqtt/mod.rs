@@ -40,9 +40,10 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use once_cell::sync::OnceCell;
-use rumqttc::{Event as MqttEvent, Packet};
+use rumqttc::{Event as MqttEvent, Packet, SubscribeFilter};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
@@ -55,7 +56,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
         Ownership,
     },
-    interfaces::Interfaces,
+    interfaces::{self, Interfaces, Introspection},
     properties,
     retry::DelayedPoll,
     shared::SharedDevice,
@@ -328,12 +329,30 @@ impl Mqtt {
         Ok(())
     }
 
+    /// Create a topic to subscribe on an interface
+    fn make_topic(&self, interface_name: &str) -> String {
+        format!("{}/{interface_name}/#", self.client_id())
+    }
+
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
         self.client
-            .subscribe(
-                format!("{}/{interface_name}/#", self.client_id()),
-                rumqttc::QoS::ExactlyOnce,
-            )
+            .subscribe(self.make_topic(interface_name), rumqttc::QoS::ExactlyOnce)
+            .await
+            .map_err(MqttError::Subscribe)
+    }
+
+    /// Subscribe to many topics
+    async fn subscribe_many(&self, interfaces_names: &[&str]) -> Result<(), MqttError> {
+        let topics = interfaces_names
+            .iter()
+            .map(|name| SubscribeFilter {
+                path: self.make_topic(name),
+                qos: rumqttc::QoS::ExactlyOnce,
+            })
+            .collect_vec();
+
+        self.client
+            .subscribe_many(topics)
             .await
             .map_err(MqttError::Subscribe)
     }
@@ -472,28 +491,18 @@ impl Receive for Mqtt {
 
 #[async_trait]
 impl Register for Mqtt {
-    async fn add_interface<S>(
+    async fn add_interface(
         &self,
-        device: &SharedDevice<S>,
-        added_interface: &str,
-    ) -> Result<(), Error>
-    where
-        S: Send + Sync,
-    {
-        let interfaces = device.interfaces.read().await;
-        let interface_ownership = interfaces
-            .get(added_interface)
-            .ok_or(Error::InterfaceNotFound {
-                name: added_interface.to_string(),
-            })?
-            .ownership();
-        let introspection_string = interfaces.get_introspection_string();
-
-        if interface_ownership == Ownership::Server {
-            self.subscribe(added_interface).await?
+        interfaces: &Interfaces,
+        added: &interfaces::Validated,
+    ) -> Result<(), Error> {
+        if added.ownership().is_server() {
+            self.subscribe(added.interface_name()).await?
         }
 
-        self.send_introspection(introspection_string)
+        let introspection = Introspection::new(interfaces.iter_with_added(added)).to_string();
+
+        self.send_introspection(introspection)
             .await
             .map_err(MqttError::into)
     }
@@ -501,16 +510,62 @@ impl Register for Mqtt {
     async fn remove_interface(
         &self,
         interfaces: &Interfaces,
-        removed_interface: Interface,
+        removed: &Interface,
     ) -> Result<(), Error> {
-        self.send_introspection(interfaces.get_introspection_string())
-            .await?;
+        let iter = interfaces.iter_with_removed(removed);
+        let introspection = Introspection::new(iter).to_string();
 
-        if removed_interface.ownership() == Ownership::Server {
-            self.unsubscribe(removed_interface.interface_name()).await?;
+        self.send_introspection(introspection).await?;
+
+        if removed.ownership().is_server() {
+            self.unsubscribe(removed.interface_name()).await?;
         }
 
         Ok(())
+    }
+
+    /// Called when multiple interfaces are added.
+    ///
+    /// This method should convey to the server that one or more interfaces have been added.
+    async fn extend_interfaces(
+        &self,
+        interfaces: &Interfaces,
+        added: &interfaces::ValidatedCollection,
+    ) -> Result<(), crate::Error> {
+        let server_interfaces = added
+            .values()
+            .filter_map(|i| {
+                if i.ownership().is_server() {
+                    Some(i.interface_name())
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        self.subscribe_many(&server_interfaces).await?;
+
+        let introspection = Introspection::new(interfaces.iter_with_added_many(added)).to_string();
+
+        let subscribe_res = self
+            .send_introspection(introspection)
+            .await
+            .map_err(MqttError::into);
+
+        // Cleanup the already subscribed interfaces
+        if subscribe_res.is_err() {
+            error!("error while subscribing to interfaces");
+
+            for srv_interface in server_interfaces {
+                if let Err(err) = self.unsubscribe(srv_interface).await {
+                    error!(
+                        "failed to unsubscribing to server interface {srv_interface} with: {err}"
+                    );
+                }
+            }
+        }
+
+        subscribe_res
     }
 }
 
@@ -524,7 +579,7 @@ pub(crate) struct SessionData {
 impl SessionData {
     fn filter_server_interfaces(interfaces: &Interfaces) -> Vec<String> {
         interfaces
-            .iter_interfaces()
+            .iter()
             .filter(|interface| interface.ownership() == Ownership::Server)
             .map(|interface| interface.interface_name().to_owned())
             .collect()
@@ -700,14 +755,15 @@ impl ConnectionConfig for MqttConfig {
 pub(crate) mod test {
     use std::{str::FromStr, time::Duration};
 
+    use itertools::Itertools;
     use mockall::predicate;
-    use rumqttc::Packet;
+    use rumqttc::{ClientError, Packet, SubscribeFilter};
     use tokio::sync::mpsc;
 
     use crate::{
-        interfaces::Interfaces,
+        interfaces::{Interfaces, Introspection},
         store::{PropertyStore, StoredProp},
-        transport::test::mock_shared_device,
+        transport::{test::mock_shared_device, Register},
         types::AstarteType,
         Interface,
     };
@@ -880,5 +936,99 @@ pub(crate) mod test {
 
         assert!(!debug_string.contains("secret="));
         assert!(debug_string.contains("REDACTED"));
+    }
+
+    #[tokio::test]
+    async fn should_extend_interfaces() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = [
+            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
+            Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+        ];
+
+        let mut introspection = Introspection::new(to_add.iter())
+            .to_string()
+            .split(';')
+            .map(ToOwned::to_owned)
+            .collect_vec();
+
+        introspection.sort_unstable();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
+
+        client
+            .expect_subscribe_many::<Vec<SubscribeFilter>>()
+            .once()
+            .returning(|_| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .withf(move |publish, _, _, payload| {
+                let mut intro = payload.split(';').collect_vec();
+
+                intro.sort_unstable();
+
+                publish == "realm/device_id" && intro == introspection
+            })
+            .returning(|_, _, _, _| Ok(()));
+
+        let mqtt_connection = mock_mqtt_connection(client, eventl);
+
+        mqtt_connection
+            .extend_interfaces(&interfaces, &to_add)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn should_unsubscribe_on_extend_err() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = [Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()];
+
+        let introspection = Introspection::new(to_add.iter()).to_string();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
+
+        client
+            .expect_subscribe_many::<Vec<SubscribeFilter>>()
+            .once()
+            .returning(|_| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .withf(move |publish, _, _, payload| {
+                publish == "realm/device_id" && *payload == introspection
+            })
+            .returning(|_, _, _, _| {
+                // Random error
+                Err(ClientError::Request(rumqttc::Request::Disconnect))
+            });
+
+        client
+            .expect_unsubscribe::<String>()
+            .once()
+            .withf(move |topic| topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/#")
+            .returning(|_| {
+                // We are disconnected so we cannot unsubscribe
+                Err(ClientError::Request(rumqttc::Request::Disconnect))
+            });
+
+        let mqtt_connection = mock_mqtt_connection(client, eventl);
+
+        mqtt_connection
+            .extend_interfaces(&interfaces, &to_add)
+            .await
+            .expect_err("Didn't return the error");
     }
 }

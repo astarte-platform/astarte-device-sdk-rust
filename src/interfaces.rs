@@ -18,12 +18,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    fmt::Display,
-};
+use std::borrow::Borrow;
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::ops::Deref;
 
-use log::debug;
+use itertools::Itertools;
+use log::{debug, trace};
 
 use crate::{
     interface::{
@@ -50,37 +51,40 @@ impl Interfaces {
     ///
     /// If the interface is already present and is not a valid new version, returns a
     /// [`ValidationError`].
-    pub(crate) fn add(
-        &mut self,
-        interface: Interface,
-    ) -> Result<Option<Interface>, InterfaceError> {
-        let entry = self
-            .interfaces
-            .entry(interface.interface_name().to_string());
+    pub(crate) fn add(&mut self, interface: Validated) -> Option<Interface> {
+        self.interfaces
+            .insert(interface.interface_name().to_string(), interface.0)
+    }
 
-        let prev = match entry {
-            Entry::Occupied(mut entry) => {
-                debug!(
+    /// Validate that an interface can be added.
+    ///
+    /// It will return [`None`] if the interface is already present.
+    pub(crate) fn validate(
+        &self,
+        interface: Interface,
+    ) -> Result<Option<Validated>, InterfaceError> {
+        match self.interfaces.get(interface.interface_name()) {
+            Some(prev) => {
+                trace!(
                     "Interface {} already present, validating new version",
                     interface.interface_name()
                 );
 
-                let prev_interface = entry.get();
+                // Filter the interfaces that are already present
+                if interface == *prev {
+                    debug!("Interfaces are equal");
 
-                interface.validate_with(prev_interface)?;
+                    return Ok(None);
+                }
 
-                Some(entry.insert(interface))
+                interface.validate_with(prev)?;
             }
-            Entry::Vacant(entry) => {
-                debug!("Interface {} not present, adding it", entry.key());
-
-                entry.insert(interface);
-
-                None
+            None => {
+                trace!("Interface {} not present", interface.interface_name());
             }
-        };
+        }
 
-        Ok(prev)
+        Ok(Some(Validated(interface)))
     }
 
     pub(crate) fn remove(&mut self, interface_name: &str) -> Option<Interface> {
@@ -88,10 +92,7 @@ impl Interfaces {
     }
 
     pub(crate) fn get_introspection_string(&self) -> String {
-        Introspection {
-            interfaces: &self.interfaces,
-        }
-        .to_string()
+        Introspection::new(self.interfaces.values()).to_string()
     }
 
     pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
@@ -158,8 +159,65 @@ impl Interfaces {
             })
     }
 
-    pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
+    /// Iterate over the interfaces
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Interface> {
         self.interfaces.values()
+    }
+
+    /// Validate that one or more interfaces can be inserted in the collection.
+    pub(crate) fn validate_many<I>(
+        &self,
+        interfaces: I,
+    ) -> Result<ValidatedCollection, InterfaceError>
+    where
+        I: IntoIterator<Item = Interface>,
+    {
+        interfaces
+            .into_iter()
+            .filter_map(|i| {
+                let res = self.validate(i).transpose()?;
+
+                Some(res.map(|i| (i.interface_name().to_string(), i.0)))
+            })
+            .try_collect()
+            .map(ValidatedCollection)
+    }
+
+    /// Extend the interfaces with the validated ones.
+    pub(crate) fn extend(&mut self, interfaces: ValidatedCollection) {
+        self.interfaces.extend(interfaces.0);
+    }
+
+    /// Iterator over the interface with the added one
+    pub(crate) fn iter_with_added<'a>(
+        &'a self,
+        added: &'a Validated,
+    ) -> impl Iterator<Item = &'a Interface> + Clone {
+        self.interfaces
+            .values()
+            .filter(|i| i.interface_name() == added.interface_name())
+            .chain(std::iter::once(&added.0))
+    }
+
+    /// Iterator over the resulting added interfaces
+    pub(crate) fn iter_with_added_many<'a>(
+        &'a self,
+        added: &'a ValidatedCollection,
+    ) -> impl Iterator<Item = &'a Interface> + Clone {
+        self.interfaces
+            .values()
+            .filter(|i| !added.contains_key(i.interface_name()))
+            .chain(added.values())
+    }
+
+    /// Iter with removed interface
+    pub(crate) fn iter_with_removed<'a>(
+        &'a self,
+        removed: &'a Interface,
+    ) -> impl Iterator<Item = &'a Interface> + Clone {
+        self.interfaces
+            .values()
+            .filter(|i| i.interface_name() != removed.interface_name())
     }
 }
 
@@ -174,23 +232,68 @@ impl FromIterator<Interface> for Interfaces {
     }
 }
 
-struct Introspection<'a> {
-    interfaces: &'a HashMap<String, Interface>,
+#[derive(Debug)]
+pub(crate) struct Validated(Interface);
+
+impl Borrow<Interface> for Validated {
+    fn borrow(&self) -> &Interface {
+        &self.0
+    }
 }
 
-impl<'a> Display for Introspection<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut iter = self.interfaces.iter();
+impl Deref for Validated {
+    type Target = Interface;
 
-        let Some((name, interface)) = iter.next() else {
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ValidatedCollection(HashMap<String, Interface>);
+
+impl Borrow<HashMap<String, Interface>> for ValidatedCollection {
+    fn borrow(&self) -> &HashMap<String, Interface> {
+        &self.0
+    }
+}
+
+impl Deref for ValidatedCollection {
+    type Target = HashMap<String, Interface>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+pub(crate) struct Introspection<I> {
+    iter: I,
+}
+
+impl<I> Introspection<I> {
+    pub(crate) fn new(iter: I) -> Self {
+        Self { iter }
+    }
+}
+
+impl<'a, I> Display for Introspection<I>
+where
+    I: Iterator<Item = &'a Interface> + Clone,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut iter = self.iter.clone();
+
+        if let Some(interface) = iter.next() {
+            let name = interface.interface_name();
+            let major = interface.version_major();
+            let minor = interface.version_minor();
+            write!(f, "{}:{}:{}", name, major, minor)?;
+        } else {
             return Ok(());
         };
 
-        let major = interface.version_major();
-        let minor = interface.version_minor();
-        write!(f, "{}:{}:{}", name, major, minor)?;
-
-        for (name, interface) in iter {
+        for interface in iter {
+            let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
             write!(f, ";{}:{}:{}", name, major, minor)?;
@@ -204,10 +307,9 @@ impl<'a> Display for Introspection<'a> {
 pub(crate) mod tests {
     use std::str::FromStr;
 
-    use crate::{
-        builder::DeviceBuilder, error::Error, interface::MappingType, interfaces::Interfaces,
-        mapping, Interface,
-    };
+    use super::*;
+
+    use crate::{builder::DeviceBuilder, interface::MappingType, mapping};
 
     pub(crate) const PROPERTIES_SERVER: &str = r#"
         {
@@ -394,5 +496,49 @@ pub(crate) mod tests {
         res.sort_unstable();
 
         assert_eq!(res, expected);
+    }
+
+    #[tokio::test]
+    async fn success_extend_interfaces() {
+        let itfs = [
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+            ))
+            .unwrap(),
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
+            ))
+            .unwrap(),
+        ];
+
+        let mut interfaces = Interfaces::from_iter(itfs);
+
+        let ifaces = [
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+            ))
+            .unwrap(),
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerAggregate.json"
+            ))
+            .unwrap(),
+        ];
+
+        let validated = interfaces.validate_many(ifaces).unwrap();
+
+        interfaces.extend(validated);
+
+        let mut interfaces = interfaces.iter().map(|i| i.interface_name()).collect_vec();
+
+        interfaces.sort_unstable();
+
+        let expected = [
+            "org.astarte-platform.rust.e2etest.DeviceAggregate",
+            "org.astarte-platform.rust.e2etest.DeviceProperty",
+            "org.astarte-platform.rust.e2etest.ServerAggregate",
+            "org.astarte-platform.rust.e2etest.ServerProperty",
+        ];
+
+        assert_eq!(expected.as_slice(), interfaces);
     }
 }

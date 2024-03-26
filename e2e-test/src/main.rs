@@ -24,16 +24,22 @@
 //! - A test over aggregates
 //! - A test over properties
 
+use core::panic;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{env, panic, process};
 
-use log::{debug, info};
+use astarte_device_sdk::Interface;
+use eyre::WrapErr;
+use itertools::Itertools;
+use log::{debug, error, info};
 use reqwest::StatusCode;
 use serde_json::Value;
-use tokio::{task, time};
+use tokio::task::JoinSet;
+use tokio::time;
 
 use astarte_device_sdk::{
     builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
@@ -48,6 +54,8 @@ mod utils;
 use mock_data_aggregate::MockDataAggregate;
 use mock_data_datastream::MockDataDatastream;
 use mock_data_property::MockDataProperty;
+
+const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 
 #[derive(Clone)]
 struct TestCfg {
@@ -66,19 +74,19 @@ struct TestCfg {
     appengine_token: String,
 }
 
-impl TestCfg {
-    pub fn init() -> Result<Self, String> {
-        let realm = env::var("E2E_REALM").map_err(|msg| msg.to_string())?;
-        let device_id = env::var("E2E_DEVICE_ID").map_err(|msg| msg.to_string())?;
-        let credentials_secret =
-            env::var("E2E_CREDENTIALS_SECRET").map_err(|msg| msg.to_string())?;
-        let api_url = env::var("E2E_API_URL").map_err(|msg| msg.to_string())?;
-        let pairing_url = env::var("E2E_PAIRING_URL").map_err(|msg| msg.to_string())?;
+fn read_env(name: &str) -> eyre::Result<String> {
+    env::var(name).wrap_err_with(|| format!("culdn't read environment variable {name}"))
+}
 
-        let interfaces_fld = env::current_dir()
-            .map_err(|msg| msg.to_string())?
-            .join("e2e-test")
-            .join("interfaces");
+impl TestCfg {
+    pub fn init() -> eyre::Result<Self> {
+        let realm = read_env("E2E_REALM")?;
+        let device_id = read_env("E2E_DEVICE_ID")?;
+        let credentials_secret = read_env("E2E_CREDENTIALS_SECRET")?;
+        let api_url = read_env("E2E_API_URL")?;
+        let pairing_url = read_env("E2E_PAIRING_URL")?;
+
+        let interfaces_fld = Path::new(INTERFACE_DIR).to_owned();
 
         let interface_datastream_so =
             "org.astarte-platform.rust.e2etest.ServerDatastream".to_string();
@@ -91,7 +99,7 @@ impl TestCfg {
         let interface_property_do = "org.astarte-platform.rust.e2etest.DeviceProperty".to_string();
         let interface_property_so = "org.astarte-platform.rust.e2etest.ServerProperty".to_string();
 
-        let appengine_token = std::env::var("E2E_TOKEN").map_err(|e| e.to_string())?;
+        let appengine_token = read_env("E2E_TOKEN")?;
 
         Ok(TestCfg {
             realm,
@@ -112,18 +120,11 @@ impl TestCfg {
 }
 
 #[tokio::main]
-async fn main() {
-    // Set custom panic hook to exit in case a subprocess panics.
-    let orig_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        // invoke the default handler and exit the process
-        orig_hook(panic_info);
-        process::exit(1);
-    }));
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    env_logger::try_init()?;
 
-    env_logger::init();
-
-    let test_cfg = TestCfg::init().expect("Failed configuration initialization");
+    let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 
     let mut mqtt_config = MqttConfig::new(
         &test_cfg.realm,
@@ -145,6 +146,7 @@ async fn main() {
         .await
         .unwrap()
         .build();
+
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
@@ -154,7 +156,17 @@ async fn main() {
     let rx_data_ind_datastream_cpy = rx_data_ind_datastream.clone();
     let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
     let rx_data_ind_prop_cpy = rx_data_ind_prop.clone();
-    task::spawn(async move {
+
+    let mut tasks = JoinSet::new();
+
+    let handle_events = tasks.spawn(async move { device.handle_events().await });
+
+    // Add the remaining interfaces
+    let additional_interfaces = read_additional_interfaces()?;
+    debug!("adding {} interfaces", additional_interfaces.len());
+    device_cpy.extend_interfaces(additional_interfaces).await?;
+
+    tasks.spawn(async move {
         // Run datastream tests
         test_datastream_device_to_server(&device_cpy, &test_cfg_cpy)
             .await
@@ -178,66 +190,100 @@ async fn main() {
             .unwrap();
 
         info!("Test datastreams completed successfully");
-        process::exit(0);
+        handle_events.abort();
+
+        Ok(())
     });
 
-    let handle_events = tokio::spawn(async move { device.handle_events().await });
-
-    // Poll any astarte message and store its content in the correct shared data structure
-    while let Some(event) = rx_events.recv().await {
-        match event {
-            Ok(data) => {
-                if data.interface == test_cfg.interface_datastream_so {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
-                        let mut rx_data = rx_data_ind_datastream.lock().unwrap();
-                        let mut key = data.path.clone();
-                        key.remove(0);
-                        rx_data.insert(key, var);
-                    } else {
-                        panic!("Received unexpected message!");
-                    }
-                } else if data.interface == test_cfg.interface_aggregate_so {
-                    if let astarte_device_sdk::Aggregation::Object(var) = data.data {
-                        let mut rx_data = rx_data_agg_datastream.lock().unwrap();
-                        let mut sensor_n = data.path.clone();
-                        sensor_n.remove(0);
-                        rx_data.0 = sensor_n;
-                        for (key, value) in var {
-                            rx_data.1.insert(key, value);
+    tasks.spawn(async move {
+        // Poll any astarte message and store its content in the correct shared data structure
+        while let Some(event) = rx_events.recv().await {
+            match event {
+                Ok(data) => {
+                    if data.interface == test_cfg.interface_datastream_so {
+                        if let astarte_device_sdk::Aggregation::Individual(var) = data.data {
+                            let mut rx_data = rx_data_ind_datastream.lock().unwrap();
+                            let mut key = data.path.clone();
+                            key.remove(0);
+                            rx_data.insert(key, var);
+                        } else {
+                            panic!("Received unexpected message!");
+                        }
+                    } else if data.interface == test_cfg.interface_aggregate_so {
+                        if let astarte_device_sdk::Aggregation::Object(var) = data.data {
+                            let mut rx_data = rx_data_agg_datastream.lock().unwrap();
+                            let mut sensor_n = data.path.clone();
+                            sensor_n.remove(0);
+                            rx_data.0 = sensor_n;
+                            for (key, value) in var {
+                                rx_data.1.insert(key, value);
+                            }
+                        } else {
+                            panic!("Received unexpected message!");
+                        }
+                    } else if data.interface == test_cfg.interface_property_so {
+                        if let astarte_device_sdk::Aggregation::Individual(var) = data.clone().data
+                        {
+                            let mut rx_data = rx_data_ind_prop.lock().unwrap();
+                            let mut path = data.path.clone();
+                            path.remove(0); // Remove first forward slash
+                            let panic_msg = format!("Incorrect path in message {:?}", &data);
+                            let (sensor_n, key) = path.split_once('/').expect(&panic_msg);
+                            rx_data.0 = sensor_n.to_string();
+                            rx_data.1.insert(key.to_string(), var);
+                        } else {
+                            panic!("Received unexpected message!");
                         }
                     } else {
                         panic!("Received unexpected message!");
                     }
-                } else if data.interface == test_cfg.interface_property_so {
-                    if let astarte_device_sdk::Aggregation::Individual(var) = data.clone().data {
-                        let mut rx_data = rx_data_ind_prop.lock().unwrap();
-                        let mut path = data.path.clone();
-                        path.remove(0); // Remove first forward slash
-                        let panic_msg = format!("Incorrect path in message {:?}", &data);
-                        let (sensor_n, key) = path.split_once('/').expect(&panic_msg);
-                        rx_data.0 = sensor_n.to_string();
-                        rx_data.1.insert(key.to_string(), var);
-                    } else {
-                        panic!("Received unexpected message!");
-                    }
-                } else {
-                    panic!("Received unexpected message!");
+                }
+                Err(err) => {
+                    panic!("poll error {err:?}");
                 }
             }
+        }
+
+        Ok(())
+    });
+
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(Ok(())) => {}
+            Err(err) if err.is_cancelled() => {}
             Err(err) => {
-                panic!("poll error {err:?}");
+                error!("Task panicked {err}");
+
+                return Err(err.into());
+            }
+            Ok(Err(err)) => {
+                error!("Task returned an error {err}");
+
+                return Err(err.into());
             }
         }
     }
 
-    handle_events.abort();
-    match handle_events.await {
-        Ok(res) => res.expect("error while handling events"),
-        Err(err) if err.is_cancelled() => {}
-        Err(err) => {
-            panic!("error while joining thread: {err:#?}")
-        }
-    }
+    Ok(())
+}
+
+fn read_additional_interfaces() -> eyre::Result<Vec<Interface>> {
+    let interfaces = [
+        include_str!(
+            "../interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+        ),
+        include_str!(
+            "../interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
+        ),
+        include_str!(
+            "../interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
+        ),
+    ]
+    .into_iter()
+    .map(Interface::from_str)
+    .try_collect()?;
+
+    Ok(interfaces)
 }
 
 /// Run the end to end tests from device to server for individual datastreams.

@@ -22,6 +22,7 @@
 
 use std::ffi::OsStr;
 use std::fmt::Debug;
+use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -31,10 +32,9 @@ use async_trait::async_trait;
 use log::debug;
 use tokio::sync::mpsc;
 
-use crate::interface::error::InterfaceError;
-use crate::interface::error::InterfaceFileError;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
+use crate::introspection::AddInterfaceError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::transport::{Publish, Receive, Register};
@@ -46,27 +46,6 @@ use crate::EventReceiver;
 /// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and EventLoop
 /// and the internal channel used by the [`AstarteDeviceSdk`] to send events data to the external receiver.
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
-
-/// Astarte builder error.
-///
-/// Possible errors used by the Astarte builder module.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum BuilderError {
-    /// Couldn't add the interface
-    #[error("error adding interface")]
-    Interface(#[from] InterfaceError),
-    /// Couldn't add the interface from the file
-    #[error("error adding interface file")]
-    InterfaceFile(#[from] InterfaceFileError),
-    /// Failed to read interface directory
-    #[error("couldn't read interface path {}", .path.display())]
-    Io {
-        path: PathBuf,
-        #[source]
-        backtrace: std::io::Error,
-    },
-}
 
 /// Declares the conclusive operation of the device builder.
 ///
@@ -132,40 +111,56 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface_file<P>(mut self, file_path: P) -> Result<Self, BuilderError>
+    pub fn interface_file<P>(self, path: P) -> Result<Self, AddInterfaceError>
     where
         P: AsRef<Path>,
     {
-        let interface = Interface::from_file(&file_path)?;
-        let name = interface.interface_name();
+        let interface = fs::read_to_string(path.as_ref()).map_err(|err| AddInterfaceError::Io {
+            path: path.as_ref().to_path_buf(),
+            backtrace: err,
+        })?;
 
-        debug!("Added interface {}", name);
-
-        self.interfaces
-            .add(interface)
-            .map_err(|err| InterfaceFileError::Interface {
-                path: file_path.as_ref().to_path_buf(),
-                backtrace: err,
-            })?;
-
-        Ok(self)
+        self.interface_str(&interface)
+            .map_err(|err| err.add_path_context(path.as_ref().to_owned()))
     }
 
-    pub fn interface(mut self, interface: &str) -> Result<Self, BuilderError> {
+    /// Add a single interface from the provided string.
+    ///
+    /// If an interface with the same name is present, the code will validate
+    /// the passed interface to ensure it has a newer version than the one stored.
+    pub fn interface_str(self, interface: &str) -> Result<Self, AddInterfaceError> {
         let interface = Interface::from_str(interface)?;
 
-        self.interfaces.add(interface)?;
+        self.interface(interface)
+    }
+
+    /// Add a single interface.
+    ///
+    /// If an interface with the same name is present, the code will validate
+    /// the passed interface to ensure it has a newer version than the one stored.
+    pub fn interface(mut self, interface: Interface) -> Result<Self, AddInterfaceError> {
+        debug!("adding interface {}", interface.interface_name());
+
+        let interface = self.interfaces.validate(interface)?;
+
+        let Some(interface) = interface else {
+            debug!("interface already present");
+
+            return Ok(self);
+        };
+
+        self.interfaces.add(interface);
 
         Ok(self)
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, BuilderError>
+    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, AddInterfaceError>
     where
         P: AsRef<Path>,
     {
         walk_dir_json(&interfaces_directory)
-            .map_err(|err| BuilderError::Io {
+            .map_err(|err| AddInterfaceError::Io {
                 path: interfaces_directory.as_ref().to_path_buf(),
                 backtrace: err,
             })?

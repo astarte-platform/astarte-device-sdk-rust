@@ -249,7 +249,7 @@ mod tests {
     );
 
     const SERVER_DATASTREAM: &str = include_str!(
-        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerDatastream.json"
+        "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
     fn initialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {
