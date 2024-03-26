@@ -25,8 +25,8 @@ use log::{debug, error, warn};
 use crate::{
     interface::{
         mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-        Ownership,
+        reference::{MappingRef, ObjectRef, PropertyRef},
+        Mapping, Ownership,
     },
     types::AstarteType,
     Interface, Timestamp,
@@ -49,8 +49,8 @@ pub enum UserValidationError {
     #[error("mismatching type while serializing, expected {expected} but got {got}")]
     SerializeType { expected: String, got: String },
     /// Couldn't accept unset for mapping without `allow_unset`
-    #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]
-    Unset,
+    #[error("couldn't unset property {interface}{mapping} without `allow_unset`")]
+    Unset { interface: String, mapping: String },
 }
 
 /// Optionals check on the sent individual payload.
@@ -126,20 +126,11 @@ impl<'a> ValidatedIndividual<'a> {
             return Err(err);
         }
 
-        match data {
-            AstarteType::Unset => {
-                if !mapping.allow_unset() {
-                    return Err(UserValidationError::Unset);
-                }
-            }
-            ref data => {
-                if *data != mapping.mapping_type() {
-                    return Err(UserValidationError::SerializeType {
-                        expected: mapping.mapping_type().to_string(),
-                        got: data.display_type().to_string(),
-                    });
-                }
-            }
+        if data != mapping.mapping_type() {
+            return Err(UserValidationError::SerializeType {
+                expected: mapping.mapping_type().to_string(),
+                got: data.display_type().to_string(),
+            });
         }
 
         Ok(ValidatedIndividual {
@@ -160,6 +151,10 @@ pub(crate) struct ValidatedObject<'a> {
 }
 
 impl<'a> ValidatedObject<'a> {
+    pub(crate) fn interface(&self) -> &Interface {
+        self.object.interface
+    }
+
     pub(crate) fn object(&self) -> ObjectRef<'a> {
         self.object
     }
@@ -204,10 +199,6 @@ impl<'a> ValidatedObject<'a> {
                     return None;
                 };
 
-                if value.is_unset() {
-                    return Some(Err(UserValidationError::Unset));
-                }
-
                 if value != mapping.mapping_type() {
                     return Some(Err(UserValidationError::SerializeType {
                         expected: mapping.mapping_type().to_string(),
@@ -234,11 +225,45 @@ impl<'a> ValidatedObject<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatedUnset<'a> {
+    mapping: MappingRef<'a, PropertyRef<'a>>,
+    path: &'a MappingPath<'a>,
+}
+
+impl<'a> ValidatedUnset<'a> {
+    pub(crate) fn prop(&self) -> PropertyRef<'_> {
+        *self.mapping.interface()
+    }
+
+    pub(crate) fn mapping(&self) -> &Mapping<&str> {
+        self.mapping.mapping()
+    }
+
+    pub(crate) fn path(&self) -> &MappingPath<'_> {
+        self.path
+    }
+
+    pub(crate) fn validate(
+        mapping: MappingRef<'a, PropertyRef<'a>>,
+        path: &'a MappingPath<'a>,
+    ) -> Result<Self, UserValidationError> {
+        if !mapping.allow_unset() {
+            return Err(UserValidationError::Unset {
+                interface: mapping.interface().interface_name().to_string(),
+                mapping: path.to_string(),
+            });
+        }
+
+        Ok(Self { mapping, path })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
-    use crate::{interfaces::tests::DEVICE_OBJECT, mapping};
+    use crate::{interface::mapping::path::tests::mapping, interfaces::tests::DEVICE_OBJECT};
 
     use super::*;
 
@@ -297,7 +322,8 @@ mod tests {
     fn test_validate_send_for_individual_datastream() {
         let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
 
-        let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
+        let path = mapping("/boolean_endpoint");
+        let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let res = optional_individual_checks(mapping, &None);
         assert!(res.is_ok(), "error: {}", res.unwrap_err());
@@ -305,12 +331,13 @@ mod tests {
         let res = optional_individual_checks(mapping, &Some(Utc::now()));
         assert!(res.is_ok());
     }
-    #[test]
 
+    #[test]
     fn test_validate_send_for_server() {
         let interface = Interface::from_str(SERVER_DATASTREAM).unwrap();
 
-        let mapping = MappingRef::new(&interface, mapping!("/boolean_endpoint")).unwrap();
+        let path = mapping("/boolean_endpoint");
+        let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let res = optional_individual_checks(mapping, &None);
         assert!(res.is_err());

@@ -283,6 +283,5 @@ pub fn json_string_from_astarte_type(atype: AstarteType) -> String {
                     .join(",")
                 + "]"
         }
-        _ => "".to_string(),
     }
 }

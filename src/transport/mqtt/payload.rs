@@ -115,12 +115,6 @@ pub(super) fn serialize_individual(
     individual: &AstarteType,
     timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
-    if &AstarteType::Unset == individual {
-        // When sending/receiving an unset we should accept an empty payload.
-        // https://docs.astarte-platform.org/latest/080-mqtt-v1-protocol.html#payload-format
-        return Ok(Vec::new());
-    }
-
     Payload::with_timestamp(individual, timestamp).to_vec()
 }
 
@@ -134,9 +128,9 @@ pub(super) fn serialize_object(
 
 /// Deserialize an individual [`AstarteType`]
 pub(super) fn deserialize_individual<'a>(
-    mapping: MappingRef<'a, &'a Interface>,
+    mapping: &MappingRef<'a, &'a Interface>,
     buf: &[u8],
-) -> Result<(AstarteType, Option<Timestamp>), PayloadError> {
+) -> Result<Option<(AstarteType, Option<Timestamp>)>, PayloadError> {
     if buf.is_empty() {
         debug!("unset received");
 
@@ -144,7 +138,7 @@ pub(super) fn deserialize_individual<'a>(
             return Err(PayloadError::Unset);
         }
 
-        return Ok((AstarteType::Unset, None));
+        return Ok(None);
     }
 
     let payload = Payload::<Bson>::from_slice(buf)?;
@@ -153,11 +147,11 @@ pub(super) fn deserialize_individual<'a>(
 
     let ast_val = AstarteType::try_from(hint)?;
 
-    Ok((ast_val, payload.timestamp))
+    Ok(Some((ast_val, payload.timestamp)))
 }
 
 pub(super) fn deserialize_object(
-    object: ObjectRef,
+    object: &ObjectRef,
     path: &MappingPath,
     buf: &[u8],
 ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), PayloadError> {
@@ -204,10 +198,6 @@ pub(super) fn deserialize_object(
                 Err(err) => return Some(Err(PayloadError::from(err))),
             };
 
-            if ast_val.is_unset() {
-                return Some(Err(PayloadError::Unset));
-            }
-
             Some(Ok((key, ast_val)))
         })
         .collect::<Result<HashMap<String, AstarteType>, _>>()?;
@@ -223,8 +213,7 @@ mod test {
     use chrono::TimeZone;
 
     use crate::{
-        interface::MappingType,
-        mapping,
+        interface::{mapping::path::tests::mapping, MappingType},
         transport::test::{mock_validate_individual, mock_validate_object},
         validate::ValidatedIndividual,
     };
@@ -250,9 +239,6 @@ mod test {
             AstarteType::StringArray(_) => MappingType::StringArray,
             AstarteType::BinaryBlobArray(_) => MappingType::BinaryBlobArray,
             AstarteType::DateTimeArray(_) => MappingType::DateTimeArray,
-            AstarteType::Unset => {
-                panic!("Mapping doesn't exists for those type")
-            }
         }
     }
 
@@ -286,13 +272,15 @@ mod test {
             let mapping_type = mapping_type(&ty);
             let endpoint = format!("/{mapping_type}_endpoint");
 
-            let path = mapping!(endpoint.as_str());
-            let mapping = interface.as_mapping_ref(path).unwrap();
+            let path = mapping(endpoint.as_str());
+            let mapping = interface.as_mapping_ref(&path).unwrap();
 
-            let validated = mock_validate_individual(mapping, path, ty.clone(), None).unwrap();
+            let validated = mock_validate_individual(mapping, &path, ty.clone(), None).unwrap();
             let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
-            let (res, _) = deserialize_individual(mapping, &buf).unwrap();
+            let (res, _) = deserialize_individual(&mapping, &buf)
+                .unwrap()
+                .expect("invalid unset");
 
             assert_eq!(res, ty);
         }
@@ -335,12 +323,12 @@ mod test {
             })
             .collect();
 
-        let path = mapping!(base_path);
+        let path = mapping(base_path);
 
-        let validated = mock_validate_object(&interface, path, data.clone(), None).unwrap();
+        let validated = mock_validate_object(&interface, &path, data.clone(), None).unwrap();
         let buf = serialize_object(validated.data(), validated.timestamp()).unwrap();
 
-        let (res, _) = deserialize_object(validated.object(), validated.path(), &buf).unwrap();
+        let (res, _) = deserialize_object(&validated.object(), validated.path(), &buf).unwrap();
 
         assert_eq!(res, data)
     }
@@ -348,14 +336,15 @@ mod test {
     #[test]
     fn test_integer_longinteger_compatibility() {
         let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
-        let mapping = interface
-            .as_mapping_ref(mapping!("/longinteger_endpoint"))
-            .unwrap();
+        let mapping = mapping("/longinteger_endpoint");
+        let mapping = interface.as_mapping_ref(&mapping).unwrap();
 
         // 3600i32
         let longinteger_b = [12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0];
 
-        let (res, _) = deserialize_individual(mapping, &longinteger_b).unwrap();
+        let (res, _) = deserialize_individual(&mapping, &longinteger_b)
+            .unwrap()
+            .expect("invalid unset");
 
         assert_eq!(res, AstarteType::LongInteger(3600i64));
     }
@@ -363,19 +352,21 @@ mod test {
     #[test]
     fn test_bson_serialization() {
         let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
-        let path = mapping!("/longinteger_endpoint");
-        let mapping = interface.as_mapping_ref(path).unwrap();
+        let path = mapping("/longinteger_endpoint");
+        let mapping = interface.as_mapping_ref(&path).unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
         let validated =
-            ValidatedIndividual::validate(mapping, path, og_value.clone(), None).unwrap();
+            ValidatedIndividual::validate(mapping, &path, og_value.clone(), None).unwrap();
         let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
         let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
 
         assert_eq!(buf, expected);
 
-        let (res, _) = deserialize_individual(mapping, &buf).unwrap();
+        let (res, _) = deserialize_individual(&mapping, &buf)
+            .unwrap()
+            .expect("invalid unset");
 
         assert_eq!(res, og_value);
     }
@@ -389,11 +380,12 @@ mod test {
 
         let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
 
-        let mapping = interface
-            .as_mapping_ref(mapping!("/longintegerarray_endpoint"))
-            .unwrap();
+        let binding = mapping("/longintegerarray_endpoint");
+        let mapping = interface.as_mapping_ref(&binding).unwrap();
 
-        let (at, _) = deserialize_individual(mapping, &buf).unwrap();
+        let (at, _) = deserialize_individual(&mapping, &buf)
+            .unwrap()
+            .expect("invalid unset");
 
         let expected = AstarteType::LongIntegerArray(vec![45543543534, 10, 0, 45543543534]);
 
@@ -406,11 +398,12 @@ mod test {
 
         let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
 
-        let mapping = interface
-            .as_mapping_ref(mapping!("/longintegerarray_endpoint"))
-            .unwrap();
+        let binding = mapping("/longintegerarray_endpoint");
+        let mapping = interface.as_mapping_ref(&binding).unwrap();
 
-        let (at, _) = deserialize_individual(mapping, &buf).unwrap();
+        let (at, _) = deserialize_individual(&mapping, &buf)
+            .unwrap()
+            .expect("invalid unset");
 
         let expected = AstarteType::LongIntegerArray(vec![]);
 
@@ -438,11 +431,10 @@ mod test {
         )
         .unwrap();
 
-        let mapping = interface
-            .as_mapping_ref(mapping!("/1/double_endpoint"))
-            .unwrap();
+        let path = mapping("/1/double_endpoint");
+        let mapping = interface.as_mapping_ref(&path).unwrap();
 
-        let at = deserialize_individual(mapping, &buf);
+        let at = deserialize_individual(&mapping, &buf);
 
         assert!(matches!(at, Err(PayloadError::Unset)));
     }
@@ -454,7 +446,7 @@ mod test {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
         let object = interface.as_object_ref().unwrap();
 
-        let at = deserialize_object(object, mapping!("/1"), &buf);
+        let at = deserialize_object(&object, &(mapping("/1")), &buf);
 
         assert!(matches!(at, Err(PayloadError::Unset)));
     }

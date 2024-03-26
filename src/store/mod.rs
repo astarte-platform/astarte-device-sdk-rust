@@ -23,7 +23,13 @@ use std::{error::Error as StdError, fmt::Debug};
 use async_trait::async_trait;
 
 pub use self::sqlite::SqliteStore;
-use crate::{interface::Ownership, types::AstarteType};
+use crate::{
+    interface::{
+        reference::{MappingRef, PropertyRef},
+        Ownership,
+    },
+    types::AstarteType,
+};
 
 pub mod error;
 pub mod memory;
@@ -89,6 +95,22 @@ pub struct StoredProp<S = String, V = AstarteType> {
 impl StoredProp {
     pub fn as_ref(&self) -> StoredProp<&str, &AstarteType> {
         self.into()
+    }
+}
+
+impl<'a> StoredProp<&'a str, &'a AstarteType> {
+    /// Create a new with the given [`Interface`], path and value.
+    pub(crate) fn from_mapping(
+        mapping: &'a MappingRef<'a, PropertyRef>,
+        value: &'a AstarteType,
+    ) -> Self {
+        Self {
+            interface: mapping.interface().interface_name(),
+            path: mapping.path().as_str(),
+            value,
+            interface_major: mapping.interface().version_major(),
+            ownership: mapping.interface().ownership(),
+        }
     }
 }
 
@@ -161,7 +183,7 @@ mod tests {
         // after mismatch the path should be deleted
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
-        // delete
+        // delete/unset
         store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
@@ -173,33 +195,6 @@ mod tests {
         );
         store.delete_prop("com.test", "/test").await.unwrap();
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
-
-        // unset
-        store.store_prop(prop).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            ty
-        );
-        let unset = StoredProp {
-            interface: "com.test",
-            path: "/test",
-            value: &AstarteType::Unset,
-            interface_major: 1,
-            ownership: Ownership::Device,
-        };
-        store.store_prop(unset).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            AstarteType::Unset
-        );
 
         // clear
         store.store_prop(prop).await.unwrap();
