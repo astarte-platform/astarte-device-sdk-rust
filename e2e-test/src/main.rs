@@ -186,56 +186,54 @@ async fn main() {
 
     // Poll any astarte message and store its content in the correct shared data structure
     while let Some(event) = rx_events.recv().await {
-        match event {
-            Ok(data) => {
-                if data.interface == test_cfg.interface_datastream_so {
-                    if let Value::Individual(var) = data.data {
-                        let mut rx_data = rx_data_ind_datastream.lock().unwrap();
-                        let mut key = data.path.clone();
-                        key.remove(0);
-                        rx_data.insert(key, var);
-                    } else {
-                        panic!("Received unexpected message!");
-                    }
-                } else if data.interface == test_cfg.interface_aggregate_so {
-                    if let Value::Object(var) = data.data {
-                        let mut rx_data = rx_data_agg_datastream.lock().unwrap();
-                        let mut sensor_n = data.path.clone();
-                        sensor_n.remove(0);
-                        rx_data.0 = sensor_n;
-                        for (key, value) in var {
-                            rx_data.1.insert(key, value);
-                        }
-                    } else {
-                        panic!("Received unexpected message!");
-                    }
-                } else if data.interface == test_cfg.interface_property_so {
-                    let mut rx_data = rx_data_ind_prop.lock().unwrap();
+        let event = event.unwrap_or_else(|err| panic!("error received {err}"));
 
-                    let mut path = data.path.clone();
-                    path.remove(0); // Remove first forward slash
-                    let (sensor_n, key) = path
-                        .split_once('/')
-                        .unwrap_or_else(|| panic!("Incorrect path in message {:?}", data));
+        if event.interface == test_cfg.interface_datastream_so {
+            let var = event
+                .data
+                .take_individual()
+                .expect("Received unexpected message!");
 
-                    rx_data.0 = sensor_n.to_string();
+            let mut rx_data = rx_data_ind_datastream.lock().unwrap();
+            let mut key = event.path.clone();
+            key.remove(0);
+            rx_data.insert(key, var);
+        } else if event.interface == test_cfg.interface_aggregate_so {
+            let var = event
+                .data
+                .take_object()
+                .expect("Received unexpected message!");
 
-                    match data.clone().data {
-                        Value::Individual(var) => {
-                            rx_data.1.insert(key.to_string(), var);
-                        }
-                        Value::Unset => {
-                            rx_data.1.remove(key);
-                        }
-                        _ => panic!("Received unexpected message!"),
-                    };
-                } else {
-                    panic!("Received unexpected message!");
+            let mut rx_data = rx_data_agg_datastream.lock().unwrap();
+            let mut sensor_n = event.path.clone();
+            sensor_n.remove(0);
+            rx_data.0 = sensor_n;
+
+            for (key, value) in var {
+                rx_data.1.insert(key, value);
+            }
+        } else if event.interface == test_cfg.interface_property_so {
+            let mut rx_data = rx_data_ind_prop.lock().unwrap();
+
+            let mut path = event.path.clone();
+            path.remove(0); // Remove first forward slash
+            let (sensor_n, key) = path
+                .split_once('/')
+                .unwrap_or_else(|| panic!("Incorrect path in message {:?}", event));
+
+            rx_data.0 = sensor_n.to_string();
+
+            match event.clone().data {
+                Value::Individual(var) => {
+                    rx_data.1.insert(key.to_string(), var);
                 }
-            }
-            Err(err) => {
-                panic!("poll error {err:?}");
-            }
+                Value::Unset => {
+                    rx_data.1.remove(key);
+                }
+                _ => panic!("Received unexpected message!"),
+            };
+        } else {
+            panic!("Received unexpected message!");
         }
     }
 
