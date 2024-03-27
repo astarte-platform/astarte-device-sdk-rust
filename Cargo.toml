@@ -10,8 +10,9 @@ version = { workspace = true }
 categories = ["embedded", "api-bindings"]
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = { workspace = true }
-exclude = { workspace = true }
+exclude = ["/.github", "/.reuse"]
 homepage = { workspace = true }
+include = ["/.sqlx"]
 keywords = ["sdk", "iot", "astarte"]
 license = { workspace = true }
 readme = "README.md"
@@ -31,7 +32,6 @@ members = [
 [workspace.package]
 version = "0.7.2"
 edition = "2021"
-exclude = [".github"]
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"

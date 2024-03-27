@@ -10,7 +10,6 @@ version = { workspace = true }
 categories = ["embedded", "api-bindings", "development-tools::procedural-macro-helpers"]
 documentation = "https://docs.rs/astarte-device-sdk-derive"
 edition = { workspace = true }
-exclude = { workspace = true }
 homepage = { workspace = true }
 keywords = ["sdk", "iot", "astarte", "derive"]
 license = { workspace = true }
