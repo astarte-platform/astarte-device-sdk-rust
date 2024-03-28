@@ -17,8 +17,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-//! Provides functionality to configure an instance of the
-//! [AstarteDeviceSdk].
+//! Provides functionality to configure an instance of the [`DeviceClient`] and
+//! [`DeviceConnection`].
 
 use std::ffi::OsStr;
 use std::fmt::Debug;
@@ -27,24 +27,27 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
 use tokio::sync::mpsc;
+use tokio::sync::RwLock;
 
+use crate::client::DeviceClient;
+use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::transport::{Publish, Receive, Register};
-use crate::AstarteDeviceSdk;
-use crate::EventReceiver;
 
 /// Default capacity of the channels
 ///
-/// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and EventLoop
-/// and the internal channel used by the [`AstarteDeviceSdk`] to send events data to the external receiver.
+/// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and
+/// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
+/// events data to the external receiver and between each component.
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Declares the conclusive operation of the device builder.
@@ -52,9 +55,9 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 /// This trait is already implemented generically for the [`DeviceBuilder`]
 /// and implementing it should be avoided since it has no practical use.
 pub trait DeviceSdkBuild<S, C> {
-    /// Method that consumes the builder and returns a working
-    /// [`AstarteDeviceSdk`] with the specified settings.
-    fn build(self) -> (AstarteDeviceSdk<S, C>, EventReceiver);
+    /// Method that consumes the builder and returns a working [`DeviceClient`] and
+    /// [`DeviceConnection`] with the specified settings.
+    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
 }
 
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
@@ -62,17 +65,32 @@ where
     S: PropertyStore,
     C: Publish + Receive + Register + Send,
 {
-    fn build(self) -> (AstarteDeviceSdk<S, C>, EventReceiver) {
-        let (tx, rx) = mpsc::channel(self.channel_size);
+    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
+        let (tx_connection, rx_client) = flume::bounded(self.channel_size);
+        let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
 
-        let device = AstarteDeviceSdk::new(self.interfaces, self.store.store, self.connection, tx);
+        let interfaces = Arc::new(RwLock::new(self.interfaces));
 
-        (device, rx)
+        let client = DeviceClient::new(
+            Arc::clone(&interfaces),
+            rx_client,
+            tx_client,
+            self.store.clone(),
+        );
+        let device = DeviceConnection::new(
+            interfaces,
+            tx_connection,
+            rx_connection,
+            self.store,
+            self.connection,
+        );
+
+        (client, device)
     }
 }
 
-/// Structure used to store the configuration options for an instance of
-/// [AstarteDeviceSdk].
+/// Structure used to store the configuration options for an instance of [`DeviceClient`] and
+/// [`DeviceConnection`].
 #[derive(Clone)]
 pub struct DeviceBuilder<S, C> {
     pub(crate) channel_size: usize,
@@ -194,7 +212,7 @@ impl<S, C> DeviceBuilder<S, C> {
     /// Establishes the connection using the passed [`ConnectionConfig`].
     ///
     /// If the connection gets established correctly, the caller can than construct
-    /// the [`crate::AstarteDeviceSdk`] using the [`DeviceSdkBuild::build`] method.
+    /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceSdkBuild::build`] method.
     pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Con>, crate::Error>
     where
         S: PropertyStore,

@@ -34,7 +34,6 @@ use astarte_device_sdk::{
     builder::DeviceBuilder,
     transport::mqtt::MqttConfig,
     error::Error,
-    AstarteDeviceSdk,
     prelude::*,
     store::sqlite::SqliteStore,
 };
@@ -56,7 +55,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     mqtt_config.ignore_ssl_errors();
 
     // 3. Create the device instance
-    let (mut device, mut rx_events) = DeviceBuilder::new()
+    let (mut client, mut connection) = DeviceBuilder::new()
         .interface_directory("./examples/interfaces")?
         .store(db)
         .connect(mqtt_config).await?
@@ -66,7 +65,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
 
     // Send individual datastream or set individual property
     let data: i32 = 12;
-    device.send("interface.name", "/endpoint/path", data).await?;
+    client.send("interface.name", "/endpoint/path", data).await?;
 
     // Send aggregated object datastream
     use astarte_device_sdk::AstarteAggregate;
@@ -81,12 +80,12 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     }
 
     let data = MyAggObj {endpoint1: 1.34, endpoint2: 22};
-    device.send_object("interface.name", "/common/endpoint/path", data).await?;
+    client.send_object("interface.name", "/common/endpoint/path", data).await?;
 
     // Receive a server publish from the event channel
     tokio::spawn(async move {
-        while let Some(event) = rx_events.recv().await {
-          match event {
+        loop {
+          match client.recv().await {
               Ok(data) => (), // Handle data
               Err(err) => (), // Handle errors
           }
@@ -94,7 +93,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     });
 
     // Blocking call for the device event loop
-    device.handle_events().await?;
+    connection.handle_events().await?;
 
     Ok(())
 }

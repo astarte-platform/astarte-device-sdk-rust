@@ -35,7 +35,7 @@ use p384::{
     pkcs8::{EncodePrivateKey, LineEnding},
     SecretKey,
 };
-use rustls::PrivateKey;
+use rustls::pki_types::PrivatePkcs8KeyDer;
 use x509_cert::{
     builder::{Builder, RequestBuilder},
     der::EncodePem,
@@ -66,7 +66,7 @@ pub enum CryptoError {
 /// Generate a Certificate and CSR bundle in PEM format.
 #[derive(Debug)]
 pub(crate) struct Bundle {
-    pub private_key: PrivateKey,
+    pub private_key: PrivatePkcs8KeyDer<'static>,
     /// PEM encoded CSR
     pub csr: String,
 }
@@ -102,7 +102,9 @@ impl Bundle {
         // note kept in memory. We nee to extract the key from the wrapper to use it normally.
         let mut z_private_key = private_key.to_pkcs8_der()?.to_bytes();
         // Replace the private_key with an empty string to take it out without cloning it.
-        let private_key = PrivateKey(std::mem::take(&mut z_private_key));
+        let v: Vec<u8> = std::mem::take(&mut z_private_key);
+
+        let private_key = PrivatePkcs8KeyDer::from(v);
 
         Ok(Bundle { private_key, csr })
     }
@@ -127,7 +129,7 @@ impl Bundle {
         let csr_bytes = req_builder.build().to_pem()?;
 
         Ok(Bundle {
-            private_key: PrivateKey(pkey_bytes),
+            private_key: PrivatePkcs8KeyDer::from(pkey_bytes),
             csr: String::from_utf8(csr_bytes)?,
         })
     }
@@ -136,12 +138,12 @@ impl Bundle {
 #[cfg(not(taurpaulin_include))]
 #[doc(hidden)]
 pub mod bench {
-    use rustls::PrivateKey;
 
     use super::Bundle;
+    use rustls::pki_types::PrivatePkcs8KeyDer;
 
     #[cfg(not(taurpaulin_include))]
-    pub fn generate_key(realm: &str, device: &str) -> (PrivateKey, String) {
+    pub fn generate_key(realm: &str, device: &str) -> (PrivatePkcs8KeyDer<'static>, String) {
         let Bundle { private_key, csr } =
             Bundle::generate_key(realm, device).expect("Failed to generate key");
 
@@ -150,7 +152,7 @@ pub mod bench {
 
     #[cfg(feature = "openssl")]
     #[cfg(not(taurpaulin_include))]
-    pub fn openssl_key(realm: &str, device: &str) -> (PrivateKey, String) {
+    pub fn openssl_key(realm: &str, device: &str) -> (PrivatePkcs8KeyDer<'static>, String) {
         let Bundle { private_key, csr } =
             Bundle::openssl_key(realm, device).expect("Failed to generate key");
 
@@ -184,23 +186,20 @@ mod tests {
 
         let bundle = bundle.unwrap();
 
-        assert!(!bundle.private_key.0.is_empty());
+        assert!(!bundle.private_key.secret_pkcs8_der().is_empty());
         assert!(!bundle.csr.is_empty());
     }
 
     #[test]
     fn test_bundle() {
-        let Bundle {
-            private_key: PrivateKey(private_key),
-            csr,
-        } = Bundle::generate_key("realm", "device_id").unwrap();
-        assert!(!private_key.is_empty());
+        let Bundle { private_key, csr } = Bundle::generate_key("realm", "device_id").unwrap();
+        assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
         let csr = CertReq::from_pem(csr.as_bytes()).unwrap();
         assert_eq!(csr.info.subject.to_string(), "CN=realm/device_id");
 
-        let private_key = SecretKey::from_pkcs8_der(&private_key).unwrap();
+        let private_key = SecretKey::from_pkcs8_der(private_key.secret_pkcs8_der()).unwrap();
         let signer = SigningKey::from(&private_key);
         let verifier = VerifyingKey::from(signer);
 
@@ -219,14 +218,12 @@ mod tests {
     #[test]
     fn test_bundle_sanity_test() {
         // This will check both implementation are compatible
-        let Bundle {
-            private_key: PrivateKey(private_key),
-            csr,
-        } = Bundle::generate_key("realm", "device_id").unwrap();
-        assert!(!private_key.is_empty());
+        let Bundle { private_key, csr } = Bundle::generate_key("realm", "device_id").unwrap();
+        assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
-        let private_key = openssl::pkey::PKey::private_key_from_der(&private_key).unwrap();
+        let private_key =
+            openssl::pkey::PKey::private_key_from_der(private_key.secret_pkcs8_der()).unwrap();
         let csr = openssl::x509::X509Req::from_pem(csr.as_bytes()).unwrap();
 
         assert!(csr.verify(&private_key).unwrap());
@@ -242,14 +239,12 @@ mod tests {
     #[cfg(feature = "openssl")]
     #[test]
     fn test_bundle_openssl() {
-        let Bundle {
-            private_key: PrivateKey(private_key),
-            csr,
-        } = Bundle::openssl_key("realm", "device_id").unwrap();
-        assert!(!private_key.is_empty());
+        let Bundle { private_key, csr } = Bundle::openssl_key("realm", "device_id").unwrap();
+        assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
-        let private_key = openssl::pkey::PKey::private_key_from_der(&private_key).unwrap();
+        let private_key =
+            openssl::pkey::PKey::private_key_from_der(private_key.secret_pkcs8_der()).unwrap();
         let csr = openssl::x509::X509Req::from_pem(csr.as_bytes()).unwrap();
 
         assert!(csr.verify(&private_key).unwrap());

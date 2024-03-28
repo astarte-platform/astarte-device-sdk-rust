@@ -22,9 +22,10 @@
 
 use std::sync::Arc;
 
+use itertools::Itertools;
 use reqwest::{StatusCode, Url};
 use rumqttc::{MqttOptions, NetworkOptions};
-use rustls::{Certificate, PrivateKey};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use url::ParseError;
@@ -80,9 +81,6 @@ pub enum PairingError {
     /// Couldn't configure the TLS store
     #[error("failed to configure TLS")]
     Tls(#[from] rustls::Error),
-    /// Couldn't add certificate to the TLS store
-    #[error("failed to add certificate")]
-    Pki(#[from] webpki::Error),
     /// Couldn't load native certs
     #[error("couldn't load native certificates")]
     Native(#[source] std::io::Error),
@@ -172,15 +170,13 @@ async fn fetch_broker_url(opts: &MqttConfig) -> Result<String, PairingError> {
 
 async fn populate_credentials(
     opts: &MqttConfig,
-) -> Result<(Vec<Certificate>, PrivateKey), PairingError> {
+) -> Result<(Vec<CertificateDer<'static>>, PrivatePkcs8KeyDer<'static>), PairingError> {
     let Bundle { private_key, csr } = Bundle::new(&opts.realm, &opts.device_id)?;
 
     let certificate = fetch_credentials(opts, &csr).await?;
     let certs = rustls_pemfile::certs(&mut certificate.as_bytes())
-        .map_err(PairingError::InvalidCredentials)?
-        .into_iter()
-        .map(Certificate)
-        .collect();
+        .try_collect()
+        .map_err(PairingError::InvalidCredentials)?;
 
     Ok((certs, private_key))
 }
@@ -193,8 +189,8 @@ async fn populate_broker_url(opts: &MqttConfig) -> Result<Url, PairingError> {
 
 fn build_mqtt_opts(
     opts: &MqttConfig,
-    certificate: Vec<Certificate>,
-    private_key: PrivateKey,
+    certificate: Vec<CertificateDer<'static>>,
+    private_key: PrivatePkcs8KeyDer<'static>,
     broker_url: &Url,
 ) -> Result<(MqttOptions, NetworkOptions), PairingError> {
     let MqttConfig {
@@ -208,17 +204,6 @@ fn build_mqtt_opts(
     let port = broker_url
         .port()
         .ok_or_else(|| PairingError::Config("missing port in url".to_string()))?;
-
-    let mut root_cert_store = rustls::RootCertStore::empty();
-    let native_certs = rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
-    for cert in native_certs {
-        root_cert_store.add(&rustls::Certificate(cert.0))?;
-    }
-
-    let mut tls_client_config = rumqttc::tokio_rustls::rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(root_cert_store)
-        .with_single_cert(certificate, private_key)?;
 
     let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
@@ -236,29 +221,82 @@ fn build_mqtt_opts(
     mqtt_opts.set_keep_alive(opts.keepalive);
 
     if opts.ignore_ssl_errors || is_env_ignore_ssl() {
-        struct OkVerifier {}
-        impl rustls::client::ServerCertVerifier for OkVerifier {
+        #[derive(Debug)]
+        struct NoVerifier;
+
+        impl rustls::client::danger::ServerCertVerifier for NoVerifier {
             fn verify_server_cert(
                 &self,
-                _: &Certificate,
-                _: &[Certificate],
-                _: &rustls::ServerName,
-                _: &mut dyn Iterator<Item = &[u8]>,
-                _: &[u8],
-                _: std::time::SystemTime,
-            ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-                Ok(rustls::client::ServerCertVerified::assertion())
+                _end_entity: &rustls::pki_types::CertificateDer<'_>,
+                _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+                _server_name: &rustls::pki_types::ServerName<'_>,
+                _ocsp_response: &[u8],
+                _now: rustls::pki_types::UnixTime,
+            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+                Ok(rustls::client::danger::ServerCertVerified::assertion())
+            }
+
+            fn verify_tls12_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls::pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+
+            fn verify_tls13_signature(
+                &self,
+                _message: &[u8],
+                _cert: &rustls::pki_types::CertificateDer<'_>,
+                _dss: &rustls::DigitallySignedStruct,
+            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+            {
+                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            }
+
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                vec![
+                    rustls::SignatureScheme::RSA_PKCS1_SHA1,
+                    rustls::SignatureScheme::ECDSA_SHA1_Legacy,
+                    rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                    rustls::SignatureScheme::RSA_PKCS1_SHA384,
+                    rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+                    rustls::SignatureScheme::RSA_PKCS1_SHA512,
+                    rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+                    rustls::SignatureScheme::RSA_PSS_SHA256,
+                    rustls::SignatureScheme::RSA_PSS_SHA384,
+                    rustls::SignatureScheme::RSA_PSS_SHA512,
+                    rustls::SignatureScheme::ED25519,
+                    rustls::SignatureScheme::ED448,
+                ]
             }
         }
 
-        let mut clientconfig = tls_client_config.dangerous();
-        clientconfig.set_certificate_verifier(Arc::new(OkVerifier {}));
+        let clientconfig = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
+            .with_client_auth_cert(certificate, private_key.into())
+            .map_err(PairingError::Tls)?;
 
-        let tls_config = rumqttc::TlsConfiguration::Rustls(Arc::new(clientconfig.cfg.to_owned()));
+        let tls_config = rumqttc::TlsConfiguration::Rustls(Arc::new(clientconfig));
         let transport = rumqttc::Transport::tls_with_config(tls_config);
 
         mqtt_opts.set_transport(transport);
     } else {
+        let mut root_cert_store = rustls::RootCertStore::empty();
+        let native_certs =
+            rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
+        for cert in native_certs {
+            root_cert_store.add(cert)?;
+        }
+
+        let tls_client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_cert_store)
+            .with_client_auth_cert(certificate, private_key.into())?;
+
         mqtt_opts.set_transport(rumqttc::Transport::tls_with_config(
             tls_client_config.into(),
         ));

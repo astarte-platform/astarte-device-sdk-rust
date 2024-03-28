@@ -55,14 +55,14 @@ async fn main() -> Result<(), Error> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (mut device, mut rx_events) = DeviceBuilder::new()
+    let (client, mut connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connect(mqtt_config)
         .await?
         .build();
 
-    let device_cpy = device.clone();
+    let device_cpy = client.clone();
     println!("Connection to Astarte established.");
 
     // Create a task to transmit
@@ -99,8 +99,8 @@ async fn main() -> Result<(), Error> {
 
     // Spawn a task to receive
     tokio::spawn(async move {
-        while let Some(event) = rx_events.recv().await {
-            match event {
+        loop {
+            match client.recv().await {
                 Ok(data) => {
                     if let astarte_device_sdk::Value::Individual(var) = data.data {
                         let mut iter = data.path.splitn(3, '/').skip(1);
@@ -128,6 +128,7 @@ async fn main() -> Result<(), Error> {
                         }
                     }
                 }
+                Err(Error::Disconnected) => break,
                 Err(err) => log::error!("{:?}", err),
             }
         }
@@ -135,7 +136,7 @@ async fn main() -> Result<(), Error> {
         Ok::<_, DynError>(())
     });
 
-    device.handle_events().await?;
+    connection.handle_events().await?;
 
     Ok(())
 }

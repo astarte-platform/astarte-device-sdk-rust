@@ -276,7 +276,7 @@ mod test {
             let mapping = interface.as_mapping_ref(&path).unwrap();
 
             let validated = mock_validate_individual(mapping, &path, ty.clone(), None).unwrap();
-            let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
+            let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
             let (res, _) = deserialize_individual(&mapping, &buf)
                 .unwrap()
@@ -326,9 +326,10 @@ mod test {
         let path = mapping(base_path);
 
         let validated = mock_validate_object(&interface, &path, data.clone(), None).unwrap();
-        let buf = serialize_object(validated.data(), validated.timestamp()).unwrap();
+        let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
-        let (res, _) = deserialize_object(&validated.object(), validated.path(), &buf).unwrap();
+        let (res, _) =
+            deserialize_object(&interface.as_object_ref().unwrap(), &path, &buf).unwrap();
 
         assert_eq!(res, data)
     }
@@ -358,7 +359,7 @@ mod test {
         let og_value = AstarteType::LongInteger(3600);
         let validated =
             ValidatedIndividual::validate(mapping, &path, og_value.clone(), None).unwrap();
-        let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
+        let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
         let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
 

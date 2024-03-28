@@ -77,13 +77,13 @@ async fn main() -> Result<(), DynError> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (mut device, mut rx_events) = DeviceBuilder::new()
+    let (client, mut connection) = DeviceBuilder::new()
         .interface_directory("./examples/individual_properties/interfaces")?
         .store(db)
         .connect(mqtt_config)
         .await?
         .build();
-    let device_cpy = device.clone();
+    let device_cpy = client.clone();
 
     println!("Connection to Astarte established.");
 
@@ -125,8 +125,8 @@ async fn main() -> Result<(), DynError> {
 
     // Use the current thread to receive changes in the server owned properties
     tokio::spawn(async move {
-        while let Some(event) = rx_events.recv().await {
-            match event {
+        loop {
+            match client.recv().await {
                 Ok(data) => {
                     if let Value::Individual(var) = data.data {
                         let mut iter = data.path.splitn(3, '/').skip(1);
@@ -151,6 +151,7 @@ async fn main() -> Result<(), DynError> {
                         }
                     }
                 }
+                Err(Error::Disconnected) => break,
                 Err(err) => log::error!("{:?}", err),
             }
         }
@@ -158,7 +159,7 @@ async fn main() -> Result<(), DynError> {
         Ok::<_, DynError>(())
     });
 
-    device.handle_events().await?;
+    connection.handle_events().await?;
 
     Ok(())
 }

@@ -24,11 +24,11 @@ use futures::{future, StreamExt, TryStreamExt};
 use log::{error, warn};
 
 use crate::{
+    client::DeviceClient,
     error::Error,
     interface::mapping::path::MappingPath,
     store::{PropertyStore, StoredProp},
     types::AstarteType,
-    AstarteDeviceSdk,
 };
 
 /// Error handling the properties.
@@ -53,7 +53,7 @@ pub trait PropAccess {
     ///
     /// ```no_run
     /// use astarte_device_sdk::{
-    ///     AstarteDeviceSdk, store::sqlite::SqliteStore, builder::DeviceBuilder,
+    ///     store::sqlite::SqliteStore, builder::DeviceBuilder,
     ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
     /// };
     ///
@@ -64,7 +64,7 @@ pub trait PropAccess {
     ///         .unwrap();
     ///     let mqtt_config = MqttConfig::new("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
-    ///     let (mut device, _rx_events) = DeviceBuilder::new().store(database)
+    ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
     ///         .connect(mqtt_config).await.unwrap()
     ///         .build();
     ///
@@ -86,10 +86,9 @@ pub trait PropAccess {
 }
 
 #[async_trait]
-impl<S, C> PropAccess for AstarteDeviceSdk<S, C>
+impl<S> PropAccess for DeviceClient<S>
 where
     S: PropertyStore,
-    C: Sync,
 {
     async fn property(
         &self,

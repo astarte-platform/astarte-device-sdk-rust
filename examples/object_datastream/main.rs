@@ -62,7 +62,7 @@ async fn main() -> Result<(), Error> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (mut device, _rx) = DeviceBuilder::new()
+    let (client, mut connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connect(mqtt_config)
@@ -70,7 +70,6 @@ async fn main() -> Result<(), Error> {
         .build();
 
     // Create an thread to transmit
-    let device_cpy = device.clone();
     tokio::task::spawn(async move {
         loop {
             let data = DataObject {
@@ -80,7 +79,7 @@ async fn main() -> Result<(), Error> {
             };
 
             println!("Sending {data:?}");
-            device_cpy
+            client
                 .send_object(
                     "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
                     "/23",
@@ -95,7 +94,7 @@ async fn main() -> Result<(), Error> {
 
     // Use the current thread to receive (no incoming messages are expected in this example)
     loop {
-        match device.handle_events().await {
+        match connection.handle_events().await {
             Ok(data) => {
                 println!("incoming: {data:?}");
             }

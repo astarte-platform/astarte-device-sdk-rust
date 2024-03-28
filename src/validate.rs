@@ -26,7 +26,7 @@ use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef, PropertyRef},
-        Mapping, Ownership,
+        Ownership, Reliability,
     },
     types::AstarteType,
     Interface, Timestamp,
@@ -85,40 +85,21 @@ fn optional_object_checks(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatedIndividual<'a> {
-    mapping: MappingRef<'a, &'a Interface>,
-    path: &'a MappingPath<'a>,
-    data: AstarteType,
-    timestamp: Option<Timestamp>,
+pub(crate) struct ValidatedIndividual {
+    pub(crate) interface: String,
+    pub(crate) path: String,
+    pub(crate) reliability: Reliability,
+    pub(crate) data: AstarteType,
+    pub(crate) timestamp: Option<Timestamp>,
 }
 
-impl<'a> ValidatedIndividual<'a> {
-    pub(crate) fn mapping(&self) -> MappingRef<'a, &'a Interface> {
-        self.mapping
-    }
-
-    pub(crate) fn path(&self) -> &'a MappingPath<'a> {
-        self.path
-    }
-
-    pub(crate) fn data(&self) -> &AstarteType {
-        &self.data
-    }
-
-    pub(crate) fn into_data(self) -> AstarteType {
-        self.data
-    }
-
-    pub(crate) fn timestamp(&self) -> Option<Timestamp> {
-        self.timestamp
-    }
-
+impl ValidatedIndividual {
     pub(crate) fn validate(
-        mapping: MappingRef<'a, &'a Interface>,
-        path: &'a MappingPath<'a>,
+        mapping: MappingRef<'_, &Interface>,
+        path: &MappingPath<'_>,
         data: AstarteType,
         timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedIndividual<'a>, UserValidationError> {
+    ) -> Result<ValidatedIndividual, UserValidationError> {
         if let Err(err) = optional_individual_checks(mapping, &timestamp) {
             error!("send validation failed: {err}");
 
@@ -134,8 +115,9 @@ impl<'a> ValidatedIndividual<'a> {
         }
 
         Ok(ValidatedIndividual {
-            mapping,
-            path,
+            interface: mapping.interface().interface_name().to_string(),
+            path: path.to_string(),
+            reliability: mapping.mapping().reliability(),
             data,
             timestamp,
         })
@@ -143,45 +125,21 @@ impl<'a> ValidatedIndividual<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatedObject<'a> {
-    object: ObjectRef<'a>,
-    path: &'a MappingPath<'a>,
-    data: HashMap<String, AstarteType>,
-    timestamp: Option<Timestamp>,
+pub(crate) struct ValidatedObject {
+    pub(crate) interface: String,
+    pub(crate) path: String,
+    pub(crate) reliability: Reliability,
+    pub(crate) data: HashMap<String, AstarteType>,
+    pub(crate) timestamp: Option<Timestamp>,
 }
 
-impl<'a> ValidatedObject<'a> {
-    pub(crate) fn interface(&self) -> &Interface {
-        self.object.interface
-    }
-
-    pub(crate) fn object(&self) -> ObjectRef<'a> {
-        self.object
-    }
-
-    pub(crate) fn path(&self) -> &'a MappingPath<'a> {
-        self.path
-    }
-
-    pub(crate) fn data(&self) -> &HashMap<String, AstarteType> {
-        &self.data
-    }
-
-    #[cfg(feature = "message-hub")]
-    pub(crate) fn into_data(self) -> HashMap<String, AstarteType> {
-        self.data
-    }
-
-    pub(crate) fn timestamp(&self) -> Option<Timestamp> {
-        self.timestamp
-    }
-
+impl ValidatedObject {
     pub(crate) fn validate(
-        object: ObjectRef<'a>,
-        path: &'a MappingPath<'a>,
+        object: ObjectRef<'_>,
+        path: &MappingPath<'_>,
         data: HashMap<String, AstarteType>,
         timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedObject<'a>, UserValidationError> {
+    ) -> Result<ValidatedObject, UserValidationError> {
         if let Err(err) = optional_object_checks(object, &timestamp) {
             error!("Send validation failed: {err}");
 
@@ -217,8 +175,9 @@ impl<'a> ValidatedObject<'a> {
         }
 
         Ok(ValidatedObject {
-            object,
-            path,
+            interface: object.interface.interface_name().to_string(),
+            path: path.to_string(),
+            reliability: object.reliability(),
             data: aggregate,
             timestamp,
         })
@@ -226,27 +185,15 @@ impl<'a> ValidatedObject<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatedUnset<'a> {
-    mapping: MappingRef<'a, PropertyRef<'a>>,
-    path: &'a MappingPath<'a>,
+pub(crate) struct ValidatedUnset {
+    pub(crate) interface: String,
+    pub(crate) path: String,
 }
 
-impl<'a> ValidatedUnset<'a> {
-    pub(crate) fn prop(&self) -> PropertyRef<'_> {
-        *self.mapping.interface()
-    }
-
-    pub(crate) fn mapping(&self) -> &Mapping<&str> {
-        self.mapping.mapping()
-    }
-
-    pub(crate) fn path(&self) -> &MappingPath<'_> {
-        self.path
-    }
-
+impl ValidatedUnset {
     pub(crate) fn validate(
-        mapping: MappingRef<'a, PropertyRef<'a>>,
-        path: &'a MappingPath<'a>,
+        mapping: MappingRef<'_, PropertyRef<'_>>,
+        path: &MappingPath<'_>,
     ) -> Result<Self, UserValidationError> {
         if !mapping.allow_unset() {
             return Err(UserValidationError::Unset {
@@ -255,7 +202,10 @@ impl<'a> ValidatedUnset<'a> {
             });
         }
 
-        Ok(Self { mapping, path })
+        Ok(Self {
+            interface: mapping.interface().interface_name().to_string(),
+            path: path.to_string(),
+        })
     }
 }
 

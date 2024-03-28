@@ -44,7 +44,7 @@ pub mod wrapper;
 /// This SDK provides an implementation of a sqlite database for which this trait has already
 /// been implemented, see [`crate::store::sqlite::SqliteStore`].
 #[async_trait]
-pub trait PropertyStore: Debug + Send + Sync + 'static
+pub trait PropertyStore: Clone + Debug + Send + Sync + 'static
 where
     // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
     //       bound to further restrict the error type.

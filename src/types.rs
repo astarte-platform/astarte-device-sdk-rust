@@ -17,8 +17,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-//! Provides Astarte specific types to be used by the
-//! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receive data to/from the Astarte cluster.
+//! Provides Astarte specific types to be used by the [Client][crate::DeviceClient] to
+//! transmit/receive data to/from the Astarte cluster.
 
 use bson::{Binary, Bson};
 use serde::Serialize;
