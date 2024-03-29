@@ -88,6 +88,13 @@ where
             .await
             .map_err(StoreError::load_all)
     }
+
+    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+        self.store
+            .delete_interface(interface)
+            .await
+            .map_err(StoreError::delete_interface)
+    }
 }
 
 #[cfg(test)]

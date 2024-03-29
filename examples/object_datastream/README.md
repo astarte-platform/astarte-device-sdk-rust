@@ -33,5 +33,5 @@ devices get-samples <DEVICE_NAME>
 org.astarte-platform.rust.examples.object-datastream.DeviceDatastream <COMM_ENDPOINT> -c 1
 ```
 Where `<REALM>` is your realm's name, `<DEVICE_ID>` is the device ID from which the data has
-been received and `<COMM_ENDPOINT>` is the common part of the aggegate endpoints.
+been received and `<COMM_ENDPOINT>` is the common part of the aggregate endpoints.
 For this example `<COMM_ENDPOINT>` is fixed to `/23`.

@@ -49,7 +49,7 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
-    #[error("expected object, individual data deserialized intead {0}")]
+    #[error("expected object, individual data deserialized instead {0}")]
     Object(Bson),
     /// Missing mapping in payload
     #[error["missing mappings in the payload"]]
@@ -58,7 +58,7 @@ pub enum PayloadError {
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingError),
     /// Mismatching type while serializing
-    #[error("mimatching type while serializing, expected {expected} but got {got}")]
+    #[error("mismatching type while serializing, expected {expected} but got {got}")]
     SerializeType { expected: String, got: String },
     /// Couldn't accept unset for mapping without `allow_unset`
     #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]

@@ -71,6 +71,8 @@ where
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Deletes all the properties of the interface from the database.
+    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
@@ -195,6 +197,12 @@ mod tests {
 
         assert_eq!(props, expected);
 
+        // delete interface properties
+        store.delete_interface("com.test").await.unwrap();
+        let prop = store.load_prop("com.test", "/test", 1).await.unwrap();
+
+        assert_eq!(prop, None);
+
         // test all types
         let all_types = [
             AstarteType::Double(4.5),
@@ -229,7 +237,7 @@ mod tests {
 
     /// Test that the error is Send + Sync + 'static to be send across task boundaries.
     #[tokio::test]
-    async fn erro_should_compatible_with_tokio() {
+    async fn error_should_compatible_with_tokio() {
         let mem = StoreWrapper::new(MemoryStore::new());
 
         let exp = AstarteType::Integer(1);
