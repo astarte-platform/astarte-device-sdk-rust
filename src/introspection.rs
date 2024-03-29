@@ -95,7 +95,7 @@ pub trait DynamicIntrospection {
     /// Returns a bool to check weather the if the interface was added or was already present.
     async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
 
-    /// Add one ore more [`Interface`] to the device introspection.
+    /// Add one or more [`Interface`] to the device introspection.
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been added.
     async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
@@ -125,6 +125,13 @@ pub trait DynamicIntrospection {
     ///
     /// Returns a bool to check weather the if the interface was removed or was missing.
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+
+    // TODO: change return value
+    /// Remove the interface with the name specified as argument.
+    async fn remove_interfaces<'a, I>(&self, interfaces_name: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = &'a str> + Send,
+        I::IntoIter: Send;
 }
 
 #[cfg(test)]
@@ -141,7 +148,6 @@ mod tests {
     use crate::interfaces::Introspection;
     use crate::test::{
         mock_astarte_device, E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY,
-        INDIVIDUAL_SERVER_DATASTREAM,
     };
     use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
 
@@ -197,14 +203,14 @@ mod tests {
         });
 
         let res = client
-            .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
+            .add_interface_from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM)
             .await
             .unwrap();
         assert!(res);
 
         // Shouldn't add the second one
         let res = client
-            .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
+            .add_interface_from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM)
             .await
             .unwrap();
         assert!(!res);
@@ -221,14 +227,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_extend_interfaces() {
+    async fn should_extend_and_remove_interfaces() {
         let eventloop = MqttEventLoop::default();
         let mut client = AsyncClient::default();
 
-        let to_add = [
-            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
-            Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+        let i1 = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let i2 = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
+        let i3 = Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap();
+        let i4 = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
+
+        let to_add = [i1.clone(), i2.clone(), i3.clone(), i4.clone()];
+        let to_remove = [
+            i1.interface_name(),
+            i2.interface_name(),
+            i3.interface_name(),
+            i4.interface_name(),
         ];
 
         let mut names = to_add
@@ -262,16 +275,37 @@ mod tests {
             })
             .returning(|_, _, _, _| Ok(()));
 
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            // 2 times since only 2 out of 4 interfaces are server-owned
+            .times(2)
+            .returning(|_| Ok(()));
+
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
-            let msg = connection.client.recv().await.unwrap();
-            connection.handle_client_msg(msg).await.unwrap();
+            for _ in 0..2 {
+                let msg = connection.client.recv().await.unwrap();
+                connection.handle_client_msg(msg).await.unwrap();
+            }
         });
 
-        let mut res = client.extend_interfaces(to_add).await.unwrap();
+        let mut res = client.extend_interfaces(to_add.clone()).await.unwrap();
         res.sort();
         assert_eq!(res, names);
+
+        client.remove_interfaces(to_remove).await.unwrap();
 
         handle.await.unwrap();
     }
@@ -301,6 +335,92 @@ mod tests {
         assert!(res.is_empty());
 
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_not_unsubscribe_interfaces() {
+        let eventloop = MqttEventLoop::default();
+        let mut client = AsyncClient::default();
+
+        // don't add server-owned properties, thus no unsubscribe should be called
+        let i1 = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let i2 = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
+
+        let to_add = [i1.clone(), i2.clone()];
+        let to_remove = [i1.interface_name(), i2.interface_name()];
+
+        let mut introspection = Introspection::new(to_add.iter())
+            .to_string()
+            .split(';')
+            .map(ToOwned::to_owned)
+            .collect_vec();
+
+        introspection.sort_unstable();
+
+        // no subscribe many is expected since no server-owned interfaces are added
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        // no unsubscribe is called since no server-owned interfaces have been added
+
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+
+        let handle = tokio::spawn(async move {
+            for _ in 0..2 {
+                let msg = connection.client.recv().await.unwrap();
+                connection.handle_client_msg(msg).await.unwrap();
+            }
+        });
+
+        client.extend_interfaces(to_add.clone()).await.unwrap();
+
+        client.remove_interfaces(to_remove).await.unwrap();
+
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn remove_non_existing_interfaces() {
+        let eventloop = MqttEventLoop::default();
+        let client = AsyncClient::default();
+
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+
+        let handle = tokio::spawn(async move {
+            for _ in 0..2 {
+                let msg = connection.client.recv().await.unwrap();
+                connection.handle_client_msg(msg).await.unwrap();
+            }
+        });
+
+        client
+            .remove_interface("com.example.NonExistingInterface")
+            .await
+            .unwrap_err();
+
+        client
+            .remove_interfaces([
+                "com.example.NonExistingInterface1",
+                "com.example.NonExistingInterface2",
+            ])
+            .await
+            .unwrap_err();
+
+        handle.await.expect_err("panicked after debug_assert");
     }
 
     #[test]

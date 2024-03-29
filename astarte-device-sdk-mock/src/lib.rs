@@ -96,6 +96,12 @@ pub trait DynamicIntrospection {
     async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+
+    // TODO: change return value
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+    where
+        I: IntoIterator<Item = &'static str> + Send + 'static,
+        I::IntoIter: Send;
 }
 
 mock! {
@@ -172,6 +178,11 @@ mock! {
         async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
         async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+            where
+                I: IntoIterator<Item = &'static str> + Send + 'static,
+                I::IntoIter: Send;
     }
 
     impl<C> Clone for DeviceClient<C> {
@@ -417,6 +428,18 @@ mod tests {
             )
             .await
         }
+
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+        where
+            I: IntoIterator<Item = &'static str> + Send + 'static,
+            I::IntoIter: Send,
+        {
+            astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces(
+                self,
+                interfaces_name,
+            )
+            .await
+        }
     }
 
     #[async_trait]
@@ -452,6 +475,14 @@ mod tests {
 
         async fn remove_interface(&self, _interface_name: &str) -> Result<bool, Error> {
             Ok(Default::default())
+        }
+
+        async fn remove_interfaces<'a, I>(&self, _interfaces_name: I) -> Result<(), Error>
+        where
+            I: IntoIterator<Item = &'a str> + Send,
+            I::IntoIter: Send,
+        {
+            Ok(())
         }
     }
 

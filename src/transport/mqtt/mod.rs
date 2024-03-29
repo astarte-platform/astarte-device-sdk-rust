@@ -397,6 +397,17 @@ impl Mqtt {
             .map_err(MqttError::Unsubscribe)
     }
 
+    async fn unsubscribe_many<'a, I>(&self, interfaces_name: I) -> Result<(), MqttError>
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        for iface_name in interfaces_name.into_iter() {
+            self.unsubscribe(iface_name).await?;
+        }
+
+        Ok(())
+    }
+
     /// Sends the introspection [`String`].
     async fn send_introspection(&self, introspection: String) -> Result<(), MqttError> {
         debug!("sending introspection = {}", introspection);
@@ -555,23 +566,6 @@ impl Register for Mqtt {
             .map_err(MqttError::into)
     }
 
-    async fn remove_interface(
-        &mut self,
-        interfaces: &Interfaces,
-        removed: &Interface,
-    ) -> Result<(), Error> {
-        let iter = interfaces.iter_without_removed(removed);
-        let introspection = Introspection::new(iter).to_string();
-
-        self.send_introspection(introspection).await?;
-
-        if removed.ownership().is_server() {
-            self.unsubscribe(removed.interface_name()).await?;
-        }
-
-        Ok(())
-    }
-
     /// Called when multiple interfaces are added.
     ///
     /// This method should convey to the server that one or more interfaces have been added.
@@ -614,6 +608,44 @@ impl Register for Mqtt {
         }
 
         subscribe_res
+    }
+
+    async fn remove_interface(
+        &mut self,
+        interfaces: &Interfaces,
+        removed: &Interface,
+    ) -> Result<(), Error> {
+        let iter = interfaces.iter_without_removed(removed);
+        let introspection = Introspection::new(iter).to_string();
+
+        self.send_introspection(introspection).await?;
+
+        if removed.ownership().is_server() {
+            self.unsubscribe(removed.interface_name()).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn remove_interfaces(
+        &mut self,
+        interfaces: &Interfaces,
+        removed: &HashMap<&str, &Interface>,
+    ) -> Result<(), Error> {
+        let interfaces = interfaces.iter_without_removed_many(removed);
+        let introspection = Introspection::new(interfaces).to_string();
+
+        self.send_introspection(introspection).await?;
+
+        let interfaces_name = removed
+            .iter()
+            .filter(|(_iface_name, iface)| iface.ownership().is_server())
+            .map(|(&name, _)| name)
+            .collect_vec();
+
+        self.unsubscribe_many(interfaces_name).await?;
+
+        Ok(())
     }
 }
 

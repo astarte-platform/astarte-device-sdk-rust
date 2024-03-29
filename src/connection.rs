@@ -18,6 +18,7 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -284,10 +285,16 @@ impl<S, C> DeviceConnection<S, C> {
     {
         let mut interfaces = self.interfaces.write().await;
 
-        let Some(to_remove) = interfaces.get(interface_name) else {
-            debug!("interface {interface_name} not found");
+        let to_remove = interfaces.get(interface_name);
 
-            return Ok(false);
+        // only in debug mode, if the interface is not found, it has been probably misspelled
+        debug_assert!(to_remove.is_some(), "interface {interface_name} not found");
+        let to_remove = match to_remove {
+            Some(i) => i,
+            None => {
+                warn!("{interface_name} not found, skipping");
+                return Ok(false);
+            }
         };
 
         self.connection
@@ -304,6 +311,47 @@ impl<S, C> DeviceConnection<S, C> {
         interfaces.remove(interface_name);
 
         Ok(true)
+    }
+
+    // TODO: make it return the list of removed interfaces names
+    async fn remove_interfaces<'a, I>(&mut self, interfaces_name: I) -> Result<(), Error>
+    where
+        C: Register,
+        S: PropertyStore,
+        I: IntoIterator<Item = &'a str> + Clone + Send,
+    {
+        let mut interfaces = self.interfaces.write().await;
+
+        let to_remove = interfaces_name
+            .clone()
+            .into_iter()
+            .filter_map(|iface_name| {
+                let interface = interfaces.get(iface_name).map(|i| (i.interface_name(), i));
+
+                // only in debug mode, if the interface is not found, it has been probably misspelled
+                debug_assert!(interface.is_some(), "interface {iface_name} not found");
+                if interface.is_none() {
+                    warn!("{iface_name} not found, skipping");
+                }
+
+                interface
+            })
+            .collect();
+
+        self.connection
+            .remove_interfaces(&interfaces, &to_remove)
+            .await?;
+
+        for (iface_name, _) in to_remove.iter() {
+            // We cannot error here since we already unsubscribed to the interface
+            if let Err(err) = self.store.delete_interface(iface_name).await {
+                error!("failed to remove property {err}");
+            }
+        }
+
+        interfaces.remove_many(&HashSet::from_iter(interfaces_name));
+
+        Ok(())
     }
 
     async fn handle_connection_event(&self, event: ReceivedEvent<C::Payload>) -> Result<(), Error>
@@ -405,6 +453,20 @@ impl<S, C> DeviceConnection<S, C> {
 
                 Ok(())
             }
+            ClientMessage::RemoveInterfaces {
+                interfaces,
+                response,
+            } => {
+                let res = self
+                    .remove_interfaces(interfaces.iter().map(|s| s.as_str()))
+                    .await;
+
+                if let Err(Err(err)) = response.send(res) {
+                    error!("client disconnected while failing to remove interfaces: {err}");
+                }
+
+                Ok(())
+            }
         }
     }
 }
@@ -475,5 +537,10 @@ pub(crate) enum ClientMessage {
     RemoveInterface {
         interface: String,
         response: oneshot::Sender<Result<bool, Error>>,
+    },
+    RemoveInterfaces {
+        interfaces: Vec<String>,
+        // TODO: change return val
+        response: oneshot::Sender<Result<(), Error>>,
     },
 }
