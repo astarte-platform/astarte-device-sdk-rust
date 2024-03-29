@@ -103,6 +103,7 @@ pub trait DynamicIntrospection {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
     use std::str::FromStr;
 
     use itertools::Itertools;
@@ -227,5 +228,37 @@ mod tests {
         client.extend_interfaces(to_add).await.unwrap();
 
         handle.await.unwrap();
+    }
+
+    #[test]
+    fn should_add_context_to_err() {
+        let ctx = Path::new("/foo/bar");
+
+        let original = AddInterfaceError::Interface(InterfaceError::MajorMinor);
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::InterfaceFile { path, backtrace: InterfaceError::MajorMinor } if path == ctx
+        ));
+
+        let original = AddInterfaceError::Io {
+            path: Path::new("/baz").to_owned(),
+            backtrace: io::Error::new(io::ErrorKind::NotFound, "foo"),
+        };
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::Io { path, backtrace: _ } if path == ctx
+        ));
+
+        let original = AddInterfaceError::InterfaceFile {
+            path: Path::new("/baz").to_owned(),
+            backtrace: InterfaceError::MajorMinor,
+        };
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::InterfaceFile { path, backtrace: InterfaceError::MajorMinor } if path == ctx
+        ));
     }
 }
