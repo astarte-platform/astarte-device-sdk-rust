@@ -330,7 +330,7 @@ where
     /// Remove the interface with the name specified as argument.
     pub async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
         let interface = self.remove_interface_from_map(interface_name).await?;
-        self.remove_properties_from_store(interface_name).await?;
+        self.store.delete_interface(interface_name).await?;
         self.send_introspection().await?;
         if interface.ownership() == interface::Ownership::Server {
             self.unsubscribe_server_owned_interface(&interface).await?;
@@ -811,24 +811,6 @@ where
             Some(value) => Ok(value.eq(new)),
             None => Ok(false),
         }
-    }
-
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error> {
-        let interfaces = self.interfaces.read().await;
-        let mappings = interfaces.get_property(interface_name);
-
-        let property = match mappings {
-            Some(property) => property,
-            None => return Ok(()),
-        };
-
-        for mapping in property.iter_mappings() {
-            let path = mapping.endpoint();
-            self.store.delete_prop(interface_name, path).await?;
-            debug!("Stored property {}{} deleted", interface_name, path);
-        }
-
-        Ok(())
     }
 
     // ------------------------------------------------------------------------

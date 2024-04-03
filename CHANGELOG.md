@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Fixed
+- Delete all interface's properties, using the correct mapping, when an
+  interface is removed
+  [#313](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/313)
+
 ## [0.6.4] - 2024-03-20
 
 ## [0.5.3] - 2024-03-20

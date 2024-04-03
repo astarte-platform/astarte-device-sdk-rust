@@ -40,6 +40,9 @@ pub enum StoreError {
     /// Could not load all properties.
     #[error("could not load all properties")]
     LoadAll(#[source] DynError),
+    /// Could not delete all the interface properties.
+    #[error("could not delete all the interface properties")]
+    DeleteInterface(#[source] DynError),
 }
 
 impl StoreError {
@@ -61,5 +64,9 @@ impl StoreError {
 
     pub(crate) fn load_all(err: impl Into<DynError>) -> Self {
         Self::LoadAll(err.into())
+    }
+
+    pub(crate) fn delete_interface(err: impl Into<DynError>) -> Self {
+        Self::DeleteInterface(err.into())
     }
 }

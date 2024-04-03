@@ -140,6 +140,15 @@ impl PropertyStore for MemoryStore {
 
         Ok(props)
     }
+
+    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+        self.store
+            .write()
+            .await
+            .retain(|k, _v| k.interface != interface);
+
+        Ok(())
+    }
 }
 
 /// Key for the in memory store, this let us customize the hash and equality, and use (&str, &str)

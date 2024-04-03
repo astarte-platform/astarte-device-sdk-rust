@@ -20,6 +20,16 @@
     },
     "query": "DELETE FROM propcache WHERE interface = ? AND path = ?\n"
   },
+  "5c53a781263f71fd7aa603bbbd63d15316a3f916286577885a1a6d1eb3d790ed": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Right": 1
+      }
+    },
+    "query": "DELETE FROM propcache WHERE interface = ?\n"
+  },
   "baddb61f1e374ef6ebc7ff926a78e210bc4023b9079426bfdff6e73dde5a6a63": {
     "describe": {
       "columns": [],
