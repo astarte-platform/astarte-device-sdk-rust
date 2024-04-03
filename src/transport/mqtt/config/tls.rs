@@ -187,3 +187,53 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
         ]
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::transport::mqtt::config::{CERTIFICATE_FILE, PRIVATE_KEY_FILE};
+
+    pub(crate) const TEST_CERTIFICATE: &str = include_str!("../../../../tests/certificate.pem");
+    pub(crate) const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../../tests/priv-key.der");
+
+    #[tokio::test]
+    async fn should_read_keys() {
+        let dir = TempDir::new().unwrap();
+
+        let cert = dir.path().join(CERTIFICATE_FILE);
+        tokio::fs::write(&cert, TEST_CERTIFICATE).await.unwrap();
+
+        let key = dir.path().join(PRIVATE_KEY_FILE);
+        tokio::fs::write(&key, TEST_PRIVATE_KEY).await.unwrap();
+
+        let client = ClientAuth::try_read(cert.clone(), key.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(client.certs.len(), 1);
+
+        let cert_der = client.certs.first().unwrap();
+
+        let rustls_pemfile::Item::X509Certificate(exp) =
+            rustls_pemfile::read_one_from_slice(TEST_CERTIFICATE.as_bytes())
+                .unwrap()
+                .unwrap()
+                .0
+        else {
+            panic!("expected cert");
+        };
+
+        assert_eq!(*cert_der, exp);
+
+        assert_eq!(client.private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
+
+        client.tls_config().await.unwrap();
+
+        // Reuse the file setup
+        let client = ClientAuth::try_read(cert, key).await.unwrap();
+
+        client.insecure_tls_config().await.unwrap();
+    }
+}

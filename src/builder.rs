@@ -383,9 +383,17 @@ where
 
 #[cfg(test)]
 mod test {
+    use mockito::Server;
+    use rumqttc::{ConnAck, ConnectReturnCode, Event, Packet, QoS};
     use tempfile::TempDir;
 
-    use super::DeviceBuilder;
+    use crate::transport::mqtt::{
+        client::{AsyncClient, EventLoop, NEW_LOCK},
+        pairing::tests::{mock_create_certificate, mock_get_broker_url},
+        MqttConfig,
+    };
+
+    use super::*;
 
     #[test]
     fn interface_directory() {
@@ -429,5 +437,112 @@ mod test {
         let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
 
         assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
+    }
+
+    #[tokio::test]
+    async fn should_dir_with_store_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path();
+
+        DeviceBuilder::new()
+            .store_dir(path.join("not existing "))
+            .await
+            .expect_err("Should error for non existing directory");
+        let file = path.join("file");
+
+        tokio::fs::write(&file, "content").await.unwrap();
+
+        DeviceBuilder::new()
+            .store_dir(file)
+            .await
+            .expect_err("Should error for file and not dir");
+
+        let readonly = path.join("dir");
+        tokio::fs::create_dir(&readonly).await.unwrap();
+
+        let mut perm = readonly.metadata().unwrap().permissions();
+
+        perm.set_readonly(true);
+
+        tokio::fs::set_permissions(&readonly, perm).await.unwrap();
+
+        DeviceBuilder::new()
+            .store_dir(readonly)
+            .await
+            .expect_err("Should error for readonly");
+    }
+
+    #[tokio::test]
+    async fn should_build() {
+        let _m = NEW_LOCK.lock().await;
+
+        let dir = TempDir::new().unwrap();
+
+        let ctx = AsyncClient::new_context();
+        ctx.expect().once().returning(|_, _| {
+            let mut client = AsyncClient::default();
+            let mut ev_loop = EventLoop::default();
+
+            ev_loop
+                .expect_set_network_options()
+                .returning(|_| EventLoop::default());
+
+            ev_loop.expect_poll().returning(|| {
+                Ok(Event::Incoming(Packet::ConnAck(ConnAck {
+                    session_present: false,
+                    code: ConnectReturnCode::Success,
+                })))
+            });
+
+            client
+                .expect_subscribe::<String>()
+                .withf(|topic, qos| {
+                    topic == "realm/device_id/control/consumer/properties"
+                        && *qos == QoS::ExactlyOnce
+                })
+                .returning(|_, _| Ok(()));
+
+            client
+                .expect_publish::<String, String>()
+                .withf(|topic, qos, _, introspection| {
+                    topic == "realm/device_id"
+                        && *qos == QoS::ExactlyOnce
+                        && introspection.is_empty()
+                })
+                .returning(|_, _, _, _| Ok(()));
+
+            client
+                .expect_publish::<String, &str>()
+                .withf(|topic, qos, _, payload| {
+                    topic == "realm/device_id/control/emptyCache"
+                        && *qos == QoS::ExactlyOnce
+                        && *payload == "1"
+                })
+                .returning(|_, _, _, _| Ok(()));
+
+            (client, ev_loop)
+        });
+
+        let mut server = Server::new_async().await;
+
+        let mock_url = mock_get_broker_url(&mut server).create_async().await;
+        let mock_cert = mock_create_certificate(&mut server).create_async().await;
+
+        let (_client, _connection) = DeviceBuilder::new()
+            .store_dir(dir.path())
+            .await
+            .unwrap()
+            .connect(MqttConfig::with_credential_secret(
+                "realm",
+                "device_id",
+                "secret",
+                server.url(),
+            ))
+            .await
+            .unwrap()
+            .build();
+
+        mock_url.assert_async().await;
+        mock_cert.assert_async().await;
     }
 }

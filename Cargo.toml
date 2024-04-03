@@ -96,6 +96,7 @@ astarte-device-sdk-derive = { workspace = true }
 criterion = { workspace = true }
 env_logger = { workspace = true }
 mockall = { workspace = true }
+mockito = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["net"] }
@@ -129,6 +130,7 @@ http = "1.0.0"
 itertools = "0.11.0"
 log = "0.4.17"
 mockall = "0.12.1"
+mockito = "1.4.0"
 once_cell = "1.18.0"
 openssl = "0.10.46"
 p384 = "0.13.0"

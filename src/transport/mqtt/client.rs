@@ -22,7 +22,11 @@ pub(crate) use self::mock::{MockAsyncClient as AsyncClient, MockEventLoop as Eve
 pub(crate) use rumqttc::{AsyncClient, EventLoop};
 
 #[cfg(test)]
-mod mock {
+/// Lock for synchronizing the calls to [`AsyncClient::new`]
+pub(crate) static NEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
+pub(crate) mod mock {
     use mockall::mock;
     use rumqttc::{
         ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, QoS, SubscribeFilter,

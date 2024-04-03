@@ -237,3 +237,137 @@ struct ProtocolsInfo {
 struct AstarteMqttV1Info {
     broker_url: Url,
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    use mockito::Server;
+
+    pub(crate) fn mock_get_broker_url(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "GET",
+                "/v1/realm/devices/device_id",
+            )
+            .with_status(200)
+            .with_body(
+                r#"{"data":{"protocols":{"astarte_mqtt_v1":{"__unknown_fields__":[],"broker_url":"mqtts://broker.astarte.localhost:8883/"}},"status":"pending","version":"1.1.1"}}"#,
+            )
+            .match_header("authorization", "Bearer secret")
+    }
+
+    pub(crate) fn mock_create_certificate(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials",
+            )
+            .with_status(201)
+            .with_body(r#"{"data":{"client_crt":"certificate"}}"#)
+            .match_header("authorization", "Bearer secret")
+    }
+
+    #[tokio::test]
+    async fn should_create_certificate() {
+        let mut server = Server::new_async().await;
+
+        let mock = mock_create_certificate(&mut server)
+            .match_body(r#"{"data":{"csr":"csr"}}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client.create_certificate("csr").await.unwrap();
+
+        assert_eq!(res, "certificate");
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_error_not_create_certificate() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials",
+            )
+            .with_status(202)
+            .with_body(r#"{"error":"error"}"#)
+            .match_header("authorization", "Bearer secret")
+            .match_body(r#"{"data":{"csr":"csr"}}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client
+            .create_certificate("csr")
+            .await
+            .expect_err("error expected");
+
+        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 202));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_get_broker_url() {
+        let mut server = Server::new_async().await;
+
+        let mock = mock_get_broker_url(&mut server).create_async().await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client.get_broker_url().await.unwrap();
+
+        let expected = Url::parse("mqtts://broker.astarte.localhost:8883/").unwrap();
+
+        assert_eq!(res, expected);
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn forbidden_get_broker_url() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/v1/realm/devices/device_id")
+            .with_status(401)
+            .match_header("authorization", "Bearer secret")
+            .create_async()
+            .await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client.get_broker_url().await.expect_err("should error");
+
+        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 401));
+
+        mock.assert_async().await;
+    }
+}

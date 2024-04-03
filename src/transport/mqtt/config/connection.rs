@@ -189,3 +189,178 @@ impl TransportProvider {
         &self.credential_secret
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use mockito::Server;
+    use tempfile::TempDir;
+
+    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn should_create_transport_insecure() {
+        let dir = TempDir::new().unwrap();
+
+        let mut server = Server::new_async().await;
+
+        let mock = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        // With store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            Some(dir.path().to_owned()),
+            true,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.transport(&api).await.unwrap();
+
+        let certificate_file = dir.path().join(CERTIFICATE_FILE);
+        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+
+        let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
+        assert_eq!(cert, "certificate");
+        let key = tokio::fs::read(&private_key_file).await.unwrap();
+        assert!(!key.is_empty());
+
+        // Without store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            None,
+            true,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.transport(&api).await.unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_create_transport() {
+        let dir = TempDir::new().unwrap();
+
+        let mut server = Server::new_async().await;
+
+        let mock = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        // With store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            Some(dir.path().to_owned()),
+            false,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.transport(&api).await.unwrap();
+
+        let certificate_file = dir.path().join(CERTIFICATE_FILE);
+        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+
+        let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
+        assert_eq!(cert, "certificate");
+        let key = tokio::fs::read(&private_key_file).await.unwrap();
+        assert!(!key.is_empty());
+
+        // Without store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            None,
+            false,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.transport(&api).await.unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_recreate_transport() {
+        let dir = TempDir::new().unwrap();
+
+        let mut server = Server::new_async().await;
+
+        let mock = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        // With store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            Some(dir.path().to_owned()),
+            false,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.recreate_transport(&api).await.unwrap();
+
+        let certificate_file = dir.path().join(CERTIFICATE_FILE);
+        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+
+        let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
+        assert_eq!(cert, "certificate");
+        let key = tokio::fs::read(&private_key_file).await.unwrap();
+        assert!(!key.is_empty());
+
+        // Without store
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            None,
+            false,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.recreate_transport(&api).await.unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_succeed_if_fs_error() {
+        let dir = TempDir::new().unwrap();
+
+        let mut server = Server::new_async().await;
+
+        let mock = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        let provider = TransportProvider::new(
+            server.url().parse().unwrap(),
+            "secret".to_string(),
+            Some(dir.path().join("non existing")),
+            false,
+        );
+
+        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+
+        let _ = provider.transport(&api).await.unwrap();
+
+        let _ = provider.recreate_transport(&api).await.unwrap();
+
+        mock.assert_async().await;
+    }
+}

@@ -656,9 +656,18 @@ pub(crate) mod test {
     use std::str::FromStr;
 
     use mockall::predicate;
-    use rumqttc::ClientError;
+    use mockito::Server;
+    use rumqttc::{ClientError, ConnAck, ConnectReturnCode, QoS};
+    use tempfile::TempDir;
+    use test::{
+        client::NEW_LOCK,
+        pairing::tests::{mock_create_certificate, mock_get_broker_url},
+    };
 
-    use crate::store::memory::MemoryStore;
+    use crate::{
+        builder::{ConnectionConfig, DeviceBuilder},
+        store::memory::MemoryStore,
+    };
 
     use super::*;
 
@@ -939,5 +948,109 @@ pub(crate) mod test {
             .extend_interfaces(&interfaces, &to_add)
             .await
             .expect_err("Didn't return the error");
+    }
+
+    #[tokio::test]
+    async fn should_reconnect() {
+        let _m = NEW_LOCK.lock().await;
+
+        let dir = TempDir::new().unwrap();
+
+        let ctx = AsyncClient::new_context();
+        ctx.expect().once().returning(|_, _| {
+            let mut client = AsyncClient::default();
+            let mut ev_loop = EventLoop::default();
+
+            let mut seq = mockall::Sequence::new();
+
+            ev_loop
+                .expect_set_network_options()
+                .returning(|_| EventLoop::default())
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_poll()
+                .returning(|| {
+                    Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
+                        rustls::Error::AlertReceived(rustls::AlertDescription::CertificateExpired),
+                    )))
+                })
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_clean()
+                .return_const(())
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_poll()
+                .returning(|| {
+                    Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
+                        session_present: false,
+                        code: ConnectReturnCode::Success,
+                    })))
+                })
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_subscribe::<String>()
+                .withf(|topic, qos| {
+                    topic == "realm/device_id/control/consumer/properties"
+                        && *qos == QoS::ExactlyOnce
+                })
+                .returning(|_, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_publish::<String, String>()
+                .withf(|topic, qos, _, introspection| {
+                    topic == "realm/device_id"
+                        && *qos == QoS::ExactlyOnce
+                        && introspection.is_empty()
+                })
+                .returning(|_, _, _, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_publish::<String, &str>()
+                .withf(|topic, qos, _, payload| {
+                    topic == "realm/device_id/control/emptyCache"
+                        && *qos == QoS::ExactlyOnce
+                        && *payload == "1"
+                })
+                .returning(|_, _, _, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            (client, ev_loop)
+        });
+
+        let mut server = Server::new_async().await;
+
+        let mock_url = mock_get_broker_url(&mut server).create_async().await;
+        let mock_cert = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
+
+        let config = MqttConfig::new(
+            "realm",
+            "device_id",
+            Credential::secret("secret"),
+            server.url(),
+        );
+
+        config.connect(&builder).await.unwrap();
+
+        mock_url.assert_async().await;
+        mock_cert.assert_async().await;
     }
 }
