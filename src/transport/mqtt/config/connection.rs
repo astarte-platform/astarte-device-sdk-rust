@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-use log::error;
+use log::{debug, error};
 use rumqttc::Transport;
 use tokio::fs;
 use url::Url;
@@ -62,6 +62,8 @@ impl TransportProvider {
 
         let certificate = client.create_certificate(&bundle.csr).await?;
 
+        debug!("credentials created");
+
         Ok((bundle, certificate))
     }
 
@@ -95,6 +97,8 @@ impl TransportProvider {
 
     /// Creates a new credential and if a store directory is set, it stores it
     async fn create_credentials(&self, client: &ApiClient<'_>) -> Result<ClientAuth, PairingError> {
+        debug!("creating new transport credentials");
+
         // If no store dir is set we just create a new certificate
         let Some(store_dir) = &self.store_dir else {
             let (bundle, certificate) = self.create_certificate(client).await?;
@@ -115,20 +119,29 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
     ) -> Result<ClientAuth, PairingError> {
+        debug!("retrieving credentials");
+
         // If no store dir is set we just create a new certificate
         let Some(store_dir) = &self.store_dir else {
+            debug!("no store directory, creating new credentials");
+
             let (bundle, certificate) = self.create_certificate(client).await?;
 
             return ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
                 .map_err(PairingError::InvalidCredentials);
         };
 
+        debug!("reading existing credentials from {}", store_dir.display());
+
         let certificate_file = store_dir.join(CERTIFICATE_FILE);
         let private_key_file = store_dir.join(PRIVATE_KEY_FILE);
 
+        // Return with the existing certificate
         if let Some(auth) =
             ClientAuth::try_read(certificate_file.clone(), private_key_file.clone()).await
         {
+            debug!("existing certificate found");
+
             return Ok(auth);
         }
 

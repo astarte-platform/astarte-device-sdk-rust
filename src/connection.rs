@@ -428,6 +428,8 @@ where
                     let event = event?;
 
                     self.handle_connection_event(event).await?;
+                    // recreate the future
+                    continue;
                 }
                 event = self.client.recv() => {
                     let msg = event.ok_or(Error::Disconnected)?;

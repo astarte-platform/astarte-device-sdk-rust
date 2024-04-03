@@ -26,7 +26,7 @@ use std::{
 };
 
 use itertools::Itertools;
-use log::{error, warn};
+use log::{debug, error, warn};
 use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
     RootCertStore,
@@ -54,6 +54,11 @@ impl ClientAuth {
 
         match res {
             Ok(auth) => auth,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                debug!("credential files are missing");
+
+                None
+            }
             Err(err) => {
                 error!("couldn't read certificates {err}");
 
@@ -79,16 +84,20 @@ impl ClientAuth {
         let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut c_r).try_collect()?;
 
         if certs.is_empty() {
+            debug!("no certificate found");
+
             return Ok(None);
         }
 
-        let k_f = File::open(key)?;
-        let mut k_r = BufReader::new(k_f);
-        let Some(private_key) = rustls_pemfile::pkcs8_private_keys(&mut k_r).next() else {
-            return Ok(None);
-        };
+        let k_r = std::fs::read(key)?;
+        if k_r.is_empty() {
+            debug!("no private key found");
 
-        private_key.map(|private_key| Some(ClientAuth { private_key, certs }))
+            return Ok(None);
+        }
+        let private_key = PrivatePkcs8KeyDer::from(k_r);
+
+        Ok(Some(ClientAuth { private_key, certs }))
     }
 
     pub(crate) async fn tls_config(self) -> Result<rustls::ClientConfig, PairingError> {

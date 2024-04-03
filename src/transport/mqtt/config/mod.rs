@@ -52,7 +52,7 @@ pub const CREDENTIAL_FILE: &str = "credential";
 /// File where the certificate is stored in PEM format
 pub const CERTIFICATE_FILE: &str = "certificate.pem";
 /// File where the private key is stored in PEM format
-pub const PRIVATE_KEY_FILE: &str = "priv-key.pem";
+pub const PRIVATE_KEY_FILE: &str = "priv-key.der";
 
 /// Credentials for the [`Mqtt`] connection.
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]

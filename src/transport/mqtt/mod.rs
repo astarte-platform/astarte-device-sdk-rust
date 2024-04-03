@@ -280,11 +280,15 @@ impl Mqtt {
         match self.eventloop.get_mut().poll().await {
             Ok(event) => Ok(event),
             Err(ConnectionError::Tls(err)) => {
-                error!("couldn't poll the event loop: {err}");
+                error!("couldn't poll the event loop, tls error: {err}");
 
                 self.reconnect().await?;
 
-                DelayedPoll::retry_poll_event(self.eventloop.get_mut()).await
+                self.eventloop.get_mut().poll().await.map_err(|err| {
+                    error!("poll fatal error {err}");
+
+                    Error::Disconnected
+                })
             }
             Err(err) => {
                 error!("couldn't poll the event loop: {err}");
@@ -321,7 +325,10 @@ impl Mqtt {
             .await
             .map_err(MqttError::Pairing)?;
 
+        debug!("created a new transport, reconnecting");
+
         self.set_transport(transport);
+        self.eventloop.get_mut().clean();
 
         Ok(())
     }

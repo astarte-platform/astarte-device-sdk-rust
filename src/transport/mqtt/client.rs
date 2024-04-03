@@ -45,6 +45,7 @@ mod mock {
         pub EventLoop{
             pub async fn poll(&mut self) -> Result<Event, ConnectionError>;
             pub fn set_network_options(&mut self, network_options: NetworkOptions) -> &mut Self;
+            pub fn clean(&mut self);
         }
     }
 }
