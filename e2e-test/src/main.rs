@@ -215,15 +215,14 @@ async fn main() -> eyre::Result<()> {
             } else if event.interface == test_cfg.interface_property_so {
                 let mut rx_data = rx_data_ind_prop.lock().await;
 
-                let mut path = event.path.clone();
-                path.remove(0); // Remove first forward slash
+                let path = event.path.as_str();
                 let (sensor_n, key) = path
-                    .split_once('/')
-                    .ok_or_else(|| eyre!("Incorrect path in message {:?}", event))?;
+                    .strip_prefix('/')
+                    .and_then(|s| s.split_once('/'))
+                    .unwrap_or_else(|| panic!("Incorrect path in message {:?}", event.clone()));
 
                 rx_data.0 = sensor_n.to_string();
-
-                match event.clone().data {
+                match event.data {
                     Value::Individual(var) => {
                         rx_data.1.insert(key.to_string(), var);
                     }
