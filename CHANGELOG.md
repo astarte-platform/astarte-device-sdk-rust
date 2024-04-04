@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#296](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/296)
 - Move the `AstarteType::Unset` to the `Value::Unset` for the astarte event
   [#296](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/296)
+- Separate the `AstarteDeviceSdk` into `DeviceClient` and `DeviceConnection`
+  [#311](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/311)
 
 ## [0.7.3] - 2024-04-09
 
