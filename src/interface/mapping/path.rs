@@ -190,17 +190,14 @@ fn parse_mapping(input: &str) -> Result<MappingPath, MappingError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::interface::mapping::endpoint::Level;
 
     use super::*;
 
-    /// Helper macro to create a `MappingPath` from a string literal.
-    #[macro_export]
-    macro_rules! mapping {
-        ($mapping:expr) => {
-            &$crate::MappingPath::try_from($mapping).expect("failed to create mapping path")
-        };
+    /// Helper to create a `MappingPath` from a string literal.
+    pub(crate) fn mapping(path: &str) -> MappingPath<'_> {
+        MappingPath::try_from(path).expect("failed to create mapping path")
     }
 
     #[test]
@@ -235,11 +232,11 @@ mod tests {
             ],
         };
 
-        assert_eq!(endpoint, *mapping!("/foo/value"));
-        assert_eq!(endpoint, *mapping!("/bar/value"));
-        assert_ne!(endpoint, *mapping!("/value"));
-        assert_ne!(endpoint, *mapping!("/foo/bar/value"));
-        assert_ne!(endpoint, *mapping!("/foo/value/bar"));
+        assert_eq!(endpoint, mapping("/foo/value"));
+        assert_eq!(endpoint, mapping("/bar/value"));
+        assert_ne!(endpoint, mapping("/value"));
+        assert_ne!(endpoint, mapping("/foo/bar/value"));
+        assert_ne!(endpoint, mapping("/foo/value/bar"));
     }
 
     #[test]
@@ -254,11 +251,11 @@ mod tests {
         };
 
         let cases = [
-            ((mapping!("/1/foo"), "bar"), Ordering::Equal),
-            ((mapping!("/1/foo"), "a"), Ordering::Less),
-            ((mapping!("/1"), "foo"), Ordering::Less),
-            ((mapping!("/1/foo"), "some"), Ordering::Greater),
-            ((mapping!("/1/foo/bar"), "some"), Ordering::Greater),
+            ((&mapping("/1/foo"), "bar"), Ordering::Equal),
+            ((&mapping("/1/foo"), "a"), Ordering::Less),
+            ((&mapping("/1"), "foo"), Ordering::Less),
+            ((&mapping("/1/foo"), "some"), Ordering::Greater),
+            ((&mapping("/1/foo/bar"), "some"), Ordering::Greater),
         ];
 
         for (mapping, exp) in cases {

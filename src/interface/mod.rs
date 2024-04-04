@@ -164,7 +164,10 @@ impl Interface {
     }
 
     /// Get a [`MappingRef`] reference of the path if the endpoint is present in the interface.
-    pub(crate) fn as_mapping_ref(&self, path: &MappingPath) -> Option<MappingRef<&Interface>> {
+    pub(crate) fn as_mapping_ref<'a>(
+        &'a self,
+        path: &'a MappingPath,
+    ) -> Option<MappingRef<&Interface>> {
         MappingRef::new(self, path)
     }
 
@@ -620,14 +623,14 @@ mod tests {
         interface::{
             def::{DatabaseRetentionPolicyDef, RetentionDef},
             mapping::{
-                path::MappingPath,
+                path::{tests::mapping, MappingPath},
                 vec::{Item, MappingVec},
                 BaseMapping, DatastreamIndividualMapping,
             },
             Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
             Mapping, MappingSet, MappingType, Ownership, Reliability, Retention,
         },
-        mapping, Interface,
+        Interface,
     };
 
     // The mappings are sorted alphabetically by endpoint, so we can confront them
@@ -892,7 +895,7 @@ mod tests {
         assert_eq!(interface.doc().unwrap(), r#"Interface doc "escaped""#);
         assert_eq!(
             *interface
-                .mapping(mapping!("/double_endpoint"))
+                .mapping(&mapping("/double_endpoint"))
                 .unwrap()
                 .doc()
                 .unwrap(),

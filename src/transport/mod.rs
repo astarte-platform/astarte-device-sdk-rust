@@ -39,7 +39,7 @@ use crate::{
     shared::SharedDevice,
     store::PropertyStore,
     types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject},
+    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
 };
 
@@ -64,6 +64,9 @@ pub(crate) trait Publish {
 
     /// Sends validated objects values over this connection
     async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error>;
+
+    /// Unset a property value over this connection
+    async fn unset(&self, data: ValidatedUnset<'_>) -> Result<(), crate::Error>;
 }
 
 #[async_trait]
@@ -85,14 +88,14 @@ pub(crate) trait Receive {
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
-        mapping: MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), crate::Error>;
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
         &self,
-        object: ObjectRef,
+        object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;

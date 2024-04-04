@@ -197,6 +197,7 @@ impl MockDataDatastream {
         json_obj: &serde_json::Value,
     ) -> Result<Self, String> {
         let err = format!("Incorrectly formatted json: {json_obj:#?}.");
+
         let json_map = json_obj.get("data").ok_or(&err)?.as_object().ok_or(&err)?;
         let mut data = HashMap::new();
         for (key, value) in json_map {

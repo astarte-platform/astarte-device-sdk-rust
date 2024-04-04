@@ -34,11 +34,12 @@ use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::Channel;
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
-    astarte_message::Payload, message_hub_client::MessageHubClient, tonic, AstarteMessage, Node,
+    astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
+    AstarteMessage, Node,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use log::trace;
+use log::{debug, trace};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -51,14 +52,15 @@ use crate::{
     interfaces::{self, Interfaces},
     shared::SharedDevice,
     store::PropertyStore,
+    transport::grpc::convert::map_values_to_astarte_type,
     types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject},
+    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
 };
 
 use super::{Disconnect, Publish, Receive, ReceivedEvent, Register};
 
-use self::convert::{map_values_to_astarte_type, MessageHubProtoError};
+use self::convert::MessageHubProtoError;
 
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
@@ -198,9 +200,7 @@ impl Publish for Grpc {
         self.client
             .lock()
             .await
-            .send(tonic::Request::new(
-                data.try_into().map_err(GrpcError::from)?,
-            ))
+            .send(tonic::Request::new(data.into()))
             .await
             .map(|_| ())
             .map_err(|e| GrpcError::from(e).into())
@@ -210,9 +210,17 @@ impl Publish for Grpc {
         self.client
             .lock()
             .await
-            .send(tonic::Request::new(
-                data.try_into().map_err(GrpcError::from)?,
-            ))
+            .send(tonic::Request::new(data.into()))
+            .await
+            .map(|_| ())
+            .map_err(|e| GrpcError::from(e).into())
+    }
+
+    async fn unset(&self, data: ValidatedUnset<'_>) -> Result<(), crate::Error> {
+        self.client
+            .lock()
+            .await
+            .send(tonic::Request::new(data.into()))
             .await
             .map(|_| ())
             .map_err(|e| GrpcError::from(e).into())
@@ -229,7 +237,7 @@ impl Deref for Grpc {
 
 #[async_trait]
 impl Receive for Grpc {
-    type Payload = GrpcReceivePayload;
+    type Payload = GrpcPayload;
 
     async fn next_event<S>(
         &self,
@@ -241,8 +249,9 @@ impl Receive for Grpc {
         loop {
             match self.next_message().await {
                 Ok(Some(message)) => {
-                    let event: ReceivedEvent<Self::Payload> =
-                        message.try_into().map_err(GrpcError::from)?;
+                    let event: ReceivedEvent<Self::Payload> = message
+                        .try_into()
+                        .map_err(GrpcError::MessageHubProtoConversion)?;
 
                     return Ok(event);
                 }
@@ -270,15 +279,15 @@ impl Receive for Grpc {
 
     fn deserialize_individual(
         &self,
-        _mapping: MappingRef<'_, &Interface>,
+        _mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), crate::Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error> {
         let data = match payload.data {
-            Payload::AstarteData(data) => data,
-            Payload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
-                trace!("unset received");
+            ProtoPayload::AstarteData(data) => data,
+            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
+                debug!("unset received");
 
-                return Ok((AstarteType::Unset, payload.timestamp));
+                return Ok(None);
             }
         };
 
@@ -293,12 +302,12 @@ impl Receive for Grpc {
 
         trace!("received {}", data.display_type());
 
-        Ok((data, payload.timestamp))
+        Ok(Some((data, payload.timestamp)))
     }
 
     fn deserialize_object(
         &self,
-        _object: ObjectRef,
+        _object: &ObjectRef,
         _path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
@@ -308,8 +317,8 @@ impl Receive for Grpc {
             .and_then(|d| d.take_object())
             .ok_or(GrpcError::DeserializationExpectedObject)?;
 
-        let data = map_values_to_astarte_type(object.object_data)
-            .map_err(GrpcError::MessageHubProtoConversion)?;
+        let data =
+            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
 
         trace!("object received");
 
@@ -372,13 +381,13 @@ impl Disconnect for Grpc {
 
 /// Internal struct holding the received grpc message
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct GrpcReceivePayload {
-    data: Payload,
+pub(crate) struct GrpcPayload {
+    data: ProtoPayload,
     timestamp: Option<Timestamp>,
 }
 
-impl GrpcReceivePayload {
-    pub(crate) fn new(data: Payload, timestamp: Option<Timestamp>) -> Self {
+impl GrpcPayload {
+    pub(crate) fn new(data: ProtoPayload, timestamp: Option<Timestamp>) -> Self {
         Self { data, timestamp }
     }
 }
@@ -455,7 +464,7 @@ mod test {
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        pbjson_types,
+        pbjson_types, AstarteUnset,
     };
     use async_trait::async_trait;
     use tokio::{net::TcpListener, sync::mpsc};
@@ -464,7 +473,7 @@ mod test {
     use crate::{
         error,
         transport::test::{mock_shared_device, mock_validate_individual, mock_validate_object},
-        Aggregation, AstarteAggregate, AstarteDeviceDataEvent,
+        AstarteAggregate, AstarteDeviceDataEvent, Value,
     };
 
     use super::*;
@@ -901,7 +910,7 @@ mod test {
             => data_event = AstarteDeviceDataEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.individual-properties.DeviceProperties"
                 && data_event.path == "/1/name"
-                && matches!(data_event.data, Aggregation::Individual(AstarteType::String(v)) if v == STRING_VALUE),
+                && matches!(data_event.data, Value::Individual(AstarteType::String(v)) if v == STRING_VALUE),
             ServerReceivedRequest::Detach(d) if d.uuid == ID.to_string()
         );
     }
@@ -966,7 +975,7 @@ mod test {
             => data_event = AstarteDeviceDataEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
                     && data_event.path == "/1",
-            => object_value = {  let Aggregation::Object(v) = data_event.data else { panic!("Expected object") }; v };
+            => object_value = {  let Value::Object(v) = data_event.data else { panic!("Expected object") }; v };
                 if object_value["endpoint1"] == AstarteType::Double(4.2)
                     && object_value["endpoint2"] == AstarteType::String("obj".to_string())
                     && object_value["endpoint3"] == AstarteType::BooleanArray(vec![true])
@@ -980,10 +989,10 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        let expected_object = Aggregation::Object((MockObject {}).astarte_aggregate().unwrap());
+        let expected_object = Value::Object((MockObject {}).astarte_aggregate().unwrap());
 
         let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
-            expected_object.try_into().unwrap();
+            expected_object.into();
 
         let astarte_message = AstarteMessage {
             interface_name: "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
@@ -1026,7 +1035,7 @@ mod test {
             ReceivedEvent {
                 ref interface,
                 ref path,
-                payload: GrpcReceivePayload {
+                payload: GrpcPayload {
                     data,
                     timestamp: None,
                 },
@@ -1043,8 +1052,7 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
-            AstarteType::Unset.try_into().unwrap();
+        let proto_payload = ProtoPayload::AstarteUnset(AstarteUnset {});
 
         let exp_interface =
             "org.astarte-platform.rust.examples.individual-properties.ServerProperties";
@@ -1087,7 +1095,7 @@ mod test {
             ReceivedEvent {
                 ref interface,
                 ref path,
-                payload: GrpcReceivePayload {
+                payload: GrpcPayload {
                     data,
                     timestamp: None,
                 },

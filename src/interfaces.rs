@@ -110,10 +110,10 @@ impl Interfaces {
     /// # Errors
     ///
     /// Will return error if either the interface or the mapping is missing.
-    pub(crate) fn interface_mapping(
-        &self,
+    pub(crate) fn interface_mapping<'a>(
+        &'a self,
         interface_name: &str,
-        interface_path: &MappingPath,
+        interface_path: &'a MappingPath,
     ) -> Result<MappingRef<&Interface>, Error> {
         self.interfaces
             .get(interface_name)
@@ -133,10 +133,10 @@ impl Interfaces {
     /// # Errors
     ///
     /// Will return error if either the interface or the mapping is missing.
-    pub(crate) fn property_mapping(
-        &self,
+    pub(crate) fn property_mapping<'a>(
+        &'a self,
         interface_name: &str,
-        interface_path: &MappingPath,
+        interface_path: &'a MappingPath,
     ) -> Result<MappingRef<PropertyRef>, Error> {
         self.interfaces
             .get(interface_name)
@@ -309,7 +309,10 @@ pub(crate) mod tests {
 
     use super::*;
 
-    use crate::{builder::DeviceBuilder, interface::MappingType, mapping};
+    use crate::{
+        builder::DeviceBuilder,
+        interface::{mapping::path::tests::mapping, MappingType},
+    };
 
     pub(crate) const PROPERTIES_SERVER: &str = r#"
         {
@@ -390,8 +393,8 @@ pub(crate) mod tests {
 
     impl<'a> CheckEndpoint<'a> {
         pub(crate) fn check(&self) {
-            let path = mapping!(self.path);
-            let mapping = self.interfaces.interface_mapping(self.name, path).unwrap();
+            let path = mapping(self.path);
+            let mapping = self.interfaces.interface_mapping(self.name, &path).unwrap();
             assert_eq!(mapping.interface().interface_name(), self.name);
             assert_eq!(mapping.interface().version_major(), self.version_major);
             assert_eq!(mapping.mapping_type(), self.mapping_type);
@@ -430,15 +433,15 @@ pub(crate) mod tests {
         .check();
 
         assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/button/foo")),
+            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/button/foo")),
             Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/foo/button")),
+            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/foo/button")),
             Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/obj")),
+            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/obj")),
             Err(Error::MappingNotFound { .. })
         ));
     }
@@ -466,12 +469,12 @@ pub(crate) mod tests {
         assert!(matches!(
             ifa.interface_mapping(
                 "org.astarte-platform.test.test",
-                mapping!("/foo/bar/enable")
+                &mapping("/foo/bar/enable")
             ),
             Err(Error::MappingNotFound { .. })
         ));
         assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", mapping!("/obj")),
+            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/obj")),
             Err(Error::MappingNotFound { .. })
         ));
     }

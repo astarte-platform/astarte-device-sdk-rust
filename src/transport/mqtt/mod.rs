@@ -63,7 +63,7 @@ use crate::{
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
     topic::ParsedTopic,
     types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject},
+    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
 
@@ -405,10 +405,21 @@ impl Publish for Mqtt {
             .map_err(MqttError::Payload)?;
 
         self.send(
-            validated.object().interface,
+            validated.interface(),
             validated.path().as_str(),
             validated.object().reliability().into(),
             buf,
+        )
+        .await
+    }
+
+    async fn unset(&self, validated: ValidatedUnset<'_>) -> Result<(), Error> {
+        // We send an empty vector as payload to unset the property, https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#payload-format
+        self.send(
+            validated.prop().0,
+            validated.path().as_str(),
+            validated.mapping().reliability().into(),
+            Vec::new(),
         )
         .await
     }
@@ -471,16 +482,16 @@ impl Receive for Mqtt {
 
     fn deserialize_individual(
         &self,
-        mapping: MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
         payload::deserialize_individual(mapping, &payload)
             .map_err(|err| MqttError::Payload(err).into())
     }
 
     fn deserialize_object(
         &self,
-        object: ObjectRef,
+        object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {

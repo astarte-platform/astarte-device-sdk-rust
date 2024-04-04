@@ -21,7 +21,6 @@
 //! [AstarteDeviceSdk][crate::AstarteDeviceSdk] to transmit/receive data to/from the Astarte cluster.
 
 use bson::{Binary, Bson};
-use log::debug;
 use serde::Serialize;
 
 use crate::{interface::MappingType, Timestamp};
@@ -86,8 +85,6 @@ pub enum AstarteType {
     StringArray(Vec<String>),
     BinaryBlobArray(Vec<Vec<u8>>),
     DateTimeArray(Vec<Timestamp>),
-
-    Unset,
 }
 
 macro_rules! check_astype_match {
@@ -309,7 +306,6 @@ impl From<AstarteType> for Bson {
                 })
                 .collect(),
             AstarteType::DateTimeArray(d) => d.into_iter().collect(),
-            AstarteType::Unset => Bson::Null,
         }
     }
 }
@@ -327,11 +323,6 @@ where
 }
 
 impl AstarteType {
-    /// Check if the variant is [`AstarteType::Unset`].
-    pub fn is_unset(&self) -> bool {
-        matches!(self, AstarteType::Unset)
-    }
-
     /// Convert a non empty BSON array to astarte array with all the elements of the same type.
     pub(crate) fn try_from_array(
         array: Vec<Bson>,
@@ -395,7 +386,6 @@ impl AstarteType {
             AstarteType::StringArray(_) => "string array",
             AstarteType::BinaryBlobArray(_) => "binary blob array",
             AstarteType::DateTimeArray(_) => "datetime array",
-            AstarteType::Unset => "unset",
         }
     }
 }
@@ -461,12 +451,6 @@ impl TryFrom<BsonConverter> for AstarteType {
     type Error = TypeError;
 
     fn try_from(value: BsonConverter) -> Result<Self, Self::Error> {
-        if value.bson == Bson::Null {
-            debug!("bson null returning unset");
-
-            return Ok(AstarteType::Unset);
-        }
-
         match value.mapping_type {
             MappingType::Double => value
                 .bson
@@ -517,7 +501,7 @@ impl TryFrom<BsonConverter> for AstarteType {
 mod test {
     use chrono::{DateTime, TimeZone, Utc};
 
-    use crate::Aggregation;
+    use crate::Value;
 
     use super::*;
 
@@ -704,9 +688,9 @@ mod test {
     #[test]
     fn test_conversion_from_astarte_integer_to_f64() {
         let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Aggregation::Individual(astarte_type_double);
+        let astarte_ind = Value::Individual(astarte_type_double);
 
-        if let Aggregation::Individual(var) = astarte_ind {
+        if let Value::Individual(var) = astarte_ind {
             let value: f64 = var.try_into().unwrap();
             assert_eq!(5.0, value);
         } else {
@@ -717,9 +701,9 @@ mod test {
     #[test]
     fn test_conversion_from_astarte_integer_to_i64() {
         let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Aggregation::Individual(astarte_type_double);
+        let astarte_ind = Value::Individual(astarte_type_double);
 
-        if let Aggregation::Individual(var) = astarte_ind {
+        if let Value::Individual(var) = astarte_ind {
             let value: i64 = var.try_into().unwrap();
             assert_eq!(5, value);
         } else {
