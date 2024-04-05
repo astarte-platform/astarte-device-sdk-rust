@@ -273,7 +273,9 @@ where
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum InterfaceTypeDef {
+    /// Stream of non persistent data.
     Datastream,
+    /// Stateful value.
     Properties,
 }
 
@@ -293,7 +295,9 @@ impl Display for InterfaceTypeDef {
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum Ownership {
+    /// Data is sent from the device to Astarte.
     Device,
+    /// Data is received from Astarte.
     Server,
 }
 
@@ -323,8 +327,10 @@ impl Display for Ownership {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Aggregation {
+    /// Every mapping changes state or streams data independently.
     #[default]
     Individual,
+    /// Send all the data for every mapping as a single object.
     Object,
 }
 

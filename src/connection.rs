@@ -77,6 +77,7 @@ pub trait EventLoop {
 /// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
 #[async_trait]
 pub trait ClientDisconnect {
+    /// Cleanly disconnects the client consuming it.
     async fn disconnect(self);
 }
 

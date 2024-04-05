@@ -35,13 +35,13 @@ use super::{
     MqttConfig,
 };
 
-/// Api response from astarte
+/// Api response from astarte.
 #[derive(Debug, Serialize, Deserialize)]
 struct ApiResponse<C> {
     data: C,
 }
 
-/// Response to the pairing request
+/// Response to the pairing request.
 #[derive(Debug, Serialize, Deserialize)]
 struct MqttV1Credentials {
     client_crt: String,
@@ -68,22 +68,33 @@ struct AstarteMqttV1Info {
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum PairingError {
+    /// Invalid credential secret.
     #[error("invalid credentials secret")]
     InvalidCredentials(#[source] std::io::Error),
+    /// Couldn't parse the pairing URL.
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
+    /// The pairing request failed.
     #[error("error while sending or receiving request")]
     Request(#[from] reqwest::Error),
+    /// The API returned an error.
     #[error("API returned an error code {status}")]
-    Api { status: StatusCode, body: String },
-    #[error("crypto error")]
+    Api {
+        /// The status code of the response.
+        status: StatusCode,
+        /// The body of the response.
+        body: String,
+    },
+    /// Failed to generate the CSR.
+    #[error("couldn't generate the CSR")]
     Crypto(#[from] CryptoError),
-    /// Couldn't configure the TLS store
+    /// Couldn't configure the TLS store.
     #[error("failed to configure TLS")]
     Tls(#[from] rustls::Error),
-    /// Couldn't load native certs
+    /// Couldn't load native certs.
     #[error("couldn't load native certificates")]
     Native(#[source] std::io::Error),
+    /// Invalid configuration.
     #[error("configuration error, {0}")]
     Config(String),
 }

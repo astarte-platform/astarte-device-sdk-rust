@@ -16,6 +16,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! Value to send or receive from Astarte.
+
 use std::collections::HashMap;
 
 use crate::{error::Error, types::AstarteType};

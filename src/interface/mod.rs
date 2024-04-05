@@ -135,10 +135,12 @@ impl Interface {
         }
     }
 
+    /// Returns the interface description.
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
+    /// Returns the interface documentation.
     pub fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
     }
@@ -155,6 +157,7 @@ impl Interface {
         }
     }
 
+    /// Returns the number of Mappings in the interface.
     pub fn mappings_len(&self) -> usize {
         match &self.inner {
             InterfaceType::DatastreamIndividual(datastream) => datastream.mappings.len(),

@@ -31,6 +31,7 @@ pub enum MqttError {
     /// Error while pairing with Astarte
     #[error("couldn't pair with Astarte")]
     Pairing(#[from] PairingError),
+    /// Error while loading the property for the session data.
     #[error("Error while loading session data to perform the mqtt connection: {0}")]
     PropLoad(#[from] StoreError),
     /// Failed to subscribe to topic
@@ -42,7 +43,9 @@ pub enum MqttError {
     /// Failed to publish on topic
     #[error("Couldn't publish on topic {ctx}")]
     Publish {
+        /// The topic we tried to publish on.
         ctx: &'static str,
+        /// Reason why the publish failed.
         #[source]
         backtrace: ClientError,
     },

@@ -50,6 +50,7 @@ where
     //       bound to further restrict the error type.
     Self::Err: StdError + Send + Sync + 'static,
 {
+    /// Reason for a failed operation.
     type Err;
 
     /// Stores a property within the database.
@@ -83,18 +84,30 @@ where
     async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
 }
 
-/// Data structure used to return stored properties by a database implementing the AstarteDatabase
+/// Data structure used to return stored properties by a database implementing the [`PropertyStore`]
 /// trait.
 #[derive(Debug, Clone, Copy, PartialOrd)]
 pub struct StoredProp<S = String, V = AstarteType> {
+    /// Interface name of the property.
     pub interface: S,
+    /// Path of the property's mapping.
     pub path: S,
+    /// Value of the property.
     pub value: V,
+    /// Major version of the interface.
+    ///
+    /// This is important to check if a stored property is compatible with the current interface
+    /// version.
     pub interface_major: i32,
+    /// Ownership of the property.
+    ///
+    /// If it's [`Ownership::Device`] the property was sent from the device to Astarte. Instead, if
+    /// it's [`Ownership::Server`] it was received from Astarte.
     pub ownership: Ownership,
 }
 
 impl StoredProp {
+    /// Coverts the stored property into a reference to its values.
     pub fn as_ref(&self) -> StoredProp<&str, &AstarteType> {
         self.into()
     }

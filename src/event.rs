@@ -138,8 +138,10 @@ pub enum FromEventError {
 /// }
 /// ```
 pub trait FromEvent: Sized {
+    /// Reason why the conversion failed.
     type Err;
 
+    /// Perform the conversion from the event.
     fn from_event(event: DeviceEvent) -> Result<Self, Self::Err>;
 }
 
