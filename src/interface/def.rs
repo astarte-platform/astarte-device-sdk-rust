@@ -22,7 +22,7 @@
 //! For more information see:
 //! [Interface Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html)
 
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 use log::warn;
 use rumqttc::QoS;
@@ -45,8 +45,8 @@ fn is_false(flag: &bool) -> bool {
     !flag
 }
 
-/// Utility to check a i32 is equal to 0.
-fn is_zero(value: &i32) -> bool {
+/// Utility to check a integer is equal to 0.
+fn is_zero(value: &i64) -> bool {
     *value == 0
 }
 
@@ -89,18 +89,18 @@ pub(super) struct InterfaceDef<T> {
 
 /// Represents, the JSON of a mapping. It includes all the fields available for a mapping, but it
 /// it is validated when built with the [`TryFrom`]. It uniforms the different types of mappings
-/// like [`super::mapping::DatastreamIndividualMapping`], [`DatastreamObject`] mappings and
-/// [`super::mapping::PropertiesMapping`] in a single struct.
+/// like [`DatastreamIndividualMapping`](super::mapping::DatastreamIndividualMapping), [`DatastreamObject`] mappings and
+/// [`PropertiesMapping`](super::mapping::PropertiesMapping) in a single struct.
 ///
 /// Since it's a 1:1 representation of the JSON it is used for serialization and deserialization,
 /// and then is converted to the internal representation of the mapping with the [`TryFrom`] and
-/// [`From`] traits of the [`InterfaceDef`].
+/// [`From`] traits of the [`Interface`]'s' mappings.
 //
 /// You can find the specification here
 /// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
-pub(crate) struct Mapping<T> {
+pub struct Mapping<T> {
     pub(super) endpoint: T,
     #[serde(rename = "type")]
     pub(super) mapping_type: MappingType,
@@ -109,11 +109,11 @@ pub(crate) struct Mapping<T> {
     #[serde(default, skip_serializing_if = "is_default")]
     pub(super) retention: RetentionDef,
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub(super) expiry: i32,
+    pub(super) expiry: i64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub(super) database_retention_policy: DatabaseRetentionPolicyDef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) database_retention_ttl: Option<i32>,
+    pub(super) database_retention_ttl: Option<i64>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) allow_unset: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -163,19 +163,46 @@ impl<T> Mapping<T> {
         self
     }
 
-    pub(crate) fn endpoint(&self) -> &T {
+    /// Path of the mapping.
+    ///
+    /// It can be parametrized (e.g. `/foo/%{path}/baz`).
+    pub fn endpoint(&self) -> &T {
         &self.endpoint
     }
 
-    pub(crate) fn mapping_type(&self) -> MappingType {
+    /// Returns the mapping's type.
+    pub fn mapping_type(&self) -> MappingType {
         self.mapping_type
     }
 
-    pub(crate) fn reliability(&self) -> Reliability {
+    /// Reliability of the data stream.
+    ///
+    /// See the [`Reliability`] documentation for more information.
+    pub fn reliability(&self) -> Reliability {
         self.reliability
     }
 
-    pub(crate) fn retention(&self) -> Retention {
+    /// Expiry of the data stream.
+    ///
+    /// If it's [`None`] the stream will never expire.
+    pub fn expiry(&self) -> Option<Duration> {
+        match &self.expiry {
+            ..=0 => None,
+            1.. => Some(Duration::from_secs(self.expiry as u64)),
+        }
+    }
+
+    /// Expiry of the data stream.
+    ///
+    /// If it's [`None`] the stream will never expire.
+    pub fn expiry_as_i64(&self) -> i64 {
+        self.expiry
+    }
+
+    /// Retention of the data stream.
+    ///
+    /// See the [`Retention`] documentation for more information.
+    pub fn retention(&self) -> Retention {
         match self.retention {
             RetentionDef::Discard => {
                 if self.expiry > 0 {
@@ -193,10 +220,9 @@ impl<T> Mapping<T> {
         }
     }
 
-    pub(crate) fn expiry(&self) -> i32 {
-        self.expiry
-    }
-
+    /// Returns the database retention of the data stream.
+    ///
+    /// See the [`DatabaseRetention`] for more information.
     pub fn database_retention(&self) -> DatabaseRetention {
         match self.database_retention_policy {
             DatabaseRetentionPolicyDef::NoTtl => {
@@ -211,27 +237,42 @@ impl<T> Mapping<T> {
                     warn!("use_ttl retention policy without ttl set, using 0 as ttl");
                 }
 
+                let ttl = self
+                    .database_retention_ttl
+                    .and_then(|ttl| {
+                        if ttl < 0 {
+                            warn!("negative ttl, using 0");
+                        }
+
+                        ttl.try_into().ok()
+                    })
+                    .unwrap_or(0);
+
                 DatabaseRetention::UseTtl {
-                    ttl: self.database_retention_ttl.unwrap_or(0),
+                    ttl: Duration::from_secs(ttl),
                 }
             }
         }
     }
 
+    /// Returns whether the property's mapping can be unset.
     pub fn allow_unset(&self) -> bool {
         self.allow_unset
     }
 
+    /// Returns whether the mapping should be sent with an explicit time stamp.
     pub fn explicit_timestamp(&self) -> bool {
         self.explicit_timestamp
     }
 
     #[cfg(feature = "interface-doc")]
+    /// Returns the mapping's description.
     pub fn description(&self) -> Option<&T> {
         self.description.as_ref()
     }
 
     #[cfg(feature = "interface-doc")]
+    /// Returns the mapping's documentation.
     pub fn doc(&self) -> Option<&T> {
         self.doc.as_ref()
     }
@@ -373,22 +414,39 @@ impl Display for Aggregation {
     }
 }
 
+/// Defines the type of the mapping.
+///
+/// See the [`AstarteType`](crate::AstarteType) for more information.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum MappingType {
+pub enum MappingType {
+    /// Double mapping.
     Double,
+    /// Integer mapping.
     Integer,
+    /// Boolean mapping.
     Boolean,
+    /// Long integers mapping.
     LongInteger,
+    /// String mapping.
     String,
+    /// Binary mapping.
     BinaryBlob,
+    /// Date time mapping.
     DateTime,
+    /// Double array mapping.
     DoubleArray,
+    /// Integer array mapping.
     IntegerArray,
+    /// Boolean array mapping.
     BooleanArray,
+    /// Long integer array mapping.
     LongIntegerArray,
+    /// String array mapping.
     StringArray,
+    /// Binary array mapping.
     BinaryBlobArray,
+    /// Date time array mapping.
     DateTimeArray,
 }
 
@@ -413,12 +471,23 @@ impl Display for MappingType {
     }
 }
 
+/// Reliability of a data stream.
+///
+/// Defines whether the sent data should be considered delivered.
+///
+/// Properties have always a unique reliability.
+///
+/// See [Reliability](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-reliability)
+/// for more information.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Reliability {
+pub enum Reliability {
+    /// If the transport sends the data
     #[default]
     Unreliable,
+    /// When we know the data has been received at least once.
     Guaranteed,
+    /// When we know the data has been received exactly once.
     Unique,
 }
 
@@ -432,12 +501,21 @@ impl From<Reliability> for QoS {
     }
 }
 
+/// Defines the retention of a data stream.
+///
+/// Describes what to do with the sent data if the transport is incapable of delivering it.
+///
+/// See [Retention](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-retention)
+/// for more information.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RetentionDef {
+    /// Data is discarded.
     #[default]
     Discard,
+    /// Data is kept in a cache in memory.
     Volatile,
+    /// Data is kept on disk.
     Stored,
 }
 
@@ -505,5 +583,111 @@ mod tests {
 
         serde_json::from_str::<InterfaceDef<String>>(json)
             .expect_err("should error for misspelled fields");
+    }
+
+    #[test]
+    fn should_get_expiry() {
+        let json = |expiry: i64| {
+            format!(
+                r#"{{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "mappings": [{{
+                "endpoint": "/double_endpoint",
+                "expiry": {expiry},
+                "type": "double"
+            }}]
+        }}"#
+            )
+        };
+
+        let i = serde_json::from_str::<InterfaceDef<String>>(&json(10)).unwrap();
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.expiry_as_i64(), 10);
+        assert_eq!(mapping.expiry(), Some(Duration::from_secs(10)));
+
+        let i = serde_json::from_str::<InterfaceDef<String>>(&json(-42)).unwrap();
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.expiry_as_i64(), -42);
+        assert_eq!(mapping.expiry(), None);
+
+        let i = serde_json::from_str::<InterfaceDef<String>>(&json(0)).unwrap();
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.expiry_as_i64(), 0);
+        assert_eq!(mapping.expiry(), None);
+
+        let i = serde_json::from_str::<InterfaceDef<String>>(&json(1)).unwrap();
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.expiry_as_i64(), 1);
+        assert_eq!(mapping.expiry(), Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn should_get_retention() {
+        let json = |ttl: i64| {
+            serde_json::from_str::<InterfaceDef<String>>(&format!(
+                r#"{{
+            "interface_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownership": "server",
+            "mappings": [{{
+                "endpoint": "/double_endpoint",
+                "database_retention_policy": "use_ttl",
+                "database_retention_ttl": {ttl},
+                "type": "double"
+            }}]
+        }}"#
+            ))
+            .unwrap()
+        };
+
+        let i = json(10);
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.database_retention_ttl, Some(10));
+        assert_eq!(
+            mapping.database_retention(),
+            DatabaseRetention::UseTtl {
+                ttl: Duration::from_secs(10)
+            }
+        );
+
+        let i = json(0);
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.database_retention_ttl, Some(0));
+        assert_eq!(
+            mapping.database_retention(),
+            DatabaseRetention::UseTtl {
+                ttl: Duration::from_secs(0)
+            }
+        );
+
+        let i = json(-32);
+
+        let mapping = i.mappings.first().unwrap();
+
+        assert_eq!(mapping.database_retention_ttl, Some(-32));
+        assert_eq!(
+            mapping.database_retention(),
+            DatabaseRetention::UseTtl {
+                ttl: Duration::from_secs(0)
+            }
+        );
     }
 }

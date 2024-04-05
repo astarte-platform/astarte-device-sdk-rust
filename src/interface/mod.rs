@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::str::FromStr;
+use std::time::Duration;
 
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
@@ -72,7 +73,7 @@ pub(crate) type MappingSet<T> = BTreeSet<Item<T>>;
 /// Maximum number of mappings an interface can have
 ///
 /// See the [Astarte interface scheme](https://docs.astarte-platform.org/latest/040-interface_schema.html#astarte-interface-schema-mappings)
-pub(crate) const MAX_INTERFACE_MAPPINGS: usize = 1024;
+pub const MAX_INTERFACE_MAPPINGS: usize = 1024;
 
 /// Astarte interface implementation.
 ///
@@ -149,7 +150,8 @@ impl Interface {
         self.doc.as_deref()
     }
 
-    pub(crate) fn iter_mappings(&self) -> MappingIter {
+    /// Returns an iterator over the interface's mappings.
+    pub fn iter_mappings(&self) -> MappingIter {
         MappingIter::new(&self.inner)
     }
 
@@ -256,6 +258,20 @@ impl Interface {
             InterfaceType::Properties(_) => Some(PropertyRef(self)),
         }
     }
+
+    /// Returns a reference to the specific interface type.
+    ///
+    /// See the documentation on [`InterfaceType`] for more information.
+    pub fn as_inner(&self) -> &InterfaceType {
+        &self.inner
+    }
+
+    /// Returns the specific interface type.
+    ///
+    /// See the documentation on [`InterfaceType`] for more information.
+    pub fn into_inner(self) -> InterfaceType {
+        self.inner
+    }
 }
 
 impl Serialize for Interface {
@@ -285,22 +301,83 @@ impl Display for Interface {
 }
 
 /// Enum of all the types of interfaces
+///
 /// This is not a direct representation of only the mapping to permit extensibility of specific
 /// properties present only in some aggregations.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum InterfaceType {
+pub enum InterfaceType {
+    /// Interface with type datastream and aggregations individual.
     DatastreamIndividual(DatastreamIndividual),
+    /// Interface with type datastream and aggregations object.
     DatastreamObject(DatastreamObject),
+    /// A property interface.
     Properties(Properties),
 }
 
+impl InterfaceType {
+    /// Return a reference to a [`DatastreamIndividual`].
+    pub fn as_datastream_individual(&self) -> Option<&DatastreamIndividual> {
+        if let Self::DatastreamIndividual(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Return a reference to a [`DatastreamObject`].
+    pub fn as_datastream_object(&self) -> Option<&DatastreamObject> {
+        if let Self::DatastreamObject(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Return a reference to a [`Properties`].
+    pub fn as_properties(&self) -> Option<&Properties> {
+        if let Self::Properties(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if the interface type is [`DatastreamIndividual`].
+    ///
+    /// [`DatastreamIndividual`]: InterfaceType::DatastreamIndividual
+    #[must_use]
+    pub fn is_datastream_individual(&self) -> bool {
+        matches!(self, Self::DatastreamIndividual(..))
+    }
+
+    /// Returns `true` if the interface type is [`DatastreamObject`].
+    ///
+    /// [`DatastreamObject`]: InterfaceType::DatastreamObject
+    #[must_use]
+    pub fn is_datastream_object(&self) -> bool {
+        matches!(self, Self::DatastreamObject(..))
+    }
+
+    /// Returns `true` if the interface type is [`Properties`].
+    ///
+    /// [`Properties`]: InterfaceType::Properties
+    #[must_use]
+    pub fn is_properties(&self) -> bool {
+        matches!(self, Self::Properties(..))
+    }
+}
+
+/// Interface of type datastream individual.
+///
+/// For this interface all the mappings have distinct configurations.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct DatastreamIndividual {
+pub struct DatastreamIndividual {
     mappings: MappingVec<DatastreamIndividualMapping>,
 }
 
 impl DatastreamIndividual {
-    pub(crate) fn iter_mappings(&self) -> IndividualMappingIter {
+    /// Returns an iterator over the interface mappings.
+    pub fn iter_mappings(&self) -> IndividualMappingIter {
         IndividualMappingIter::new(&self.mappings)
     }
 
@@ -324,13 +401,27 @@ impl DatastreamIndividual {
 
         Ok(())
     }
+}
 
-    pub fn get(&self, path: &MappingPath) -> Option<&DatastreamIndividualMapping> {
+impl MappingAccess for DatastreamIndividual {
+    type Mapping = DatastreamIndividualMapping;
+
+    fn get(&self, path: &MappingPath) -> Option<&Self::Mapping> {
         self.mappings.get(path)
     }
 
-    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
-        self.get(path).map(Mapping::from)
+    fn len(&self) -> usize {
+        self.mappings.len()
+    }
+}
+
+impl<'a> IntoIterator for &'a DatastreamIndividual {
+    type Item = Mapping<&'a str>;
+
+    type IntoIter = IndividualMappingIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mappings()
     }
 }
 
@@ -353,8 +444,11 @@ where
     }
 }
 
+/// Interface of type datastream object.
+///
+/// For this interface all the mappings have the same prefix and configurations.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct DatastreamObject {
+pub struct DatastreamObject {
     reliability: Reliability,
     explicit_timestamp: bool,
     retention: Retention,
@@ -375,12 +469,13 @@ impl DatastreamObject {
         mapping
     }
 
+    /// Returns an iterator over the interface mappings.
     pub fn iter_mappings(&self) -> ObjectMappingIter {
         ObjectMappingIter::new(self)
     }
 
     /// Check if the mapping is compatible with the interface
-    pub fn is_compatible<T>(&self, mapping: &Mapping<T>) -> bool {
+    pub(crate) fn is_compatible<T>(&self, mapping: &Mapping<T>) -> bool {
         mapping.reliability() == self.reliability
             && mapping.explicit_timestamp() == self.explicit_timestamp
             && mapping.retention() == self.retention
@@ -434,29 +529,40 @@ impl DatastreamObject {
         Ok(())
     }
 
-    pub fn get(&self, path: &MappingPath) -> Option<&BaseMapping> {
-        self.mappings.get(path)
-    }
-
-    pub fn get_field(&self, base: &MappingPath, field: &str) -> Option<&BaseMapping> {
+    pub(crate) fn get_field(&self, base: &MappingPath, field: &str) -> Option<&BaseMapping> {
         self.mappings.get(&(base, field))
     }
 
-    /// Returns the number of mappings in the interface.
-    pub(crate) fn len(&self) -> usize {
-        self.mappings.len()
-    }
-
-    pub fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
-        self.get(path).map(|base| self.apply(base))
-    }
-
-    pub(crate) fn reliability(&self) -> Reliability {
+    /// Returns the reliability of the object's mappings.
+    pub fn reliability(&self) -> Reliability {
         self.reliability
     }
 
-    pub(crate) fn explicit_timestamp(&self) -> bool {
+    /// Returns whether the object needs an explicit timestamp to be sent.
+    pub fn explicit_timestamp(&self) -> bool {
         self.explicit_timestamp
+    }
+}
+
+impl MappingAccess for DatastreamObject {
+    type Mapping = BaseMapping;
+
+    fn get(&self, path: &MappingPath) -> Option<&Self::Mapping> {
+        self.mappings.get(path)
+    }
+
+    fn len(&self) -> usize {
+        self.mappings.len()
+    }
+}
+
+impl<'a> IntoIterator for &'a DatastreamObject {
+    type Item = Mapping<&'a str>;
+
+    type IntoIter = ObjectMappingIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mappings()
     }
 }
 
@@ -495,25 +601,21 @@ where
     }
 }
 
+/// Interface of type individual property.
+///
+/// For this interface all the mappings have their own configuration.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct Properties {
+pub struct Properties {
     mappings: MappingVec<PropertiesMapping>,
 }
 
 impl Properties {
+    /// Returns an iterator over the interface mappings.
     pub fn iter_mappings(&self) -> PropertiesMappingIter {
         PropertiesMappingIter::new(&self.mappings)
     }
 
-    pub fn get(&self, path: &MappingPath) -> Option<&PropertiesMapping> {
-        self.mappings.get(path)
-    }
-
-    pub fn mapping(&self, endpoint: &MappingPath) -> Option<Mapping<&str>> {
-        self.get(endpoint).map(Mapping::from)
-    }
-
-    pub fn add_mapping<T>(
+    pub(crate) fn add_mapping<T>(
         btree: &mut MappingSet<PropertiesMapping>,
         mapping: &Mapping<T>,
     ) -> Result<(), InterfaceError>
@@ -532,6 +634,28 @@ impl Properties {
         btree.insert(property);
 
         Ok(())
+    }
+}
+
+impl MappingAccess for Properties {
+    type Mapping = PropertiesMapping;
+
+    fn get(&self, path: &MappingPath) -> Option<&Self::Mapping> {
+        self.mappings.get(path)
+    }
+
+    fn len(&self) -> usize {
+        self.mappings.len()
+    }
+}
+
+impl<'a> IntoIterator for &'a Properties {
+    type Item = Mapping<&'a str>;
+
+    type IntoIter = PropertiesMappingIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mappings()
     }
 }
 
@@ -554,16 +678,29 @@ where
     }
 }
 
+/// Defines the retention of a data stream.
+///
+/// Describes what to do with the sent data if the transport is incapable of delivering it.
+///
+/// See [Retention](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-retention)
+/// for more information.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum Retention {
+pub enum Retention {
+    /// Data is discarded.
     Discard,
+    /// Data is kept in a cache in memory.
     Volatile {
-        /// Expiration in seconds
-        expiry: i32,
+        /// Duration for the data to expire.
+        ///
+        /// If it's [`None`] it will never expire.
+        expiry: Option<Duration>,
     },
+    /// Data is kept on disk.
     Stored {
-        /// Expiration in seconds
-        expiry: i32,
+        /// Duration for the data to expire.
+        ///
+        /// If it's [`None`] it will never expire.
+        expiry: Option<Duration>,
     },
 }
 
@@ -576,11 +713,18 @@ impl Retention {
             }
             Retention::Volatile { expiry } => {
                 mapping.retention = RetentionDef::Volatile;
-                mapping.expiry = *expiry;
+                // This will never error since it will error while deserializing the interface.
+                // However astarte can handle bigger integers than i64, so a conservative move is to
+                // have an expiry of i64::MAX.
+                mapping.expiry = expiry
+                    .map(|t| t.as_secs().try_into().unwrap_or(i64::MAX))
+                    .unwrap_or(0);
             }
             Retention::Stored { expiry } => {
                 mapping.retention = RetentionDef::Stored;
-                mapping.expiry = *expiry;
+                mapping.expiry = expiry
+                    .map(|t| t.as_secs().try_into().unwrap_or(i64::MAX))
+                    .unwrap_or(0);
             }
         }
     }
@@ -592,12 +736,18 @@ impl Default for Retention {
     }
 }
 
+/// Defines if data should be expired from the database after a given interval.
+///
+/// See [Database Retention Policy](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-database_retention_policy)
+/// for more information.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum DatabaseRetention {
+pub enum DatabaseRetention {
+    /// Data will never expire.
     NoTtl,
+    /// Data will live for the ttl.
     UseTtl {
-        /// Time to live in seconds
-        ttl: i32,
+        /// Time to live int the database.
+        ttl: Duration,
     },
 }
 
@@ -610,7 +760,7 @@ impl DatabaseRetention {
             }
             DatabaseRetention::UseTtl { ttl } => {
                 mapping.database_retention_policy = DatabaseRetentionPolicyDef::UseTtl;
-                mapping.database_retention_ttl = Some(*ttl);
+                mapping.database_retention_ttl = Some(ttl.as_secs().try_into().unwrap_or(i64::MAX));
             }
         }
     }
@@ -619,6 +769,32 @@ impl DatabaseRetention {
 impl Default for DatabaseRetention {
     fn default() -> Self {
         Self::NoTtl
+    }
+}
+
+/// Access the interface's mappings.
+pub trait MappingAccess
+where
+    for<'a> &'a Self: IntoIterator<Item = Mapping<&'a str>>,
+    for<'a> &'a Self::Mapping: Into<Mapping<&'a str>>,
+{
+    /// Mapping specific for the interface's type.
+    type Mapping: InterfaceMapping;
+
+    /// Gets an interface mapping given the path.
+    fn get(&self, path: &MappingPath) -> Option<&Self::Mapping>;
+
+    /// Returns the number of mappings in the interface.
+    fn len(&self) -> usize;
+
+    /// Returns the mapping definition for the given path.
+    fn mapping(&self, path: &MappingPath) -> Option<Mapping<&str>> {
+        self.get(path).map(Into::into)
+    }
+
+    /// Returns whether the interface has no mappings.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -635,8 +811,9 @@ mod tests {
                 BaseMapping, DatastreamIndividualMapping,
             },
             Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
-            Mapping, MappingSet, MappingType, Ownership, Reliability, Retention,
+            Mapping, MappingAccess, MappingSet, MappingType, Ownership, Reliability, Retention,
         },
+        test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY},
         Interface,
     };
 
@@ -955,5 +1132,50 @@ mod tests {
                 .unwrap(),
             r#"Mapping doc "escaped""#
         );
+    }
+
+    #[test]
+    fn should_convert_into_inner() {
+        let interface = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
+
+        assert!(interface.as_inner().as_properties().is_some());
+        assert!(interface.as_inner().as_datastream_object().is_none());
+        assert!(interface.as_inner().as_datastream_individual().is_none());
+        assert!(interface.as_inner().is_properties());
+        assert!(!interface.as_inner().is_datastream_object());
+        assert!(!interface.as_inner().is_datastream_object());
+
+        let inner = interface.into_inner();
+        let interface = inner.as_properties().unwrap();
+        assert_eq!(interface.len(), 14);
+        assert!(!interface.is_empty());
+
+        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+
+        assert!(interface.as_inner().as_properties().is_none());
+        assert!(interface.as_inner().as_datastream_object().is_some());
+        assert!(interface.as_inner().as_datastream_individual().is_none());
+        assert!(!interface.as_inner().is_properties());
+        assert!(interface.as_inner().is_datastream_object());
+        assert!(!interface.as_inner().is_datastream_individual());
+
+        let inner = interface.into_inner();
+        let interface = inner.as_datastream_object().unwrap();
+        assert_eq!(interface.len(), 14);
+        assert!(!interface.is_empty());
+
+        let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+
+        assert!(interface.as_inner().as_properties().is_none());
+        assert!(interface.as_inner().as_datastream_object().is_none());
+        assert!(interface.as_inner().as_datastream_individual().is_some());
+        assert!(!interface.as_inner().is_properties());
+        assert!(!interface.as_inner().is_datastream_object());
+        assert!(interface.as_inner().is_datastream_individual());
+
+        let inner = interface.into_inner();
+        let interface = inner.as_datastream_individual().unwrap();
+        assert_eq!(interface.len(), 14);
+        assert!(!interface.is_empty());
     }
 }

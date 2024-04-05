@@ -31,8 +31,9 @@ pub mod iter;
 pub mod path;
 pub mod vec;
 
+/// Mapping of a [`DatastreamIndividual`](super::DatastreamIndividual) interface.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct DatastreamIndividualMapping {
+pub struct DatastreamIndividualMapping {
     pub(super) mapping: BaseMapping,
     pub(super) reliability: Reliability,
     pub(super) retention: Retention,
@@ -115,8 +116,9 @@ impl Deref for DatastreamIndividualMapping {
     }
 }
 
+/// Mapping of a [`Properties`](super::Properties) interface.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct PropertiesMapping {
+pub struct PropertiesMapping {
     pub(super) mapping: BaseMapping,
     pub(super) allow_unset: bool,
 }
@@ -191,8 +193,9 @@ impl Deref for PropertiesMapping {
     }
 }
 
+/// Shared struct for a mapping for all interface types.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct BaseMapping {
+pub struct BaseMapping {
     pub(super) endpoint: Endpoint<String>,
     pub(super) mapping_type: MappingType,
     #[cfg(feature = "interface-doc")]
@@ -278,6 +281,7 @@ where
 }
 
 /// Mapping of an interface.
-pub(crate) trait InterfaceMapping {
+pub trait InterfaceMapping {
+    /// Returns a reference to the endpoint of an interface.
     fn endpoint(&self) -> &Endpoint<String>;
 }

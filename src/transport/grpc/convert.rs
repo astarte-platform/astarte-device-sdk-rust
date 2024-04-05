@@ -36,11 +36,11 @@ use chrono::TimeZone;
 use itertools::Itertools;
 
 use crate::validate::ValidatedUnset;
-use crate::Interface;
 use crate::{
     transport::ReceivedEvent, types::AstarteType, validate::ValidatedIndividual,
     validate::ValidatedObject,
 };
+use crate::{DeviceEvent, Interface, Value};
 
 use super::{GrpcError, GrpcPayload};
 
@@ -284,15 +284,52 @@ impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
 
 /// This function can be used to convert a map of (String, AstarteDataTypeIndividual) into a
 /// map of (String, AstarteType).
-/// It can be useful when a method accept an astarte_device_sdk::AstarteAggregate.
-pub(crate) fn map_values_to_astarte_type(
+///
+/// It's used also outside in the message hub.
+pub fn map_values_to_astarte_type(
     value: AstarteDataTypeObject,
 ) -> Result<HashMap<String, AstarteType>, MessageHubProtoError> {
+    // Cannot be implemented as TryFrom since the types are not from our crate
     value
         .object_data
         .into_iter()
         .map(|(k, value)| AstarteType::try_from(value).map(|v| (k, v)))
         .collect()
+}
+
+// This is needed for a conversion in the message hub, but cannot be implemented outside of the crate
+// because the AstarteMessage is from the proto crate, while the AstarteDeviceDataEvent is ours.
+impl TryFrom<astarte_message_hub_proto::AstarteMessage> for DeviceEvent {
+    type Error = MessageHubProtoError;
+
+    fn try_from(value: astarte_message_hub_proto::AstarteMessage) -> Result<Self, Self::Error> {
+        let payload = value
+            .payload
+            .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
+
+        let data = match payload {
+            // Unset
+            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => Value::Unset,
+            // Individual
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: Some(ProtoData::AstarteIndividual(individual)),
+            }) => Value::Individual(individual.try_into()?),
+            // Object
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: Some(ProtoData::AstarteObject(obj)),
+            }) => Value::Object(map_values_to_astarte_type(obj)?),
+            // Error case
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: None,
+            }) => return Err(MessageHubProtoError::ExpectedField("data")),
+        };
+
+        Ok(Self {
+            interface: value.interface_name,
+            path: value.path,
+            data,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -306,41 +343,6 @@ mod test {
     use crate::{DeviceEvent, Value};
 
     use super::*;
-
-    impl TryFrom<astarte_message_hub_proto::AstarteMessage> for DeviceEvent {
-        type Error = MessageHubProtoError;
-
-        fn try_from(value: astarte_message_hub_proto::AstarteMessage) -> Result<Self, Self::Error> {
-            let payload = value
-                .payload
-                .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
-
-            let data = match payload {
-                // Unset
-                ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
-                    Value::Unset
-                }
-                // Individual
-                ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                    data: Some(ProtoData::AstarteIndividual(individual)),
-                }) => Value::Individual(individual.try_into()?),
-                // Object
-                ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                    data: Some(ProtoData::AstarteObject(obj)),
-                }) => Value::Object(map_values_to_astarte_type(obj)?),
-                // Error case
-                ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                    data: None,
-                }) => return Err(MessageHubProtoError::ExpectedField("data")),
-            };
-
-            Ok(Self {
-                interface: value.interface_name,
-                path: value.path,
-                data,
-            })
-        }
-    }
 
     impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
         fn from(value: DeviceEvent) -> Self {

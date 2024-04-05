@@ -36,7 +36,7 @@ use crate::{
         Aggregation as InterfaceAggregation, InterfaceTypeDef,
     },
     interfaces::Interfaces,
-    introspection::{AddInterfaceError, DynamicIntrospection},
+    introspection::{AddInterfaceError, DeviceIntrospection, DynamicIntrospection},
     store::{wrapper::StoreWrapper, PropertyStore},
     types::{AstarteType, TypeError},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -467,6 +467,21 @@ where
             .recv_async()
             .await
             .map_err(|_| Error::Disconnected)?
+    }
+}
+
+#[async_trait]
+impl<S> DeviceIntrospection for DeviceClient<S>
+where
+    S: Send + Sync,
+{
+    async fn get_interface<F, O>(&self, interface_name: &str, mut f: F) -> O
+    where
+        F: FnMut(Option<&Interface>) -> O + Send,
+    {
+        let interfaces = self.interfaces.read().await;
+
+        f(interfaces.get(interface_name))
     }
 }
 

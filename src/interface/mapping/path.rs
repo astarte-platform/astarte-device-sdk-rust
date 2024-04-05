@@ -27,10 +27,10 @@ use super::endpoint::Endpoint;
 
 /// Path of a mapping in interface.
 ///
-/// This is used to access the [`crate::interface::Interface`] so we can compare the parsed [`MappingPath::Mapping`]
-/// with the [`crate::interface::mapping::endpoint::Endpoint`].
+/// This is used to access the [`Interface`](crate::interface::Interface) so we can compare the parsed [`MappingPath`]
+/// with the [`Endpoint`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub(crate) struct MappingPath<'a> {
+pub struct MappingPath<'a> {
     pub(crate) path: &'a str,
     pub(crate) levels: Vec<&'a str>,
 }

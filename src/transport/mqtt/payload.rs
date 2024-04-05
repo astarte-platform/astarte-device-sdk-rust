@@ -31,6 +31,7 @@ use crate::{
     interface::{
         mapping::path::{MappingError, MappingPath},
         reference::{MappingRef, ObjectRef},
+        MappingAccess,
     },
     types::{AstarteType, BsonConverter, TypeError},
     Interface, Timestamp,
