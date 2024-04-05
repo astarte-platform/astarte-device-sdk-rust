@@ -62,6 +62,7 @@ fn is_zero(value: &i32) -> bool {
 /// - **Optional**: the field is optional, it is wrapped in [`Option`]. It will not be serialized if
 ///   the value is [`None`].
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+#[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
 pub(super) struct InterfaceDef<T> {
     pub(super) interface_name: T,
     pub(super) version_major: i32,
@@ -71,8 +72,16 @@ pub(super) struct InterfaceDef<T> {
     pub(super) ownership: Ownership,
     #[serde(default, skip_serializing_if = "is_default")]
     pub(super) aggregation: Aggregation,
+    #[cfg(not(feature = "interface-doc"))]
+    #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
+    pub(super) description: (),
+    #[cfg(not(feature = "interface-doc"))]
+    #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
+    pub(super) doc: (),
+    #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) description: Option<T>,
+    #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) doc: Option<T>,
     pub(super) mappings: Vec<Mapping<T>>,
@@ -90,6 +99,7 @@ pub(super) struct InterfaceDef<T> {
 /// You can find the specification here
 /// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
 pub(crate) struct Mapping<T> {
     pub(super) endpoint: T,
     #[serde(rename = "type")]
@@ -108,8 +118,16 @@ pub(crate) struct Mapping<T> {
     pub(super) allow_unset: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) explicit_timestamp: bool,
+    #[cfg(not(feature = "interface-doc"))]
+    #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
+    pub(super) description: (),
+    #[cfg(not(feature = "interface-doc"))]
+    #[serde(default, skip_serializing, deserialize_with = "doc::deserialize_doc")]
+    pub(super) doc: (),
+    #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) description: Option<T>,
+    #[cfg(feature = "interface-doc")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) doc: Option<T>,
 }
@@ -126,17 +144,19 @@ impl<T> Mapping<T> {
             database_retention_ttl: None,
             allow_unset: false,
             explicit_timestamp: false,
-            description: None,
-            doc: None,
+            description: Default::default(),
+            doc: Default::default(),
         }
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn with_description(mut self, description: Option<T>) -> Self {
         self.description = description;
 
         self
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn with_doc(mut self, doc: Option<T>) -> Self {
         self.doc = doc;
 
@@ -206,10 +226,12 @@ impl<T> Mapping<T> {
         self.explicit_timestamp
     }
 
+    #[cfg(feature = "interface-doc")]
     pub fn description(&self) -> Option<&T> {
         self.description.as_ref()
     }
 
+    #[cfg(feature = "interface-doc")]
     pub fn doc(&self) -> Option<&T> {
         self.doc.as_ref()
     }
@@ -222,8 +244,14 @@ impl<'a> From<&'a Interface> for InterfaceDef<&'a str> {
             version_major: value.version_major(),
             version_minor: value.version_minor(),
             interface_type: value.interface_type(),
+            #[cfg(feature = "interface-doc")]
             description: value.description(),
+            #[cfg(feature = "interface-doc")]
             doc: value.doc(),
+            #[cfg(not(feature = "interface-doc"))]
+            description: (),
+            #[cfg(not(feature = "interface-doc"))]
+            doc: (),
             ownership: value.ownership(),
             aggregation: value.aggregation(),
             mappings: value.iter_mappings().collect(),
@@ -255,7 +283,9 @@ where
             version_major: def.version_major,
             version_minor: def.version_minor,
             ownership: def.ownership,
+            #[cfg(feature = "interface-doc")]
             description: def.description.map(T::into),
+            #[cfg(feature = "interface-doc")]
             doc: def.doc.map(T::into),
             inner,
         };
@@ -417,4 +447,63 @@ pub(super) enum DatabaseRetentionPolicyDef {
     #[default]
     NoTtl,
     UseTtl,
+}
+
+#[cfg(not(feature = "interface-doc"))]
+mod doc {
+    use log::trace;
+    use serde::{de::Visitor, Deserializer};
+
+    pub(super) fn deserialize_doc<'de, D>(de: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        de.deserialize_str(DocVisitor)
+    }
+
+    struct DocVisitor;
+
+    impl<'de> Visitor<'de> for DocVisitor {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            trace!("visited doc {v}");
+
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "interface-strict")]
+    #[test]
+    fn should_be_strict() {
+        let json = r#"{
+            "interfaceS_name": "org.astarte-platform.genericproperties.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "properties",
+            "ownArship": "server",
+            "description": "Interface description \"escaped\"",
+            "doc": "Interface doc \"escaped\"",
+            "mappings": [{
+                "endpoint": "/double_endpoint",
+                "type": "double",
+                "doc": "Mapping doc \"escaped\""
+            }]
+        }"#;
+
+        serde_json::from_str::<InterfaceDef<String>>(json)
+            .expect_err("should error for misspelled fields");
+    }
 }

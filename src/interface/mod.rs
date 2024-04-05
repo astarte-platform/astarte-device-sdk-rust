@@ -84,7 +84,9 @@ pub struct Interface {
     version_major: i32,
     version_minor: i32,
     ownership: Ownership,
+    #[cfg(feature = "interface-doc")]
     description: Option<String>,
+    #[cfg(feature = "interface-doc")]
     doc: Option<String>,
     pub(crate) inner: InterfaceType,
 }
@@ -135,11 +137,13 @@ impl Interface {
         }
     }
 
-    /// Returns the interface description.
+    #[cfg(feature = "interface-doc")]
+    /// Returns the interface description
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
+    #[cfg(feature = "interface-doc")]
     /// Returns the interface documentation.
     pub fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
@@ -626,7 +630,7 @@ mod tests {
         interface::{
             def::{DatabaseRetentionPolicyDef, RetentionDef},
             mapping::{
-                path::{tests::mapping, MappingPath},
+                path::MappingPath,
                 vec::{Item, MappingVec},
                 BaseMapping, DatastreamIndividualMapping,
             },
@@ -637,6 +641,7 @@ mod tests {
     };
 
     // The mappings are sorted alphabetically by endpoint, so we can confront them
+    #[cfg(feature = "interface-doc")]
     const INTERFACE_JSON: &str = r#"{
             "interface_name": "org.astarte-platform.genericsensors.Values",
             "version_major": 1,
@@ -659,6 +664,27 @@ mod tests {
                     "explicit_timestamp": true,
                     "description": "Mapping description",
                     "doc": "Mapping doc"
+                }
+            ]
+        }"#;
+
+    #[cfg(not(feature = "interface-doc"))]
+    const INTERFACE_JSON: &str = r#"{
+            "interface_name": "org.astarte-platform.genericsensors.Values",
+            "version_major": 1,
+            "version_minor": 0,
+            "type": "datastream",
+            "ownership": "device",
+            "mappings": [
+                {
+                    "endpoint": "/%{sensor_id}/otherValue",
+                    "type": "longinteger",
+                    "explicit_timestamp": true
+                },
+                {
+                    "endpoint": "/%{sensor_id}/value",
+                    "type": "double",
+                    "explicit_timestamp": true
                 }
             ]
         }"#;
@@ -692,7 +718,9 @@ mod tests {
             mapping: BaseMapping {
                 endpoint: "/%{sensor_id}/value".try_into().unwrap(),
                 mapping_type: MappingType::Double,
+                #[cfg(feature = "interface-doc")]
                 description: Some("Mapping description".to_string()),
+                #[cfg(feature = "interface-doc")]
                 doc: Some("Mapping doc".to_string()),
             },
             reliability: Reliability::default(),
@@ -705,7 +733,9 @@ mod tests {
             mapping: BaseMapping {
                 endpoint: "/%{sensor_id}/otherValue".try_into().unwrap(),
                 mapping_type: MappingType::LongInteger,
+                #[cfg(feature = "interface-doc")]
                 description: Some("Mapping description".to_string()),
+                #[cfg(feature = "interface-doc")]
                 doc: Some("Mapping doc".to_string()),
             },
             reliability: Reliability::default(),
@@ -718,7 +748,9 @@ mod tests {
         let version_major = 1;
         let version_minor = 0;
         let ownership = Ownership::Device;
+        #[cfg(feature = "interface-doc")]
         let description = Some("Interface description".to_owned());
+        #[cfg(feature = "interface-doc")]
         let doc = Some("Interface doc".to_owned());
 
         let btree = MappingSet::from_iter(
@@ -736,7 +768,9 @@ mod tests {
             version_major,
             version_minor,
             ownership,
+            #[cfg(feature = "interface-doc")]
             description,
+            #[cfg(feature = "interface-doc")]
             doc,
             inner: InterfaceType::DatastreamIndividual(datastream_individual),
         };
@@ -795,8 +829,14 @@ mod tests {
         let value_mapping = Mapping {
             endpoint: "/%{sensor_id}/value",
             mapping_type: MappingType::Double,
+            #[cfg(feature = "interface-doc")]
             description: Some("Mapping description"),
+            #[cfg(feature = "interface-doc")]
             doc: Some("Mapping doc"),
+            #[cfg(not(feature = "interface-doc"))]
+            description: (),
+            #[cfg(not(feature = "interface-doc"))]
+            doc: (),
             reliability: Reliability::default(),
             retention: RetentionDef::default(),
             database_retention_policy: DatabaseRetentionPolicyDef::default(),
@@ -809,8 +849,14 @@ mod tests {
         let other_value_mapping = Mapping {
             endpoint: "/%{sensor_id}/otherValue",
             mapping_type: MappingType::LongInteger,
+            #[cfg(feature = "interface-doc")]
             description: Some("Mapping description"),
+            #[cfg(feature = "interface-doc")]
             doc: Some("Mapping doc"),
+            #[cfg(not(feature = "interface-doc"))]
+            description: (),
+            #[cfg(not(feature = "interface-doc"))]
+            doc: (),
             reliability: Reliability::default(),
             retention: RetentionDef::default(),
             database_retention_policy: DatabaseRetentionPolicyDef::default(),
@@ -840,9 +886,11 @@ mod tests {
         assert_eq!(interface.version_major(), 1);
         assert_eq!(interface.version_minor(), 0);
         assert_eq!(interface.ownership(), Ownership::Device);
+        #[cfg(feature = "interface-doc")]
         assert_eq!(interface.description(), Some("Interface description"));
         assert_eq!(interface.aggregation(), Aggregation::Individual);
         assert_eq!(interface.interface_type(), InterfaceTypeDef::Datastream);
+        #[cfg(feature = "interface-doc")]
         assert_eq!(interface.doc(), Some("Interface doc"));
     }
 
@@ -872,6 +920,7 @@ mod tests {
         assert_eq!(interface.as_prop(), None);
     }
 
+    #[cfg(feature = "interface-doc")]
     #[test]
     fn test_with_escaped_descriptions() {
         let json = r#"{
@@ -898,7 +947,9 @@ mod tests {
         assert_eq!(interface.doc().unwrap(), r#"Interface doc "escaped""#);
         assert_eq!(
             *interface
-                .mapping(&mapping("/double_endpoint"))
+                .mapping(&crate::interface::mapping::path::tests::mapping(
+                    "/double_endpoint"
+                ))
                 .unwrap()
                 .doc()
                 .unwrap(),

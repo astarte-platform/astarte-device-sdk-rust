@@ -195,7 +195,9 @@ impl Deref for PropertiesMapping {
 pub(crate) struct BaseMapping {
     pub(super) endpoint: Endpoint<String>,
     pub(super) mapping_type: MappingType,
+    #[cfg(feature = "interface-doc")]
     pub(super) description: Option<String>,
+    #[cfg(feature = "interface-doc")]
     pub(super) doc: Option<String>,
 }
 
@@ -204,10 +206,12 @@ impl BaseMapping {
         self.mapping_type
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
     }
@@ -237,11 +241,19 @@ impl Ord for BaseMapping {
     }
 }
 
+#[cfg(feature = "interface-doc")]
 impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
     fn from(value: &'a BaseMapping) -> Self {
         Self::new(value.endpoint(), value.mapping_type())
             .with_description(value.description())
             .with_doc(value.doc())
+    }
+}
+
+#[cfg(not(feature = "interface-doc"))]
+impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
+    fn from(value: &'a BaseMapping) -> Self {
+        Self::new(value.endpoint(), value.mapping_type())
     }
 }
 
@@ -257,7 +269,9 @@ where
         Ok(Self {
             endpoint,
             mapping_type: value.mapping_type(),
+            #[cfg(feature = "interface-doc")]
             description: value.description().map(|t| t.as_ref().into()),
+            #[cfg(feature = "interface-doc")]
             doc: value.doc().map(|t| t.as_ref().into()),
         })
     }
