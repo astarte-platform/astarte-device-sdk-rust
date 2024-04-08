@@ -6,7 +6,7 @@
 
 [package]
 name = "astarte-device-sdk-derive"
-version = "0.6.4"
+version = "0.6.5"
 documentation = "https://docs.rs/astarte-device-sdk-derive"
 edition = "2021"
 homepage = "https://astarte.cloud/"
