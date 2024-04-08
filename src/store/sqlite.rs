@@ -416,6 +416,14 @@ impl PropertyStore for SqliteStore {
 
         Ok(res)
     }
+
+    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+        sqlx::query_file!("queries/delete_interface.sql", interface)
+            .execute(&self.db_conn)
+            .await?;
+
+        Ok(())
+    }
 }
 
 /// Deserialize a property from the store.

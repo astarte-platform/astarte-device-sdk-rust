@@ -387,27 +387,6 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
         self.connection.send_object(validated).await
     }
-
-    async fn remove_properties_from_store(&self, interface_name: &str) -> Result<(), Error>
-    where
-        S: PropertyStore,
-    {
-        let interfaces = self.interfaces.read().await;
-        let mappings = interfaces.get_property(interface_name);
-
-        let property = match mappings {
-            Some(property) => property,
-            None => return Ok(()),
-        };
-
-        for mapping in property.iter_mappings() {
-            let path = mapping.endpoint();
-            self.store.delete_prop(interface_name, path).await?;
-            debug!("Stored property {}{} deleted", interface_name, path);
-        }
-
-        Ok(())
-    }
 }
 
 /// Manual implementation of [`Clone`] since the inner shared device doesn't requires the [`Clone`]
@@ -762,7 +741,9 @@ where
                 .await?;
         }
 
-        self.remove_properties_from_store(interface_name).await
+        self.store.delete_interface(interface_name).await?;
+
+        Ok(())
     }
 }
 
