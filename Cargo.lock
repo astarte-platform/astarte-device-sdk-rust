@@ -91,7 +91,7 @@ checksum = "59d2a3357dde987206219e78ecfbbb6e8dad06cbb65292758d3270e6254f7355"
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "astarte-device-sdk-derive",
  "astarte-message-hub-proto",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -671,7 +671,7 @@ checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
 name = "e2e-test"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "astarte-device-sdk",
  "base64 0.21.2",
