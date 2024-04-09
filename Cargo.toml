@@ -10,9 +10,21 @@ version = { workspace = true }
 categories = ["embedded", "api-bindings"]
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = { workspace = true }
-exclude = ["/.github", "/.reuse"]
 homepage = { workspace = true }
-include = ["/.sqlx"]
+# Needed to include the `.sqlx/` hidden folder
+include = [
+  "/.sqlx",
+  "/LICENSES",
+  "/benches",
+  "/examples",
+  "/migrations",
+  "/queries",
+  "/src",
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "!*.sqlite*",
+]
 keywords = ["sdk", "iot", "astarte"]
 license = { workspace = true }
 readme = "README.md"
