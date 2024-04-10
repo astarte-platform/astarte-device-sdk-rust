@@ -449,4 +449,30 @@ mod tests {
 
         test_property_store(db).await;
     }
+
+    #[tokio::test]
+    async fn should_parse_uri() {
+        let dir = tempfile::tempdir().unwrap();
+
+        SqliteStore::new(&format!(
+            "sqlite://{}",
+            dir.path().join("success.sqlite").display()
+        ))
+        .await
+        .expect("should parse the correct uri");
+
+        SqliteStore::new(&format!(
+            "sqlite:://{}",
+            dir.path().join("error.sqlite").display()
+        ))
+        .await
+        .expect_err("should error for the uri");
+
+        SqliteStore::new(&format!(
+            "sqlite:///{}",
+            dir.path().join("error.sqlite").display()
+        ))
+        .await
+        .expect("should not error for multiple slashes");
+    }
 }
