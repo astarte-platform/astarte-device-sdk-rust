@@ -66,6 +66,7 @@ where
     C: Publish + Receive + Register + Send,
 {
     fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
+        // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
 
@@ -77,7 +78,7 @@ where
             tx_client,
             self.store.clone(),
         );
-        let device = DeviceConnection::new(
+        let connection = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
@@ -85,7 +86,7 @@ where
             self.connection,
         );
 
-        (client, device)
+        (client, connection)
     }
 }
 
