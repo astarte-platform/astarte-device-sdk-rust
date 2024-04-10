@@ -77,7 +77,7 @@ impl AddInterfaceError {
 /// Trait that permits a client to add and remove interfaces dynamically after being connected.
 #[async_trait]
 pub trait DynamicIntrospection {
-    /// Add a new [`Interface`] to the device interfaces.
+    /// Add a new [`Interface`] to the device introspection.
     async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
 
     /// Add one ore more [`Interface`] to the device introspection.
