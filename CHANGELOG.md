@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Move the `AstarteType::Unset` to the `Value::Unset` for the astarte event
   [#296](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/296)
 
+## [0.7.3] - 2024-04-09
+
+## [0.6.5] - 2024-04-08
+### Fixed
+- Delete all interface's properties, using the correct mapping, when an
+  interface is removed
+  [#313](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/313)
+
 ## [0.7.2] - 2024-03-21
 ### Fixed
 - Handle Unset from gRPC correctly

@@ -389,26 +389,6 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         self.connection.send_object(validated).await
     }
 
-    async fn remove_properties_from_store<'a>(&self, property: PropertyRef<'a>) -> Result<(), Error>
-    where
-        S: PropertyStore,
-    {
-        for mapping in property.iter_mappings() {
-            let path = mapping.endpoint();
-            self.store
-                .delete_prop(property.interface_name(), path)
-                .await?;
-
-            debug!(
-                "Stored property {}{} deleted",
-                property.interface_name(),
-                path
-            );
-        }
-
-        Ok(())
-    }
-
     async fn unset_prop<'a>(
         &self,
         interface_name: &str,

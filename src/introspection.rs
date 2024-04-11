@@ -200,7 +200,7 @@ where
 
         if let Some(prop) = to_remove.as_prop() {
             // We cannot error here since we already unsubscribed to the interface
-            if let Err(err) = self.remove_properties_from_store(prop).await {
+            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
                 error!("failed to remove property {err}");
             }
         }

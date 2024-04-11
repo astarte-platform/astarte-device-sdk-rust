@@ -79,6 +79,8 @@ where
     async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
     /// Retrieves all the property values of a specific interface in the database.
     async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err>;
+    /// Deletes all the properties of the interface from the database.
+    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the AstarteDatabase
@@ -247,6 +249,12 @@ mod tests {
         assert_eq!(props, vec![device]);
         let props = store.interface_props("com.test2").await.unwrap();
         assert_eq!(props, vec![server]);
+
+        // delete interface properties
+        store.delete_interface("com.test1").await.unwrap();
+        let prop = store.interface_props("com.test1").await.unwrap();
+
+        assert!(prop.is_empty());
 
         // test all types
         let all_types = [

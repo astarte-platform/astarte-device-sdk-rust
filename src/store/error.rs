@@ -49,6 +49,9 @@ pub enum StoreError {
     /// Could not load interface properties.
     #[error("could not load server properties")]
     InterfaceProps(#[source] DynError),
+    /// Could not delete all the interface properties.
+    #[error("could not delete all the interface properties")]
+    DeleteInterface(#[source] DynError),
 }
 
 impl StoreError {
@@ -82,5 +85,9 @@ impl StoreError {
 
     pub(crate) fn interface_props(err: impl Into<DynError>) -> Self {
         Self::InterfaceProps(err.into())
+    }
+
+    pub(crate) fn delete_interface(err: impl Into<DynError>) -> Self {
+        Self::DeleteInterface(err.into())
     }
 }
