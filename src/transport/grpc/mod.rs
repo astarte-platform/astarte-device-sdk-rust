@@ -360,13 +360,13 @@ impl GrpcPayload {
     }
 }
 
+/// Configuration for the mqtt connection
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct GrpcConfig {
+pub struct GrpcConfig {
     uuid: Uuid,
     endpoint: String,
 }
 
-/// Configuration for the grpc connection
 #[async_trait]
 impl ConnectionConfig for GrpcConfig {
     type Con = Grpc;

@@ -307,28 +307,85 @@ impl TryFrom<astarte_message_hub_proto::AstarteMessage> for DeviceEvent {
             .payload
             .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
 
-        let data = match payload {
-            // Unset
-            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => Value::Unset,
-            // Individual
-            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                data: Some(ProtoData::AstarteIndividual(individual)),
-            }) => Value::Individual(individual.try_into()?),
-            // Object
-            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                data: Some(ProtoData::AstarteObject(obj)),
-            }) => Value::Object(map_values_to_astarte_type(obj)?),
-            // Error case
-            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                data: None,
-            }) => return Err(MessageHubProtoError::ExpectedField("data")),
-        };
+        let data = payload.try_into()?;
 
         Ok(Self {
             interface: value.interface_name,
             path: value.path,
             data,
         })
+    }
+}
+
+// This is needed for a conversion in the message hub, but cannot be implemented outside of the crate
+// because the AstarteMessage is from the proto crate, while the AstarteDeviceDataEvent is ours.
+impl TryFrom<ProtoPayload> for Value {
+    type Error = MessageHubProtoError;
+
+    fn try_from(value: ProtoPayload) -> Result<Self, Self::Error> {
+        match value {
+            // Unset
+            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
+                Ok(Value::Unset)
+            }
+            // Individual
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: Some(ProtoData::AstarteIndividual(individual)),
+            }) => {
+                let value = individual.try_into()?;
+
+                Ok(Value::Individual(value))
+            }
+            // Object
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: Some(ProtoData::AstarteObject(obj)),
+            }) => {
+                let value = map_values_to_astarte_type(obj)?;
+
+                Ok(Value::Object(value))
+            }
+            // Error case
+            ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                data: None,
+            }) => Err(MessageHubProtoError::ExpectedField("data")),
+        }
+    }
+}
+
+// This is needed for a conversion in the message hub, but cannot be implemented outside of the crate
+// because the AstarteMessage is from the proto crate, while the AstarteDeviceDataEvent is ours.
+impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: DeviceEvent) -> Self {
+        let payload: ProtoPayload = value.data.into();
+
+        astarte_message_hub_proto::AstarteMessage {
+            interface_name: value.interface,
+            path: value.path,
+            timestamp: None,
+            payload: Some(payload),
+        }
+    }
+}
+
+impl From<Value> for ProtoPayload {
+    fn from(value: Value) -> Self {
+        use astarte_message_hub_proto::astarte_data_type::Data;
+
+        match value {
+            Value::Individual(val) => {
+                ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                    data: Some(Data::AstarteIndividual(val.into())),
+                })
+            }
+            Value::Object(val) => {
+                let object_data = val.into_iter().map(|(k, v)| (k, v.into())).collect();
+
+                ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
+                    data: Some(Data::AstarteObject(AstarteDataTypeObject { object_data })),
+                })
+            }
+            Value::Unset => ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}),
+        }
     }
 }
 
@@ -340,46 +397,7 @@ mod test {
     };
     use chrono::{DateTime, Utc};
 
-    use crate::{DeviceEvent, Value};
-
     use super::*;
-
-    impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
-        fn from(value: DeviceEvent) -> Self {
-            let payload: ProtoPayload = value.data.into();
-
-            astarte_message_hub_proto::AstarteMessage {
-                interface_name: value.interface,
-                path: value.path,
-                timestamp: None,
-                payload: Some(payload),
-            }
-        }
-    }
-
-    impl From<Value> for ProtoPayload {
-        fn from(value: Value) -> Self {
-            use astarte_message_hub_proto::astarte_data_type::Data;
-
-            match value {
-                Value::Individual(val) => {
-                    ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                        data: Some(Data::AstarteIndividual(val.into())),
-                    })
-                }
-                Value::Object(val) => {
-                    let object_data = val.into_iter().map(|(k, v)| (k, v.into())).collect();
-
-                    ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
-                        data: Some(Data::AstarteObject(AstarteDataTypeObject { object_data })),
-                    })
-                }
-                Value::Unset => {
-                    ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {})
-                }
-            }
-        }
-    }
 
     #[test]
     fn proto_astarte_double_into_astarte_device_sdk_type_success() {
