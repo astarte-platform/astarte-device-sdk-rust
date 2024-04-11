@@ -80,6 +80,11 @@ pub enum Error {
     /// Error returned by the MQTT connection
     #[error(transparent)]
     Mqtt(#[from] MqttError),
+    /// Error when the Device is disconnected from Astarte or client.
+    ///
+    /// This is an unrecoverable error for the SDK.
+    #[error("disconnected from astarte")]
+    Disconnected,
     /// Error returned by the GRpc transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]

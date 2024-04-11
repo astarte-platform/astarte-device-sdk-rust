@@ -18,19 +18,12 @@
 
 //! Handle the introspection for the device
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use log::{debug, error};
 
-use crate::{
-    interface::error::InterfaceError, store::PropertyStore, transport::Register, AstarteDeviceSdk,
-    Error, Interface,
-};
+use crate::{interface::error::InterfaceError, Error, Interface};
 
 /// Error while adding an [`Interface`] to the device introspection.
 #[non_exhaustive]
@@ -84,7 +77,7 @@ impl AddInterfaceError {
 /// Trait that permits a client to add and remove interfaces dynamically after being connected.
 #[async_trait]
 pub trait DynamicIntrospection {
-    /// Add a new [`Interface`] to the device interfaces.
+    /// Add a new [`Interface`] to the device introspection.
     async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
 
     /// Add one ore more [`Interface`] to the device introspection.
@@ -92,10 +85,13 @@ pub trait DynamicIntrospection {
     where
         I: IntoIterator<Item = Interface> + Send;
 
+    /// Add one or more [`Interface`] to the device introspection, specialized for a [`Vec`].
+    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error>;
+
     /// Add a new interface from the provided file.
     async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
     where
-        P: AsRef<Path> + Send;
+        P: AsRef<Path> + Send + Sync;
 
     /// Add a new interface from a string. The string should contain a valid json formatted
     /// interface.
@@ -105,114 +101,11 @@ pub trait DynamicIntrospection {
     async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
 }
 
-#[async_trait]
-impl<S, C> DynamicIntrospection for AstarteDeviceSdk<S, C>
-where
-    C: Register + Send + Sync,
-    S: Send + PropertyStore,
-{
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
-        // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.interfaces.write().await;
-
-        let map_err = interfaces
-            .validate(interface)
-            .map_err(AddInterfaceError::Interface)?;
-
-        let Some(to_add) = map_err else {
-            debug!("interfaces already present");
-
-            return Ok(());
-        };
-
-        self.connection.add_interface(&interfaces, &to_add).await?;
-
-        interfaces.add(to_add);
-
-        Ok(())
-    }
-
-    async fn extend_interfaces<I>(&self, added: I) -> Result<(), Error>
-    where
-        I: IntoIterator<Item = Interface> + Send,
-    {
-        // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.interfaces.write().await;
-
-        let to_add = interfaces
-            .validate_many(added)
-            .map_err(AddInterfaceError::Interface)?;
-
-        if to_add.is_empty() {
-            debug!("All interfaces already present");
-            return Ok(());
-        }
-
-        debug!("Adding {} interfaces", to_add.len());
-
-        self.connection
-            .extend_interfaces(&interfaces, &to_add)
-            .await?;
-
-        interfaces.extend(to_add);
-
-        debug!("Interfaces added");
-
-        Ok(())
-    }
-
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
-    where
-        P: AsRef<Path> + Send,
-    {
-        let interface = fs::read_to_string(&file_path).map_err(|err| AddInterfaceError::Io {
-            path: file_path.as_ref().to_owned(),
-            backtrace: err,
-        })?;
-
-        let interface =
-            Interface::from_str(&interface).map_err(|err| AddInterfaceError::InterfaceFile {
-                path: file_path.as_ref().to_owned(),
-                backtrace: err,
-            })?;
-
-        self.add_interface(interface).await
-    }
-
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
-        let interface = Interface::from_str(json_str).map_err(AddInterfaceError::Interface)?;
-
-        self.add_interface(interface).await
-    }
-
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
-        let mut interfaces = self.interfaces.write().await;
-
-        let to_remove = interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
-
-        self.connection
-            .remove_interface(&interfaces, to_remove)
-            .await?;
-
-        if let Some(prop) = to_remove.as_prop() {
-            // We cannot error here since we already unsubscribed to the interface
-            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
-                error!("failed to remove property {err}");
-            }
-        }
-
-        interfaces.remove(interface_name);
-
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::str::FromStr;
+
     use itertools::Itertools;
     use mockall::predicate;
     use rumqttc::SubscribeFilter;
@@ -221,11 +114,11 @@ mod tests {
 
     use crate::interfaces::Introspection;
     use crate::test::{mock_astarte_device, INDIVIDUAL_SERVER_DATASTREAM};
-    use crate::transport::mqtt::{AsyncClient, EventLoop};
+    use crate::transport::mqtt::{AsyncClient, EventLoop as MqttEventLoop};
 
     #[tokio::test]
     async fn test_add_remove_interface() {
-        let eventloop = EventLoop::default();
+        let eventloop = MqttEventLoop::default();
         let mut client = AsyncClient::default();
 
         client
@@ -265,24 +158,33 @@ mod tests {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_| Ok(()));
 
-        let (astarte, _rx) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
-        astarte
+        let handle = tokio::spawn(async move {
+            for _ in 0..2 {
+                let msg = connection.client.recv().await.unwrap();
+                connection.handle_client_msg(msg).await.unwrap();
+            }
+        });
+
+        client
             .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
             .await
             .unwrap();
 
-        astarte
+        client
             .remove_interface(
                 "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream",
             )
             .await
             .unwrap();
+
+        handle.await.unwrap();
     }
 
     #[tokio::test]
     async fn should_extend_interfaces() {
-        let eventloop = EventLoop::default();
+        let eventloop = MqttEventLoop::default();
         let mut client = AsyncClient::default();
 
         let to_add = [
@@ -316,8 +218,47 @@ mod tests {
             })
             .returning(|_, _, _, _| Ok(()));
 
-        let (astarte, _rx) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
-        astarte.extend_interfaces(to_add).await.unwrap()
+        let handle = tokio::spawn(async move {
+            let msg = connection.client.recv().await.unwrap();
+            connection.handle_client_msg(msg).await.unwrap();
+        });
+
+        client.extend_interfaces(to_add).await.unwrap();
+
+        handle.await.unwrap();
+    }
+
+    #[test]
+    fn should_add_context_to_err() {
+        let ctx = Path::new("/foo/bar");
+
+        let original = AddInterfaceError::Interface(InterfaceError::MajorMinor);
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::InterfaceFile { path, backtrace: InterfaceError::MajorMinor } if path == ctx
+        ));
+
+        let original = AddInterfaceError::Io {
+            path: Path::new("/baz").to_owned(),
+            backtrace: io::Error::new(io::ErrorKind::NotFound, "foo"),
+        };
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::Io { path, backtrace: _ } if path == ctx
+        ));
+
+        let original = AddInterfaceError::InterfaceFile {
+            path: Path::new("/baz").to_owned(),
+            backtrace: InterfaceError::MajorMinor,
+        };
+        let err = original.add_path_context(ctx.to_owned());
+        assert!(matches!(
+            err,
+            AddInterfaceError::InterfaceFile { path, backtrace: InterfaceError::MajorMinor } if path == ctx
+        ));
     }
 }

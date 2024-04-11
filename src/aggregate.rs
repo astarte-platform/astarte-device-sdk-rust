@@ -66,7 +66,7 @@ impl AstarteAggregate for HashMap<String, AstarteType> {
     }
 }
 
-/// Data for an [`Astarte data event`](crate::AstarteDeviceDataEvent).
+/// Data for an [`Astarte data event`](crate::DeviceEvent).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     /// Individual data, can be both from a datastream or property.

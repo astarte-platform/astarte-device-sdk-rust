@@ -139,7 +139,7 @@ async fn main() -> eyre::Result<()> {
         mqtt_config.ignore_ssl_errors();
     }
 
-    let (mut device, mut rx_events) = DeviceBuilder::new()
+    let (client, mut connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory(&test_cfg.interfaces_fld)?
         .connect(mqtt_config)
@@ -150,7 +150,7 @@ async fn main() -> eyre::Result<()> {
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
 
-    let device_cpy = device.clone();
+    let device_cpy = client.clone();
     let test_cfg_cpy = test_cfg.clone();
     let rx_data_ind_datastream_cpy = rx_data_ind_datastream.clone();
     let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
@@ -159,7 +159,7 @@ async fn main() -> eyre::Result<()> {
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
     let handle_events =
-        tasks.spawn(async move { device.handle_events().await.map_err(Into::into) });
+        tasks.spawn(async move { connection.handle_events().await.map_err(Into::into) });
 
     // Add the remaining interfaces
     let additional_interfaces = read_additional_interfaces()?;
@@ -184,55 +184,61 @@ async fn main() -> eyre::Result<()> {
     });
 
     tasks.spawn(async move {
-        // Poll any astarte message and store its content in the correct shared data structure
-        while let Some(event) = rx_events.recv().await {
-            let event = event.wrap_err("error received")?;
+        loop {
+            // Poll any astarte message and store its content in the correct shared data structure
+            match client.recv().await {
+                Ok(event) => {
+                    if event.interface == test_cfg.interface_datastream_so {
+                        let var = event
+                            .data
+                            .take_individual()
+                            .ok_or_eyre("Received unexpected message!")?;
 
-            if event.interface == test_cfg.interface_datastream_so {
-                let var = event
-                    .data
-                    .take_individual()
-                    .ok_or_eyre("Received unexpected message!")?;
+                        let mut rx_data = rx_data_ind_datastream.lock().await;
+                        let mut key = event.path.clone();
+                        key.remove(0);
+                        rx_data.insert(key, var);
+                    } else if event.interface == test_cfg.interface_aggregate_so {
+                        let var = event
+                            .data
+                            .take_object()
+                            .ok_or_eyre("Received unexpected message!")?;
 
-                let mut rx_data = rx_data_ind_datastream.lock().await;
-                let mut key = event.path.clone();
-                key.remove(0);
-                rx_data.insert(key, var);
-            } else if event.interface == test_cfg.interface_aggregate_so {
-                let var = event
-                    .data
-                    .take_object()
-                    .ok_or_eyre("Received unexpected message!")?;
+                        let mut rx_data = rx_data_agg_datastream.lock().await;
+                        let mut sensor_n = event.path.clone();
+                        sensor_n.remove(0);
+                        rx_data.0 = sensor_n;
 
-                let mut rx_data = rx_data_agg_datastream.lock().await;
-                let mut sensor_n = event.path.clone();
-                sensor_n.remove(0);
-                rx_data.0 = sensor_n;
+                        for (key, value) in var {
+                            rx_data.1.insert(key, value);
+                        }
+                    } else if event.interface == test_cfg.interface_property_so {
+                        let mut rx_data = rx_data_ind_prop.lock().await;
 
-                for (key, value) in var {
-                    rx_data.1.insert(key, value);
+                        let path = event.path.as_str();
+                        let (sensor_n, key) = path
+                            .strip_prefix('/')
+                            .and_then(|s| s.split_once('/'))
+                            .unwrap_or_else(|| {
+                                panic!("Incorrect path in message {:?}", event.clone())
+                            });
+
+                        rx_data.0 = sensor_n.to_string();
+                        match event.data {
+                            Value::Individual(var) => {
+                                rx_data.1.insert(key.to_string(), var);
+                            }
+                            Value::Unset => {
+                                rx_data.1.remove(key);
+                            }
+                            _ => panic!("Received unexpected message!"),
+                        };
+                    }
                 }
-            } else if event.interface == test_cfg.interface_property_so {
-                let mut rx_data = rx_data_ind_prop.lock().await;
-
-                let path = event.path.as_str();
-                let (sensor_n, key) = path
-                    .strip_prefix('/')
-                    .and_then(|s| s.split_once('/'))
-                    .unwrap_or_else(|| panic!("Incorrect path in message {:?}", event.clone()));
-
-                rx_data.0 = sensor_n.to_string();
-                match event.data {
-                    Value::Individual(var) => {
-                        rx_data.1.insert(key.to_string(), var);
-                    }
-                    Value::Unset => {
-                        rx_data.1.remove(key);
-                    }
-                    _ => panic!("Received unexpected message!"),
-                };
-            } else {
-                panic!("Received unexpected message!");
+                Err(astarte_device_sdk::Error::Disconnected) => break,
+                Err(err) => {
+                    panic!("poll error {err:?}");
+                }
             }
         }
 

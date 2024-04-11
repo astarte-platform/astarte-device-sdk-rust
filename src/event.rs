@@ -18,9 +18,23 @@
 
 //! Event returned form the loop.
 
-use crate::AstarteDeviceDataEvent;
+use crate::Value;
 
-/// Conversion error from an [`AstarteDeviceDataEvent`].
+/// Astarte device event data structure.
+///
+/// Data structure received from the [`Client`](crate::DeviceClient) when the
+/// [`Connection`](crate::DeviceConnection) polls a valid event.
+#[derive(Debug, Clone)]
+pub struct DeviceEvent {
+    /// Interface on which the event has been triggered
+    pub interface: String,
+    /// Path to the endpoint for which the event has been triggered
+    pub path: String,
+    /// Payload of the event
+    pub data: Value,
+}
+
+/// Conversion error from an [`DeviceEvent].
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum FromEventError {
@@ -61,12 +75,12 @@ pub enum FromEventError {
     Endpoint(#[from] crate::interface::mapping::endpoint::EndpointError),
 }
 
-/// Converts a struct form an [`AstarteDeviceDataEvent`].
+/// Converts a struct form an [`DeviceEvent`].
 ///
 /// # Example
 ///
 /// ```rust
-/// use astarte_device_sdk::{Value, AstarteDeviceDataEvent};
+/// use astarte_device_sdk::{Value, DeviceEvent};
 /// use astarte_device_sdk::event::{FromEvent, FromEventError};
 /// use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
 ///
@@ -80,7 +94,7 @@ pub enum FromEventError {
 /// impl FromEvent for Sensor {
 ///     type Err = FromEventError;
 ///
-///     fn from_event(event: AstarteDeviceDataEvent) -> Result<Self, Self::Err> {
+///     fn from_event(event: DeviceEvent) -> Result<Self, Self::Err> {
 ///         let base_path: Endpoint<&str> = Endpoint::try_from("/sensor")?;
 ///
 ///         if event.interface != "com.example.Sensor" {
@@ -126,7 +140,7 @@ pub enum FromEventError {
 pub trait FromEvent: Sized {
     type Err;
 
-    fn from_event(event: AstarteDeviceDataEvent) -> Result<Self, Self::Err>;
+    fn from_event(event: DeviceEvent) -> Result<Self, Self::Err>;
 }
 
 #[cfg(test)]
@@ -136,10 +150,10 @@ mod tests {
     fn should_derive_form_event() {
         use std::collections::HashMap;
 
-        use crate::{FromEvent, Value};
+        use crate::{DeviceEvent, FromEvent, Value};
 
         // Alias the crate to the resulting macro
-        use crate::{self as astarte_device_sdk, AstarteDeviceDataEvent};
+        use crate::{self as astarte_device_sdk};
 
         #[derive(Debug, FromEvent, PartialEq, Eq)]
         #[from_event(interface = "com.example.Sensor", path = "/sensor")]
@@ -152,7 +166,7 @@ mod tests {
         data.insert("name".to_string(), "Foo".to_string().into());
         data.insert("value".to_string(), 42i32.into());
 
-        let event = AstarteDeviceDataEvent {
+        let event = DeviceEvent {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor".to_string(),
             data: Value::Object(data),

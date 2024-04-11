@@ -229,35 +229,26 @@ impl TryFrom<astarte_message_hub_proto::AstarteMessage> for ReceivedEvent<GrpcPa
     }
 }
 
-impl<'a> From<ValidatedIndividual<'a>> for astarte_message_hub_proto::AstarteMessage {
-    fn from(value: ValidatedIndividual<'a>) -> Self {
-        let interface_name = value.mapping().interface().interface_name().to_owned();
-        let path = value.path().as_str().to_owned();
+impl From<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedIndividual) -> Self {
+        let timestamp = value.timestamp.map(|t| t.into());
 
-        let timestamp = value.timestamp().map(|t| t.into());
-
-        let payload = Some(value.into_data().into());
+        let payload = Some(value.data.into());
 
         astarte_message_hub_proto::AstarteMessage {
-            interface_name,
-            path,
+            interface_name: value.interface,
+            path: value.path,
             timestamp,
             payload,
         }
     }
 }
 
-impl<'a> From<ValidatedObject<'a>> for astarte_message_hub_proto::AstarteMessage {
-    fn from(value: ValidatedObject<'a>) -> Self {
-        let interface_name = value.interface().interface_name().to_string();
-        let path = value.path().to_string();
-        let timestamp = value.timestamp().map(|t| t.into());
+impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedObject) -> Self {
+        let timestamp = value.timestamp.map(|t| t.into());
 
-        let object_data = value
-            .into_data()
-            .into_iter()
-            .map(|(k, v)| (k, v.into()))
-            .collect();
+        let object_data = value.data.into_iter().map(|(k, v)| (k, v.into())).collect();
 
         let payload = Some(ProtoPayload::AstarteData(
             astarte_message_hub_proto::AstarteDataType {
@@ -270,19 +261,19 @@ impl<'a> From<ValidatedObject<'a>> for astarte_message_hub_proto::AstarteMessage
         ));
 
         astarte_message_hub_proto::AstarteMessage {
-            interface_name,
-            path,
+            interface_name: value.interface,
+            path: value.path,
             timestamp,
             payload,
         }
     }
 }
 
-impl<'a> From<ValidatedUnset<'a>> for astarte_message_hub_proto::AstarteMessage {
-    fn from(value: ValidatedUnset<'a>) -> Self {
+impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedUnset) -> Self {
         Self {
-            interface_name: value.prop().interface_name().to_string(),
-            path: value.path().to_string(),
+            interface_name: value.interface,
+            path: value.path,
             timestamp: None,
             payload: Some(ProtoPayload::AstarteUnset(
                 astarte_message_hub_proto::AstarteUnset {},
@@ -312,11 +303,11 @@ mod test {
     };
     use chrono::{DateTime, Utc};
 
-    use crate::{AstarteDeviceDataEvent, Value};
+    use crate::{DeviceEvent, Value};
 
     use super::*;
 
-    impl TryFrom<astarte_message_hub_proto::AstarteMessage> for AstarteDeviceDataEvent {
+    impl TryFrom<astarte_message_hub_proto::AstarteMessage> for DeviceEvent {
         type Error = MessageHubProtoError;
 
         fn try_from(value: astarte_message_hub_proto::AstarteMessage) -> Result<Self, Self::Error> {
@@ -351,8 +342,8 @@ mod test {
         }
     }
 
-    impl From<AstarteDeviceDataEvent> for astarte_message_hub_proto::AstarteMessage {
-        fn from(value: AstarteDeviceDataEvent) -> Self {
+    impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
+        fn from(value: DeviceEvent) -> Self {
             let payload: ProtoPayload = value.data.into();
 
             astarte_message_hub_proto::AstarteMessage {
@@ -618,7 +609,7 @@ mod test {
             payload: Some(payload),
         };
 
-        let astarte_device_data_event: AstarteDeviceDataEvent = astarte_message.try_into().unwrap();
+        let astarte_device_data_event: DeviceEvent = astarte_message.try_into().unwrap();
 
         assert_eq!(interface_name, astarte_device_data_event.interface);
         assert_eq!(interface_path, astarte_device_data_event.path);
@@ -645,7 +636,7 @@ mod test {
             payload: Some(ProtoPayload::AstarteData(object_map.into())),
         };
 
-        let astarte_device_data_event: AstarteDeviceDataEvent = astarte_message.try_into().unwrap();
+        let astarte_device_data_event: DeviceEvent = astarte_message.try_into().unwrap();
 
         assert_eq!(interface_name, astarte_device_data_event.interface);
         assert_eq!(interface_path, astarte_device_data_event.path);
@@ -677,7 +668,7 @@ mod test {
             payload: Some(payload),
         };
 
-        let astarte_device_data_event: AstarteDeviceDataEvent = astarte_message.try_into().unwrap();
+        let astarte_device_data_event: DeviceEvent = astarte_message.try_into().unwrap();
 
         assert_eq!(interface_name, astarte_device_data_event.interface);
         assert_eq!(interface_path, astarte_device_data_event.path);
@@ -783,7 +774,7 @@ mod test {
 
     #[test]
     fn convert_astarte_device_data_event_unset_to_astarte_message() {
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Unset,
@@ -818,7 +809,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_f64_to_astarte_message() {
         let expected_data = AstarteType::Double(10.1);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -841,7 +832,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_i32_to_astarte_message() {
         let expected_data = AstarteType::Integer(10);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -864,7 +855,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_bool_to_astarte_message() {
         let expected_data = AstarteType::Boolean(true);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -886,7 +877,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_i64_to_astarte_message() {
         let expected_data = AstarteType::LongInteger(45);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -909,7 +900,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_string_to_astarte_message() {
         let expected_data = AstarteType::String("test".to_owned());
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -932,7 +923,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_bytes_to_astarte_message() {
         let expected_data = AstarteType::BinaryBlob(vec![12, 48]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -955,7 +946,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_date_time_to_astarte_message() {
         let expected_data = AstarteType::DateTime(Utc::now());
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -978,7 +969,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_f64_array_to_astarte_message() {
         let expected_data = AstarteType::DoubleArray(vec![13.5, 487.35]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1001,7 +992,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_i32_array_to_astarte_message() {
         let expected_data = AstarteType::IntegerArray(vec![78, 45]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1024,7 +1015,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_bool_array_to_astarte_message() {
         let expected_data = AstarteType::BooleanArray(vec![true, false, true]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1047,7 +1038,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_i64_array_to_astarte_message() {
         let expected_data = AstarteType::LongIntegerArray(vec![658, 77845, 4444]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1071,7 +1062,7 @@ mod test {
         let expected_data =
             AstarteType::StringArray(vec!["test1".to_owned(), "test_098".to_string()]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1094,7 +1085,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_bytes_array_to_astarte_message() {
         let expected_data = AstarteType::BinaryBlobArray(vec![vec![12, 48], vec![47, 55], vec![9]]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1117,7 +1108,7 @@ mod test {
     fn convert_astarte_device_data_event_individual_date_time_array_to_astarte_message() {
         let expected_data = AstarteType::DateTimeArray(vec![Utc::now(), Utc::now()]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Individual(expected_data.clone()),
@@ -1144,7 +1135,7 @@ mod test {
             ("Mars".to_owned(), AstarteType::Double(1.5)),
         ]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Object(expected_map.clone()),
@@ -1185,7 +1176,7 @@ mod test {
             ("a".to_owned(), AstarteType::Boolean(false)),
         ]);
 
-        let astarte_device_data_event = AstarteDeviceDataEvent {
+        let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
             path: "test".to_owned(),
             data: Value::Object(expected_map.clone()),

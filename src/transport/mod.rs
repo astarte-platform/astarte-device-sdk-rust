@@ -36,8 +36,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
     },
     interfaces::{self, Interfaces},
-    shared::SharedDevice,
-    store::PropertyStore,
+    store::{wrapper::StoreWrapper, PropertyStore},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
@@ -60,13 +59,13 @@ pub(crate) struct ReceivedEvent<P> {
 #[async_trait]
 pub(crate) trait Publish {
     /// Sends validated individual values over this connection
-    async fn send_individual(&self, data: ValidatedIndividual<'_>) -> Result<(), crate::Error>;
+    async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error>;
 
     /// Sends validated objects values over this connection
-    async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error>;
+    async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error>;
 
     /// Unset a property value over this connection
-    async fn unset(&self, data: ValidatedUnset<'_>) -> Result<(), crate::Error>;
+    async fn unset(&mut self, data: ValidatedUnset) -> Result<(), crate::Error>;
 }
 
 #[async_trait]
@@ -79,8 +78,9 @@ pub(crate) trait Receive {
     /// Implementations could decide to process internally some types of
     /// incoming messages.
     async fn next_event<S>(
-        &self,
-        device: &SharedDevice<S>,
+        &mut self,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
     ) -> Result<ReceivedEvent<Self::Payload>, crate::Error>
     where
         S: PropertyStore;
@@ -106,7 +106,7 @@ pub(crate) trait Register {
     /// Called when an interface gets added to the device interface list.
     /// This method should convey to the server that a new interface got added.
     async fn add_interface(
-        &self,
+        &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::Validated,
     ) -> Result<(), crate::Error>;
@@ -114,7 +114,7 @@ pub(crate) trait Register {
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
     async fn remove_interface(
-        &self,
+        &mut self,
         interfaces: &Interfaces,
         removed_interface: &Interface,
     ) -> Result<(), crate::Error>;
@@ -125,7 +125,7 @@ pub(crate) trait Register {
     ///
     /// The added interfaces are still not present in the [`Interfaces`]
     async fn extend_interfaces(
-        &self,
+        &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error>;
@@ -139,35 +139,20 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
-    use tokio::sync::RwLock;
 
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
-        interfaces::Interfaces,
-        shared::SharedDevice,
-        store::memory::MemoryStore,
         types::{AstarteType, TypeError},
         validate::{ValidatedIndividual, ValidatedObject},
-        AstarteAggregate, EventSender, Interface,
+        AstarteAggregate, Interface,
     };
-
-    pub(crate) fn mock_shared_device(
-        interfaces: Interfaces,
-        tx: EventSender,
-    ) -> SharedDevice<MemoryStore> {
-        SharedDevice {
-            interfaces: RwLock::new(interfaces),
-            store: crate::store::wrapper::StoreWrapper::new(MemoryStore::new()),
-            tx,
-        }
-    }
 
     pub(crate) fn mock_validate_object<'a, D>(
         interface: &'a Interface,
         path: &'a MappingPath<'a>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedObject<'a>, crate::Error>
+    ) -> Result<ValidatedObject, crate::Error>
     where
         D: AstarteAggregate + Send,
     {
@@ -188,7 +173,7 @@ mod test {
         path: &'a MappingPath<'a>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedIndividual<'a>, crate::Error>
+    ) -> Result<ValidatedIndividual, crate::Error>
     where
         D: TryInto<AstarteType> + Send,
     {
