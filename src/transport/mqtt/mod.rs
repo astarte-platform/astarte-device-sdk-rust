@@ -331,6 +331,11 @@ impl Mqtt {
 
     /// Subscribe to many topics
     async fn subscribe_many(&self, interfaces_names: &[&str]) -> Result<(), MqttError> {
+        // should not subscribe if there are no interfaces
+        if interfaces_names.is_empty() {
+            return Ok(());
+        }
+
         let topics = interfaces_names
             .iter()
             .map(|name| SubscribeFilter {
@@ -934,6 +939,50 @@ pub(crate) mod test {
             .once()
             .returning(|_| Ok(()));
 
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .withf(move |publish, _, _, payload| {
+                let mut intro = payload.split(';').collect_vec();
+
+                intro.sort_unstable();
+
+                publish == "realm/device_id" && intro == introspection
+            })
+            .returning(|_, _, _, _| Ok(()));
+
+        let mut mqtt_connection = mock_mqtt_connection(client, eventl);
+
+        mqtt_connection
+            .extend_interfaces(&interfaces, &to_add)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn should_not_subscribe_many() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        // no server owned interfaces are present
+        let to_add = [
+            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
+        ];
+
+        let mut introspection = Introspection::new(to_add.iter())
+            .to_string()
+            .split(';')
+            .map(ToOwned::to_owned)
+            .collect_vec();
+
+        introspection.sort_unstable();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
+
+        // in this case, no client.subscribe_many() is expected
         client
             .expect_publish::<String, String>()
             .once()
