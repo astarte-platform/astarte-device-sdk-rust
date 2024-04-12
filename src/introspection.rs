@@ -29,20 +29,24 @@ use crate::{interface::error::InterfaceError, Error, Interface};
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum AddInterfaceError {
-    /// Couldn't add the interface
+    /// Couldn't add the interface.
     #[error("error adding interface")]
     Interface(#[from] InterfaceError),
-    /// Failed to read interface directory
+    /// Failed to read interface directory.
     #[error("couldn't read interface path {}", .path.display())]
     Io {
+        /// The path of the interface json file we couldn't read.
         path: PathBuf,
         #[source]
+        /// The IO error.
         backtrace: std::io::Error,
     },
     /// Cannot read the interface file.
     #[error("invalid interface file {}", .path.display())]
     InterfaceFile {
+        /// The path of the invalid interface json.
         path: PathBuf,
+        /// Reason why the interface couldn't be added.
         backtrace: InterfaceError,
     },
 }

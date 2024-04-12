@@ -143,10 +143,13 @@ where
 #[non_exhaustive]
 #[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
 pub enum MappingError {
+    /// Missing forward slash at the beginning of the path.
     #[error("path missing prefix: {0}")]
     Prefix(String),
+    /// The path must contain at least one level.
     #[error("path should have at least one level")]
     Empty,
+    /// A path level must contain at least one character, it cannot be `//`.
     #[error("path has an empty level: {0}")]
     EmptyLevel(String),
 }

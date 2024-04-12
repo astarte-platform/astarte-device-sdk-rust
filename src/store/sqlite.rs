@@ -38,17 +38,19 @@ pub enum SqliteError {
     /// Error returned when the database uri is not valid
     #[error("could not parse the database uri: {uri}")]
     Uri {
-        #[source]
-        err: sqlx::Error,
+        /// The original invalid URI.
         uri: String,
+        /// Reason why the URI is invalid.
+        #[source]
+        backtrace: sqlx::Error,
     },
-    /// Error returned when the database connection fails
+    /// Error returned when the database connection fails.
     #[error("could not connect to database")]
     Connection(#[source] sqlx::Error),
-    /// Error returned when the database migration fails
+    /// Error returned when the database migration fails.
     #[error("could not run migration")]
     Migration(sqlx::migrate::MigrateError),
-    /// Error returned when the database query fails
+    /// Error returned when the database query fails.
     #[error("could not execute query")]
     Query(#[from] sqlx::Error),
     /// Couldn't convert the stored value.
@@ -59,7 +61,7 @@ pub enum SqliteError {
     Ownership(#[from] OwnershipError),
 }
 
-/// Error when converting a u8 into the [`Ownership`] struct
+/// Error when converting a u8 into the [`Ownership`] struct.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid ownership value {value}")]
 pub struct OwnershipError {
@@ -119,6 +121,7 @@ pub enum ValueError {
     /// Couldn't decode the BSON buffer.
     #[error("couldn't decode property from bson")]
     Decode(#[source] PayloadError),
+    /// Couldn't encode the BSON buffer.
     #[error("couldn't encode property from bson")]
     Encode(#[source] PayloadError),
     /// Unsupported [`AstarteType`].
@@ -263,7 +266,7 @@ impl SqliteStore {
     pub async fn new(uri: &str) -> Result<Self, SqliteError> {
         let options = SqliteConnectOptions::from_str(uri)
             .map_err(|err| SqliteError::Uri {
-                err,
+                backtrace: err,
                 uri: uri.to_string(),
             })?
             .create_if_missing(true);
@@ -445,5 +448,31 @@ mod tests {
         let db = SqliteStore::new(path).await.unwrap();
 
         test_property_store(db).await;
+    }
+
+    #[tokio::test]
+    async fn should_parse_uri() {
+        let dir = tempfile::tempdir().unwrap();
+
+        SqliteStore::new(&format!(
+            "sqlite://{}",
+            dir.path().join("success.sqlite").display()
+        ))
+        .await
+        .expect("should parse the correct uri");
+
+        SqliteStore::new(&format!(
+            "sqlite:://{}",
+            dir.path().join("error.sqlite").display()
+        ))
+        .await
+        .expect_err("should error for the uri");
+
+        SqliteStore::new(&format!(
+            "sqlite:///{}",
+            dir.path().join("error.sqlite").display()
+        ))
+        .await
+        .expect("should not error for multiple slashes");
     }
 }

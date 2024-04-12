@@ -39,25 +39,35 @@ pub enum Error {
     /// The connection poll reached the max number of retries.
     #[error("connection reached max retries")]
     ConnectionTimeout,
-    /// Error while parsing interface
+    /// Error while parsing interface.
     #[error("couldn't parse interface")]
     Interface(#[from] InterfaceError),
-    /// Error while operating on the device introspection
+    /// Error while operating on the device introspection.
     #[error("couldn't complete introspection operation")]
     AddInterface(#[from] AddInterfaceError),
-    /// Invalid interface type when sending or receiving
+    /// Invalid interface type when sending or receiving.
     #[error("invalid interface type, expected {exp} but got {got}")]
     InterfaceType {
+        /// Expected interface type.
         exp: InterfaceTypeDef,
+        /// Actual interface type.
         got: InterfaceTypeDef,
     },
     /// Couldn't find an interface with the given name.
     #[error("couldn't find interface '{name}'")]
-    InterfaceNotFound { name: String },
-    /// Error missing mapping in interface
+    InterfaceNotFound {
+        /// Name of the missing interface.
+        name: String,
+    },
+    /// Couldn't find missing mapping in the interface.
     #[error("couldn't find mapping {mapping} in interface {interface}")]
-    MappingNotFound { interface: String, mapping: String },
-    /// Couldn't parse the mapping path
+    MappingNotFound {
+        /// Name of the interface.
+        interface: String,
+        /// Path of the missing mapping.
+        mapping: String,
+    },
+    /// Couldn't parse the mapping path.
     #[error("invalid mapping path '{}'", .0.path())]
     InvalidEndpoint(#[from] MappingError),
     /// Errors when converting between Astarte types.
@@ -72,12 +82,18 @@ pub enum Error {
     /// Send or receive validation failed
     #[error("validation of the send payload failed")]
     Validation(#[from] UserValidationError),
+    /// Invalid aggregation between the interface and the data.
     #[error("invalid aggregation, expected {exp} but got {got}")]
-    Aggregation { exp: Aggregation, got: Aggregation },
-    /// Infallible conversion
+    Aggregation {
+        /// Expected aggregation of the interface.
+        exp: Aggregation,
+        /// The actual aggregation.
+        got: Aggregation,
+    },
+    /// Infallible conversion.
     #[error(transparent)]
     Infallible(#[from] Infallible),
-    /// Error returned by the MQTT connection
+    /// Error returned by the MQTT connection.
     #[error(transparent)]
     Mqtt(#[from] MqttError),
     /// Error when the Device is disconnected from Astarte or client.
@@ -85,7 +101,7 @@ pub enum Error {
     /// This is an unrecoverable error for the SDK.
     #[error("disconnected from astarte")]
     Disconnected,
-    /// Error returned by the GRpc transport
+    /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),

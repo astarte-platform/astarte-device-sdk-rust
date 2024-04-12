@@ -131,6 +131,7 @@ pub(crate) trait Register {
     ) -> Result<(), crate::Error>;
 }
 
+/// Gracefully close the connection.
 #[async_trait]
 pub trait Disconnect {
     /// User callable api to gracefully disconnect from the transport

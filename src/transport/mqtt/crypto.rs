@@ -47,18 +47,19 @@ use x509_cert::{
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
     #[cfg(feature = "openssl")]
+    /// Openssl CSR generation failed.
     #[error("Openssl error")]
     Openssl(#[from] openssl::error::ErrorStack),
-
+    /// Invalid common name in the certificate.
     #[error("Invalid COMMONNAME")]
     InvalidCn(#[from] x509_cert::der::Error),
-
+    /// Failed to generate the CSR.
     #[error("Failed to create Certificate and CSR")]
     Certificate(#[from] x509_cert::builder::Error),
-
+    /// Couldn't encode the private key to PKCS8 PEM format.
     #[error("Failed to encode key to PKCS8 pem")]
     Pem(#[from] p384::pkcs8::Error),
-
+    /// Invalid UTF-8 character in the PEM file.
     #[error("Invalid UTF-8 encoded PEM")]
     Utf8(#[from] std::string::FromUtf8Error),
 }

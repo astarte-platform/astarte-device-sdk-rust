@@ -335,36 +335,38 @@ impl From<Level<&str>> for Level<String> {
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EndpointError {
+    /// Missing forward slash at the beginning of the endpoint.
     #[error("endpoint must start with a slash, got instead: {0}")]
     Prefix(String),
+    /// Endpoints must contain at least one level.
+    ///
+    /// The empty endpoint is reserved.
     #[error("endpoint must contain at least a level: {0}")]
     Empty(String),
+    /// Couldn't parse the endpoint's level.
     #[error("endpoint contains invalid level: {input}")]
     Level {
+        /// The original endpoint.
         input: String,
+        /// Reason for the invalid level.
         #[source]
         error: LevelError,
     },
-}
-
-impl EndpointError {
-    pub fn endpoint(&self) -> &str {
-        match self {
-            EndpointError::Prefix(endpoint) => endpoint,
-            EndpointError::Empty(endpoint) => endpoint,
-            EndpointError::Level { input, .. } => input,
-        }
-    }
 }
 
 /// Error that can happen when parsing a level.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum LevelError {
+    /// The level must contain at least one character, it cannot be `//`.
     #[error("levels must not be empty")]
     Empty,
+    /// Invalid character in the level (e.g. MQTT wild card character `+`).
     #[error("levels must not contain MQTT wildcard: {0}")]
     MQTTWildcard(char),
+    /// Mixed characters and parameter in level.
+    ///
+    /// A parameter should incapsulate the whole level (e.g. `/foo%{bar}` is invalid).
     #[error("the parameter should incapsulate the whole level")]
     Parameter,
 }

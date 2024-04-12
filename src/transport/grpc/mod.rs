@@ -65,18 +65,25 @@ use self::convert::MessageHubProtoError;
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum GrpcError {
+    /// The gRPC connection returned an error.
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
+    /// Status code error.
     #[error("Status error {0}")]
     Status(#[from] tonic::Status),
     #[error("Error while serializing the interfaces")]
+    /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
+    /// Expected an individual message but got an object one.
     #[error("Attempting to deserialize individual message but got an object")]
     DeserializationExpectedIndividual,
+    /// Expected an object message but got an individual one.
     #[error("Attempting to deserialize object message but got an individual value")]
     DeserializationExpectedObject,
+    /// Couldn't close the connection gracefully.
     #[error("Graceful close of the grpc channel failed, the Arc is still shared")]
     GracefulClose,
+    /// Failed to convert a proto message.
     #[error(transparent)]
     MessageHubProtoConversion(#[from] MessageHubProtoError),
 }
@@ -354,15 +361,9 @@ impl GrpcPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct GrpcConfig {
+pub(crate) struct GrpcConfig {
     uuid: Uuid,
     endpoint: String,
-}
-
-impl GrpcConfig {
-    pub fn new(uuid: Uuid, endpoint: String) -> Self {
-        Self { uuid, endpoint }
-    }
 }
 
 /// Configuration for the grpc connection
@@ -391,7 +392,7 @@ impl ConnectionConfig for GrpcConfig {
     }
 }
 
-/// Wrapper that contains data needed while connecting the node to the astarte message hub
+/// Wrapper that contains data needed while connecting the node to the astarte message hub.
 struct NodeData {
     node: Node,
 }

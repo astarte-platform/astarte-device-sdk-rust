@@ -31,9 +31,6 @@ pub enum InterfaceError {
     /// Both major and minor are 0.
     #[error("wrong major and minor")]
     MajorMinor,
-    /// The interface has no mapping with the given path.
-    #[error("couldn't find the mapping '{path}' in the interface")]
-    MappingNotFound { path: String },
     /// The database retention policy is set to `use_ttl` but the TTL was not specified.
     #[error("Database retention policy set to `use_ttl` but the TTL was not specified")]
     MissingTtl,
@@ -51,13 +48,23 @@ pub enum InterfaceError {
     InconsistentEndpoints,
     /// The interfaced endpoints must all be unique.
     #[error("duplicate endpoint mapping '{endpoint}' and '{duplicate}'")]
-    DuplicateMapping { endpoint: String, duplicate: String },
+    DuplicateMapping {
+        /// The existing endpoint.
+        endpoint: String,
+        /// The duplicated endpoint.
+        duplicate: String,
+    },
     /// The object interface should have at least 2 levels.
     #[error("object endpoint should have at least 2 levels: '{0}'")]
     ObjectEndpointTooShort(String),
     /// The name of the interface was changed.
-    #[error( r#"this version has a different name than the previous version name: {name} prev_name: {prev_name}"#)]
-    NameMismatch { name: String, prev_name: String },
+    #[error("this version has a different name {name} than the previous version {prev_name}")]
+    NameMismatch {
+        /// The new version name.
+        name: String,
+        /// The previous version name.
+        prev_name: String,
+    },
     /// Invalid version change.
     #[error("invalid version: {0}")]
     Version(VersionChangeError),

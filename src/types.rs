@@ -70,20 +70,45 @@ pub enum TypeError {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Serialize)]
 #[serde(into = "Bson")]
 pub enum AstarteType {
+    /// Double value.
+    ///
+    /// This is guaranteed not to be a [subnormal](https://en.wikipedia.org/wiki/Subnormal_number) or
+    /// `+inf`, `Nan`, etc...
     Double(f64),
+    /// Singed integer value.
     Integer(i32),
+    /// Boolean value.
     Boolean(bool),
+    /// Long integer value.
+    ///
+    /// During transport this can be received from Astarte as a `i32` to save space.
     LongInteger(i64),
+    /// String value.
     String(String),
+    /// Binary value.
     BinaryBlob(Vec<u8>),
+    /// Date time value.
+    ///
+    /// UTC date time.
     DateTime(Timestamp),
-
+    /// Double array value.
     DoubleArray(Vec<f64>),
+    /// Integer array value.
     IntegerArray(Vec<i32>),
+    /// Boolean array value.
     BooleanArray(Vec<bool>),
+    /// Long integer array value.
+    ///
+    /// During transport this can be received from Astarte as a mixed `i32` and `i64` array to save
+    /// space.
     LongIntegerArray(Vec<i64>),
+    /// String array value.
     StringArray(Vec<String>),
+    /// Binary array value.
     BinaryBlobArray(Vec<Vec<u8>>),
+    /// Date time array value.
+    ///
+    /// UTC date time.
     DateTimeArray(Vec<Timestamp>),
 }
 

@@ -28,12 +28,6 @@ use super::{mapping::path::MappingPath, DatastreamObject, Mapping};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PropertyRef<'a>(pub(crate) &'a Interface);
 
-impl<'a> PropertyRef<'a> {
-    pub fn new(interface: &'a Interface) -> Option<Self> {
-        interface.is_property().then_some(Self(interface))
-    }
-}
-
 impl<'a> Borrow<Interface> for PropertyRef<'a> {
     fn borrow(&self) -> &Interface {
         self.0
