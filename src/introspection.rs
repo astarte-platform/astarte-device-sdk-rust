@@ -246,6 +246,32 @@ mod tests {
         handle.await.unwrap();
     }
 
+    #[tokio::test]
+    async fn should_not_extend_interfaces() {
+        let eventloop = MqttEventLoop::default();
+        let client = AsyncClient::default();
+
+        let to_add = [
+            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
+            Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+        ];
+
+        // no expectations since no interfaces will be added
+
+        // trying to add the already-present interfaces
+        let (client, mut connection) = mock_astarte_device(client, eventloop, to_add.clone());
+
+        let handle = tokio::spawn(async move {
+            let msg = connection.client.recv().await.unwrap();
+            connection.handle_client_msg(msg).await.unwrap();
+        });
+
+        client.extend_interfaces(to_add).await.unwrap();
+
+        handle.await.unwrap();
+    }
+
     #[test]
     fn should_add_context_to_err() {
         let ctx = Path::new("/foo/bar");
