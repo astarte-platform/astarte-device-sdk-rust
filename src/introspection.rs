@@ -78,6 +78,15 @@ impl AddInterfaceError {
     }
 }
 
+/// Trait that permits a client to query the interfaces in the device introspection.
+#[async_trait]
+pub trait DeviceIntrospection {
+    /// Returns a reference to the [`Interface`] with the given name.
+    async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
+    where
+        F: FnMut(Option<&Interface>) -> O + Send;
+}
+
 /// Trait that permits a client to add and remove interfaces dynamically after being connected.
 #[async_trait]
 pub trait DynamicIntrospection {
@@ -117,7 +126,10 @@ mod tests {
     use super::*;
 
     use crate::interfaces::Introspection;
-    use crate::test::{mock_astarte_device, INDIVIDUAL_SERVER_DATASTREAM};
+    use crate::test::{
+        mock_astarte_device, E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY,
+        INDIVIDUAL_SERVER_DATASTREAM,
+    };
     use crate::transport::mqtt::{AsyncClient, EventLoop as MqttEventLoop};
 
     #[tokio::test]
@@ -264,5 +276,37 @@ mod tests {
             err,
             AddInterfaceError::InterfaceFile { path, backtrace: InterfaceError::MajorMinor } if path == ctx
         ));
+    }
+
+    #[tokio::test]
+    async fn should_get_interface() {
+        let eventloop = MqttEventLoop::default();
+        let client = AsyncClient::default();
+
+        let (device, _) = mock_astarte_device(
+            client,
+            eventloop,
+            [
+                Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
+                Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap(),
+                Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap(),
+            ],
+        );
+
+        let interface = device
+            .get_interface("org.astarte-platform.rust.e2etest.DeviceProperty", |i| {
+                i.cloned()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            interface.interface_name(),
+            "org.astarte-platform.rust.e2etest.DeviceProperty"
+        );
+
+        let interface = device.get_interface("foo.bar", |i| i.cloned()).await;
+
+        assert_eq!(interface, None);
     }
 }

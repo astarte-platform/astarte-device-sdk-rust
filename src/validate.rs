@@ -26,7 +26,7 @@ use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef, PropertyRef},
-        Ownership, Reliability,
+        MappingAccess, Ownership, Reliability,
     },
     types::AstarteType,
     Interface, Timestamp,

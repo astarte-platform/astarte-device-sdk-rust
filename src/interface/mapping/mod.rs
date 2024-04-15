@@ -31,8 +31,9 @@ pub mod iter;
 pub mod path;
 pub mod vec;
 
+/// Mapping of a [`DatastreamIndividual`](super::DatastreamIndividual) interface.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct DatastreamIndividualMapping {
+pub struct DatastreamIndividualMapping {
     pub(super) mapping: BaseMapping,
     pub(super) reliability: Reliability,
     pub(super) retention: Retention,
@@ -115,8 +116,9 @@ impl Deref for DatastreamIndividualMapping {
     }
 }
 
+/// Mapping of a [`Properties`](super::Properties) interface.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct PropertiesMapping {
+pub struct PropertiesMapping {
     pub(super) mapping: BaseMapping,
     pub(super) allow_unset: bool,
 }
@@ -191,11 +193,14 @@ impl Deref for PropertiesMapping {
     }
 }
 
+/// Shared struct for a mapping for all interface types.
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) struct BaseMapping {
+pub struct BaseMapping {
     pub(super) endpoint: Endpoint<String>,
     pub(super) mapping_type: MappingType,
+    #[cfg(feature = "interface-doc")]
     pub(super) description: Option<String>,
+    #[cfg(feature = "interface-doc")]
     pub(super) doc: Option<String>,
 }
 
@@ -204,10 +209,12 @@ impl BaseMapping {
         self.mapping_type
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
+    #[cfg(feature = "interface-doc")]
     pub(crate) fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
     }
@@ -237,11 +244,19 @@ impl Ord for BaseMapping {
     }
 }
 
+#[cfg(feature = "interface-doc")]
 impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
     fn from(value: &'a BaseMapping) -> Self {
         Self::new(value.endpoint(), value.mapping_type())
             .with_description(value.description())
             .with_doc(value.doc())
+    }
+}
+
+#[cfg(not(feature = "interface-doc"))]
+impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
+    fn from(value: &'a BaseMapping) -> Self {
+        Self::new(value.endpoint(), value.mapping_type())
     }
 }
 
@@ -257,13 +272,16 @@ where
         Ok(Self {
             endpoint,
             mapping_type: value.mapping_type(),
+            #[cfg(feature = "interface-doc")]
             description: value.description().map(|t| t.as_ref().into()),
+            #[cfg(feature = "interface-doc")]
             doc: value.doc().map(|t| t.as_ref().into()),
         })
     }
 }
 
 /// Mapping of an interface.
-pub(crate) trait InterfaceMapping {
+pub trait InterfaceMapping {
+    /// Returns a reference to the endpoint of an interface.
     fn endpoint(&self) -> &Endpoint<String>;
 }

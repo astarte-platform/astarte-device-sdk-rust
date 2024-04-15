@@ -24,7 +24,10 @@ use crate::interface::{DatastreamObject, InterfaceType, Mapping, MappingVec};
 
 use super::{vec::ItemIter, BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
 
-pub(crate) enum MappingIter<'a> {
+/// Iterator over an [`Interface`](crate::Interface) mappings.
+pub struct MappingIter<'a>(InnerIter<'a>);
+
+enum InnerIter<'a> {
     Properties(PropertiesMappingIter<'a>),
     Individual(IndividualMappingIter<'a>),
     Object(ObjectMappingIter<'a>),
@@ -32,13 +35,17 @@ pub(crate) enum MappingIter<'a> {
 
 impl<'a> MappingIter<'a> {
     pub(crate) fn new(interface: &'a InterfaceType) -> Self {
-        match interface {
+        let iter = match interface {
             InterfaceType::DatastreamIndividual(individual) => {
-                Self::Individual(individual.iter_mappings())
+                InnerIter::Individual(individual.iter_mappings())
             }
-            InterfaceType::DatastreamObject(object) => Self::Object(object.iter_mappings()),
-            InterfaceType::Properties(properties) => Self::Properties(properties.iter_mappings()),
-        }
+            InterfaceType::DatastreamObject(object) => InnerIter::Object(object.iter_mappings()),
+            InterfaceType::Properties(properties) => {
+                InnerIter::Properties(properties.iter_mappings())
+            }
+        };
+
+        Self(iter)
     }
 }
 
@@ -46,46 +53,47 @@ impl<'a> Iterator for MappingIter<'a> {
     type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Properties(iter) => iter.next(),
-            Self::Individual(iter) => iter.next(),
-            Self::Object(iter) => iter.next(),
+        match &mut self.0 {
+            InnerIter::Properties(iter) => iter.next(),
+            InnerIter::Individual(iter) => iter.next(),
+            InnerIter::Object(iter) => iter.next(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Properties(iter) => iter.size_hint(),
-            Self::Individual(iter) => iter.size_hint(),
-            Self::Object(iter) => iter.size_hint(),
+        match &self.0 {
+            InnerIter::Properties(iter) => iter.size_hint(),
+            InnerIter::Individual(iter) => iter.size_hint(),
+            InnerIter::Object(iter) => iter.size_hint(),
         }
     }
 }
 
 impl DoubleEndedIterator for MappingIter<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Properties(iter) => iter.next_back(),
-            Self::Individual(iter) => iter.next_back(),
-            Self::Object(iter) => iter.next_back(),
+        match &mut self.0 {
+            InnerIter::Properties(iter) => iter.next_back(),
+            InnerIter::Individual(iter) => iter.next_back(),
+            InnerIter::Object(iter) => iter.next_back(),
         }
     }
 }
 
 impl ExactSizeIterator for MappingIter<'_> {
     fn len(&self) -> usize {
-        match self {
-            Self::Properties(iter) => iter.len(),
-            Self::Individual(iter) => iter.len(),
-            Self::Object(iter) => iter.len(),
+        match &self.0 {
+            InnerIter::Properties(iter) => iter.len(),
+            InnerIter::Individual(iter) => iter.len(),
+            InnerIter::Object(iter) => iter.len(),
         }
     }
 }
 
 impl FusedIterator for MappingIter<'_> {}
 
+/// Iterator over a [`Properties`](crate::interface::Properties) mappings.
 #[derive(Debug, Clone)]
-pub(crate) struct PropertiesMappingIter<'a> {
+pub struct PropertiesMappingIter<'a> {
     properties: ItemIter<'a, PropertiesMapping>,
 }
 
@@ -123,8 +131,9 @@ impl ExactSizeIterator for PropertiesMappingIter<'_> {
 
 impl FusedIterator for PropertiesMappingIter<'_> {}
 
+/// Iterator over a [`DatastreamIndividual`](crate::interface::DatastreamIndividual) mappings.
 #[derive(Debug, Clone)]
-pub(crate) struct IndividualMappingIter<'a> {
+pub struct IndividualMappingIter<'a> {
     properties: ItemIter<'a, DatastreamIndividualMapping>,
 }
 
@@ -162,17 +171,18 @@ impl ExactSizeIterator for IndividualMappingIter<'_> {
 
 impl FusedIterator for IndividualMappingIter<'_> {}
 
+/// Iterator over a [`DatastreamObject`] mappings.
 #[derive(Debug, Clone)]
-pub(crate) struct ObjectMappingIter<'a> {
+pub struct ObjectMappingIter<'a> {
     interface: &'a DatastreamObject,
-    properties: ItemIter<'a, BaseMapping>,
+    mappings: ItemIter<'a, BaseMapping>,
 }
 
 impl<'a> ObjectMappingIter<'a> {
     pub(crate) fn new(interface: &'a DatastreamObject) -> Self {
         Self {
             interface,
-            properties: interface.mappings.iter(),
+            mappings: interface.mappings.iter(),
         }
     }
 }
@@ -181,28 +191,89 @@ impl<'a> Iterator for ObjectMappingIter<'a> {
     type Item = Mapping<&'a str>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.properties
+        self.mappings
             .next()
             .map(|mapping| self.interface.apply(mapping))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.properties.size_hint()
+        self.mappings.size_hint()
     }
 }
 
 impl<'a> DoubleEndedIterator for ObjectMappingIter<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.properties
+        self.mappings
             .next_back()
-            .map(move |mapping| self.interface.apply(mapping))
+            .map(|mapping| self.interface.apply(mapping))
     }
 }
 
 impl<'a> ExactSizeIterator for ObjectMappingIter<'a> {
     fn len(&self) -> usize {
-        self.properties.len()
+        self.mappings.len()
     }
 }
 
 impl FusedIterator for ObjectMappingIter<'_> {}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use crate::{
+        test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY},
+        Interface,
+    };
+
+    #[test]
+    fn should_iter() {
+        let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+
+        let t = interface.as_inner();
+        let t = t.as_datastream_individual().unwrap();
+        let mut iter = t.into_iter();
+
+        assert_eq!(iter.len(), 14);
+
+        let n = iter.next().unwrap();
+
+        assert_eq!(*n.endpoint(), "/binaryblob_endpoint");
+
+        let n = iter.next_back().unwrap();
+
+        assert_eq!(*n.endpoint(), "/stringarray_endpoint");
+
+        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+
+        let t = interface.as_inner();
+        let t = t.as_datastream_object().unwrap();
+        let mut iter = t.into_iter();
+
+        assert_eq!(iter.len(), 14);
+
+        let n = iter.next().unwrap();
+
+        assert_eq!(*n.endpoint(), "/%{sensor_id}/binaryblob_endpoint");
+
+        let n = iter.next_back().unwrap();
+
+        assert_eq!(*n.endpoint(), "/%{sensor_id}/stringarray_endpoint");
+
+        let interface = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
+
+        let t = interface.as_inner();
+        let t = t.as_properties().unwrap();
+        let mut iter = t.into_iter();
+
+        assert_eq!(iter.len(), 14);
+
+        let n = iter.next().unwrap();
+
+        assert_eq!(*n.endpoint(), "/%{sensor_id}/binaryblob_endpoint");
+
+        let n = iter.next_back().unwrap();
+
+        assert_eq!(*n.endpoint(), "/%{sensor_id}/stringarray_endpoint");
+    }
+}

@@ -595,7 +595,7 @@ impl SessionData {
     }
 }
 
-/// Configuration for the mqtt connection
+/// Configuration for the MQTT connection.
 #[derive(Serialize, Deserialize)]
 pub struct MqttConfig {
     pub(crate) realm: String,

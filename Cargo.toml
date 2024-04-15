@@ -100,9 +100,12 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["net"] }
 
 [features]
+default = ["interface-strict"]
 derive = ["dep:astarte-device-sdk-derive"]
 openssl = ["dep:openssl"]
 message-hub = ["dep:astarte-message-hub-proto"]
+interface-doc = []
+interface-strict = []
 
 [workspace.dependencies]
 astarte-device-sdk-derive = { version = "=0.7.3", path = "./astarte-device-sdk-derive" }

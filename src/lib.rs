@@ -47,6 +47,7 @@ pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
 pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::interface::Interface;
+pub use crate::types::AstarteType;
 
 // Re-export rumqttc since we return its types in some methods
 pub use chrono;
@@ -110,6 +111,9 @@ mod test {
     );
     pub(crate) const E2E_DEVICE_AGGREGATE: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+    );
+    pub(crate) const E2E_DEVICE_PROPERTY: &str = include_str!(
+        "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
     );
 
     pub(crate) fn mock_astarte_device<I>(
