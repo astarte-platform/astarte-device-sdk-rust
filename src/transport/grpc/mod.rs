@@ -31,13 +31,14 @@ use std::collections::HashMap;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
 use astarte_message_hub_proto::tonic::service::Interceptor;
-use astarte_message_hub_proto::tonic::transport::Channel;
+use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
     AstarteMessage, Node,
 };
 use async_trait::async_trait;
+use bytes::Bytes;
 use itertools::Itertools;
 use log::{debug, trace};
 use uuid::Uuid;
@@ -361,10 +362,29 @@ impl GrpcPayload {
 }
 
 /// Configuration for the mqtt connection
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub struct GrpcConfig {
     uuid: Uuid,
-    endpoint: String,
+    endpoint: Endpoint,
+}
+
+impl GrpcConfig {
+    /// Create a new config.
+    pub const fn new(uuid: Uuid, endpoint: Endpoint) -> Self {
+        Self { uuid, endpoint }
+    }
+
+    /// Create a new config from node id and Message Hub endpoint.
+    pub fn from_url(uuid: Uuid, url: impl Into<Bytes>) -> Result<Self, GrpcError> {
+        let endpoint = Endpoint::from_shared(url)?;
+
+        Ok(Self::new(uuid, endpoint))
+    }
+
+    /// Returns a mutable reference to configure the endpoint.
+    pub fn endpoint_mut(&mut self) -> &mut Endpoint {
+        &mut self.endpoint
+    }
 }
 
 #[async_trait]
@@ -377,9 +397,7 @@ impl ConnectionConfig for GrpcConfig {
         S: PropertyStore,
         C: Send + Sync,
     {
-        let channel = tonic::transport::Endpoint::new(self.endpoint)?
-            .connect()
-            .await?;
+        let channel = self.endpoint.connect().await?;
 
         let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
 
@@ -1142,5 +1160,14 @@ mod test {
             .unwrap();
 
         assert_eq!(interfaces, map);
+    }
+
+    #[test]
+    fn create_config() {
+        let uuid = Uuid::new_v4();
+
+        let mut config = GrpcConfig::from_url(uuid, "http://hub.example.com").unwrap();
+
+        assert_eq!(config.endpoint_mut().uri().host(), Some("hub.example.com"));
     }
 }
