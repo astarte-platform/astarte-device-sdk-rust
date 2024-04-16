@@ -36,6 +36,7 @@ description = "A library that provides communication and pairing primitives to a
 resolver = "2"
 members = [
   "astarte-device-sdk-derive",
+  "astarte-device-sdk-mock",
   "e2e-test",
 ]
 
@@ -108,6 +109,7 @@ interface-doc = []
 interface-strict = []
 
 [workspace.dependencies]
+astarte-device-sdk = { path = "./", version = "=0.7.3" }
 astarte-device-sdk-derive = { version = "=0.7.3", path = "./astarte-device-sdk-derive" }
 astarte-message-hub-proto = "0.6.1"
 async-trait = "0.1.50"
