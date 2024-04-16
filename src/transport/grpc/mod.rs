@@ -41,6 +41,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use itertools::Itertools;
 use log::{debug, trace};
+use sync_wrapper::SyncWrapper;
 use uuid::Uuid;
 
 use crate::store::wrapper::StoreWrapper;
@@ -117,7 +118,7 @@ impl Interceptor for NodeIdInterceptor {
 pub struct Grpc {
     uuid: Uuid,
     client: MessageHubClientWithInterceptor,
-    stream: tonic::codec::Streaming<AstarteMessage>,
+    stream: SyncWrapper<tonic::codec::Streaming<AstarteMessage>>,
 }
 
 impl Grpc {
@@ -129,7 +130,7 @@ impl Grpc {
         Self {
             uuid,
             client,
-            stream,
+            stream: SyncWrapper::new(stream),
         }
     }
 
@@ -138,7 +139,7 @@ impl Grpc {
     /// An [`Option`] is returned directly from the [`tonic::codec::Streaming::message`] method.
     /// A result of [`None`] signals a disconnection and should be handled by the caller
     async fn next_message(&mut self) -> Result<Option<AstarteMessage>, tonic::Status> {
-        self.stream.message().await
+        self.stream.get_mut().message().await
     }
 
     async fn attach(
@@ -175,7 +176,8 @@ impl Grpc {
             .await
             .map(|_| ())?;
 
-        self.stream = Grpc::attach(&mut self.client, data).await?;
+        let stream = Grpc::attach(&mut self.client, data).await?;
+        self.stream = SyncWrapper::new(stream);
 
         Ok(())
     }
@@ -246,7 +248,8 @@ impl Receive for Grpc {
                     // try reattaching
                     let data = NodeData::try_from_interfaces(&self.uuid, interfaces)?;
 
-                    self.stream = Grpc::attach(&mut self.client, data).await?;
+                    let stream = Grpc::attach(&mut self.client, data).await?;
+                    self.stream = SyncWrapper::new(stream);
                 }
             }
         }
