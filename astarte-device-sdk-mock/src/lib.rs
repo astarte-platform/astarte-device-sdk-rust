@@ -169,6 +169,10 @@ mock! {
 
         async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
     }
+
+    impl<C> Clone for DeviceClient<C> {
+        fn clone(&self) -> Self {}
+    }
 }
 
 mock! {
