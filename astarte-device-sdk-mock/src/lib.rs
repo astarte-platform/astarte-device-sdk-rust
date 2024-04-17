@@ -22,6 +22,9 @@ use astarte_device_sdk::{AstarteAggregate, AstarteType, DeviceEvent, Error, Inte
 use async_trait::async_trait;
 use mockall::mock;
 
+// Export public facing dependencies
+pub use mockall;
+
 #[async_trait]
 pub trait Client {
     async fn send_object_with_timestamp<D>(
