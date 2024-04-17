@@ -22,6 +22,9 @@ use astarte_device_sdk::{AstarteAggregate, AstarteType, DeviceEvent, Error, Inte
 use async_trait::async_trait;
 use mockall::mock;
 
+// Export public facing dependencies
+pub use mockall;
+
 #[async_trait]
 pub trait Client {
     async fn send_object_with_timestamp<D>(
@@ -168,6 +171,10 @@ mock! {
         async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
 
         async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
+    }
+
+    impl<C> Clone for DeviceClient<C> {
+        fn clone(&self) -> Self {}
     }
 }
 
