@@ -80,21 +80,22 @@ pub trait DeviceIntrospection {
 
 #[async_trait]
 pub trait DynamicIntrospection {
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
+    async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
 
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
     where
         I: IntoIterator<Item = Interface> + Send + 'static;
 
-    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error>;
+    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>)
+        -> Result<Vec<String>, Error>;
 
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
     where
         P: AsRef<Path> + Send + Sync + 'static;
 
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
+    async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 }
 
 mock! {
@@ -156,21 +157,21 @@ mock! {
 
     #[async_trait]
     impl<C: Send + Sync> DynamicIntrospection for DeviceClient<C> {
-        async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
+        async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
 
-        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send + 'static;
 
-        async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error>;
+        async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<Vec<String>, Error>;
 
-        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync + 'static;
 
-        async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
+        async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
-        async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
+        async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
     }
 
     impl<C> Clone for DeviceClient<C> {
@@ -367,12 +368,12 @@ mod tests {
 
     #[async_trait]
     impl DynamicIntrospection for CheckMocks {
-        async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
+        async fn add_interface(&self, interface: Interface) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface(self, interface)
                 .await
         }
 
-        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send + 'static,
         {
@@ -382,14 +383,17 @@ mod tests {
             .await
         }
 
-        async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error> {
+        async fn extend_interfaces_vec(
+            &self,
+            interfaces: Vec<Interface>,
+        ) -> Result<Vec<String>, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::extend_interfaces_vec(
                 self, interfaces,
             )
             .await
         }
 
-        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync + 'static,
         {
@@ -399,14 +403,14 @@ mod tests {
             .await
         }
 
-        async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
+        async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface_from_str(
                 self, json_str,
             )
             .await
         }
 
-        async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
+        async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::remove_interface(
                 self,
                 interface_name,
@@ -417,34 +421,37 @@ mod tests {
 
     #[async_trait]
     impl astarte_device_sdk::introspection::DynamicIntrospection for CheckMocks {
-        async fn add_interface(&self, _interface: Interface) -> Result<(), Error> {
-            Ok(())
+        async fn add_interface(&self, _interface: Interface) -> Result<bool, Error> {
+            Ok(Default::default())
         }
 
-        async fn extend_interfaces<I>(&self, _interfaces: I) -> Result<(), Error>
+        async fn extend_interfaces<I>(&self, _interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send,
         {
-            Ok(())
+            Ok(Default::default())
         }
 
-        async fn extend_interfaces_vec(&self, _interfaces: Vec<Interface>) -> Result<(), Error> {
-            Ok(())
+        async fn extend_interfaces_vec(
+            &self,
+            _interfaces: Vec<Interface>,
+        ) -> Result<Vec<String>, Error> {
+            Ok(Default::default())
         }
 
-        async fn add_interface_from_file<P>(&self, _file_path: P) -> Result<(), Error>
+        async fn add_interface_from_file<P>(&self, _file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync,
         {
-            Ok(())
+            Ok(Default::default())
         }
 
-        async fn add_interface_from_str(&self, _json_str: &str) -> Result<(), Error> {
-            Ok(())
+        async fn add_interface_from_str(&self, _json_str: &str) -> Result<bool, Error> {
+            Ok(Default::default())
         }
 
-        async fn remove_interface(&self, _interface_name: &str) -> Result<(), Error> {
-            Ok(())
+        async fn remove_interface(&self, _interface_name: &str) -> Result<bool, Error> {
+            Ok(Default::default())
         }
     }
 

@@ -490,7 +490,7 @@ impl<S> DynamicIntrospection for DeviceClient<S>
 where
     S: Send + Sync,
 {
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error> {
+    async fn add_interface(&self, interface: Interface) -> Result<bool, Error> {
         let (tx, rx) = oneshot::channel();
 
         self.send_msg(ClientMessage::AddInterface {
@@ -502,7 +502,7 @@ where
         rx.await.map_err(|_| Error::Disconnected)?
     }
 
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
     where
         I: IntoIterator<Item = Interface> + Send,
     {
@@ -511,7 +511,10 @@ where
         self.extend_interfaces_vec(interfaces).await
     }
 
-    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error> {
+    async fn extend_interfaces_vec(
+        &self,
+        interfaces: Vec<Interface>,
+    ) -> Result<Vec<String>, Error> {
         let (tx, rx) = oneshot::channel();
 
         self.send_msg(ClientMessage::ExtendInterfaces {
@@ -523,7 +526,7 @@ where
         rx.await.map_err(|_| Error::Disconnected)?
     }
 
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
     where
         P: AsRef<Path> + Send + Sync,
     {
@@ -544,13 +547,13 @@ where
         self.add_interface(interface).await
     }
 
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error> {
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error> {
         let interface = Interface::from_str(json_str).map_err(AddInterfaceError::Interface)?;
 
         self.add_interface(interface).await
     }
 
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error> {
+    async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error> {
         let (tx, rx) = oneshot::channel();
 
         self.send_msg(ClientMessage::RemoveInterface {
