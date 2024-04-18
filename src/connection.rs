@@ -21,6 +21,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use itertools::Itertools;
 use log::{debug, error, info, warn};
 use tokio::{
     select,
@@ -217,7 +218,8 @@ impl<S, C> DeviceConnection<S, C> {
         Ok((Value::Object(data), timestamp))
     }
 
-    async fn add_interface(&mut self, interface: Interface) -> Result<(), Error>
+    /// Returns a boolean to check if the interface was added.
+    async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>
     where
         C: Register,
     {
@@ -231,17 +233,18 @@ impl<S, C> DeviceConnection<S, C> {
         let Some(to_add) = map_err else {
             debug!("interfaces already present");
 
-            return Ok(());
+            return Ok(false);
         };
 
         self.connection.add_interface(&interfaces, &to_add).await?;
 
         interfaces.add(to_add);
 
-        Ok(())
+        Ok(true)
     }
 
-    async fn extend_interfaces<I>(&mut self, added: I) -> Result<(), Error>
+    /// Returns a [`Vec`] with the name of the interfaces that have been added.
+    async fn extend_interfaces<I>(&mut self, added: I) -> Result<Vec<String>, Error>
     where
         I: IntoIterator<Item = Interface> + Send,
         C: Register,
@@ -255,7 +258,7 @@ impl<S, C> DeviceConnection<S, C> {
 
         if to_add.is_empty() {
             debug!("All interfaces already present");
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         debug!("Adding {} interfaces", to_add.len());
@@ -264,25 +267,28 @@ impl<S, C> DeviceConnection<S, C> {
             .extend_interfaces(&interfaces, &to_add)
             .await?;
 
+        let names = to_add.keys().cloned().collect_vec();
+
         interfaces.extend(to_add);
 
         debug!("Interfaces added");
 
-        Ok(())
+        Ok(names)
     }
 
-    async fn remove_interface(&mut self, interface_name: &str) -> Result<(), Error>
+    /// Returns a bool to check if the interface was added.
+    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error>
     where
         C: Register,
         S: PropertyStore,
     {
         let mut interfaces = self.interfaces.write().await;
 
-        let to_remove = interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+        let Some(to_remove) = interfaces.get(interface_name) else {
+            debug!("interface {interface_name} not found");
+
+            return Ok(false);
+        };
 
         self.connection
             .remove_interface(&interfaces, to_remove)
@@ -297,7 +303,7 @@ impl<S, C> DeviceConnection<S, C> {
 
         interfaces.remove(interface_name);
 
-        Ok(())
+        Ok(true)
     }
 
     async fn handle_connection_event(&self, event: ReceivedEvent<C::Payload>) -> Result<(), Error>
@@ -458,14 +464,14 @@ pub(crate) enum ClientMessage {
     Unset(ValidatedUnset),
     AddInterface {
         interface: Interface,
-        response: oneshot::Sender<Result<(), Error>>,
+        response: oneshot::Sender<Result<bool, Error>>,
     },
     ExtendInterfaces {
         interfaces: Vec<Interface>,
-        response: oneshot::Sender<Result<(), Error>>,
+        response: oneshot::Sender<Result<Vec<String>, Error>>,
     },
     RemoveInterface {
         interface: String,
-        response: oneshot::Sender<Result<(), Error>>,
+        response: oneshot::Sender<Result<bool, Error>>,
     },
 }

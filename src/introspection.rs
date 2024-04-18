@@ -91,27 +91,40 @@ pub trait DeviceIntrospection {
 #[async_trait]
 pub trait DynamicIntrospection {
     /// Add a new [`Interface`] to the device introspection.
-    async fn add_interface(&self, interface: Interface) -> Result<(), Error>;
+    ///
+    /// Returns a bool to check weather the if the interface was added or was already present.
+    async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
 
     /// Add one ore more [`Interface`] to the device introspection.
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<(), Error>
+    ///
+    /// Returns a [`Vec`] with the name of the interfaces that have been added.
+    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
     where
         I: IntoIterator<Item = Interface> + Send;
 
     /// Add one or more [`Interface`] to the device introspection, specialized for a [`Vec`].
-    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<(), Error>;
+    ///
+    /// Returns a [`Vec`] with the name of the interfaces that have been added.
+    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>)
+        -> Result<Vec<String>, Error>;
 
     /// Add a new interface from the provided file.
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<(), Error>
+    ///
+    /// Returns a bool to check weather the if the interface was added or was already present.
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
     where
         P: AsRef<Path> + Send + Sync;
 
     /// Add a new interface from a string. The string should contain a valid json formatted
     /// interface.
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<(), Error>;
+    ///
+    /// Returns a bool to check weather the if the interface was added or was already present.
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
     /// Remove the interface with the name specified as argument.
-    async fn remove_interface(&self, interface_name: &str) -> Result<(), Error>;
+    ///
+    /// Returns a bool to check weather the if the interface was removed or was missing.
+    async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 }
 
 #[cfg(test)]
@@ -177,23 +190,32 @@ mod tests {
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
-            for _ in 0..2 {
+            for _ in 0..3 {
                 let msg = connection.client.recv().await.unwrap();
                 connection.handle_client_msg(msg).await.unwrap();
             }
         });
 
-        client
+        let res = client
             .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
             .await
             .unwrap();
+        assert!(res);
 
-        client
+        // Shouldn't add the second one
+        let res = client
+            .add_interface_from_str(INDIVIDUAL_SERVER_DATASTREAM)
+            .await
+            .unwrap();
+        assert!(!res);
+
+        let res = client
             .remove_interface(
                 "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream",
             )
             .await
             .unwrap();
+        assert!(res);
 
         handle.await.unwrap();
     }
@@ -208,6 +230,12 @@ mod tests {
             Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
             Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
         ];
+
+        let mut names = to_add
+            .iter()
+            .map(|i| i.interface_name().to_string())
+            .collect_vec();
+        names.sort();
 
         let mut introspection = Introspection::new(to_add.iter())
             .to_string()
@@ -241,7 +269,9 @@ mod tests {
             connection.handle_client_msg(msg).await.unwrap();
         });
 
-        client.extend_interfaces(to_add).await.unwrap();
+        let mut res = client.extend_interfaces(to_add).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
         handle.await.unwrap();
     }
@@ -267,7 +297,8 @@ mod tests {
             connection.handle_client_msg(msg).await.unwrap();
         });
 
-        client.extend_interfaces(to_add).await.unwrap();
+        let res = client.extend_interfaces(to_add).await.unwrap();
+        assert!(res.is_empty());
 
         handle.await.unwrap();
     }

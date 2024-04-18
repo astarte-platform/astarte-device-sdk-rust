@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#293](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/293)
 - Add a method `unset` to unset a property
   [#296](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/296)
+- Return values for the `DynamicIntrospection` to check if/which interface
+  where added/removed [#326](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/326)
 
 ### Changed
 - Rename the enum `Aggregation` into `Value`
