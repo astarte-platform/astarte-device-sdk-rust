@@ -634,7 +634,6 @@ impl Register for Mqtt {
     ) -> Result<(), Error> {
         let interfaces = interfaces.iter_without_removed_many(removed);
         let introspection = Introspection::new(interfaces).to_string();
-
         self.send_introspection(introspection).await?;
 
         let interfaces_name = removed

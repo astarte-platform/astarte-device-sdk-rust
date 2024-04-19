@@ -126,11 +126,12 @@ pub trait DynamicIntrospection {
     /// Returns a bool to check weather the if the interface was removed or was missing.
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 
-    // TODO: change return value
     /// Remove the interface with the name specified as argument.
-    async fn remove_interfaces<'a, I>(&self, interfaces_name: I) -> Result<(), Error>
+    ///
+    /// Returns a [`Vec`] with the name of the interfaces that have been removed.
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
     where
-        I: IntoIterator<Item = &'a str> + Send,
+        I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send;
 }
 
@@ -242,7 +243,8 @@ mod tests {
             i2.interface_name(),
             i3.interface_name(),
             i4.interface_name(),
-        ];
+        ]
+        .map(|i| i.to_string());
 
         let mut names = to_add
             .iter()
@@ -347,7 +349,7 @@ mod tests {
         let i2 = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
 
         let to_add = [i1.clone(), i2.clone()];
-        let to_remove = [i1.interface_name(), i2.interface_name()];
+        let to_remove = [i1.interface_name(), i2.interface_name()].map(|i| i.to_string());
 
         let mut introspection = Introspection::new(to_add.iter())
             .to_string()
@@ -413,10 +415,13 @@ mod tests {
             .unwrap_err();
 
         client
-            .remove_interfaces([
-                "com.example.NonExistingInterface1",
-                "com.example.NonExistingInterface2",
-            ])
+            .remove_interfaces(
+                [
+                    "com.example.NonExistingInterface1",
+                    "com.example.NonExistingInterface2",
+                ]
+                .map(|i| i.to_string()),
+            )
             .await
             .unwrap_err();
 

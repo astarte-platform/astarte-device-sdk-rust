@@ -313,8 +313,7 @@ impl<S, C> DeviceConnection<S, C> {
         Ok(true)
     }
 
-    // TODO: make it return the list of removed interfaces names
-    async fn remove_interfaces<'a, I>(&mut self, interfaces_name: I) -> Result<(), Error>
+    async fn remove_interfaces<'a, I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
     where
         C: Register,
         S: PropertyStore,
@@ -349,9 +348,11 @@ impl<S, C> DeviceConnection<S, C> {
             }
         }
 
+        let removed_names = to_remove.keys().map(|k| k.to_string()).collect_vec();
+
         interfaces.remove_many(&HashSet::from_iter(interfaces_name));
 
-        Ok(())
+        Ok(removed_names)
     }
 
     async fn handle_connection_event(&self, event: ReceivedEvent<C::Payload>) -> Result<(), Error>
@@ -540,7 +541,6 @@ pub(crate) enum ClientMessage {
     },
     RemoveInterfaces {
         interfaces: Vec<String>,
-        // TODO: change return val
-        response: oneshot::Sender<Result<(), Error>>,
+        response: oneshot::Sender<Result<Vec<String>, Error>>,
     },
 }

@@ -97,10 +97,9 @@ pub trait DynamicIntrospection {
 
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 
-    // TODO: change return value
-    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
     where
-        I: IntoIterator<Item = &'static str> + Send + 'static,
+        I: IntoIterator<Item = String> + Send + 'static,
         I::IntoIter: Send;
 }
 
@@ -179,9 +178,9 @@ mock! {
 
         async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 
-        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
             where
-                I: IntoIterator<Item = &'static str> + Send + 'static,
+                I: IntoIterator<Item = String> + Send + 'static,
                 I::IntoIter: Send;
     }
 
@@ -429,9 +428,9 @@ mod tests {
             .await
         }
 
-        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<(), Error>
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
         where
-            I: IntoIterator<Item = &'static str> + Send + 'static,
+            I: IntoIterator<Item = String> + Send + 'static,
             I::IntoIter: Send,
         {
             astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces(
@@ -477,12 +476,12 @@ mod tests {
             Ok(Default::default())
         }
 
-        async fn remove_interfaces<'a, I>(&self, _interfaces_name: I) -> Result<(), Error>
+        async fn remove_interfaces<I>(&self, _interfaces_name: I) -> Result<Vec<String>, Error>
         where
-            I: IntoIterator<Item = &'a str> + Send,
+            I: IntoIterator<Item = String> + Send,
             I::IntoIter: Send,
         {
-            Ok(())
+            Ok(Default::default())
         }
     }
 
