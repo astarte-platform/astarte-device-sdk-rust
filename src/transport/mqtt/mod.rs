@@ -637,9 +637,9 @@ impl Register for Mqtt {
         self.send_introspection(introspection).await?;
 
         let interfaces_name = removed
-            .iter()
-            .filter(|(_iface_name, iface)| iface.ownership().is_server())
-            .map(|(&name, _)| name)
+            .values()
+            .filter(|iface| iface.ownership().is_server())
+            .map(|iface| iface.interface_name())
             .collect_vec();
 
         self.unsubscribe_many(interfaces_name).await?;

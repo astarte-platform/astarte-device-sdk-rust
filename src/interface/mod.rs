@@ -29,8 +29,6 @@ pub(crate) mod validation;
 use log::info;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "message-hub")]
-use astarte_message_hub_proto::InterfaceJson;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::str::FromStr;
@@ -273,13 +271,6 @@ impl Interface {
     /// See the documentation on [`InterfaceType`] for more information.
     pub fn into_inner(self) -> InterfaceType {
         self.inner
-    }
-
-    // TODO: move to message hub (use serialize()), or define try_from
-    #[cfg(feature = "message-hub")]
-    pub(crate) fn as_proto(&self) -> Result<InterfaceJson, InterfaceError> {
-        let iface = serde_json::to_vec(&self).map_err(InterfaceError::Parse)?;
-        Ok(InterfaceJson::from(iface))
     }
 }
 

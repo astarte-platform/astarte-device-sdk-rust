@@ -133,6 +133,14 @@ pub trait DynamicIntrospection {
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send;
+
+    /// Remove one or more [`Interface`] from the device introspection, specialized for a [`Vec`].
+    ///
+    /// Returns a [`Vec`] with the name of the interfaces that have been added.
+    async fn remove_interfaces_vec(
+        &self,
+        interfaces_name: Vec<String>,
+    ) -> Result<Vec<String>, Error>;
 }
 
 #[cfg(test)]
@@ -228,6 +236,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_extend_interfaces() {
+        let eventloop = MqttEventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let i1 = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let i2 = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
+        let i3 = Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap();
+        let i4 = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
+
+        let to_add = [i1.clone(), i2.clone(), i3.clone(), i4.clone()];
+
+        let mut names = to_add.clone().map(|i| i.interface_name().to_string());
+        names.sort();
+
+        let mut introspection = Introspection::new(to_add.iter())
+            .to_string()
+            .split(';')
+            .map(ToOwned::to_owned)
+            .collect_vec();
+        introspection.sort_unstable();
+
+        let introspection_cpy = introspection.clone();
+
+        client
+            .expect_subscribe_many::<Vec<SubscribeFilter>>()
+            .once()
+            .returning(|_| Ok(()));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .withf(move |publish, _, _, payload| {
+                let mut intro = payload.split(';').collect_vec();
+
+                intro.sort_unstable();
+
+                publish == "realm/device_id" && intro == introspection_cpy
+            })
+            .returning(|_, _, _, _| Ok(()));
+
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+
+        let handle = tokio::spawn(async move {
+            let msg = connection.client.recv().await.unwrap();
+            connection.handle_client_msg(msg).await.unwrap();
+        });
+
+        let mut res = client.extend_interfaces(to_add.clone()).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
+
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn should_remove_interfaces() {
+        let eventloop = MqttEventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let i1 = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let i2 = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
+        let i3 = Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap();
+        let i4 = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
+
+        let interfaces = [i1.clone(), i2.clone(), i3.clone(), i4.clone()];
+        let to_remove = [
+            i1.interface_name(),
+            i2.interface_name(),
+            i3.interface_name(),
+            i4.interface_name(),
+        ]
+        .map(|i| i.to_string());
+
+        let mut names = to_remove.clone();
+        names.sort();
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id".to_string()),
+                predicate::always(),
+                predicate::eq(false),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            // 2 times since only 2 out of 4 interfaces are server-owned
+            .times(2)
+            .returning(|_| Ok(()));
+
+        let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces);
+
+        let handle = tokio::spawn(async move {
+            let msg = connection.client.recv().await.unwrap();
+            connection.handle_client_msg(msg).await.unwrap();
+        });
+
+        let mut res = client.remove_interfaces(to_remove).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
+
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn should_extend_and_remove_interfaces() {
         let eventloop = MqttEventLoop::default();
         let mut client = AsyncClient::default();
@@ -246,10 +362,7 @@ mod tests {
         ]
         .map(|i| i.to_string());
 
-        let mut names = to_add
-            .iter()
-            .map(|i| i.interface_name().to_string())
-            .collect_vec();
+        let mut names = to_remove.clone();
         names.sort();
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -307,7 +420,9 @@ mod tests {
         res.sort();
         assert_eq!(res, names);
 
-        client.remove_interfaces(to_remove).await.unwrap();
+        let mut res = client.remove_interfaces(to_remove).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
         handle.await.unwrap();
     }
@@ -351,6 +466,9 @@ mod tests {
         let to_add = [i1.clone(), i2.clone()];
         let to_remove = [i1.interface_name(), i2.interface_name()].map(|i| i.to_string());
 
+        let mut names = to_remove.clone();
+        names.sort();
+
         let mut introspection = Introspection::new(to_add.iter())
             .to_string()
             .split(';')
@@ -388,9 +506,13 @@ mod tests {
             }
         });
 
-        client.extend_interfaces(to_add.clone()).await.unwrap();
+        let mut res = client.extend_interfaces(to_add.clone()).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
-        client.remove_interfaces(to_remove).await.unwrap();
+        let mut res = client.remove_interfaces(to_remove).await.unwrap();
+        res.sort();
+        assert_eq!(res, names);
 
         handle.await.unwrap();
     }
@@ -409,12 +531,14 @@ mod tests {
             }
         });
 
-        client
+        let res = client
             .remove_interface("com.example.NonExistingInterface")
             .await
-            .unwrap_err();
+            .unwrap();
 
-        client
+        assert!(!res);
+
+        let res = client
             .remove_interfaces(
                 [
                     "com.example.NonExistingInterface1",
@@ -423,9 +547,10 @@ mod tests {
                 .map(|i| i.to_string()),
             )
             .await
-            .unwrap_err();
+            .unwrap();
+        assert!(res.is_empty());
 
-        handle.await.expect_err("panicked after debug_assert");
+        handle.await.unwrap();
     }
 
     #[test]

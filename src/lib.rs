@@ -102,7 +102,6 @@ mod test {
     pub(crate) const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
     pub(crate) const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
-    pub(crate) const ADDITIONAL_DEVICE_PROPERTIES: &str = include_str!("../examples/additional_interfaces/org.astarte-platform.rust.examples.individual-properties.AdditionalDeviceProperties.json");
 
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
     // E2E Interfaces

@@ -27,6 +27,7 @@
 pub mod convert;
 
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
@@ -35,11 +36,10 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
-    AstarteMessage, InterfacesJson, InterfacesName, Node,
+    AstarteMessage, InterfaceJson, InterfacesJson, InterfacesName, Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use itertools::Itertools;
 use log::{debug, trace};
 use sync_wrapper::SyncWrapper;
 use uuid::Uuid;
@@ -155,13 +155,13 @@ impl Grpc {
 
     async fn detach(
         mut client: MessageHubClientWithInterceptor,
-        uuid: &Uuid,
+        uuid: Uuid,
     ) -> Result<(), GrpcError> {
         // During the detach phase only the uuid is needed we can pass an empty array
         // as the interface_json since the interfaces are already known to the message hub
         // this api will change in the future
         client
-            .detach(Node::new(*uuid, Vec::<Vec<u8>>::new()))
+            .detach(Node::new(uuid, Vec::new()))
             .await
             .map(|_| ())
             .map_err(GrpcError::from)
@@ -296,10 +296,9 @@ impl Register for Grpc {
         _interfaces: &Interfaces,
         added: &interfaces::Validated,
     ) -> Result<(), crate::Error> {
-        let iface_json = added.as_proto()?;
-        let interface_jsons = InterfacesJson {
-            interfaces_json: vec![iface_json],
-        };
+        let interface_jsons = InterfaceJson::from_value(added.deref())
+            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?
+            .into();
 
         self.client
             .add_interfaces(tonic::Request::new(interface_jsons))
@@ -313,10 +312,11 @@ impl Register for Grpc {
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
-        let ifaces_json = added.as_proto()?;
+        let interface_jsons = InterfacesJson::try_from_iter(added.values())
+            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
         self.client
-            .add_interfaces(tonic::Request::new(ifaces_json))
+            .add_interfaces(tonic::Request::new(interface_jsons))
             .await
             .map(|_| ())
             .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
@@ -363,7 +363,7 @@ impl Register for Grpc {
 #[async_trait]
 impl Disconnect for Grpc {
     async fn disconnect(mut self) -> Result<(), crate::Error> {
-        Self::detach(self.client, &self.uuid)
+        Self::detach(self.client, self.uuid)
             .await
             .map_err(|e| e.into())
     }
@@ -441,12 +441,7 @@ impl NodeData {
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let ifaces: Vec<Vec<u8>> = interfaces
-            .into_iter()
-            .map(serde_json::to_vec)
-            .try_collect()?;
-
-        let interface_jsons = InterfacesJson::from(ifaces.as_slice());
+        let interface_jsons = InterfacesJson::try_from_iter(interfaces)?;
 
         Ok(Self {
             node: Node {
@@ -858,7 +853,7 @@ mod test {
                 .unwrap();
 
             let additional_interface =
-                Interface::from_str(crate::test::ADDITIONAL_DEVICE_PROPERTIES).unwrap();
+                Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
             let to_add = Interfaces::new()
                 .validate_many([interface.clone(), additional_interface.clone()])
                 .unwrap();
@@ -888,23 +883,24 @@ mod test {
         }
 
         let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
-        let additional_interface =
-            Interface::from_str(crate::test::ADDITIONAL_DEVICE_PROPERTIES).unwrap();
+        let additional_interface = Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
 
-        let expect_added = vec![
-            additional_interface.as_proto().unwrap().interface_json,
-            interface.as_proto().unwrap().interface_json,
-        ];
-        let expect_removed = vec![
+        let mut expect_added = [&additional_interface, &interface]
+            .map(|i| InterfaceJson::from_value(i).unwrap().interface_json)
+            .to_vec();
+        expect_added.sort();
+
+        let mut expect_removed = vec![
             additional_interface.interface_name().to_string(),
             interface.interface_name().to_string(),
         ];
+        expect_removed.sort();
 
         expect_messages!(channels.server_request_receiver.try_recv();
             // connection creation attach
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
             // add interface
-            ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![interface.as_proto().unwrap()],
+            ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![InterfaceJson::from_value(&interface).unwrap()],
             // remove interface
             ServerReceivedRequest::RemoveInterfaces(i) if i.names == vec![interface.interface_name().to_string()],
             // add more interfaces

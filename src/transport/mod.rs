@@ -105,8 +105,6 @@ pub(crate) trait Receive {
 pub(crate) trait Register {
     /// Called when an interface gets added to the device interface list.
     /// This method should convey to the server that a new interface got added.
-    ///
-    /// The `interfaces` parameter is not necessary in case of a gRPC connection.
     async fn add_interface(
         &mut self,
         interfaces: &Interfaces,
@@ -118,8 +116,6 @@ pub(crate) trait Register {
     /// This method should convey to the server that one or more interfaces have been added.
     ///
     /// The added interfaces are still not present in the [`Interfaces`]
-    ///
-    /// The `interfaces` parameter is not necessary in case of a gRPC connection.
     async fn extend_interfaces(
         &mut self,
         interfaces: &Interfaces,
@@ -128,8 +124,6 @@ pub(crate) trait Register {
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
-    ///
-    /// The `interfaces` parameter is not necessary in case of a gRPC connection.
     async fn remove_interface(
         &mut self,
         interfaces: &Interfaces,
@@ -138,8 +132,6 @@ pub(crate) trait Register {
 
     /// Called when multiple interfaces get removed from the device interface list.
     /// It relays to the server the removal of the interface.
-    ///
-    /// The `interfaces` parameter is not necessary in case of a gRPC connection.
     async fn remove_interfaces(
         &mut self,
         interfaces: &Interfaces,

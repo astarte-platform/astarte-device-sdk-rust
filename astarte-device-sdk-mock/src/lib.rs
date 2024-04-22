@@ -101,6 +101,11 @@ pub trait DynamicIntrospection {
     where
         I: IntoIterator<Item = String> + Send + 'static,
         I::IntoIter: Send;
+
+    async fn remove_interfaces_vec(
+        &self,
+        interfaces_name: Vec<String>,
+    ) -> Result<Vec<String>, Error>;
 }
 
 mock! {
@@ -182,6 +187,8 @@ mock! {
             where
                 I: IntoIterator<Item = String> + Send + 'static,
                 I::IntoIter: Send;
+
+        async fn remove_interfaces_vec(&self, interfaces_name: Vec<String>) -> Result<Vec<String>, Error>;
     }
 
     impl<C> Clone for DeviceClient<C> {
@@ -439,6 +446,17 @@ mod tests {
             )
             .await
         }
+
+        async fn remove_interfaces_vec(
+            &self,
+            interfaces_name: Vec<String>,
+        ) -> Result<Vec<String>, Error> {
+            astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces_vec(
+                self,
+                interfaces_name,
+            )
+            .await
+        }
     }
 
     #[async_trait]
@@ -481,6 +499,13 @@ mod tests {
             I: IntoIterator<Item = String> + Send,
             I::IntoIter: Send,
         {
+            Ok(Default::default())
+        }
+
+        async fn remove_interfaces_vec(
+            &self,
+            _interfaces_name: Vec<String>,
+        ) -> Result<Vec<String>, Error> {
             Ok(Default::default())
         }
     }

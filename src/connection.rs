@@ -18,7 +18,7 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -287,12 +287,10 @@ impl<S, C> DeviceConnection<S, C> {
 
         let to_remove = interfaces.get(interface_name);
 
-        // only in debug mode, if the interface is not found, it has been probably misspelled
-        debug_assert!(to_remove.is_some(), "interface {interface_name} not found");
         let to_remove = match to_remove {
             Some(i) => i,
             None => {
-                warn!("{interface_name} not found, skipping");
+                debug!("{interface_name} not found, skipping");
                 return Ok(false);
             }
         };
@@ -321,36 +319,40 @@ impl<S, C> DeviceConnection<S, C> {
     {
         let mut interfaces = self.interfaces.write().await;
 
-        let to_remove = interfaces_name
+        let to_remove: HashMap<&str, &Interface> = interfaces_name
             .clone()
             .into_iter()
             .filter_map(|iface_name| {
                 let interface = interfaces.get(iface_name).map(|i| (i.interface_name(), i));
 
-                // only in debug mode, if the interface is not found, it has been probably misspelled
-                debug_assert!(interface.is_some(), "interface {iface_name} not found");
                 if interface.is_none() {
-                    warn!("{iface_name} not found, skipping");
+                    debug!("{iface_name} not found, skipping");
                 }
 
                 interface
             })
             .collect();
 
+        if to_remove.is_empty() {
+            return Ok(Vec::new());
+        }
+
         self.connection
             .remove_interfaces(&interfaces, &to_remove)
             .await?;
 
-        for (iface_name, _) in to_remove.iter() {
+        for (_, iface) in to_remove.iter() {
             // We cannot error here since we already unsubscribed to the interface
-            if let Err(err) = self.store.delete_interface(iface_name).await {
-                error!("failed to remove property {err}");
+            if let Some(prop) = iface.as_prop() {
+                if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+                    error!("failed to remove property {err}");
+                }
             }
         }
 
         let removed_names = to_remove.keys().map(|k| k.to_string()).collect_vec();
 
-        interfaces.remove_many(&HashSet::from_iter(interfaces_name));
+        interfaces.remove_many(interfaces_name);
 
         Ok(removed_names)
     }
@@ -435,6 +437,8 @@ impl<S, C> DeviceConnection<S, C> {
                 response,
             } => {
                 let res = self.extend_interfaces(interfaces).await;
+
+                info!("RES EXTEND INTERFACES: {res:?}");
 
                 if let Err(Err(err)) = response.send(res) {
                     error!("client disconnected while failing to extend interfaces: {err}");
