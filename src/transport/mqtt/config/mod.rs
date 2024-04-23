@@ -18,7 +18,12 @@
 
 //! Configuration for the MQTT connection
 
-use std::{fmt::Debug, io, path::Path, time::Duration};
+use std::{
+    fmt::{Debug, Display},
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use log::debug;
@@ -413,6 +418,62 @@ impl ConnectionConfig for MqttConfig {
     }
 }
 
+/// Private keys file, to be a type safe when passed to functions.
+#[derive(Debug, Clone)]
+pub(crate) struct PrivateKeyFile(PathBuf);
+
+impl PrivateKeyFile {
+    /// Create a path to the key file.
+    pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
+        Self(dir.as_ref().join(PRIVATE_KEY_FILE))
+    }
+
+    /// Gets the path to the file.
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Display for PrivateKeyFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.display())
+    }
+}
+
+impl AsRef<Path> for PrivateKeyFile {
+    fn as_ref(&self) -> &Path {
+        self.path()
+    }
+}
+
+/// Certificate file, to be a type safe check.
+#[derive(Debug, Clone)]
+pub(crate) struct CertificateFile(PathBuf);
+
+impl CertificateFile {
+    /// Create a path to the certificate file.
+    pub(crate) fn new(dir: impl AsRef<Path>) -> Self {
+        Self(dir.as_ref().join(CERTIFICATE_FILE))
+    }
+
+    /// Gets the path to the file.
+    pub(crate) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Display for CertificateFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.display())
+    }
+}
+
+impl AsRef<Path> for CertificateFile {
+    fn as_ref(&self) -> &Path {
+        self.path()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +545,14 @@ mod tests {
         let secret: Credential = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(secret, expected);
+    }
+
+    #[test]
+    fn check_key_and_cert_file() {
+        let key = PrivateKeyFile::new("/foo");
+        assert_eq!(key.path().to_str().unwrap(), "/foo/priv-key.der");
+
+        let cert = CertificateFile::new("/foo");
+        assert_eq!(cert.path().to_str().unwrap(), "/foo/certificate.pem");
     }
 }

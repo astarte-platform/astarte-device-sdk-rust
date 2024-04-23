@@ -21,7 +21,6 @@
 use std::{
     fs::File,
     io::{self, BufReader},
-    path::PathBuf,
     sync::Arc,
 };
 
@@ -33,6 +32,8 @@ use rustls::{
 };
 
 use crate::transport::mqtt::PairingError;
+
+use super::{CertificateFile, PrivateKeyFile};
 
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(
@@ -47,7 +48,10 @@ pub(crate) struct ClientAuth {
 }
 
 impl ClientAuth {
-    pub(crate) async fn try_read(certificates: PathBuf, key: PathBuf) -> Option<Self> {
+    pub(crate) async fn try_read(
+        certificates: CertificateFile,
+        key: PrivateKeyFile,
+    ) -> Option<Self> {
         let res = tokio::task::spawn_blocking(|| Self::read_cert_and_key(certificates, key))
             .await
             .ok()?;
@@ -77,7 +81,10 @@ impl ClientAuth {
     }
 
     /// Blocking function to read the certificate and the key
-    fn read_cert_and_key(certificates: PathBuf, key: PathBuf) -> Result<Option<Self>, io::Error> {
+    fn read_cert_and_key(
+        certificates: CertificateFile,
+        key: PrivateKeyFile,
+    ) -> Result<Option<Self>, io::Error> {
         let c_f = File::open(certificates)?;
 
         let mut c_r = BufReader::new(c_f);
@@ -193,7 +200,6 @@ pub(crate) mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::transport::mqtt::config::{CERTIFICATE_FILE, PRIVATE_KEY_FILE};
 
     pub(crate) const TEST_CERTIFICATE: &str = include_str!("../../../../tests/certificate.pem");
     pub(crate) const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../../tests/priv-key.der");
@@ -202,10 +208,10 @@ pub(crate) mod tests {
     async fn should_read_keys() {
         let dir = TempDir::new().unwrap();
 
-        let cert = dir.path().join(CERTIFICATE_FILE);
+        let cert = CertificateFile::new(dir.path());
         tokio::fs::write(&cert, TEST_CERTIFICATE).await.unwrap();
 
-        let key = dir.path().join(PRIVATE_KEY_FILE);
+        let key = PrivateKeyFile::new(dir.path());
         tokio::fs::write(&key, TEST_PRIVATE_KEY).await.unwrap();
 
         let client = ClientAuth::try_read(cert.clone(), key.clone())

@@ -16,19 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
-use log::{debug, error};
+use log::{debug, error, info};
 use rumqttc::Transport;
+use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::fs;
 use url::Url;
 
 use crate::transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError};
 
-use super::{tls::ClientAuth, CERTIFICATE_FILE, PRIVATE_KEY_FILE};
+use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
 
 /// Structure to create an authenticated [`Transport`]
 pub(crate) struct TransportProvider {
@@ -67,88 +65,40 @@ impl TransportProvider {
         Ok((bundle, certificate))
     }
 
-    /// Creates and stores a new credential
-    async fn create_and_store(
+    /// Store the credentials to files.
+    async fn store_credentials(
         &self,
-        client: &ApiClient<'_>,
-        certificate_file: &Path,
-        private_key_file: &Path,
-    ) -> Result<ClientAuth, PairingError> {
-        let (bundle, certificate) = self.create_certificate(client).await?;
-
+        private_key_file: &PrivateKeyFile,
+        private_key: &PrivatePkcs8KeyDer<'_>,
+        certificate_file: &CertificateFile,
+        certificate: &str,
+    ) {
         // Don't fail here since the SDK can always regenerate the certificate,
         if let Err(err) = fs::write(&certificate_file, &certificate).await {
-            error!(
-                "couldn't write certificate file {}, {err}",
-                certificate_file.display()
-            );
+            error!("couldn't write certificate file {certificate_file}, {err}",);
         }
-        if let Err(err) = fs::write(&private_key_file, &bundle.private_key.secret_pkcs8_der()).await
-        {
-            error!(
-                "couldn't write private key file {}, {err}",
-                private_key_file.display()
-            );
+        if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
+            error!("couldn't write private key file {private_key_file}, {err}",);
         }
-
-        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-            .map_err(PairingError::InvalidCredentials)
     }
 
-    /// Creates a new credential and if a store directory is set, it stores it
-    async fn create_credentials(&self, client: &ApiClient<'_>) -> Result<ClientAuth, PairingError> {
-        debug!("creating new transport credentials");
-
-        // If no store dir is set we just create a new certificate
+    /// Read credentials from the filesystem.
+    async fn read_credentials(&self) -> Option<ClientAuth> {
         let Some(store_dir) = &self.store_dir else {
-            let (bundle, certificate) = self.create_certificate(client).await?;
+            debug!("no store directory");
 
-            return ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-                .map_err(PairingError::InvalidCredentials);
-        };
-
-        let certificate_file = store_dir.join(CERTIFICATE_FILE);
-        let private_key_file = store_dir.join(PRIVATE_KEY_FILE);
-
-        self.create_and_store(client, &certificate_file, &private_key_file)
-            .await
-    }
-
-    /// Retrieves an already stored certificate or creates a new one
-    async fn retrieve_credentials(
-        &self,
-        client: &ApiClient<'_>,
-    ) -> Result<ClientAuth, PairingError> {
-        debug!("retrieving credentials");
-
-        // If no store dir is set we just create a new certificate
-        let Some(store_dir) = &self.store_dir else {
-            debug!("no store directory, creating new credentials");
-
-            let (bundle, certificate) = self.create_certificate(client).await?;
-
-            return ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-                .map_err(PairingError::InvalidCredentials);
+            return None;
         };
 
         debug!("reading existing credentials from {}", store_dir.display());
 
-        let certificate_file = store_dir.join(CERTIFICATE_FILE);
-        let private_key_file = store_dir.join(PRIVATE_KEY_FILE);
+        let certificate_file = CertificateFile::new(store_dir);
+        let private_key_file = PrivateKeyFile::new(store_dir);
 
-        // Return with the existing certificate
-        if let Some(auth) =
-            ClientAuth::try_read(certificate_file.clone(), private_key_file.clone()).await
-        {
-            debug!("existing certificate found");
-
-            return Ok(auth);
-        }
-
-        self.create_and_store(client, &certificate_file, &private_key_file)
-            .await
+        ClientAuth::try_read(certificate_file, private_key_file).await
     }
 
+    /// Config the TLS for the transport.
     async fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
             client_auth.insecure_tls_config().await?
@@ -159,6 +109,47 @@ impl TransportProvider {
         Ok(Transport::tls_with_config(
             rumqttc::TlsConfiguration::Rustls(Arc::new(config)),
         ))
+    }
+
+    /// Creates a new credential and if a store directory is set, it stores it
+    async fn create_credentials(&self, client: &ApiClient<'_>) -> Result<ClientAuth, PairingError> {
+        debug!("creating new transport credentials");
+
+        let (bundle, certificate) = self.create_certificate(client).await?;
+
+        // If no store dir is set we just create a new certificate
+        if let Some(store_dir) = &self.store_dir {
+            let certificate_file = CertificateFile::new(store_dir);
+            let private_key_file = PrivateKeyFile::new(store_dir);
+
+            self.store_credentials(
+                &private_key_file,
+                &bundle.private_key,
+                &certificate_file,
+                &certificate,
+            )
+            .await
+        }
+
+        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
+            .map_err(PairingError::InvalidCredentials)
+    }
+
+    /// Retrieves an already stored certificate or creates a new one
+    async fn retrieve_credentials(
+        &self,
+        client: &ApiClient<'_>,
+    ) -> Result<ClientAuth, PairingError> {
+        debug!("retrieving credentials");
+
+        // Return with the existing certificate
+        if let Some(auth) = self.read_credentials().await {
+            info!("existing certificate found");
+
+            return Ok(auth);
+        }
+
+        self.create_credentials(client).await
     }
 
     /// Create a new transport with the given credentials
@@ -222,8 +213,8 @@ mod tests {
 
         let _ = provider.transport(&api).await.unwrap();
 
-        let certificate_file = dir.path().join(CERTIFICATE_FILE);
-        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+        let certificate_file = CertificateFile::new(dir.path());
+        let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
         assert_eq!(cert, "certificate");
@@ -268,8 +259,8 @@ mod tests {
 
         let _ = provider.transport(&api).await.unwrap();
 
-        let certificate_file = dir.path().join(CERTIFICATE_FILE);
-        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+        let certificate_file = CertificateFile::new(dir.path());
+        let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
         assert_eq!(cert, "certificate");
@@ -314,8 +305,8 @@ mod tests {
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
-        let certificate_file = dir.path().join(CERTIFICATE_FILE);
-        let private_key_file = dir.path().join(PRIVATE_KEY_FILE);
+        let certificate_file = CertificateFile::new(dir.path());
+        let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
         assert_eq!(cert, "certificate");
