@@ -74,7 +74,7 @@ openssl = { workspace = true, optional = true }
 p384 = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-rumqttc = { workspace = true }
+rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
@@ -84,7 +84,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "mig
 sync_wrapper = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["parking_lot", "macros"] }
-url = { workspace = true }
+url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v5", "v4"] }
 x509-cert = { workspace = true, features = ["builder"] }
 
@@ -96,6 +96,7 @@ astarte-device-sdk-derive = { workspace = true }
 criterion = { workspace = true }
 env_logger = { workspace = true }
 mockall = { workspace = true }
+mockito = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["net"] }
@@ -129,6 +130,7 @@ http = "1.0.0"
 itertools = "0.11.0"
 log = "0.4.17"
 mockall = "0.12.1"
+mockito = "1.4.0"
 once_cell = "1.18.0"
 openssl = "0.10.46"
 p384 = "0.13.0"

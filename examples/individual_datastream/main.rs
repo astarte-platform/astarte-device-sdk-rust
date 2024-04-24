@@ -47,7 +47,7 @@ async fn main() -> Result<(), Error> {
         std::fs::read_to_string("./examples/individual_datastream/configuration.json").unwrap();
     let cfg: Config = serde_json::from_str(&file).unwrap();
 
-    let mut mqtt_config = MqttConfig::new(
+    let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
         &cfg.device_id,
         &cfg.credentials_secret,

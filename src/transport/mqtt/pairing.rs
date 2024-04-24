@@ -20,31 +20,205 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
-use std::sync::Arc;
+use std::{io, path::PathBuf};
 
-use itertools::Itertools;
 use reqwest::{StatusCode, Url};
-use rumqttc::{MqttOptions, NetworkOptions};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use url::ParseError;
 
-use super::{
-    crypto::{Bundle, CryptoError},
-    MqttConfig,
-};
+use super::{config::connection::TransportProvider, crypto::CryptoError};
 
-/// Api response from astarte.
+/// Error returned during pairing.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum PairingError {
+    /// Invalid credential secret.
+    #[error("invalid credentials secret")]
+    InvalidCredentials(#[source] io::Error),
+    /// Couldn't parse the pairing URL.
+    #[error("invalid pairing URL")]
+    InvalidUrl(#[from] ParseError),
+    /// The pairing request failed.
+    #[error("error while sending or receiving request")]
+    Request(#[from] reqwest::Error),
+    /// The API returned an error.
+    #[error("API returned an error code {status}")]
+    Api {
+        /// The status code of the response.
+        status: StatusCode,
+        /// The body of the response.
+        body: String,
+    },
+    /// Failed to generate the CSR.
+    #[error("crypto error")]
+    Crypto(#[from] CryptoError),
+    /// Couldn't configure the TLS store
+    #[error("failed to configure TLS")]
+    Tls(#[from] rustls::Error),
+    /// Couldn't load native certs
+    #[error("couldn't load native certificates")]
+    Native(#[source] io::Error),
+    /// Invalid configuration.
+    #[error("configuration error, {0}")]
+    Config(String),
+    /// Couldn't read the credentials secret from the file
+    #[error("couldn't read credential secret from {path}")]
+    ReadCredential {
+        /// The path where the credential is stored.
+        path: PathBuf,
+        /// The reason why we couldn't read the file.
+        #[source]
+        backtrace: io::Error,
+    },
+    /// Couldn't read the certificate from the file
+    #[error("couldn't read certificate from {path}")]
+    ReadCertificate {
+        /// The path where the certificate is stored.
+        path: PathBuf,
+        /// The reason why we couldn't read the file.
+        #[source]
+        backtrace: io::Error,
+    },
+    /// Couldn't write the credentials secret to the file
+    #[error("couldn't write credential secret to {path}")]
+    WriteCredential {
+        /// The path where the credential is stored.
+        path: std::path::PathBuf,
+        /// The reason why we couldn't write the file.
+        #[source]
+        backtrace: io::Error,
+    },
+    /// Couldn't read native certificates
+    #[error("couldn't read native certificates")]
+    ReadNativeCerts(#[from] tokio::task::JoinError),
+}
+
+/// Struct with the information for the pairing
+pub(crate) struct ApiClient<'a> {
+    pub(crate) realm: &'a str,
+    pub(crate) device_id: &'a str,
+    pairing_url: &'a Url,
+    credentials_secret: &'a str,
+}
+
+impl<'a> ApiClient<'a> {
+    pub(crate) fn from_transport(
+        provider: &'a TransportProvider,
+        realm: &'a str,
+        device_id: &'a str,
+    ) -> Self {
+        Self {
+            realm,
+            device_id,
+            pairing_url: provider.pairing_url(),
+            credentials_secret: provider.credential_secret(),
+        }
+    }
+
+    fn url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
+    where
+        'a: 'i,
+        I: IntoIterator<Item = &'i str>,
+    {
+        let mut url = self.pairing_url.clone();
+
+        {
+            // We have to do this this way to avoid inconsistent behaviour depending
+            // on the user putting the trailing slash or not
+            let mut path = url
+                .path_segments_mut()
+                .map_err(|()| ParseError::RelativeUrlWithCannotBeABaseBase)?;
+
+            let iter = ["v1", self.realm, "devices", self.device_id]
+                .into_iter()
+                .chain(segments);
+
+            path.extend(iter);
+        }
+
+        Ok(url)
+    }
+
+    pub async fn create_certificate(&self, csr: &str) -> Result<String, PairingError> {
+        let url = self.url(["protocols", "astarte_mqtt_v1", "credentials"])?;
+
+        let payload = ApiData::new(MqttV1Csr { csr });
+
+        let client = reqwest::Client::new();
+        let response = client
+            .post(url)
+            .bearer_auth(self.credentials_secret)
+            .json(&payload)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::CREATED => {
+                let res: ApiData<MqttV1Certificate> = response.json().await?;
+
+                Ok(res.data.client_crt)
+            }
+            status_code => {
+                let raw_response = response.text().await?;
+
+                Err(PairingError::Api {
+                    status: status_code,
+                    body: raw_response,
+                })
+            }
+        }
+    }
+
+    pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
+        let url = self.url([])?;
+
+        let client = reqwest::Client::new();
+        let response = client
+            .get(url)
+            .bearer_auth(self.credentials_secret)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let res: ApiData<StatusInfo> = response.json().await?;
+
+                Ok(res.data.protocols.astarte_mqtt_v1.broker_url)
+            }
+            status_code => {
+                let raw_response = response.text().await?;
+
+                Err(PairingError::Api {
+                    status: status_code,
+                    body: raw_response,
+                })
+            }
+        }
+    }
+}
+
+/// Api request or response for the Astarte API
 #[derive(Debug, Serialize, Deserialize)]
-struct ApiResponse<C> {
-    data: C,
+pub(crate) struct ApiData<C> {
+    pub(crate) data: C,
+}
+
+impl<C> ApiData<C> {
+    pub(crate) fn new(data: C) -> Self {
+        Self { data }
+    }
+}
+
+/// CSR request for the MQTT certificate
+#[derive(Debug, Serialize)]
+struct MqttV1Csr<'a> {
+    csr: &'a str,
 }
 
 /// Response to the pairing request.
 #[derive(Debug, Serialize, Deserialize)]
-struct MqttV1Credentials {
-    client_crt: String,
+struct MqttV1Certificate<S = String> {
+    client_crt: S,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,275 +235,139 @@ struct ProtocolsInfo {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct AstarteMqttV1Info {
-    broker_url: String,
+    broker_url: Url,
 }
 
-/// Error returned during pairing.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum PairingError {
-    /// Invalid credential secret.
-    #[error("invalid credentials secret")]
-    InvalidCredentials(#[source] std::io::Error),
-    /// Couldn't parse the pairing URL.
-    #[error("invalid pairing URL")]
-    InvalidUrl(#[from] ParseError),
-    /// The pairing request failed.
-    #[error("error while sending or receiving request")]
-    Request(#[from] reqwest::Error),
-    /// The API returned an error.
-    #[error("API returned an error code {status}")]
-    Api {
-        /// The status code of the response.
-        status: StatusCode,
-        /// The body of the response.
-        body: String,
-    },
-    /// Failed to generate the CSR.
-    #[error("couldn't generate the CSR")]
-    Crypto(#[from] CryptoError),
-    /// Couldn't configure the TLS store.
-    #[error("failed to configure TLS")]
-    Tls(#[from] rustls::Error),
-    /// Couldn't load native certs.
-    #[error("couldn't load native certificates")]
-    Native(#[source] std::io::Error),
-    /// Invalid configuration.
-    #[error("configuration error, {0}")]
-    Config(String),
-}
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
 
-async fn fetch_credentials(opts: &MqttConfig, csr: &str) -> Result<String, PairingError> {
-    let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid inconsistent behaviour depending
-    // on the user putting the trailing slash or not
-    url.path_segments_mut()
-        .map_err(|()| ParseError::RelativeUrlWithCannotBeABaseBase)?
-        .push("v1")
-        .push(&opts.realm)
-        .push("devices")
-        .push(&opts.device_id)
-        .push("protocols")
-        .push("astarte_mqtt_v1")
-        .push("credentials");
+    use mockito::Server;
 
-    let payload = json!({
-        "data": {
-            "csr": csr,
-        }
-    });
-
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
-        .bearer_auth(&opts.credentials_secret)
-        .json(&payload)
-        .send()
-        .await?;
-
-    match response.status() {
-        StatusCode::CREATED => {
-            let res: ApiResponse<MqttV1Credentials> = response.json().await?;
-
-            Ok(res.data.client_crt)
-        }
-        status_code => {
-            let raw_response = response.text().await?;
-
-            Err(PairingError::Api {
-                status: status_code,
-                body: raw_response,
-            })
-        }
-    }
-}
-
-async fn fetch_broker_url(opts: &MqttConfig) -> Result<String, PairingError> {
-    let mut url = Url::parse(&opts.pairing_url)?;
-    // We have to do this this way to avoid inconsistent behaviour depending
-    // on the user putting the trailing slash or not
-    url.path_segments_mut()
-        .map_err(|_| ParseError::RelativeUrlWithCannotBeABaseBase)?
-        .push("v1")
-        .push(&opts.realm)
-        .push("devices")
-        .push(&opts.device_id);
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(url)
-        .bearer_auth(&opts.credentials_secret)
-        .send()
-        .await?;
-
-    match response.status() {
-        StatusCode::OK => {
-            let res: ApiResponse<StatusInfo> = response.json().await?;
-
-            Ok(res.data.protocols.astarte_mqtt_v1.broker_url)
-        }
-        status_code => {
-            let raw_response = response.text().await?;
-
-            Err(PairingError::Api {
-                status: status_code,
-                body: raw_response,
-            })
-        }
-    }
-}
-
-async fn populate_credentials(
-    opts: &MqttConfig,
-) -> Result<(Vec<CertificateDer<'static>>, PrivatePkcs8KeyDer<'static>), PairingError> {
-    let Bundle { private_key, csr } = Bundle::new(&opts.realm, &opts.device_id)?;
-
-    let certificate = fetch_credentials(opts, &csr).await?;
-    let certs = rustls_pemfile::certs(&mut certificate.as_bytes())
-        .try_collect()
-        .map_err(PairingError::InvalidCredentials)?;
-
-    Ok((certs, private_key))
-}
-
-async fn populate_broker_url(opts: &MqttConfig) -> Result<Url, PairingError> {
-    let broker_url = fetch_broker_url(opts).await?;
-    let parsed_broker_url = Url::parse(&broker_url)?;
-    Ok(parsed_broker_url)
-}
-
-fn build_mqtt_opts(
-    opts: &MqttConfig,
-    certificate: Vec<CertificateDer<'static>>,
-    private_key: PrivatePkcs8KeyDer<'static>,
-    broker_url: &Url,
-) -> Result<(MqttOptions, NetworkOptions), PairingError> {
-    let MqttConfig {
-        realm, device_id, ..
-    } = opts;
-
-    let client_id = format!("{realm}/{device_id}");
-    let host = broker_url
-        .host_str()
-        .ok_or_else(|| PairingError::Config("missing host in url".to_string()))?;
-    let port = broker_url
-        .port()
-        .ok_or_else(|| PairingError::Config("missing port in url".to_string()))?;
-
-    let mut mqtt_opts = MqttOptions::new(client_id, host, port);
-
-    let keep_alive = opts.keepalive.as_secs();
-    let conn_timeout = opts.conn_timeout.as_secs();
-    if keep_alive <= conn_timeout {
-        return Err(PairingError::Config(
-            format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
-        ));
+    pub(crate) fn mock_get_broker_url(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "GET",
+                "/v1/realm/devices/device_id",
+            )
+            .with_status(200)
+            .with_body(
+                r#"{"data":{"protocols":{"astarte_mqtt_v1":{"__unknown_fields__":[],"broker_url":"mqtts://broker.astarte.localhost:8883/"}},"status":"pending","version":"1.1.1"}}"#,
+            )
+            .match_header("authorization", "Bearer secret")
     }
 
-    let mut net_opts = NetworkOptions::new();
-    net_opts.set_connection_timeout(conn_timeout);
-
-    mqtt_opts.set_keep_alive(opts.keepalive);
-
-    if opts.ignore_ssl_errors || is_env_ignore_ssl() {
-        #[derive(Debug)]
-        struct NoVerifier;
-
-        impl rustls::client::danger::ServerCertVerifier for NoVerifier {
-            fn verify_server_cert(
-                &self,
-                _end_entity: &rustls::pki_types::CertificateDer<'_>,
-                _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-                _server_name: &rustls::pki_types::ServerName<'_>,
-                _ocsp_response: &[u8],
-                _now: rustls::pki_types::UnixTime,
-            ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-                Ok(rustls::client::danger::ServerCertVerified::assertion())
-            }
-
-            fn verify_tls12_signature(
-                &self,
-                _message: &[u8],
-                _cert: &rustls::pki_types::CertificateDer<'_>,
-                _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
-            {
-                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-            }
-
-            fn verify_tls13_signature(
-                &self,
-                _message: &[u8],
-                _cert: &rustls::pki_types::CertificateDer<'_>,
-                _dss: &rustls::DigitallySignedStruct,
-            ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
-            {
-                Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-            }
-
-            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-                vec![
-                    rustls::SignatureScheme::RSA_PKCS1_SHA1,
-                    rustls::SignatureScheme::ECDSA_SHA1_Legacy,
-                    rustls::SignatureScheme::RSA_PKCS1_SHA256,
-                    rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-                    rustls::SignatureScheme::RSA_PKCS1_SHA384,
-                    rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-                    rustls::SignatureScheme::RSA_PKCS1_SHA512,
-                    rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-                    rustls::SignatureScheme::RSA_PSS_SHA256,
-                    rustls::SignatureScheme::RSA_PSS_SHA384,
-                    rustls::SignatureScheme::RSA_PSS_SHA512,
-                    rustls::SignatureScheme::ED25519,
-                    rustls::SignatureScheme::ED448,
-                ]
-            }
-        }
-
-        let clientconfig = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
-            .with_client_auth_cert(certificate, private_key.into())
-            .map_err(PairingError::Tls)?;
-
-        let tls_config = rumqttc::TlsConfiguration::Rustls(Arc::new(clientconfig));
-        let transport = rumqttc::Transport::tls_with_config(tls_config);
-
-        mqtt_opts.set_transport(transport);
-    } else {
-        let mut root_cert_store = rustls::RootCertStore::empty();
-        let native_certs =
-            rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
-        for cert in native_certs {
-            root_cert_store.add(cert)?;
-        }
-
-        let tls_client_config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_cert_store)
-            .with_client_auth_cert(certificate, private_key.into())?;
-
-        mqtt_opts.set_transport(rumqttc::Transport::tls_with_config(
-            tls_client_config.into(),
-        ));
+    pub(crate) fn mock_create_certificate(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials",
+            )
+            .with_status(201)
+            .with_body(r#"{"data":{"client_crt":"certificate"}}"#)
+            .match_header("authorization", "Bearer secret")
     }
 
-    Ok((mqtt_opts, net_opts))
-}
+    #[tokio::test]
+    async fn should_create_certificate() {
+        let mut server = Server::new_async().await;
 
-fn is_env_ignore_ssl() -> bool {
-    matches!(
-        std::env::var("IGNORE_SSL_ERRORS").as_deref(),
-        Ok("1" | "true")
-    )
-}
+        let mock = mock_create_certificate(&mut server)
+            .match_body(r#"{"data":{"csr":"csr"}}"#)
+            .create_async()
+            .await;
 
-/// Returns a MqttOptions struct that can be used to connect to the broker.
-pub(crate) async fn get_transport_config(
-    opts: &MqttConfig,
-) -> Result<(MqttOptions, NetworkOptions), PairingError> {
-    let (certificate, private_key) = populate_credentials(opts).await?;
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
 
-    let broker_url = populate_broker_url(opts).await?;
+        let res = client.create_certificate("csr").await.unwrap();
 
-    build_mqtt_opts(opts, certificate, private_key, &broker_url)
+        assert_eq!(res, "certificate");
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_error_not_create_certificate() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials",
+            )
+            .with_status(202)
+            .with_body(r#"{"error":"error"}"#)
+            .match_header("authorization", "Bearer secret")
+            .match_body(r#"{"data":{"csr":"csr"}}"#)
+            .create_async()
+            .await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client
+            .create_certificate("csr")
+            .await
+            .expect_err("error expected");
+
+        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 202));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_get_broker_url() {
+        let mut server = Server::new_async().await;
+
+        let mock = mock_get_broker_url(&mut server).create_async().await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client.get_broker_url().await.unwrap();
+
+        let expected = Url::parse("mqtts://broker.astarte.localhost:8883/").unwrap();
+
+        assert_eq!(res, expected);
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn forbidden_get_broker_url() {
+        let mut server = Server::new_async().await;
+
+        let mock = server
+            .mock("GET", "/v1/realm/devices/device_id")
+            .with_status(401)
+            .match_header("authorization", "Bearer secret")
+            .create_async()
+            .await;
+
+        let client = ApiClient {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret",
+        };
+
+        let res = client.get_broker_url().await.expect_err("should error");
+
+        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 401));
+
+        mock.assert_async().await;
+    }
 }

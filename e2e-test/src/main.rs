@@ -32,8 +32,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use astarte_device_sdk::transport::mqtt::Credential;
 use astarte_device_sdk::{Interface, Value};
-use eyre::{eyre, OptionExt, WrapErr};
+use eyre::{bail, eyre, OptionExt, WrapErr};
 use itertools::Itertools;
 use log::{debug, error, info};
 use reqwest::StatusCode;
@@ -43,8 +44,7 @@ use tokio::task::JoinSet;
 use tokio::time;
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
-    types::AstarteType,
+    builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig, types::AstarteType,
 };
 
 mod mock_data_aggregate;
@@ -62,9 +62,11 @@ const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 struct TestCfg {
     realm: String,
     device_id: String,
-    credentials_secret: String,
+    credentials_secret: Option<String>,
+    pairing_token: Option<String>,
     api_url: String,
     pairing_url: String,
+    store_directory: String,
     interfaces_fld: PathBuf,
     interface_datastream_so: String,
     interface_datastream_do: String,
@@ -83,9 +85,11 @@ impl TestCfg {
     pub fn init() -> eyre::Result<Self> {
         let realm = read_env("E2E_REALM")?;
         let device_id = read_env("E2E_DEVICE_ID")?;
-        let credentials_secret = read_env("E2E_CREDENTIALS_SECRET")?;
+        let credentials_secret = read_env("E2E_CREDENTIALS_SECRET").ok();
+        let pairing_token = read_env("E2E_PAIRING_TOKEN").ok();
         let api_url = read_env("E2E_API_URL")?;
         let pairing_url = read_env("E2E_PAIRING_URL")?;
+        let store_directory = read_env("E2E_STORE_DIR")?;
 
         let interfaces_fld = Path::new(INTERFACE_DIR).to_owned();
 
@@ -106,8 +110,10 @@ impl TestCfg {
             realm,
             device_id,
             credentials_secret,
+            pairing_token,
             api_url,
             pairing_url,
+            store_directory,
             interfaces_fld,
             interface_datastream_so,
             interface_datastream_do,
@@ -127,10 +133,18 @@ async fn main() -> eyre::Result<()> {
 
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 
+    let cred = if let Some(pairing) = &test_cfg.pairing_token {
+        Credential::paring_token(pairing)
+    } else if let Some(secret) = &test_cfg.credentials_secret {
+        Credential::secret(secret)
+    } else {
+        bail!("missing credential secret or pairing token");
+    };
+
     let mut mqtt_config = MqttConfig::new(
         &test_cfg.realm,
         &test_cfg.device_id,
-        &test_cfg.credentials_secret,
+        cred,
         &test_cfg.pairing_url,
     );
 
@@ -140,7 +154,8 @@ async fn main() -> eyre::Result<()> {
     }
 
     let (client, mut connection) = DeviceBuilder::new()
-        .store(MemoryStore::new())
+        .store_dir(&test_cfg.store_directory)
+        .await?
         .interface_directory(&test_cfg.interfaces_fld)?
         .connect(mqtt_config)
         .await?

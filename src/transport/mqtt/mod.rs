@@ -24,6 +24,8 @@
 //! It defines the `Mqtt` struct, which represents an MQTT connection, along with traits for publishing,
 //! receiving, and registering interfaces.
 
+pub(crate) mod client;
+mod config;
 pub mod crypto;
 pub mod error;
 pub(crate) mod pairing;
@@ -33,7 +35,6 @@ pub mod registration;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -41,15 +42,10 @@ use bytes::Bytes;
 use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use once_cell::sync::OnceCell;
-use rumqttc::{Event as MqttEvent, Packet, SubscribeFilter};
-use serde::{Deserialize, Serialize};
+use rumqttc::{ConnectionError, Event as MqttEvent, Packet, SubscribeFilter, Transport};
 use sync_wrapper::SyncWrapper;
 
-#[cfg(test)]
-pub(crate) use crate::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
-
 use crate::{
-    builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -60,21 +56,24 @@ use crate::{
     retry::DelayedPoll,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
     topic::ParsedTopic,
+    transport::mqtt::pairing::ApiClient,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
 
-#[cfg(not(test))]
-pub(crate) use rumqttc::{AsyncClient, EventLoop};
-
 use super::{Publish, Receive, ReceivedEvent, Register};
 
-use self::error::MqttError;
+pub use self::config::Credential;
+pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 
-use payload::Payload;
+use self::{
+    client::{AsyncClient, EventLoop},
+    payload::Payload,
+};
+use self::{config::connection::TransportProvider, error::MqttError};
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
@@ -109,6 +108,7 @@ pub struct Mqtt {
     //       is stabilized or the EventLoop becomes Sync
     //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
     eventloop: SyncWrapper<EventLoop>,
+    provider: TransportProvider,
 }
 
 impl Mqtt {
@@ -117,12 +117,19 @@ impl Mqtt {
     /// This method should only be used for testing purposes since it does not fully
     /// connect to the mqtt broker as described by the astarte protocol.
     /// This struct should be constructed with the [`Mqtt::connected`] associated function.
-    fn new(realm: String, device_id: String, eventloop: EventLoop, client: AsyncClient) -> Self {
+    fn new(
+        realm: String,
+        device_id: String,
+        client: AsyncClient,
+        eventloop: EventLoop,
+        provider: TransportProvider,
+    ) -> Self {
         Self {
             realm,
             device_id,
             client,
             eventloop: SyncWrapper::new(eventloop),
+            provider,
         }
     }
 
@@ -272,8 +279,19 @@ impl Mqtt {
     async fn poll_mqtt_event(&mut self) -> Result<MqttEvent, Error> {
         match self.eventloop.get_mut().poll().await {
             Ok(event) => Ok(event),
+            Err(ConnectionError::Tls(err)) => {
+                error!("couldn't poll the event loop, tls error: {err}");
+
+                self.reconnect().await?;
+
+                self.eventloop.get_mut().poll().await.map_err(|err| {
+                    error!("poll fatal error {err}");
+
+                    Error::Disconnected
+                })
+            }
             Err(err) => {
-                error!("couldn't poll the event loop: {err:#?}");
+                error!("couldn't poll the event loop: {err}");
 
                 DelayedPoll::retry_poll_event(self.eventloop.get_mut()).await
             }
@@ -291,6 +309,28 @@ impl Mqtt {
                 MqttEvent::Outgoing(outgoing) => trace!("MQTT Outgoing = {:?}", outgoing),
             }
         }
+    }
+
+    /// Recreate the MQTT transport (TLS) to the broker.
+    ///
+    /// It recreate the credentials and reconnect to the broker, using the same
+    /// session. If it fails, it returns an error so that the whole connection process can
+    /// be retried.
+    async fn reconnect(&mut self) -> Result<(), Error> {
+        let api = ApiClient::from_transport(&self.provider, &self.realm, &self.device_id);
+
+        let transport = self
+            .provider
+            .recreate_transport(&api)
+            .await
+            .map_err(MqttError::Pairing)?;
+
+        debug!("created a new transport, reconnecting");
+
+        self.set_transport(transport);
+        self.eventloop.get_mut().clean();
+
+        Ok(())
     }
 
     /// Send a binary payload over this mqtt connection.
@@ -368,6 +408,17 @@ impl Mqtt {
             .await
             .map_err(|error| MqttError::publish("introspection", error))
     }
+
+    #[cfg(not(test))]
+    pub(crate) fn set_transport(&mut self, transport: Transport) {
+        self.eventloop
+            .get_mut()
+            .mqtt_options
+            .set_transport(transport);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_transport(&mut self, _transport: Transport) {}
 }
 
 #[async_trait]
@@ -600,153 +651,39 @@ impl SessionData {
     }
 }
 
-/// Configuration for the MQTT connection.
-#[derive(Serialize, Deserialize)]
-pub struct MqttConfig {
-    pub(crate) realm: String,
-    pub(crate) device_id: String,
-    pub(crate) credentials_secret: String,
-    pub(crate) pairing_url: String,
-    pub(crate) ignore_ssl_errors: bool,
-    pub(crate) keepalive: Duration,
-    pub(crate) conn_timeout: Duration,
-    pub(crate) bounded_channel_size: usize,
-}
-
-impl MqttConfig {
-    /// Create a new instance of MqttConfig
-    ///
-    /// As a default this configuration:
-    ///    - does not ignore SSL errors.
-    ///    - has a keepalive of 30 seconds
-    ///    - has a default bounded channel size of [`crate::builder::DEFAULT_CHANNEL_SIZE`]
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::transport::mqtt::MqttConfig;
-    ///
-    /// #[tokio::main]
-    /// async fn main(){
-    ///     let realm = "realm_name";
-    ///     let device_id = "device_id";
-    ///     let credentials_secret = "device_credentials_secret";
-    ///     let pairing_url = "astarte_cluster_pairing_url";
-    ///
-    ///     let mut mqtt_options =
-    ///         MqttConfig::new(realm, device_id, credentials_secret, pairing_url);
-    /// }
-    /// ```
-    pub fn new(
-        realm: impl Into<String>,
-        device_id: impl Into<String>,
-        credentials_secret: impl Into<String>,
-        pairing_url: impl Into<String>,
-    ) -> Self {
-        Self {
-            realm: realm.into(),
-            device_id: device_id.into(),
-            credentials_secret: credentials_secret.into(),
-            pairing_url: pairing_url.into(),
-            ignore_ssl_errors: false,
-            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
-            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
-            bounded_channel_size: DEFAULT_CHANNEL_SIZE,
-        }
-    }
-
-    /// Configure the keep alive timeout.
-    ///
-    /// The MQTT broker will be pinged when no data exchange has append
-    /// for the duration of the keep alive timeout.
-    pub fn keepalive(&mut self, duration: Duration) -> &mut Self {
-        self.keepalive = duration;
-
-        self
-    }
-
-    /// Ignore TLS/SSL certificate errors.
-    pub fn ignore_ssl_errors(&mut self) -> &mut Self {
-        self.ignore_ssl_errors = true;
-
-        self
-    }
-
-    /// Sets the MQTT connection timeout.
-    pub fn connection_timeout(&mut self, conn_timeout: Duration) -> &mut Self {
-        self.conn_timeout = conn_timeout;
-
-        self
-    }
-
-    /// Sets the size for the underlying bounded channel used by the eventloop of [`rumqttc`].
-    pub fn bounded_channel_size(&mut self, bounded_channel_size: usize) -> &mut Self {
-        self.bounded_channel_size = bounded_channel_size;
-
-        self
-    }
-}
-
-impl Debug for MqttConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MqttOptions")
-            .field("realm", &self.realm)
-            .field("device_id", &self.device_id)
-            .field("credentials_secret", &"REDACTED")
-            .field("pairing_url", &self.pairing_url)
-            .field("ignore_ssl_errors", &self.ignore_ssl_errors)
-            .field("keepalive", &self.keepalive)
-            .finish_non_exhaustive()
-    }
-}
-
-#[async_trait]
-impl ConnectionConfig for MqttConfig {
-    type Con = Mqtt;
-    type Err = Error;
-
-    async fn connect<S, C>(self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
-    where
-        S: PropertyStore,
-        C: Send + Sync,
-    {
-        let (mqtt_opts, net_opts) = pairing::get_transport_config(&self)
-            .await
-            .map_err(MqttError::Pairing)?;
-
-        debug!("{:?}", mqtt_opts);
-
-        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, self.bounded_channel_size);
-
-        eventloop.set_network_options(net_opts);
-
-        let session_data = SessionData::try_from_props(&builder.interfaces, &builder.store).await?;
-        let mut connection = Mqtt::new(self.realm, self.device_id, eventloop, client);
-        // to correctly initialize the connection to astarte we should wait for the connack
-        connection.wait_for_connack(session_data).await?;
-
-        Ok(connection)
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod test {
-    use std::{str::FromStr, time::Duration};
+    use std::str::FromStr;
 
-    use itertools::Itertools;
     use mockall::predicate;
-    use rumqttc::{ClientError, Packet, SubscribeFilter};
-
-    use crate::{
-        interfaces::{Interfaces, Introspection},
-        store::{memory::MemoryStore, wrapper::StoreWrapper, PropertyStore, StoredProp},
-        transport::Register,
-        types::AstarteType,
-        Interface,
+    use mockito::Server;
+    use rumqttc::{ClientError, ConnAck, ConnectReturnCode, QoS};
+    use tempfile::TempDir;
+    use test::{
+        client::NEW_LOCK,
+        pairing::tests::{mock_create_certificate, mock_get_broker_url},
     };
 
-    use super::{AsyncClient, EventLoop, Mqtt, MqttConfig, MqttEvent, SessionData};
+    use crate::{
+        builder::{ConnectionConfig, DeviceBuilder},
+        store::memory::MemoryStore,
+    };
 
-    pub(crate) fn mock_mqtt_connection(client: AsyncClient, eventl: EventLoop) -> Mqtt {
-        Mqtt::new("realm".to_string(), "device_id".to_string(), eventl, client)
+    use super::*;
+
+    pub(crate) fn mock_mqtt_connection(client: AsyncClient, eventloop: EventLoop) -> Mqtt {
+        Mqtt::new(
+            "realm".to_string(),
+            "device_id".to_string(),
+            client,
+            eventloop,
+            TransportProvider::new(
+                "http://api.astarte.localhost/pairing".parse().unwrap(),
+                "secret".to_string(),
+                None,
+                true,
+            ),
+        )
     }
 
     #[tokio::test]
@@ -871,44 +808,6 @@ pub(crate) mod test {
             )
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn test_default_mqtt_config() {
-        let mqtt_config = MqttConfig::new("test", "test", "test", "test");
-
-        assert_eq!(mqtt_config.realm, "test");
-        assert_eq!(mqtt_config.device_id, "test");
-        assert_eq!(mqtt_config.credentials_secret, "test");
-        assert_eq!(mqtt_config.pairing_url, "test");
-        assert_eq!(mqtt_config.keepalive, Duration::from_secs(30));
-        assert!(!mqtt_config.ignore_ssl_errors);
-    }
-
-    #[test]
-    fn test_override_mqtt_config() {
-        let mut mqtt_config = MqttConfig::new("test", "test", "test", "test");
-
-        mqtt_config
-            .ignore_ssl_errors()
-            .keepalive(Duration::from_secs(60));
-
-        assert_eq!(mqtt_config.realm, "test");
-        assert_eq!(mqtt_config.device_id, "test");
-        assert_eq!(mqtt_config.credentials_secret, "test");
-        assert_eq!(mqtt_config.pairing_url, "test");
-        assert_eq!(mqtt_config.keepalive, Duration::from_secs(60));
-        assert!(mqtt_config.ignore_ssl_errors);
-    }
-
-    #[test]
-    fn test_redacted_credentials_secret() {
-        let mqtt_config = MqttConfig::new("test", "test", "secret=", "test");
-
-        let debug_string = format!("{:?}", mqtt_config);
-
-        assert!(!debug_string.contains("secret="));
-        assert!(debug_string.contains("REDACTED"));
     }
 
     #[tokio::test]
@@ -1049,5 +948,109 @@ pub(crate) mod test {
             .extend_interfaces(&interfaces, &to_add)
             .await
             .expect_err("Didn't return the error");
+    }
+
+    #[tokio::test]
+    async fn should_reconnect() {
+        let _m = NEW_LOCK.lock().await;
+
+        let dir = TempDir::new().unwrap();
+
+        let ctx = AsyncClient::new_context();
+        ctx.expect().once().returning(|_, _| {
+            let mut client = AsyncClient::default();
+            let mut ev_loop = EventLoop::default();
+
+            let mut seq = mockall::Sequence::new();
+
+            ev_loop
+                .expect_set_network_options()
+                .returning(|_| EventLoop::default())
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_poll()
+                .returning(|| {
+                    Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
+                        rustls::Error::AlertReceived(rustls::AlertDescription::CertificateExpired),
+                    )))
+                })
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_clean()
+                .return_const(())
+                .once()
+                .in_sequence(&mut seq);
+
+            ev_loop
+                .expect_poll()
+                .returning(|| {
+                    Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
+                        session_present: false,
+                        code: ConnectReturnCode::Success,
+                    })))
+                })
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_subscribe::<String>()
+                .withf(|topic, qos| {
+                    topic == "realm/device_id/control/consumer/properties"
+                        && *qos == QoS::ExactlyOnce
+                })
+                .returning(|_, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_publish::<String, String>()
+                .withf(|topic, qos, _, introspection| {
+                    topic == "realm/device_id"
+                        && *qos == QoS::ExactlyOnce
+                        && introspection.is_empty()
+                })
+                .returning(|_, _, _, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            client
+                .expect_publish::<String, &str>()
+                .withf(|topic, qos, _, payload| {
+                    topic == "realm/device_id/control/emptyCache"
+                        && *qos == QoS::ExactlyOnce
+                        && *payload == "1"
+                })
+                .returning(|_, _, _, _| Ok(()))
+                .once()
+                .in_sequence(&mut seq);
+
+            (client, ev_loop)
+        });
+
+        let mut server = Server::new_async().await;
+
+        let mock_url = mock_get_broker_url(&mut server).create_async().await;
+        let mock_cert = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
+
+        let config = MqttConfig::new(
+            "realm",
+            "device_id",
+            Credential::secret("secret"),
+            server.url(),
+        );
+
+        config.connect(&builder).await.unwrap();
+
+        mock_url.assert_async().await;
+        mock_cert.assert_async().await;
     }
 }

@@ -22,10 +22,21 @@
 use base64::Engine;
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::transport::mqtt::PairingError;
+
+use super::pairing::ApiData;
+
+#[derive(Debug, Serialize)]
+struct MqttV1HwId<'a> {
+    hw_id: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct MqttV1Credential {
+    credentials_secret: String,
+}
 
 /// Obtain a credentials secret from the astarte API
 pub async fn register_device(
@@ -34,15 +45,6 @@ pub async fn register_device(
     realm: &str,
     device_id: &str,
 ) -> Result<String, PairingError> {
-    #[derive(Serialize, Deserialize, Debug)]
-    struct RegisterApiResponse {
-        data: RegisterData,
-    }
-    #[derive(Serialize, Deserialize, Debug)]
-    struct RegisterData {
-        credentials_secret: String,
-    }
-
     let mut url = Url::parse(pairing_url)?;
 
     url.path_segments_mut()
@@ -52,11 +54,7 @@ pub async fn register_device(
         .push("agent")
         .push("devices");
 
-    let payload = json!({
-        "data": {
-            "hw_id": device_id,
-        }
-    });
+    let payload = ApiData::new(MqttV1HwId { hw_id: device_id });
 
     let client = reqwest::Client::new();
     let response = client
@@ -68,10 +66,9 @@ pub async fn register_device(
 
     match response.status() {
         StatusCode::CREATED => {
-            let RegisterData { credentials_secret } =
-                response.json::<RegisterApiResponse>().await?.data;
+            let res: ApiData<MqttV1Credential> = response.json().await?;
 
-            Ok(credentials_secret)
+            Ok(res.data.credentials_secret)
         }
         status_code => {
             let raw_response = response.text().await?;
