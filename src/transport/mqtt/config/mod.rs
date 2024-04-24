@@ -550,9 +550,9 @@ mod tests {
     #[test]
     fn check_key_and_cert_file() {
         let key = PrivateKeyFile::new("/foo");
-        assert_eq!(key.path().to_str().unwrap(), "/foo/priv-key.der");
+        assert_eq!(key.path(), Path::new("/foo/priv-key.der"));
 
         let cert = CertificateFile::new("/foo");
-        assert_eq!(cert.path().to_str().unwrap(), "/foo/certificate.pem");
+        assert_eq!(cert.path(), Path::new("/foo/certificate.pem"));
     }
 }
