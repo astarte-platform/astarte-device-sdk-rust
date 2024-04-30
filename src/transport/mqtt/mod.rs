@@ -560,7 +560,7 @@ impl Register for Mqtt {
         interfaces: &Interfaces,
         removed: &Interface,
     ) -> Result<(), Error> {
-        let iter = interfaces.iter_with_removed(removed);
+        let iter = interfaces.iter_without_removed(removed);
         let introspection = Introspection::new(iter).to_string();
 
         self.send_introspection(introspection).await?;
