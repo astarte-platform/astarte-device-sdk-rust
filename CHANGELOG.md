@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Fixed
+- Correct the interfaces iterator logic to send the correct device
+  introspection [#334](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/334)
+
 ## [0.8.0] - 2024-04-29
 ### Added
 - Introduce Node ID into gRPC metadata.

@@ -193,10 +193,8 @@ impl Interfaces {
         &'a self,
         added: &'a Validated,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
-        self.interfaces
-            .values()
-            .filter(|i| i.interface_name() == added.interface_name())
-            .chain(std::iter::once(&added.0))
+        // The validated is an interfaces that is not present
+        self.interfaces.values().chain(std::iter::once(&added.0))
     }
 
     /// Iterator over the resulting added interfaces
@@ -204,14 +202,12 @@ impl Interfaces {
         &'a self,
         added: &'a ValidatedCollection,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
-        self.interfaces
-            .values()
-            .filter(|i| !added.contains_key(i.interface_name()))
-            .chain(added.values())
+        // The validated collection contains only interfaces that are not already present
+        self.interfaces.values().chain(added.values())
     }
 
-    /// Iter with removed interface
-    pub(crate) fn iter_with_removed<'a>(
+    /// Iter without removed interface
+    pub(crate) fn iter_without_removed<'a>(
         &'a self,
         removed: &'a Interface,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
@@ -543,5 +539,69 @@ pub(crate) mod tests {
         ];
 
         assert_eq!(expected.as_slice(), interfaces);
+    }
+
+    #[test]
+    fn should_iter_with_added() {
+        let itfs = [
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+            ))
+            .unwrap(),
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
+            ))
+            .unwrap(),
+        ];
+
+        let interfaces = Interfaces::from_iter(itfs);
+
+        let i = Interface::from_str(include_str!(
+            "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
+        ))
+        .unwrap();
+
+        let v = interfaces.validate(i).unwrap().unwrap();
+
+        let mut res = interfaces
+            .iter_with_added(&v)
+            .map(|i| i.interface_name())
+            .collect_vec();
+
+        res.sort_unstable();
+
+        let ex = [
+            "org.astarte-platform.rust.e2etest.DeviceAggregate",
+            "org.astarte-platform.rust.e2etest.DeviceProperty",
+            "org.astarte-platform.rust.e2etest.ServerProperty",
+        ];
+        assert_eq!(res, ex)
+    }
+
+    #[test]
+    fn should_iter_without_removed() {
+        let r = Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
+            ))
+            .unwrap();
+        let itfs = [
+            r.clone(),
+            Interface::from_str(include_str!(
+                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
+            ))
+            .unwrap()
+        ];
+
+        let interfaces = Interfaces::from_iter(itfs);
+
+        let mut res = interfaces
+            .iter_without_removed(&r)
+            .map(|i| i.interface_name())
+            .collect_vec();
+
+        res.sort_unstable();
+
+        let ex = ["org.astarte-platform.rust.e2etest.ServerProperty"];
+        assert_eq!(res, ex)
     }
 }
