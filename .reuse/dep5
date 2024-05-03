@@ -54,10 +54,6 @@ Files: Cargo.lock
 Copyright: 2023 SECO Mind Srl
 License: CC0-1.0
 
-Files: CHANGELOG.md
-Copyright: 2023 SECO Mind Srl
-License: CC0-1.0
-
-Files: astarte-device-sdk-derive/CHANGELOG.md
-Copyright: 2023 SECO Mind Srl
+Files: CHANGELOG.md */CHANGELOG.md
+Copyright: 2023-2024 SECO Mind Srl
 License: CC0-1.0
