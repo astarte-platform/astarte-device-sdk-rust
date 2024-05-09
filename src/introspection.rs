@@ -126,7 +126,7 @@ pub trait DynamicIntrospection {
     /// Returns a bool to check weather the if the interface was removed or was missing.
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
 
-    /// Remove the interface with the name specified as argument.
+    /// Remove interfaces with names specified as argument.
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been removed.
     async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>

@@ -397,17 +397,6 @@ impl Mqtt {
             .map_err(MqttError::Unsubscribe)
     }
 
-    async fn unsubscribe_many<'a, I>(&self, interfaces_name: I) -> Result<(), MqttError>
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        for iface_name in interfaces_name.into_iter() {
-            self.unsubscribe(iface_name).await?;
-        }
-
-        Ok(())
-    }
-
     /// Sends the introspection [`String`].
     async fn send_introspection(&self, introspection: String) -> Result<(), MqttError> {
         debug!("sending introspection = {}", introspection);
@@ -636,13 +625,11 @@ impl Register for Mqtt {
         let introspection = Introspection::new(interfaces).to_string();
         self.send_introspection(introspection).await?;
 
-        let interfaces_name = removed
-            .values()
-            .filter(|iface| iface.ownership().is_server())
-            .map(|iface| iface.interface_name())
-            .collect_vec();
-
-        self.unsubscribe_many(interfaces_name).await?;
+        for iface in removed.values() {
+            if iface.ownership().is_server() {
+                self.unsubscribe(iface.interface_name()).await?;
+            }
+        }
 
         Ok(())
     }

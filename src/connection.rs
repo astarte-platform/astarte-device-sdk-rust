@@ -285,14 +285,9 @@ impl<S, C> DeviceConnection<S, C> {
     {
         let mut interfaces = self.interfaces.write().await;
 
-        let to_remove = interfaces.get(interface_name);
-
-        let to_remove = match to_remove {
-            Some(i) => i,
-            None => {
-                debug!("{interface_name} not found, skipping");
-                return Ok(false);
-            }
+        let Some(to_remove) = interfaces.get(interface_name) else {
+            debug!("{interface_name} not found, skipping");
+            return Ok(false);
         };
 
         self.connection
@@ -300,7 +295,7 @@ impl<S, C> DeviceConnection<S, C> {
             .await?;
 
         if let Some(prop) = to_remove.as_prop() {
-            // We cannot error here since we already unsubscribed to the interface
+            // We cannot error here since we have already unsubscribed from the interface
             if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
                 error!("failed to remove property {err}");
             }
@@ -315,12 +310,11 @@ impl<S, C> DeviceConnection<S, C> {
     where
         C: Register,
         S: PropertyStore,
-        I: IntoIterator<Item = &'a str> + Clone + Send,
+        I: IntoIterator<Item = &'a str> + Send,
     {
         let mut interfaces = self.interfaces.write().await;
 
         let to_remove: HashMap<&str, &Interface> = interfaces_name
-            .clone()
             .into_iter()
             .filter_map(|iface_name| {
                 let interface = interfaces.get(iface_name).map(|i| (i.interface_name(), i));
@@ -342,7 +336,7 @@ impl<S, C> DeviceConnection<S, C> {
             .await?;
 
         for (_, iface) in to_remove.iter() {
-            // We cannot error here since we already unsubscribed to the interface
+            // We cannot error here since we have already unsubscribed from the interface
             if let Some(prop) = iface.as_prop() {
                 if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
                     error!("failed to remove property {err}");
@@ -352,7 +346,7 @@ impl<S, C> DeviceConnection<S, C> {
 
         let removed_names = to_remove.keys().map(|k| k.to_string()).collect_vec();
 
-        interfaces.remove_many(interfaces_name);
+        interfaces.remove_many(&removed_names);
 
         Ok(removed_names)
     }
@@ -437,8 +431,6 @@ impl<S, C> DeviceConnection<S, C> {
                 response,
             } => {
                 let res = self.extend_interfaces(interfaces).await;
-
-                info!("RES EXTEND INTERFACES: {res:?}");
 
                 if let Err(Err(err)) = response.send(res) {
                     error!("client disconnected while failing to extend interfaces: {err}");

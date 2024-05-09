@@ -36,7 +36,7 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
-    AstarteMessage, InterfaceJson, InterfacesJson, InterfacesName, Node,
+    AstarteMessage, InterfacesJson, InterfacesName, Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -155,7 +155,7 @@ impl Grpc {
 
     async fn detach(
         mut client: MessageHubClientWithInterceptor,
-        uuid: Uuid,
+        uuid: &Uuid,
     ) -> Result<(), GrpcError> {
         // During the detach phase only the uuid is needed we can pass an empty array
         // as the interface_json since the interfaces are already known to the message hub
@@ -231,7 +231,7 @@ impl Receive for Grpc {
                 }
                 Ok(None) | Err(_) => {
                     // try reattaching
-                    let data = NodeData::try_from_interfaces(&self.uuid, interfaces)?;
+                    let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
 
                     let stream = Grpc::attach(&mut self.client, data).await?;
                     self.stream = SyncWrapper::new(stream);
@@ -296,12 +296,11 @@ impl Register for Grpc {
         _interfaces: &Interfaces,
         added: &interfaces::Validated,
     ) -> Result<(), crate::Error> {
-        let interface_jsons = InterfaceJson::from_value(added.deref())
-            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?
-            .into();
+        let interfaces_json = InterfacesJson::try_from_iter([added.deref()])
+            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
         self.client
-            .add_interfaces(tonic::Request::new(interface_jsons))
+            .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
             .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
@@ -312,11 +311,11 @@ impl Register for Grpc {
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
-        let interface_jsons = InterfacesJson::try_from_iter(added.values())
+        let interfaces_json = InterfacesJson::try_from_iter(added.values())
             .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
         self.client
-            .add_interfaces(tonic::Request::new(interface_jsons))
+            .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
             .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
@@ -363,7 +362,7 @@ impl Register for Grpc {
 #[async_trait]
 impl Disconnect for Grpc {
     async fn disconnect(mut self) -> Result<(), crate::Error> {
-        Self::detach(self.client, self.uuid)
+        Self::detach(self.client, &self.uuid)
             .await
             .map_err(|e| e.into())
     }
@@ -424,7 +423,7 @@ impl ConnectionConfig for GrpcConfig {
 
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from_interfaces(&self.uuid, &builder.interfaces)?;
+        let node_data = NodeData::try_from_interfaces(self.uuid, &builder.interfaces)?;
         let stream = Grpc::attach(&mut client, node_data).await?;
 
         Ok(Grpc::new(client, stream, self.uuid))
@@ -437,21 +436,16 @@ struct NodeData {
 }
 
 impl NodeData {
-    fn try_from_iter<'a, I>(uuid: &Uuid, interfaces: I) -> Result<Self, GrpcError>
+    fn try_from_iter<'a, I>(uuid: Uuid, interfaces: I) -> Result<Self, GrpcError>
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let interface_jsons = InterfacesJson::try_from_iter(interfaces)?;
+        let node = Node::from_interfaces(&uuid, interfaces)?;
 
-        Ok(Self {
-            node: Node {
-                uuid: uuid.to_string(),
-                interface_jsons: Some(interface_jsons),
-            },
-        })
+        Ok(Self { node })
     }
 
-    fn try_from_interfaces(uuid: &Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
+    fn try_from_interfaces(uuid: Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
         Self::try_from_iter(uuid, interfaces.iter())
     }
 }
@@ -653,7 +647,7 @@ mod test {
         mut message_hub_client: MessageHubClientWithInterceptor,
         interfaces: &Interfaces,
     ) -> Result<Grpc, Box<dyn std::error::Error>> {
-        let node_data = NodeData::try_from_interfaces(&ID, interfaces)?;
+        let node_data = NodeData::try_from_interfaces(ID, interfaces)?;
         let stream = Grpc::attach(&mut message_hub_client, node_data).await?;
 
         Ok(Grpc::new(message_hub_client, stream, ID))
@@ -886,7 +880,7 @@ mod test {
         let additional_interface = Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
 
         let mut expect_added = [&additional_interface, &interface]
-            .map(|i| InterfaceJson::from_value(i).unwrap().interface_json)
+            .map(|i| serde_json::to_string(i).unwrap())
             .to_vec();
         expect_added.sort();
 
@@ -900,12 +894,12 @@ mod test {
             // connection creation attach
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
             // add interface
-            ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![InterfaceJson::from_value(&interface).unwrap()],
+            ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![serde_json::to_string(&interface).unwrap()],
             // remove interface
             ServerReceivedRequest::RemoveInterfaces(i) if i.names == vec![interface.interface_name().to_string()],
             // add more interfaces
-            ServerReceivedRequest::AddInterfaces(i)
-            => ordered = i.interfaces_json.into_iter().map(|b| b.interface_json).sorted().collect_vec();
+            ServerReceivedRequest::AddInterfaces(mut i)
+            => ordered = {i.interfaces_json.sort(); i.interfaces_json} ;
                 if ordered == expect_added,
             // remove more interfaces
             ServerReceivedRequest::RemoveInterfaces(mut i)

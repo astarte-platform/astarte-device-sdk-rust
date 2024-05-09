@@ -46,7 +46,7 @@ pub mod wrapper;
 #[async_trait]
 pub trait PropertyStore: Clone + Debug + Send + Sync + 'static
 where
-    // NOTE: the bounds are required to be compatible with the tokio tasks, with an interface Sync
+    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
     //       bound to further restrict the error type.
     Self::Err: StdError + Send + Sync + 'static,
 {

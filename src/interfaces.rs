@@ -230,7 +230,7 @@ impl Interfaces {
     /// Iter without many removed interfaces
     pub(crate) fn iter_without_removed_many<'a>(
         &'a self,
-        removed: &'a HashMap<&'a str, &'a Interface>,
+        removed: &'a HashMap<&str, &Interface>,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         self.interfaces
             .values()
