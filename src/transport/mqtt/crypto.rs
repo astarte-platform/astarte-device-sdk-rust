@@ -136,31 +136,6 @@ impl Bundle {
     }
 }
 
-#[cfg(not(taurpaulin_include))]
-#[doc(hidden)]
-pub mod bench {
-
-    use super::Bundle;
-    use rustls::pki_types::PrivatePkcs8KeyDer;
-
-    #[cfg(not(taurpaulin_include))]
-    pub fn generate_key(realm: &str, device: &str) -> (PrivatePkcs8KeyDer<'static>, String) {
-        let Bundle { private_key, csr } =
-            Bundle::generate_key(realm, device).expect("Failed to generate key");
-
-        (private_key, csr)
-    }
-
-    #[cfg(feature = "openssl")]
-    #[cfg(not(taurpaulin_include))]
-    pub fn openssl_key(realm: &str, device: &str) -> (PrivatePkcs8KeyDer<'static>, String) {
-        let Bundle { private_key, csr } =
-            Bundle::openssl_key(realm, device).expect("Failed to generate key");
-
-        (private_key, csr)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use ecdsa::SigningKey;

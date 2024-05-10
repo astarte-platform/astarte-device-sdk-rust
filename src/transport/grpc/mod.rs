@@ -322,7 +322,7 @@ impl Register for Grpc {
         interfaces: &Interfaces,
         removed: &Interface,
     ) -> Result<(), crate::Error> {
-        let iter = interfaces.iter_with_removed(removed);
+        let iter = interfaces.iter_without_removed(removed);
 
         let data = NodeData::try_from_iter(&self.uuid, iter)?;
 
