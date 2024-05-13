@@ -27,6 +27,7 @@
 pub mod convert;
 
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
@@ -35,11 +36,10 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
-    AstarteMessage, Node,
+    AstarteMessage, InterfacesJson, InterfacesName, Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use itertools::Itertools;
 use log::{debug, trace};
 use sync_wrapper::SyncWrapper;
 use uuid::Uuid;
@@ -56,7 +56,7 @@ use crate::{
     transport::grpc::convert::map_values_to_astarte_type,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Interface, Timestamp,
+    Error, Interface, Timestamp,
 };
 
 use super::{Disconnect, Publish, Receive, ReceivedEvent, Register};
@@ -161,25 +161,10 @@ impl Grpc {
         // as the interface_json since the interfaces are already known to the message hub
         // this api will change in the future
         client
-            .detach(Node::new(uuid, &Vec::<Vec<u8>>::new()))
+            .detach(Node::new(uuid, Vec::new()))
             .await
             .map(|_| ())
             .map_err(GrpcError::from)
-    }
-
-    async fn reattach(&mut self, data: NodeData) -> Result<(), GrpcError> {
-        // the lock on stream is actually intended since we are detaching and re-attaching
-        // we want to make sure no one uses the stream while the client is detached
-
-        self.client
-            .detach(Node::new(self.uuid, &Vec::<Vec<u8>>::new()))
-            .await
-            .map(|_| ())?;
-
-        let stream = Grpc::attach(&mut self.client, data).await?;
-        self.stream = SyncWrapper::new(stream);
-
-        Ok(())
     }
 }
 
@@ -246,7 +231,7 @@ impl Receive for Grpc {
                 }
                 Ok(None) | Err(_) => {
                     // try reattaching
-                    let data = NodeData::try_from_interfaces(&self.uuid, interfaces)?;
+                    let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
 
                     let stream = Grpc::attach(&mut self.client, data).await?;
                     self.stream = SyncWrapper::new(stream);
@@ -308,37 +293,69 @@ impl Receive for Grpc {
 impl Register for Grpc {
     async fn add_interface(
         &mut self,
-        interfaces: &Interfaces,
+        _interfaces: &Interfaces,
         added: &interfaces::Validated,
     ) -> Result<(), crate::Error> {
-        let iter = interfaces.iter_with_added(added);
-        let data = NodeData::try_from_iter(&self.uuid, iter)?;
+        let interfaces_json = InterfacesJson::try_from_iter([added.deref()])
+            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
-        self.reattach(data).await.map_err(crate::Error::from)
-    }
-
-    async fn remove_interface(
-        &mut self,
-        interfaces: &Interfaces,
-        removed: &Interface,
-    ) -> Result<(), crate::Error> {
-        let iter = interfaces.iter_without_removed(removed);
-
-        let data = NodeData::try_from_iter(&self.uuid, iter)?;
-
-        self.reattach(data).await.map_err(crate::Error::from)
+        self.client
+            .add_interfaces(tonic::Request::new(interfaces_json))
+            .await
+            .map(|_| ())
+            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
     }
 
     async fn extend_interfaces(
         &mut self,
-        interfaces: &Interfaces,
+        _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
-        let iter = interfaces.iter_with_added_many(added);
+        let interfaces_json = InterfacesJson::try_from_iter(added.values())
+            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
-        let data = NodeData::try_from_iter(&self.uuid, iter)?;
+        self.client
+            .add_interfaces(tonic::Request::new(interfaces_json))
+            .await
+            .map(|_| ())
+            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+    }
 
-        self.reattach(data).await.map_err(crate::Error::from)
+    async fn remove_interface(
+        &mut self,
+        _interfaces: &Interfaces,
+        removed: &Interface,
+    ) -> Result<(), crate::Error> {
+        let interfaces_name = InterfacesName {
+            names: vec![removed.interface_name().to_string()],
+        };
+
+        self.client
+            .remove_interfaces(tonic::Request::new(interfaces_name))
+            .await
+            .map(|_| ())
+            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+    }
+
+    async fn remove_interfaces(
+        &mut self,
+        _interfaces: &Interfaces,
+        removed_interfaces: &HashMap<&str, &Interface>,
+    ) -> Result<(), Error> {
+        let interfaces_name = removed_interfaces
+            .iter()
+            .map(|(iface_name, _iface)| iface_name.to_string())
+            .collect();
+
+        let interfaces_name = InterfacesName {
+            names: interfaces_name,
+        };
+
+        self.client
+            .remove_interfaces(tonic::Request::new(interfaces_name))
+            .await
+            .map(|_| ())
+            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
     }
 }
 
@@ -406,7 +423,7 @@ impl ConnectionConfig for GrpcConfig {
 
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from_interfaces(&self.uuid, &builder.interfaces)?;
+        let node_data = NodeData::try_from_interfaces(self.uuid, &builder.interfaces)?;
         let stream = Grpc::attach(&mut client, node_data).await?;
 
         Ok(Grpc::new(client, stream, self.uuid))
@@ -419,24 +436,16 @@ struct NodeData {
 }
 
 impl NodeData {
-    fn try_from_iter<'a, I>(uuid: &Uuid, interfaces: I) -> Result<Self, GrpcError>
+    fn try_from_iter<'a, I>(uuid: Uuid, interfaces: I) -> Result<Self, GrpcError>
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let interface_jsons = interfaces
-            .into_iter()
-            .map(serde_json::to_vec)
-            .try_collect()?;
+        let node = Node::from_interfaces(&uuid, interfaces)?;
 
-        Ok(Self {
-            node: Node {
-                uuid: uuid.to_string(),
-                interface_jsons,
-            },
-        })
+        Ok(Self { node })
     }
 
-    fn try_from_interfaces(uuid: &Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
+    fn try_from_interfaces(uuid: Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
         Self::try_from_iter(uuid, interfaces.iter())
     }
 }
@@ -447,7 +456,7 @@ mod test {
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        pbjson_types, AstarteUnset,
+        AstarteUnset,
     };
     use async_trait::async_trait;
     use tokio::{
@@ -470,16 +479,8 @@ mod test {
         Attach(Node),
         Send(AstarteMessage),
         Detach(Node),
-    }
-
-    impl ServerReceivedRequest {
-        fn as_attach(&self) -> Option<&Node> {
-            if let Self::Attach(v) = self {
-                Some(v)
-            } else {
-                None
-            }
-        }
+        AddInterfaces(InterfacesJson),
+        RemoveInterfaces(InterfacesName),
     }
 
     type ServerSenderValuesVec = Vec<Result<AstarteMessage, tonic::Status>>;
@@ -532,24 +533,54 @@ mod test {
         async fn send(
             &self,
             request: tonic::Request<AstarteMessage>,
-        ) -> Result<tonic::Response<pbjson_types::Empty>, tonic::Status> {
+        ) -> Result<tonic::Response<astarte_message_hub_proto::pbjson_types::Empty>, tonic::Status>
+        {
             self.server_received.send(ServerReceivedRequest::Send(request.into_inner())).await
                 .expect("Could not send notification of a server received message, connect a channel to the Receiver");
 
-            Ok(tonic::Response::new(pbjson_types::Empty::default()))
+            Ok(tonic::Response::new(
+                astarte_message_hub_proto::pbjson_types::Empty::default(),
+            ))
         }
 
         async fn detach(
             &self,
             request: tonic::Request<Node>,
-        ) -> Result<tonic::Response<pbjson_types::Empty>, tonic::Status> {
+        ) -> Result<tonic::Response<astarte_message_hub_proto::pbjson_types::Empty>, tonic::Status>
+        {
             let inner = request.into_inner();
             println!("Client '{}' detached", inner.uuid.clone());
 
             self.server_received.send(ServerReceivedRequest::Detach(inner)).await
                 .expect("Could not send notification of a server received message, connect a channel to the Receiver");
 
-            Ok(tonic::Response::new(pbjson_types::Empty::default()))
+            Ok(tonic::Response::new(
+                astarte_message_hub_proto::pbjson_types::Empty::default(),
+            ))
+        }
+
+        async fn add_interfaces(
+            &self,
+            request: tonic::Request<InterfacesJson>,
+        ) -> Result<tonic::Response<astarte_message_hub_proto::pbjson_types::Empty>, Status>
+        {
+            self.server_received.send(ServerReceivedRequest::AddInterfaces(request.into_inner())).await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
+
+            Ok(tonic::Response::new(
+                astarte_message_hub_proto::pbjson_types::Empty::default(),
+            ))
+        }
+
+        async fn remove_interfaces(
+            &self,
+            request: tonic::Request<InterfacesName>,
+        ) -> Result<tonic::Response<astarte_message_hub_proto::pbjson_types::Empty>, Status>
+        {
+            self.server_received.send(ServerReceivedRequest::RemoveInterfaces(request.into_inner())).await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
+
+            Ok(tonic::Response::new(
+                astarte_message_hub_proto::pbjson_types::Empty::default(),
+            ))
         }
     }
 
@@ -616,7 +647,7 @@ mod test {
         mut message_hub_client: MessageHubClientWithInterceptor,
         interfaces: &Interfaces,
     ) -> Result<Grpc, Box<dyn std::error::Error>> {
-        let node_data = NodeData::try_from_interfaces(&ID, interfaces)?;
+        let node_data = NodeData::try_from_interfaces(ID, interfaces)?;
         let stream = Grpc::attach(&mut message_hub_client, node_data).await?;
 
         Ok(Grpc::new(message_hub_client, stream, ID))
@@ -791,11 +822,6 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        // send first error which causes a reattach
-        channels.server_response_sender.send(vec![]).await.unwrap();
-        // second attach add_interface
-        channels.server_response_sender.send(vec![]).await.unwrap();
-        // third attach remove_interface
         channels.server_response_sender.send(vec![]).await.unwrap();
 
         let client_operations = async move {
@@ -808,7 +834,7 @@ mod test {
             let interfaces = Interfaces::new();
 
             let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
-            let validated = interfaces.validate(interface).unwrap().unwrap();
+            let validated = interfaces.validate(interface.clone()).unwrap().unwrap();
 
             connection
                 .add_interface(&interfaces, &validated)
@@ -817,6 +843,27 @@ mod test {
 
             connection
                 .remove_interface(&interfaces, &validated)
+                .await
+                .unwrap();
+
+            let additional_interface =
+                Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
+            let to_add = Interfaces::new()
+                .validate_many([interface.clone(), additional_interface.clone()])
+                .unwrap();
+
+            connection
+                .extend_interfaces(&interfaces, &to_add)
+                .await
+                .unwrap();
+
+            let to_remove = HashMap::from([
+                (interface.interface_name(), &interface),
+                (additional_interface.interface_name(), &additional_interface),
+            ]);
+
+            connection
+                .remove_interfaces(&interfaces, &to_remove)
                 .await
                 .unwrap();
 
@@ -829,15 +876,35 @@ mod test {
             _ = client_operations => println!("Client sent its data"),
         }
 
+        let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let additional_interface = Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
+
+        let mut expect_added = [&additional_interface, &interface]
+            .map(|i| serde_json::to_string(i).unwrap())
+            .to_vec();
+        expect_added.sort();
+
+        let mut expect_removed = vec![
+            additional_interface.interface_name().to_string(),
+            interface.interface_name().to_string(),
+        ];
+        expect_removed.sort();
+
         expect_messages!(channels.server_request_receiver.try_recv();
             // connection creation attach
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
-            // add interface reattach
-            ServerReceivedRequest::Detach(a) if a.uuid == ID.to_string(),
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
-            // remove interface reattach
-            ServerReceivedRequest::Detach(a) if a.uuid == ID.to_string(),
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            // add interface
+            ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![serde_json::to_string(&interface).unwrap()],
+            // remove interface
+            ServerReceivedRequest::RemoveInterfaces(i) if i.names == vec![interface.interface_name().to_string()],
+            // add more interfaces
+            ServerReceivedRequest::AddInterfaces(mut i)
+            => ordered = {i.interfaces_json.sort(); i.interfaces_json} ;
+                if ordered == expect_added,
+            // remove more interfaces
+            ServerReceivedRequest::RemoveInterfaces(mut i)
+            => ordered = {i.names.sort(); i.names} ;
+                if ordered == expect_removed,
             // detach
             ServerReceivedRequest::Detach(a) if a.uuid == ID.to_string()
         );
@@ -1090,79 +1157,6 @@ mod test {
                 && path == exp_path
                 && data == proto_payload
         );
-    }
-
-    #[tokio::test]
-    async fn should_extend_interfaces() {
-        let (server_impl, mut channels) = build_test_message_hub_server();
-        let (server_future, client_future) = mock_grpc_actors(server_impl)
-            .await
-            .expect("Could not construct test client and server");
-
-        // no messages are read as responses by the server so we pass an empty vec
-        channels.server_response_sender.send(vec![]).await.unwrap();
-        channels.server_response_sender.send(vec![]).await.unwrap();
-
-        let to_add = [
-            Interface::from_str(include_str!(
-                "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
-            ))
-            .unwrap(),
-            Interface::from_str(include_str!(
-                "../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
-            ))
-            .unwrap(),
-        ];
-
-        let map = to_add
-            .iter()
-            .cloned()
-            .map(|i| (i.interface_name().to_string(), i))
-            .collect();
-
-        let interfaces = Interfaces::new();
-
-        let validated = interfaces.validate_many(to_add).unwrap();
-        let client_operations = async move {
-            let client = client_future.await;
-            // When the grpc connection gets created the attach methods is called
-            let mut connection = mock_astarte_grpc_client(client, &Interfaces::new())
-                .await
-                .unwrap();
-
-            // manually calling detach
-            connection
-                .extend_interfaces(&interfaces, &validated)
-                .await
-                .unwrap();
-        };
-
-        tokio::select! {
-            _ = server_future => panic!("The server closed before the client could complete sending the data"),
-            _ = client_operations => println!("Client sent its data"),
-        }
-
-        expect_messages!(channels.server_request_receiver.try_recv();
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
-            ServerReceivedRequest::Detach(a) if a.uuid == ID.to_string()
-        );
-
-        let recv = channels.server_request_receiver.try_recv().unwrap();
-        let recv = recv.as_attach().unwrap();
-
-        let id = Uuid::parse_str(&recv.uuid).unwrap();
-        assert_eq!(id, ID);
-
-        let interfaces: HashMap<String, Interface> = recv
-            .interface_jsons
-            .iter()
-            .map(|i| {
-                serde_json::from_slice(i).map(|i: Interface| (i.interface_name().to_string(), i))
-            })
-            .try_collect()
-            .unwrap();
-
-        assert_eq!(interfaces, map);
     }
 
     #[test]

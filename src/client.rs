@@ -564,4 +564,29 @@ where
 
         rx.await.map_err(|_| Error::Disconnected)?
     }
+
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+    where
+        I: IntoIterator<Item = String> + Send,
+        I::IntoIter: Send,
+    {
+        let interfaces = interfaces_name.into_iter().collect();
+
+        self.remove_interfaces_vec(interfaces).await
+    }
+
+    async fn remove_interfaces_vec(
+        &self,
+        interfaces_name: Vec<String>,
+    ) -> Result<Vec<String>, Error> {
+        let (tx, rx) = oneshot::channel();
+
+        self.send_msg(ClientMessage::RemoveInterfaces {
+            interfaces: interfaces_name.into_iter().collect(),
+            response: tx,
+        })
+        .await?;
+
+        rx.await.map_err(|_| Error::Disconnected)?
+    }
 }

@@ -91,6 +91,17 @@ impl Interfaces {
         self.interfaces.remove(interface_name)
     }
 
+    /// Remove the interfaces which name is in the HashSet
+    pub(crate) fn remove_many<I, S>(&mut self, to_remove: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        for i in to_remove {
+            self.remove(i.as_ref());
+        }
+    }
+
     pub(crate) fn get_introspection_string(&self) -> String {
         Introspection::new(self.interfaces.values()).to_string()
     }
@@ -214,6 +225,16 @@ impl Interfaces {
         self.interfaces
             .values()
             .filter(|i| i.interface_name() != removed.interface_name())
+    }
+
+    /// Iter without many removed interfaces
+    pub(crate) fn iter_without_removed_many<'a>(
+        &'a self,
+        removed: &'a HashMap<&str, &Interface>,
+    ) -> impl Iterator<Item = &'a Interface> + Clone {
+        self.interfaces
+            .values()
+            .filter(|i| !removed.contains_key(i.interface_name()))
     }
 }
 

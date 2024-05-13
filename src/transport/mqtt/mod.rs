@@ -555,23 +555,6 @@ impl Register for Mqtt {
             .map_err(MqttError::into)
     }
 
-    async fn remove_interface(
-        &mut self,
-        interfaces: &Interfaces,
-        removed: &Interface,
-    ) -> Result<(), Error> {
-        let iter = interfaces.iter_without_removed(removed);
-        let introspection = Introspection::new(iter).to_string();
-
-        self.send_introspection(introspection).await?;
-
-        if removed.ownership().is_server() {
-            self.unsubscribe(removed.interface_name()).await?;
-        }
-
-        Ok(())
-    }
-
     /// Called when multiple interfaces are added.
     ///
     /// This method should convey to the server that one or more interfaces have been added.
@@ -614,6 +597,41 @@ impl Register for Mqtt {
         }
 
         subscribe_res
+    }
+
+    async fn remove_interface(
+        &mut self,
+        interfaces: &Interfaces,
+        removed: &Interface,
+    ) -> Result<(), Error> {
+        let iter = interfaces.iter_without_removed(removed);
+        let introspection = Introspection::new(iter).to_string();
+
+        self.send_introspection(introspection).await?;
+
+        if removed.ownership().is_server() {
+            self.unsubscribe(removed.interface_name()).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn remove_interfaces(
+        &mut self,
+        interfaces: &Interfaces,
+        removed: &HashMap<&str, &Interface>,
+    ) -> Result<(), Error> {
+        let interfaces = interfaces.iter_without_removed_many(removed);
+        let introspection = Introspection::new(interfaces).to_string();
+        self.send_introspection(introspection).await?;
+
+        for iface in removed.values() {
+            if iface.ownership().is_server() {
+                self.unsubscribe(iface.interface_name()).await?;
+            }
+        }
+
+        Ok(())
     }
 }
 

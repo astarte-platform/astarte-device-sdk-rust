@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::num::TryFromIntError;
-use std::str::{FromStr, Utf8Error};
+use std::str::FromStr;
 
 use astarte_message_hub_proto::astarte_data_type::Data as ProtoData;
 use astarte_message_hub_proto::types::InterfaceJson;
@@ -42,7 +42,7 @@ use crate::{
 };
 use crate::{DeviceEvent, Interface, Value};
 
-use super::{GrpcError, GrpcPayload};
+use super::GrpcPayload;
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
@@ -55,10 +55,6 @@ pub enum MessageHubProtoError {
     /// Expected field was not found
     #[error("Missing the expected field '{0}'")]
     ExpectedField(&'static str),
-
-    /// Conversion error while trying to convert the byte array into a string
-    #[error("The received byte array is not a valid utf8 string")]
-    ByteToUtf8StringConversion(#[from] Utf8Error),
 
     /// Date conversion error
     #[error("Error while converting a proto date: {0}")]
@@ -193,13 +189,7 @@ impl TryFrom<InterfaceJson> for Interface {
     type Error = crate::Error;
 
     fn try_from(interface: InterfaceJson) -> Result<Self, Self::Error> {
-        let interface_str = std::str::from_utf8(&interface.0).map_err(|err| {
-            GrpcError::MessageHubProtoConversion(MessageHubProtoError::ByteToUtf8StringConversion(
-                err,
-            ))
-        })?;
-
-        Interface::from_str(interface_str).map_err(Self::Error::Interface)
+        Interface::from_str(&interface.0).map_err(Self::Error::Interface)
     }
 }
 

@@ -111,14 +111,6 @@ pub(crate) trait Register {
         added_interface: &interfaces::Validated,
     ) -> Result<(), crate::Error>;
 
-    /// Called when an interface gets removed from the device interface list.
-    /// It relays to the server the removal of the interface.
-    async fn remove_interface(
-        &mut self,
-        interfaces: &Interfaces,
-        removed_interface: &Interface,
-    ) -> Result<(), crate::Error>;
-
     /// Called when multiple interfaces are added.
     ///
     /// This method should convey to the server that one or more interfaces have been added.
@@ -128,6 +120,22 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::ValidatedCollection,
+    ) -> Result<(), crate::Error>;
+
+    /// Called when an interface gets removed from the device interface list.
+    /// It relays to the server the removal of the interface.
+    async fn remove_interface(
+        &mut self,
+        interfaces: &Interfaces,
+        removed_interface: &Interface,
+    ) -> Result<(), crate::Error>;
+
+    /// Called when multiple interfaces get removed from the device interface list.
+    /// It relays to the server the removal of the interface.
+    async fn remove_interfaces(
+        &mut self,
+        interfaces: &Interfaces,
+        removed_interfaces: &HashMap<&str, &Interface>,
     ) -> Result<(), crate::Error>;
 }
 

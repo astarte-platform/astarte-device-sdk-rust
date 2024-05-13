@@ -96,6 +96,16 @@ pub trait DynamicIntrospection {
     async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
     async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+    where
+        I: IntoIterator<Item = String> + Send + 'static,
+        I::IntoIter: Send;
+
+    async fn remove_interfaces_vec(
+        &self,
+        interfaces_name: Vec<String>,
+    ) -> Result<Vec<String>, Error>;
 }
 
 mock! {
@@ -172,6 +182,13 @@ mock! {
         async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
 
         async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+            where
+                I: IntoIterator<Item = String> + Send + 'static,
+                I::IntoIter: Send;
+
+        async fn remove_interfaces_vec(&self, interfaces_name: Vec<String>) -> Result<Vec<String>, Error>;
     }
 
     impl<C> Clone for DeviceClient<C> {
@@ -417,6 +434,29 @@ mod tests {
             )
             .await
         }
+
+        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+        where
+            I: IntoIterator<Item = String> + Send + 'static,
+            I::IntoIter: Send,
+        {
+            astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces(
+                self,
+                interfaces_name,
+            )
+            .await
+        }
+
+        async fn remove_interfaces_vec(
+            &self,
+            interfaces_name: Vec<String>,
+        ) -> Result<Vec<String>, Error> {
+            astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces_vec(
+                self,
+                interfaces_name,
+            )
+            .await
+        }
     }
 
     #[async_trait]
@@ -451,6 +491,21 @@ mod tests {
         }
 
         async fn remove_interface(&self, _interface_name: &str) -> Result<bool, Error> {
+            Ok(Default::default())
+        }
+
+        async fn remove_interfaces<I>(&self, _interfaces_name: I) -> Result<Vec<String>, Error>
+        where
+            I: IntoIterator<Item = String> + Send,
+            I::IntoIter: Send,
+        {
+            Ok(Default::default())
+        }
+
+        async fn remove_interfaces_vec(
+            &self,
+            _interfaces_name: Vec<String>,
+        ) -> Result<Vec<String>, Error> {
             Ok(Default::default())
         }
     }
