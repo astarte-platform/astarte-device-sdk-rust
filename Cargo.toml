@@ -130,7 +130,7 @@ proc-macro2 = "1.0.63"
 quote = "1.0.28"
 rand_core = "0.6.4"
 reqwest = "0.12.0"
-rumqttc = "0.24.0"
+rumqttc = { git = "https://github.com/joshuachp/rumqtt", rev = "5a75a142ce9a8de0fb6a7daa73514ca1b1cab7c4" }
 rustls = "0.22.2"
 rustls-native-certs = "0.7.0"
 rustls-pemfile = "2.1.0"

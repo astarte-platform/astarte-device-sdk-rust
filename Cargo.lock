@@ -2256,8 +2256,7 @@ dependencies = [
 [[package]]
 name = "rumqttc"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1568e15fab2d546f940ed3a21f48bbbd1c494c90c99c4481339364a497f94a9"
+source = "git+https://github.com/joshuachp/rumqtt?rev=5a75a142ce9a8de0fb6a7daa73514ca1b1cab7c4#5a75a142ce9a8de0fb6a7daa73514ca1b1cab7c4"
 dependencies = [
  "bytes",
  "flume",
@@ -2269,6 +2268,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]

@@ -373,6 +373,7 @@ impl Mqtt {
             )
             .await
             .map_err(MqttError::Subscribe)
+            .map(drop)
     }
 
     /// Subscribe to many topics
@@ -394,6 +395,7 @@ impl Mqtt {
             .subscribe_many(topics)
             .await
             .map_err(MqttError::Subscribe)
+            .map(drop)
     }
 
     async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
@@ -401,6 +403,7 @@ impl Mqtt {
             .unsubscribe(format!("{}/{interface_name}/#", self.client_id()))
             .await
             .map_err(MqttError::Unsubscribe)
+            .map(drop)
     }
 
     /// Sends the introspection [`String`].
@@ -413,6 +416,7 @@ impl Mqtt {
             .publish(path, rumqttc::QoS::ExactlyOnce, false, introspection)
             .await
             .map_err(|error| MqttError::publish("introspection", error))
+            .map(drop)
     }
 
     #[cfg(not(test))]
