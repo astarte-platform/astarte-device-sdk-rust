@@ -432,7 +432,7 @@ impl AstarteDeviceSdk {
                                 let bdata = publish.payload.to_vec();
 
                                 if interface == "control" && path == "/consumer/properties" {
-                                    self.purge_properties(bdata).await?;
+                                    self.purge_server_properties(bdata).await?;
                                     continue;
                                 }
 
@@ -512,13 +512,22 @@ impl AstarteDeviceSdk {
         format!("{}/{}", self.realm, self.device_id)
     }
 
-    async fn purge_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
+    /// This function deletes all the stored server owned properties after receiving a publish on
+    /// `/control/consumer/properties`
+    async fn purge_server_properties(&self, bdata: Vec<u8>) -> Result<(), AstarteError> {
         if let Some(db) = &self.database {
+            let interfaces = self.interfaces.read().await;
+
             let stored_props = db.load_all_props().await?;
+
+            let server_owned_properties = stored_props.into_iter().filter(|prop| {
+                interfaces.get_ownership(&prop.interface)
+                    == Some(crate::interface::Ownership::Server)
+            });
 
             let paths = utils::extract_set_properties(&bdata);
 
-            for stored_prop in stored_props {
+            for stored_prop in server_owned_properties {
                 if paths.contains(&(stored_prop.interface.clone() + &stored_prop.path)) {
                     continue;
                 }
