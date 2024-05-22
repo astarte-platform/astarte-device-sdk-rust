@@ -74,7 +74,7 @@ use self::{
     client::{AsyncClient, EventLoop},
     payload::Payload,
 };
-use self::{config::connection::TransportProvider, error::MqttError};
+use self::{config::transport::TransportProvider, error::MqttError};
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;

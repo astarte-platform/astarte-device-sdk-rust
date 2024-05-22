@@ -26,7 +26,7 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use url::ParseError;
 
-use super::{config::connection::TransportProvider, crypto::CryptoError};
+use super::{config::transport::TransportProvider, crypto::CryptoError};
 
 /// Error returned during pairing.
 #[non_exhaustive]

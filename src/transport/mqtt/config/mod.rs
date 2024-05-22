@@ -36,7 +36,7 @@ use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
     store::PropertyStore,
     transport::mqtt::{
-        config::connection::TransportProvider, error::MqttError, registration::register_device,
+        config::transport::TransportProvider, error::MqttError, registration::register_device,
         SessionData,
     },
     Error,
@@ -49,8 +49,8 @@ use super::{
     DEFAULT_KEEP_ALIVE,
 };
 
-pub(crate) mod connection;
 mod tls;
+pub(crate) mod transport;
 
 /// File where the credential secret is stored
 pub const CREDENTIAL_FILE: &str = "credential";
