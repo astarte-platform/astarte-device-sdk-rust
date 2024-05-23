@@ -724,7 +724,7 @@ mod test {
     }
 
     macro_rules! expect_messages {
-        ($poll_result_fn:expr; $($pattern:pat $($(=> $var:ident = $expr_value:expr;)? if $guard:expr),+),+) => {{
+        ($poll_result_fn:expr; $($pattern:pat $($(=> $var:ident = $expr_value:expr;)? $(if $guard:expr)?),*),+) => {{
             let mut i = 0usize;
 
             $(
@@ -740,9 +740,9 @@ mod test {
                                         let $var = $expr_value;
                                     )?
 
-                                    if !($guard) {
+                                    $(if !($guard) {
                                         panic!("The message n.{} didn't pass the guard '{}'", i, stringify!($guard));
-                                    }
+                                    })?
                                 )*
 
                                 println!("Matched message n.{}", i);
@@ -788,7 +788,7 @@ mod test {
 
         expect_messages!(channels.server_request_receiver.try_recv();
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
-            ServerReceivedRequest::Detach(a) if a == astarte_message_hub_proto::pbjson_types::Empty{}
+            ServerReceivedRequest::Detach(_),
         );
     }
 
@@ -870,7 +870,7 @@ mod test {
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
             // second error attach
             ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
-            ServerReceivedRequest::Detach(a) if a == astarte_message_hub_proto::pbjson_types::Empty{}
+            ServerReceivedRequest::Detach(_),
         );
     }
 
@@ -1019,7 +1019,7 @@ mod test {
                 if data_event.interface == "org.astarte-platform.rust.examples.individual-properties.DeviceProperties"
                 && data_event.path == "/1/name"
                 && matches!(data_event.data, Value::Individual(AstarteType::String(v)) if v == STRING_VALUE),
-            ServerReceivedRequest::Detach(a) if a == astarte_message_hub_proto::pbjson_types::Empty{}
+            ServerReceivedRequest::Detach(_),
         );
     }
 
