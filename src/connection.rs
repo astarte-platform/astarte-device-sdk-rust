@@ -18,8 +18,8 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashMap, pin::pin};
 
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -478,25 +478,26 @@ where
     async fn handle_events(&mut self) -> Result<(), crate::Error> {
         loop {
             // Future to not hold multiple mutable reference to self, but only to connection and client
-            let fut = async {
+            // Lock the interfaces only while awaiting the next event
+            let connection_fut = async {
                 let interfaces = self.interfaces.read().await;
+                // The next event should be cancel safe
                 self.connection.next_event(&interfaces, &self.store).await
             };
 
             select! {
-                event = fut => {
+                event = connection_fut => {
                     let event = event?;
 
                     self.handle_connection_event(event).await?;
-                    // recreate the future
-                    continue;
                 }
-                event = self.client.recv() => {
-                    let msg = event.ok_or(Error::Disconnected)?;
+                msg = self.client.recv() => {
+                    // Last client disconnected or panicked
+                    let msg = msg.ok_or(Error::Disconnected)?;
 
                     self.handle_client_msg(msg).await?;
                 }
-            }
+            };
         }
     }
 }

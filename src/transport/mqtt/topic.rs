@@ -20,6 +20,8 @@
 
 use tracing::trace;
 
+use super::ClientId;
+
 /// Error returned when parsing a topic.
 ///
 /// We expect the topic to be in the form `<realm>/<device_id>/<interface>/<path>`.
@@ -55,13 +57,15 @@ pub(crate) struct ParsedTopic<'a> {
 }
 
 impl<'a> ParsedTopic<'a> {
-    pub(crate) fn try_parse(client_id: &str, topic: &'a str) -> Result<Self, TopicError> {
+    pub(crate) fn try_parse(client_id: ClientId<'_>, topic: &'a str) -> Result<Self, TopicError> {
         if topic.is_empty() {
             return Err(TopicError::Empty);
         }
 
         let rest = topic
-            .strip_prefix(client_id)
+            .strip_prefix(client_id.realm)
+            .and_then(|s| s.strip_prefix('/'))
+            .and_then(|s| s.strip_prefix(client_id.device_id))
             .ok_or(TopicError::UnknownClientId {
                 client_id: client_id.to_string(),
                 topic: topic.to_string(),
@@ -96,7 +100,10 @@ impl<'a> ParsedTopic<'a> {
 mod tests {
     use super::*;
 
-    const CLIENT_ID: &str = "test/u-WraCwtK_G_fjJf63TiAw";
+    const CLIENT_ID: ClientId<'static> = ClientId {
+        realm: "test",
+        device_id: "u-WraCwtK_G_fjJf63TiAw",
+    };
 
     #[test]
     fn test_parse_topic() {
@@ -117,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_parse_topic_client_id() {
-        let err = ParsedTopic::try_parse(CLIENT_ID, CLIENT_ID).unwrap_err();
+        let err = ParsedTopic::try_parse(CLIENT_ID, &CLIENT_ID.to_string()).unwrap_err();
 
         assert!(matches!(err, TopicError::Malformed(_)));
     }

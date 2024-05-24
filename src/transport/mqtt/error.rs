@@ -20,9 +20,9 @@
 
 use rumqttc::ClientError;
 
-use crate::{store::error::StoreError, topic::TopicError};
+use crate::store::error::StoreError;
 
-use super::{PairingError, PayloadError};
+use super::{topic::TopicError, PairingError, PayloadError};
 
 /// Errors raised during construction of the [`Mqtt`](super::Mqtt) struct
 #[non_exhaustive]

@@ -26,11 +26,13 @@
 
 pub(crate) mod client;
 mod config;
+mod connection;
 pub mod crypto;
 pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
+mod topic;
 
 use std::{
     collections::HashMap,
@@ -41,9 +43,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use rumqttc::{ConnectionError, Event as MqttEvent, Packet, SubscribeFilter, Transport};
-use sync_wrapper::SyncWrapper;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error};
 
 use crate::{
     error::Report,
@@ -54,10 +54,7 @@ use crate::{
     },
     interfaces::{self, Interfaces, Introspection},
     properties,
-    retry::DelayedPoll,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
-    topic::ParsedTopic,
-    transport::mqtt::pairing::ApiClient,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
@@ -70,11 +67,7 @@ pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 
-use self::{
-    client::{AsyncClient, EventLoop},
-    payload::Payload,
-};
-use self::{config::transport::TransportProvider, error::MqttError};
+use self::{connection::MqttState, error::MqttError, topic::ParsedTopic};
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
@@ -104,12 +97,7 @@ impl<'a> Display for ClientId<'a> {
 pub struct Mqtt {
     realm: String,
     device_id: String,
-    client: AsyncClient,
-    // NOTE: this should be replaces by Exclusive<EventLoop> when the feature `exclusive_wrapper`
-    //       is stabilized or the EventLoop becomes Sync
-    //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
-    eventloop: SyncWrapper<EventLoop>,
-    provider: TransportProvider,
+    connection: MqttState,
 }
 
 impl Mqtt {
@@ -118,37 +106,11 @@ impl Mqtt {
     /// This method should only be used for testing purposes since it does not fully
     /// connect to the mqtt broker as described by the astarte protocol.
     /// This struct should be constructed with the [`Mqtt::connected`] associated function.
-    fn new(
-        realm: String,
-        device_id: String,
-        client: AsyncClient,
-        eventloop: EventLoop,
-        provider: TransportProvider,
-    ) -> Self {
+    fn new(realm: String, device_id: String, connection: MqttState) -> Self {
         Self {
             realm,
             device_id,
-            client,
-            eventloop: SyncWrapper::new(eventloop),
-            provider,
-        }
-    }
-
-    /// Waits for mqtt connack to correctly initialize connection to astarte
-    /// by sending session data.
-    ///
-    /// The session parameter holds data that will be sent during the
-    /// connection to the astarte server.
-    pub(crate) async fn wait_for_connack(&mut self, session: SessionData) -> Result<(), Error> {
-        loop {
-            match self.poll().await? {
-                rumqttc::Packet::ConnAck(connack) => {
-                    self.connack(session, connack).await?;
-
-                    return Ok(());
-                }
-                packet => warn!("Received incoming packet while waiting for connack: {packet:?}"),
-            }
+            connection,
         }
     }
 
@@ -158,98 +120,6 @@ impl Mqtt {
             realm: &self.realm,
             device_id: &self.device_id,
         }
-    }
-
-    /// Method that gets called when a [`rumqttc::ConnAck`] is received.
-    /// Following the astarte protocol it performs the following tasks:
-    ///  - Subscribes to the server owned interfaces in the interface list
-    ///  - Sends the introspection
-    ///  - Sends the emptycache command
-    ///  - Sends the device owned properties stored locally
-    async fn connack(
-        &self,
-        SessionData {
-            interfaces,
-            server_interfaces,
-            device_properties,
-        }: SessionData,
-        connack: rumqttc::ConnAck,
-    ) -> Result<(), Error> {
-        if connack.session_present {
-            return Ok(());
-        }
-
-        self.subscribe_server_interfaces(&server_interfaces).await?;
-        self.send_introspection(interfaces).await?;
-        self.send_emptycache().await?;
-        self.send_device_properties(&device_properties).await?;
-
-        info!("connack done");
-
-        Ok(())
-    }
-
-    /// Subscribes to the passed list of interfaces
-    async fn subscribe_server_interfaces(
-        &self,
-        server_interfaces: &[String],
-    ) -> Result<(), MqttError> {
-        self.client
-            .subscribe(
-                format!("{}/control/consumer/properties", self.client_id()),
-                rumqttc::QoS::ExactlyOnce,
-            )
-            .await
-            .map_err(MqttError::Subscribe)?;
-
-        for iface in server_interfaces {
-            self.client
-                .subscribe(
-                    format!("{}/{iface}/#", self.client_id()),
-                    rumqttc::QoS::ExactlyOnce,
-                )
-                .await
-                .map_err(MqttError::Subscribe)?;
-        }
-
-        Ok(())
-    }
-
-    /// Sends the emptycache command as per the astarte protocol definition
-    async fn send_emptycache(&self) -> Result<(), Error> {
-        let url = format!("{}/control/emptyCache", self.client_id());
-        debug!("sending emptyCache to {}", url);
-
-        self.client
-            .publish(url, rumqttc::QoS::ExactlyOnce, false, "1")
-            .await
-            .map_err(|err| MqttError::publish("emptycache", err))?;
-
-        Ok(())
-    }
-
-    /// Sends the passed device owned properties
-    async fn send_device_properties(
-        &self,
-        device_properties: &[StoredProp],
-    ) -> Result<(), MqttError> {
-        for prop in device_properties {
-            let topic = format!("{}/{}{}", self.client_id(), prop.interface, prop.path);
-
-            debug!(
-                "sending device-owned property = {}{}",
-                prop.interface, prop.path
-            );
-
-            let payload = Payload::new(&prop.value).to_vec()?;
-
-            self.client
-                .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
-                .await
-                .map_err(|err| MqttError::publish("device properties", err))?;
-        }
-
-        Ok(())
     }
 
     /// This function deletes all the stored server owned properties after receiving a publish on
@@ -279,66 +149,6 @@ impl Mqtt {
         Ok(())
     }
 
-    /// Polls mqtt events from the [`rumqttc:EventLoop`].
-    ///
-    /// Errors are handled using the [`DelayedPoll::retry_poll_event`] method.
-    async fn poll_mqtt_event(&mut self) -> Result<MqttEvent, Error> {
-        match self.eventloop.get_mut().poll().await {
-            Ok(event) => Ok(event),
-            Err(ConnectionError::Tls(err)) => {
-                error!(error = %Report::new(&err), "couldn't poll the event loop, tls error");
-
-                self.reconnect().await?;
-
-                self.eventloop.get_mut().poll().await.map_err(|err| {
-                    error!(error = %Report::new(&err), "poll fatal error");
-
-                    Error::Disconnected
-                })
-            }
-            Err(err) => {
-                error!(error = %Report::new(&err), "couldn't poll the event loop");
-
-                DelayedPoll::retry_poll_event(self.eventloop.get_mut()).await
-            }
-        }
-    }
-
-    /// Polls mqtt events from the [`rumqttc:EventLoop`].
-    ///
-    /// This method internally calls [`Mqtt::poll_mqtt_event`] but ignores
-    /// outgoing packets by logging them.
-    async fn poll(&mut self) -> Result<Packet, Error> {
-        loop {
-            match self.poll_mqtt_event().await? {
-                MqttEvent::Incoming(packet) => return Ok(packet),
-                MqttEvent::Outgoing(outgoing) => trace!("MQTT Outgoing = {:?}", outgoing),
-            }
-        }
-    }
-
-    /// Recreate the MQTT transport (TLS) to the broker.
-    ///
-    /// It recreate the credentials and reconnect to the broker, using the same
-    /// session. If it fails, it returns an error so that the whole connection process can
-    /// be retried.
-    async fn reconnect(&mut self) -> Result<(), Error> {
-        let api = ApiClient::from_transport(&self.provider, &self.realm, &self.device_id);
-
-        let transport = self
-            .provider
-            .recreate_transport(&api)
-            .await
-            .map_err(MqttError::Pairing)?;
-
-        debug!("created a new transport, reconnecting");
-
-        self.set_transport(transport);
-        self.eventloop.get_mut().clean();
-
-        Ok(())
-    }
-
     /// Send a binary payload over this mqtt connection.
     async fn send(
         &self,
@@ -347,7 +157,8 @@ impl Mqtt {
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
     ) -> Result<(), Error> {
-        self.client
+        self.connection
+            .client()
             .publish(
                 format!("{}/{}{}", self.client_id(), interface, path),
                 reliability,
@@ -366,7 +177,8 @@ impl Mqtt {
     }
 
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.client
+        self.connection
+            .client()
             .subscribe(
                 self.make_interface_wildcard(interface_name),
                 rumqttc::QoS::ExactlyOnce,
@@ -376,59 +188,14 @@ impl Mqtt {
             .map(drop)
     }
 
-    /// Subscribe to many topics
-    async fn subscribe_many(&self, interfaces_names: &[&str]) -> Result<(), MqttError> {
-        // should not subscribe if there are no interfaces
-        if interfaces_names.is_empty() {
-            return Ok(());
-        }
-
-        let topics = interfaces_names
-            .iter()
-            .map(|name| SubscribeFilter {
-                path: self.make_interface_wildcard(name),
-                qos: rumqttc::QoS::ExactlyOnce,
-            })
-            .collect_vec();
-
-        self.client
-            .subscribe_many(topics)
-            .await
-            .map_err(MqttError::Subscribe)
-            .map(drop)
-    }
-
     async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.client
-            .unsubscribe(format!("{}/{interface_name}/#", self.client_id()))
+        self.connection
+            .client()
+            .unsubscribe(self.make_interface_wildcard(interface_name))
             .await
             .map_err(MqttError::Unsubscribe)
             .map(drop)
     }
-
-    /// Sends the introspection [`String`].
-    async fn send_introspection(&self, introspection: String) -> Result<(), MqttError> {
-        debug!("sending introspection = {}", introspection);
-
-        let path = self.client_id().to_string();
-
-        self.client
-            .publish(path, rumqttc::QoS::ExactlyOnce, false, introspection)
-            .await
-            .map_err(|error| MqttError::publish("introspection", error))
-            .map(drop)
-    }
-
-    #[cfg(not(test))]
-    pub(crate) fn set_transport(&mut self, transport: Transport) {
-        self.eventloop
-            .get_mut()
-            .mqtt_options
-            .set_transport(transport);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_transport(&mut self, _transport: Transport) {}
 }
 
 #[async_trait]
@@ -484,46 +251,39 @@ impl Receive for Mqtt {
         S: PropertyStore,
     {
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
-        static CLIENT_ID: OnceCell<String> = OnceCell::new();
 
-        // Keep consuming packets until we have an actual "data" event
+        // We need to construct the ClientId ourselves to not borrow self wail calling the method.
+        let client_id = ClientId {
+            realm: &self.realm,
+            device_id: &self.device_id,
+        };
+
+        // Wait until some data is received
         loop {
-            match self.poll().await? {
-                rumqttc::Packet::ConnAck(connack) => {
-                    self.connack(
-                        SessionData::try_from_props(interfaces, store).await?,
-                        connack,
-                    )
-                    .await?
-                }
-                rumqttc::Packet::Publish(publish) => {
-                    let purge_topic = PURGE_PROPERTIES_TOPIC.get_or_init(|| {
-                        format!("{}/control/consumer/properties", self.client_id())
-                    });
+            let publish = self
+                .connection
+                .next_publish(client_id, interfaces, store)
+                .await?;
 
-                    debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
+            let purge_topic = PURGE_PROPERTIES_TOPIC
+                .get_or_init(|| format!("{}/control/consumer/properties", client_id));
 
-                    if purge_topic == &publish.topic {
-                        debug!("Purging properties");
+            debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
-                        self.purge_server_properties(store, &publish.payload)
-                            .await?;
-                    } else {
-                        let client_id = CLIENT_ID.get_or_init(|| self.client_id().to_string());
-                        let ParsedTopic { interface, path } =
-                            ParsedTopic::try_parse(client_id, &publish.topic)
-                                .map_err(MqttError::Topic)?;
+            if purge_topic == &publish.topic {
+                debug!("Purging properties");
 
-                        return Ok(ReceivedEvent {
-                            interface: interface.to_string(),
-                            path: path.to_string(),
-                            payload: publish.payload,
-                        });
-                    }
-                }
-                packet => {
-                    trace!("packet received {packet:?}");
-                }
+                self.purge_server_properties(store, &publish.payload)
+                    .await?;
+            } else {
+                let ParsedTopic { interface, path } =
+                    ParsedTopic::try_parse(client_id, &publish.topic).map_err(MqttError::Topic)?;
+
+                return Ok(ReceivedEvent {
+                    interface: interface.to_string(),
+                    path: path.to_string(),
+                    payload: publish.payload,
+                });
             }
         }
     }
@@ -561,9 +321,32 @@ impl Register for Mqtt {
 
         let introspection = Introspection::new(interfaces.iter_with_added(added)).to_string();
 
-        self.send_introspection(introspection)
+        self.connection
+            .send_introspection(self.client_id(), introspection)
             .await
-            .map_err(MqttError::into)
+            .map_err(|err| MqttError::publish("send introspection", err))?;
+
+        Ok(())
+    }
+
+    async fn remove_interface(
+        &mut self,
+        interfaces: &Interfaces,
+        removed: &Interface,
+    ) -> Result<(), Error> {
+        let iter = interfaces.iter_without_removed(removed);
+        let introspection = Introspection::new(iter).to_string();
+
+        self.connection
+            .send_introspection(self.client_id(), introspection)
+            .await
+            .map_err(|err| MqttError::publish("send introspection", err))?;
+
+        if removed.ownership().is_server() {
+            self.unsubscribe(removed.interface_name()).await?;
+        }
+
+        Ok(())
     }
 
     /// Called when multiple interfaces are added.
@@ -585,17 +368,21 @@ impl Register for Mqtt {
             })
             .collect_vec();
 
-        self.subscribe_many(&server_interfaces).await?;
+        self.connection
+            .subscribe_many(self.client_id(), &server_interfaces)
+            .await
+            .map_err(MqttError::Subscribe)?;
 
         let introspection = Introspection::new(interfaces.iter_with_added_many(added)).to_string();
 
-        let subscribe_res = self
-            .send_introspection(introspection)
+        let res = self
+            .connection
+            .send_introspection(self.client_id(), introspection)
             .await
-            .map_err(MqttError::into);
+            .map_err(|err| MqttError::publish("send introspection", err).into());
 
         // Cleanup the already subscribed interfaces
-        if subscribe_res.is_err() {
+        if res.is_err() {
             error!("error while subscribing to interfaces");
 
             for srv_interface in server_interfaces {
@@ -609,24 +396,7 @@ impl Register for Mqtt {
             }
         }
 
-        subscribe_res
-    }
-
-    async fn remove_interface(
-        &mut self,
-        interfaces: &Interfaces,
-        removed: &Interface,
-    ) -> Result<(), Error> {
-        let iter = interfaces.iter_without_removed(removed);
-        let introspection = Introspection::new(iter).to_string();
-
-        self.send_introspection(introspection).await?;
-
-        if removed.ownership().is_server() {
-            self.unsubscribe(removed.interface_name()).await?;
-        }
-
-        Ok(())
+        res
     }
 
     async fn remove_interfaces(
@@ -636,7 +406,11 @@ impl Register for Mqtt {
     ) -> Result<(), Error> {
         let interfaces = interfaces.iter_without_removed_many(removed);
         let introspection = Introspection::new(interfaces).to_string();
-        self.send_introspection(introspection).await?;
+
+        self.connection
+            .send_introspection(self.client_id(), introspection)
+            .await
+            .map_err(|err| MqttError::publish("send introspection", err))?;
 
         for iface in removed.values() {
             if iface.ownership().is_server() {
@@ -688,7 +462,9 @@ pub(crate) mod test {
 
     use mockall::predicate;
     use mockito::Server;
-    use rumqttc::{ClientError, ConnAck, ConnectReturnCode, QoS};
+    use rumqttc::{
+        ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
+    };
     use tempfile::TempDir;
     use test::{
         client::NEW_LOCK,
@@ -700,19 +476,26 @@ pub(crate) mod test {
         store::memory::MemoryStore,
     };
 
+    use self::{
+        client::{AsyncClient, EventLoop},
+        config::transport::TransportProvider,
+    };
+
     use super::*;
 
     pub(crate) fn mock_mqtt_connection(client: AsyncClient, eventloop: EventLoop) -> Mqtt {
         Mqtt::new(
             "realm".to_string(),
             "device_id".to_string(),
-            client,
-            eventloop,
-            TransportProvider::new(
-                "http://api.astarte.localhost/pairing".parse().unwrap(),
-                "secret".to_string(),
-                None,
-                true,
+            MqttState::new(
+                client,
+                eventloop,
+                TransportProvider::new(
+                    "http://api.astarte.localhost/pairing".parse().unwrap(),
+                    "secret".to_string(),
+                    None,
+                    true,
+                ),
             ),
         )
     }

@@ -36,8 +36,8 @@ use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
     store::PropertyStore,
     transport::mqtt::{
-        config::transport::TransportProvider, error::MqttError, registration::register_device,
-        SessionData,
+        config::transport::TransportProvider, connection::MqttState, error::MqttError,
+        registration::register_device, ClientId,
     },
     Error,
 };
@@ -328,7 +328,7 @@ impl MqttConfig {
     }
 
     /// Builds the options to connect to the broker
-    async fn build_mqtt_opts(
+    fn build_mqtt_opts(
         &self,
         transport: Transport,
         broker_url: &Url,
@@ -399,7 +399,6 @@ impl ConnectionConfig for MqttConfig {
 
         let (mqtt_opts, net_opts) = self
             .build_mqtt_opts(transport, &borker_url)
-            .await
             .map_err(MqttError::Pairing)?;
 
         debug!("{:?}", mqtt_opts);
@@ -408,11 +407,21 @@ impl ConnectionConfig for MqttConfig {
 
         eventloop.set_network_options(net_opts);
 
-        let session_data = SessionData::try_from_props(&builder.interfaces, &builder.store).await?;
+        let client_id = ClientId {
+            device_id: &self.device_id,
+            realm: &self.realm,
+        };
+        let state = MqttState::wait_connack(
+            client,
+            eventloop,
+            provider,
+            client_id,
+            &builder.interfaces,
+            &builder.store,
+        )
+        .await?;
 
-        let mut connection = Mqtt::new(self.realm, self.device_id, client, eventloop, provider);
-        // to correctly initialize the connection to astarte we should wait for the connack
-        connection.wait_for_connack(session_data).await?;
+        let connection = Mqtt::new(self.realm, self.device_id, state);
 
         Ok(connection)
     }
