@@ -262,18 +262,9 @@ impl Mqtt {
     {
         let paths = properties::extract_set_properties(bdata)?;
 
-        let interfaces = device.interfaces.read().await;
+        let stored_props = device.store.server_props().await?;
 
-        let stored_props = device.store.load_all_props().await?;
-
-        let server_owned_properties = stored_props.into_iter().filter(|prop| {
-            interfaces
-                .get_property(&prop.interface)
-                .map(|i| i.ownership())
-                == Some(Ownership::Server)
-        });
-
-        for stored_prop in server_owned_properties {
+        for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
