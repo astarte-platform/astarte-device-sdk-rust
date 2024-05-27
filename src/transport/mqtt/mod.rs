@@ -250,14 +250,19 @@ impl Mqtt {
         Ok(())
     }
 
-    /// Purges local properties defined in the passed binary data
-    async fn purge_properties<S>(&self, device: &SharedDevice<S>, bdata: &[u8]) -> Result<(), Error>
+    /// This function deletes all the stored server owned properties after receiving a publish on
+    /// `/control/consumer/properties`
+    async fn purge_server_properties<S>(
+        &self,
+        device: &SharedDevice<S>,
+        bdata: &[u8],
+    ) -> Result<(), Error>
     where
         S: PropertyStore,
     {
-        let stored_props = device.store.load_all_props().await?;
-
         let paths = properties::extract_set_properties(bdata)?;
+
+        let stored_props = device.store.server_props().await?;
 
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
@@ -429,7 +434,8 @@ impl Receive for Mqtt {
                     if purge_topic == &publish.topic {
                         debug!("Purging properties");
 
-                        self.purge_properties(device, &publish.payload).await?;
+                        self.purge_server_properties(device, &publish.payload)
+                            .await?;
                     } else {
                         let client_id = CLIENT_ID.get_or_init(|| self.client_id().to_string());
                         let ParsedTopic { interface, path } =
