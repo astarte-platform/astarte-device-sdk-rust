@@ -18,7 +18,10 @@
 
 use std::path::Path;
 
-use astarte_device_sdk::{AstarteAggregate, AstarteType, DeviceEvent, Error, Interface};
+use astarte_device_sdk::{
+    properties::PropAccess, store::StoredProp, AstarteAggregate, AstarteType, DeviceEvent, Error,
+    Interface,
+};
 use async_trait::async_trait;
 use mockall::mock;
 
@@ -109,10 +112,10 @@ pub trait DynamicIntrospection {
 }
 
 mock! {
-    pub DeviceClient<C: 'static> { }
+    pub DeviceClient<S: 'static> { }
 
     #[async_trait]
-    impl<C: Send + Sync> Client for DeviceClient<C> {
+    impl<S: Send + Sync> Client for DeviceClient<S> {
         async fn send_object_with_timestamp<D>(
             &self,
             interface_name: &str,
@@ -158,7 +161,7 @@ mock! {
 
 
     #[async_trait]
-    impl<C: Send + Sync> DeviceIntrospection for DeviceClient<C> {
+    impl<S: Send + Sync> DeviceIntrospection for DeviceClient<S> {
         async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
         where
             F: FnMut(Option<&Interface>) -> O + Send + 'static,
@@ -166,7 +169,7 @@ mock! {
     }
 
     #[async_trait]
-    impl<C: Send + Sync> DynamicIntrospection for DeviceClient<C> {
+    impl<S: Send + Sync> DynamicIntrospection for DeviceClient<S> {
         async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
 
         async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
@@ -191,7 +194,16 @@ mock! {
         async fn remove_interfaces_vec(&self, interfaces_name: Vec<String>) -> Result<Vec<String>, Error>;
     }
 
-    impl<C> Clone for DeviceClient<C> {
+    #[async_trait]
+    impl<S: Send + Sync> PropAccess for DeviceClient<S> {
+        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+        async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
+        async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
+        async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
+        async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
+    }
+
+    impl<S> Clone for DeviceClient<S> {
         fn clone(&self) -> Self {}
     }
 }
