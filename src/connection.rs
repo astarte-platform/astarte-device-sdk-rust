@@ -18,16 +18,16 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, pin::pin};
 
 use async_trait::async_trait;
 use itertools::Itertools;
 use tokio::{
-    select,
     sync::{mpsc, oneshot, RwLock},
+    task::JoinSet,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     error::Report,
@@ -36,7 +36,7 @@ use crate::{
     interfaces::Interfaces,
     introspection::AddInterfaceError,
     store::{wrapper::StoreWrapper, PropertyStore, StoredProp},
-    transport::{Disconnect, Publish, Receive, ReceivedEvent, Register},
+    transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Value,
 };
@@ -74,7 +74,7 @@ pub trait EventLoop {
     ///     connection.handle_events().await;
     /// }
     /// ```
-    async fn handle_events(&mut self) -> Result<(), crate::Error>;
+    async fn handle_events(self) -> Result<(), crate::Error>;
 }
 
 /// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
@@ -85,31 +85,366 @@ pub trait ClientDisconnect {
 }
 
 /// Astarte device implementation.
-pub struct DeviceConnection<S, C> {
-    interfaces: Arc<RwLock<Interfaces>>,
-    tx: flume::Sender<Result<DeviceEvent, Error>>,
-    pub(crate) client: mpsc::Receiver<ClientMessage>,
-    store: StoreWrapper<S>,
-    connection: C,
+pub struct DeviceConnection<S, C>
+where
+    C: Connection,
+{
+    pub(crate) sender: DeviceSender<S, C::Sender>,
+    pub(crate) receiver: DeviceReceiver<S, C>,
 }
 
-impl<S, C> DeviceConnection<S, C> {
+impl<S, C> DeviceConnection<S, C>
+where
+    C: Connection,
+{
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
         tx: flume::Sender<Result<DeviceEvent, Error>>,
         client: mpsc::Receiver<ClientMessage>,
         store: StoreWrapper<S>,
         connection: C,
-    ) -> Self {
+        sender: C::Sender,
+    ) -> Self
+    where
+        S: Clone,
+    {
         Self {
-            interfaces,
-            tx,
-            client,
-            store,
-            connection,
+            sender: DeviceSender {
+                interfaces: Arc::clone(&interfaces),
+                client,
+                store: store.clone(),
+                sender,
+            },
+            receiver: DeviceReceiver {
+                interfaces,
+                tx,
+                store,
+                connection,
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl<S, C> EventLoop for DeviceConnection<S, C>
+where
+    C: Connection + Reconnect + Receive + Send + Sync + 'static,
+    C::Sender: Register + Publish + Send + Sync + 'static,
+    S: PropertyStore,
+{
+    async fn handle_events(mut self) -> Result<(), crate::Error> {
+        let Self {
+            mut sender,
+            mut receiver,
+        } = self;
+
+        let mut tasks: JoinSet<Result<(), Error>> = JoinSet::new();
+
+        tasks.spawn(async move {
+            // TODO: consider adding a cancellation token.
+            loop {
+                // Last client disconnected or panicked
+                let msg = sender.client.recv().await.ok_or(Error::Disconnected)?;
+
+                sender.handle_client_msg(msg).await?;
+            }
+        });
+
+        tasks.spawn(async move {
+            // The event is null, reconnect the device
+            loop {
+                let event = receiver.connection.next_event(&receiver.store).await?;
+
+                let Some(event) = event else {
+                    debug!("reconnecting");
+
+                    let interfaces = receiver.interfaces.read().await;
+                    receiver
+                        .connection
+                        .reconnect(&interfaces, &receiver.store)
+                        .await?;
+
+                    continue;
+                };
+
+                receiver.handle_connection_event(event).await?;
+            }
+        });
+
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    error!(error = %Report::new(err), "task errored")
+                }
+                Err(err) if err.is_cancelled() => {
+                    trace!("task cancelled");
+                }
+                Err(err) => {
+                    error!(error = %Report::new(err), "failed to join task");
+                }
+            }
+        }
+
+        Err(Error::Disconnected)
+    }
+}
+
+#[async_trait]
+impl<S, C> ClientDisconnect for DeviceConnection<S, C>
+where
+    S: Send,
+    C: Connection + Disconnect + Send,
+    C::Sender: Send,
+{
+    async fn disconnect(self) {
+        if let Err(e) = self.receiver.connection.disconnect().await {
+            error!(error = %Report::new(e), "Could not close the connection gracefully");
+        }
+    }
+}
+
+pub(crate) struct DeviceSender<S, T> {
+    interfaces: Arc<RwLock<Interfaces>>,
+    pub(crate) client: mpsc::Receiver<ClientMessage>,
+    store: StoreWrapper<S>,
+    sender: T,
+}
+
+impl<S, T> DeviceSender<S, T> {
+    pub(crate) async fn handle_client_msg(&mut self, msg: ClientMessage) -> Result<(), Error>
+    where
+        T: Publish + Register,
+        S: PropertyStore,
+    {
+        match msg {
+            ClientMessage::Individual(data) => self.sender.send_individual(data).await,
+            ClientMessage::Property {
+                data,
+                version_major,
+            } => {
+                self.sender.send_individual(data.clone()).await?;
+
+                let prop = StoredProp {
+                    interface: data.interface.as_str(),
+                    path: data.path.as_str(),
+                    value: &data.data,
+                    interface_major: version_major,
+                    ownership: Ownership::Device,
+                };
+
+                self.store.store_prop(prop).await?;
+
+                info!(
+                    "property stored {}{}:{version_major}",
+                    data.interface, data.path,
+                );
+
+                Ok(())
+            }
+            ClientMessage::Object(data) => self.sender.send_object(data).await,
+            ClientMessage::Unset(data) => {
+                self.sender.unset(data.clone()).await?;
+
+                debug!(
+                    "deleting property {}{} from store",
+                    data.interface, data.path
+                );
+
+                self.store.delete_prop(&data.interface, &data.path).await?;
+
+                Ok(())
+            }
+            ClientMessage::AddInterface {
+                interface,
+                response,
+            } => {
+                let res = self.add_interface(interface).await;
+
+                if let Err(Err(err)) = response.send(res) {
+                    error!(error = %Report::new(err), "client disconnected while failing to add interface");
+                }
+
+                Ok(())
+            }
+            ClientMessage::ExtendInterfaces {
+                interfaces,
+                response,
+            } => {
+                let res = self.extend_interfaces(interfaces).await;
+
+                if let Err(Err(err)) = response.send(res) {
+                    error!(error = %Report::new(err),"client disconnected while failing to extend interfaces");
+                }
+
+                Ok(())
+            }
+            ClientMessage::RemoveInterface {
+                interface,
+                response,
+            } => {
+                let res = self.remove_interface(&interface).await;
+
+                if let Err(Err(err)) = response.send(res) {
+                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
+                }
+
+                Ok(())
+            }
+            ClientMessage::RemoveInterfaces {
+                interfaces,
+                response,
+            } => {
+                let res = self
+                    .remove_interfaces(interfaces.iter().map(|s| s.as_str()))
+                    .await;
+
+                if let Err(Err(err)) = response.send(res) {
+                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
+                }
+
+                Ok(())
+            }
         }
     }
 
+    /// Returns a boolean to check if the interface was added.
+    async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>
+    where
+        T: Register,
+    {
+        // Lock for writing for the whole scope, even the checks
+        let mut interfaces = self.interfaces.write().await;
+
+        let map_err = interfaces
+            .validate(interface)
+            .map_err(AddInterfaceError::Interface)?;
+
+        let Some(to_add) = map_err else {
+            debug!("interfaces already present");
+
+            return Ok(false);
+        };
+
+        self.sender.add_interface(&interfaces, &to_add).await?;
+
+        interfaces.add(to_add);
+
+        Ok(true)
+    }
+
+    /// Returns a [`Vec`] with the name of the interfaces that have been added.
+    async fn extend_interfaces<I>(&mut self, added: I) -> Result<Vec<String>, Error>
+    where
+        I: IntoIterator<Item = Interface> + Send,
+        T: Register,
+    {
+        // Lock for writing for the whole scope, even the checks
+        let mut interfaces = self.interfaces.write().await;
+
+        let to_add = interfaces
+            .validate_many(added)
+            .map_err(AddInterfaceError::Interface)?;
+
+        if to_add.is_empty() {
+            debug!("All interfaces already present");
+            return Ok(Vec::new());
+        }
+
+        debug!("Adding {} interfaces", to_add.len());
+
+        self.sender.extend_interfaces(&interfaces, &to_add).await?;
+
+        let names = to_add.keys().cloned().collect_vec();
+
+        interfaces.extend(to_add);
+
+        debug!("Interfaces added");
+
+        Ok(names)
+    }
+
+    /// Returns a bool to check if the interface was added.
+    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error>
+    where
+        T: Register,
+        S: PropertyStore,
+    {
+        let mut interfaces = self.interfaces.write().await;
+
+        let Some(to_remove) = interfaces.get(interface_name) else {
+            debug!("{interface_name} not found, skipping");
+            return Ok(false);
+        };
+
+        self.sender.remove_interface(&interfaces, to_remove).await?;
+
+        if let Some(prop) = to_remove.as_prop() {
+            // We cannot error here since we have already unsubscribed from the interface
+            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+                error!(error = %Report::new(err),"failed to remove property");
+            }
+        }
+
+        interfaces.remove(interface_name);
+
+        Ok(true)
+    }
+
+    async fn remove_interfaces<'a, I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
+    where
+        T: Register,
+        S: PropertyStore,
+        I: IntoIterator<Item = &'a str> + Send,
+    {
+        let mut interfaces = self.interfaces.write().await;
+
+        let to_remove: HashMap<&str, &Interface> = interfaces_name
+            .into_iter()
+            .filter_map(|iface_name| {
+                let interface = interfaces.get(iface_name).map(|i| (i.interface_name(), i));
+
+                if interface.is_none() {
+                    debug!("{iface_name} not found, skipping");
+                }
+
+                interface
+            })
+            .collect();
+
+        if to_remove.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.sender
+            .remove_interfaces(&interfaces, &to_remove)
+            .await?;
+
+        for (_, iface) in to_remove.iter() {
+            // We cannot error here since we have already unsubscribed from the interface
+            if let Some(prop) = iface.as_prop() {
+                if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+                    error!(error = %Report::new(err), "failed to remove property");
+                }
+            }
+        }
+
+        let removed_names = to_remove.keys().map(|k| k.to_string()).collect_vec();
+
+        interfaces.remove_many(&removed_names);
+
+        Ok(removed_names)
+    }
+}
+
+pub(crate) struct DeviceReceiver<S, C> {
+    interfaces: Arc<RwLock<Interfaces>>,
+    tx: flume::Sender<Result<DeviceEvent, Error>>,
+    store: StoreWrapper<S>,
+    connection: C,
+}
+
+impl<S, C> DeviceReceiver<S, C> {
     async fn handle_event(
         &self,
         interface: &str,
@@ -220,138 +555,6 @@ impl<S, C> DeviceConnection<S, C> {
         Ok((Value::Object(data), timestamp))
     }
 
-    /// Returns a boolean to check if the interface was added.
-    async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>
-    where
-        C: Register,
-    {
-        // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.interfaces.write().await;
-
-        let map_err = interfaces
-            .validate(interface)
-            .map_err(AddInterfaceError::Interface)?;
-
-        let Some(to_add) = map_err else {
-            debug!("interfaces already present");
-
-            return Ok(false);
-        };
-
-        self.connection.add_interface(&interfaces, &to_add).await?;
-
-        interfaces.add(to_add);
-
-        Ok(true)
-    }
-
-    /// Returns a [`Vec`] with the name of the interfaces that have been added.
-    async fn extend_interfaces<I>(&mut self, added: I) -> Result<Vec<String>, Error>
-    where
-        I: IntoIterator<Item = Interface> + Send,
-        C: Register,
-    {
-        // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.interfaces.write().await;
-
-        let to_add = interfaces
-            .validate_many(added)
-            .map_err(AddInterfaceError::Interface)?;
-
-        if to_add.is_empty() {
-            debug!("All interfaces already present");
-            return Ok(Vec::new());
-        }
-
-        debug!("Adding {} interfaces", to_add.len());
-
-        self.connection
-            .extend_interfaces(&interfaces, &to_add)
-            .await?;
-
-        let names = to_add.keys().cloned().collect_vec();
-
-        interfaces.extend(to_add);
-
-        debug!("Interfaces added");
-
-        Ok(names)
-    }
-
-    /// Returns a bool to check if the interface was added.
-    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error>
-    where
-        C: Register,
-        S: PropertyStore,
-    {
-        let mut interfaces = self.interfaces.write().await;
-
-        let Some(to_remove) = interfaces.get(interface_name) else {
-            debug!("{interface_name} not found, skipping");
-            return Ok(false);
-        };
-
-        self.connection
-            .remove_interface(&interfaces, to_remove)
-            .await?;
-
-        if let Some(prop) = to_remove.as_prop() {
-            // We cannot error here since we have already unsubscribed from the interface
-            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
-                error!(error = %Report::new(err), "failed to remove property");
-            }
-        }
-
-        interfaces.remove(interface_name);
-
-        Ok(true)
-    }
-
-    async fn remove_interfaces<'a, I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
-    where
-        C: Register,
-        S: PropertyStore,
-        I: IntoIterator<Item = &'a str> + Send,
-    {
-        let mut interfaces = self.interfaces.write().await;
-
-        let to_remove: HashMap<&str, &Interface> = interfaces_name
-            .into_iter()
-            .filter_map(|iface_name| {
-                let interface = interfaces.get(iface_name).map(|i| (i.interface_name(), i));
-
-                if interface.is_none() {
-                    debug!("{iface_name} not found, skipping");
-                }
-
-                interface
-            })
-            .collect();
-
-        if to_remove.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        self.connection
-            .remove_interfaces(&interfaces, &to_remove)
-            .await?;
-
-        for (_, iface) in to_remove.iter() {
-            // We cannot error here since we have already unsubscribed from the interface
-            if let Some(prop) = iface.as_prop() {
-                if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
-                    error!(error = %Report::new(err), "failed to remove property");
-                }
-            }
-        }
-
-        let removed_names = to_remove.keys().map(|k| k.to_string()).collect_vec();
-
-        interfaces.remove_many(&removed_names);
-
-        Ok(removed_names)
-    }
-
     async fn handle_connection_event(&self, event: ReceivedEvent<C::Payload>) -> Result<(), Error>
     where
         C: Receive + Sync,
@@ -370,148 +573,6 @@ impl<S, C> DeviceConnection<S, C> {
             .send_async(data)
             .await
             .map_err(|_| Error::Disconnected)
-    }
-
-    pub(crate) async fn handle_client_msg(&mut self, msg: ClientMessage) -> Result<(), Error>
-    where
-        C: Publish + Register,
-        S: PropertyStore,
-    {
-        match msg {
-            ClientMessage::Individual(data) => self.connection.send_individual(data).await,
-            ClientMessage::Property {
-                data,
-                version_major,
-            } => {
-                self.connection.send_individual(data.clone()).await?;
-
-                let prop = StoredProp {
-                    interface: data.interface.as_str(),
-                    path: data.path.as_str(),
-                    value: &data.data,
-                    interface_major: version_major,
-                    ownership: Ownership::Device,
-                };
-
-                self.store.store_prop(prop).await?;
-
-                info!(
-                    "property stored {}{}:{version_major}",
-                    data.interface, data.path,
-                );
-
-                Ok(())
-            }
-            ClientMessage::Object(data) => self.connection.send_object(data).await,
-            ClientMessage::Unset(data) => {
-                self.connection.unset(data.clone()).await?;
-
-                debug!(
-                    "deleting property {}{} from store",
-                    data.interface, data.path
-                );
-
-                self.store.delete_prop(&data.interface, &data.path).await?;
-
-                Ok(())
-            }
-            ClientMessage::AddInterface {
-                interface,
-                response,
-            } => {
-                let res = self.add_interface(interface).await;
-
-                if let Err(Err(err)) = response.send(res) {
-                    error!(error = %Report::new(err), "client disconnected while failing to add interface");
-                }
-
-                Ok(())
-            }
-            ClientMessage::ExtendInterfaces {
-                interfaces,
-                response,
-            } => {
-                let res = self.extend_interfaces(interfaces).await;
-
-                if let Err(Err(err)) = response.send(res) {
-                    error!(error = %Report::new(err), "client disconnected while failing to extend interfaces");
-                }
-
-                Ok(())
-            }
-            ClientMessage::RemoveInterface {
-                interface,
-                response,
-            } => {
-                let res = self.remove_interface(&interface).await;
-
-                if let Err(Err(err)) = response.send(res) {
-                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
-                }
-
-                Ok(())
-            }
-            ClientMessage::RemoveInterfaces {
-                interfaces,
-                response,
-            } => {
-                let res = self
-                    .remove_interfaces(interfaces.iter().map(|s| s.as_str()))
-                    .await;
-
-                if let Err(Err(err)) = response.send(res) {
-                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
-                }
-
-                Ok(())
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl<S, C> EventLoop for DeviceConnection<S, C>
-where
-    C: Receive + Register + Publish + Sync + Send,
-    S: PropertyStore,
-{
-    async fn handle_events(&mut self) -> Result<(), crate::Error> {
-        loop {
-            // Future to not hold multiple mutable reference to self, but only to connection and client
-            // Lock the interfaces only while awaiting the next event
-            let connection_fut = async {
-                let interfaces = self.interfaces.read().await;
-                // The next event should be cancel safe
-                self.connection.next_event(&interfaces, &self.store).await
-            };
-
-            select! {
-                event = connection_fut => {
-                    let event = event?;
-
-                    self.handle_connection_event(event).await?;
-                }
-                msg = self.client.recv() => {
-                    // Last client disconnected or panicked
-                    let msg = msg.ok_or(Error::Disconnected)?;
-
-                    self.handle_client_msg(msg).await?;
-                }
-            };
-        }
-    }
-}
-
-#[async_trait]
-impl<S, C> ClientDisconnect for DeviceConnection<S, C>
-where
-    S: Send,
-    C: Disconnect + Send,
-{
-    async fn disconnect(self) {
-        if let Err(err) = self.connection.disconnect().await {
-            error!(error = %Report::new(err), "Could not close the connection gracefully");
-        }
     }
 }
 

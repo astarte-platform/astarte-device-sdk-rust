@@ -29,6 +29,7 @@ pub mod convert;
 use std::collections::HashMap;
 use std::ops::Deref;
 
+use astarte_message_hub_proto::tonic::codec::Streaming;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
 use astarte_message_hub_proto::tonic::service::Interceptor;
@@ -41,7 +42,7 @@ use astarte_message_hub_proto::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use crate::store::wrapper::StoreWrapper;
@@ -59,7 +60,7 @@ use crate::{
     Error, Interface, Timestamp,
 };
 
-use super::{Disconnect, Publish, Receive, ReceivedEvent, Register};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register};
 
 use self::convert::MessageHubProtoError;
 
@@ -90,9 +91,9 @@ pub enum GrpcError {
     MessageHubProtoConversion(#[from] MessageHubProtoError),
 }
 
-type MessageHubClientWithInterceptor =
-    MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
+type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct NodeIdInterceptor(Uuid);
 
 impl NodeIdInterceptor {
@@ -112,72 +113,20 @@ impl Interceptor for NodeIdInterceptor {
     }
 }
 
-/// This struct represents a GRPC connection handler for an Astarte device. It manages the
-/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and receiving [`AstarteMessage`]
-/// following the Astarte message hub protocol.
-pub struct Grpc {
-    uuid: Uuid,
-    client: MessageHubClientWithInterceptor,
-    stream: SyncWrapper<tonic::codec::Streaming<AstarteMessage>>,
+/// Client to send packets to the [Message Hub](https://github.com/astarte-platform/astarte-message-hub).
+pub struct GrpcClient {
+    client: MsgHubClient,
 }
 
-impl Grpc {
-    pub(crate) fn new(
-        client: MessageHubClientWithInterceptor,
-        stream: tonic::codec::Streaming<AstarteMessage>,
-        uuid: Uuid,
-    ) -> Self {
-        Self {
-            uuid,
-            client,
-            stream: SyncWrapper::new(stream),
-        }
-    }
-
-    /// Polls a message from the tonic stream and tries reattaching if necessary
-    ///
-    /// An [`Option`] is returned directly from the [`tonic::codec::Streaming::message`] method.
-    /// A result of [`None`] signals a disconnection and should be handled by the caller
-    async fn next_message(&mut self) -> Result<Option<AstarteMessage>, tonic::Status> {
-        self.stream.get_mut().message().await
-    }
-
-    async fn attach(
-        client: &mut MessageHubClientWithInterceptor,
-        data: NodeData,
-    ) -> Result<tonic::codec::Streaming<AstarteMessage>, GrpcError> {
-        client
-            .attach(tonic::Request::new(data.node))
-            .await
-            .map(|r| r.into_inner())
-            .map_err(GrpcError::from)
-    }
-
-    async fn detach(
-        mut client: MessageHubClientWithInterceptor,
-        uuid: &Uuid,
-    ) -> Result<(), GrpcError> {
-        // During the detach phase only the uuid is needed we can pass an empty array
-        // as the interface_json since the interfaces are already known to the message hub
-        // this api will change in the future
-        client
-            .detach(Node::new(uuid, Vec::new()))
-            .await
-            .map(|_| ())
-            .map_err(GrpcError::from)
-    }
-}
-
-impl std::fmt::Debug for Grpc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Grpc")
-            .field("uuid", &self.uuid)
-            .finish_non_exhaustive()
+impl GrpcClient {
+    /// Create a new client.
+    pub(crate) fn new(client: MsgHubClient) -> Self {
+        Self { client }
     }
 }
 
 #[async_trait]
-impl Publish for Grpc {
+impl Publish for GrpcClient {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
         self.client
             .send(tonic::Request::new(data.into()))
@@ -204,93 +153,7 @@ impl Publish for Grpc {
 }
 
 #[async_trait]
-impl Receive for Grpc {
-    type Payload = GrpcPayload;
-
-    async fn next_event<S>(
-        &mut self,
-        interfaces: &Interfaces,
-        _store: &StoreWrapper<S>,
-    ) -> Result<ReceivedEvent<Self::Payload>, crate::Error>
-    where
-        S: PropertyStore,
-    {
-        loop {
-            match self.next_message().await {
-                Ok(Some(message)) => {
-                    let event: ReceivedEvent<Self::Payload> = message
-                        .try_into()
-                        .map_err(GrpcError::MessageHubProtoConversion)?;
-
-                    return Ok(event);
-                }
-                Err(s)
-                    if s.code() != tonic::Code::Unavailable && s.code() != tonic::Code::Unknown =>
-                {
-                    return Err(GrpcError::from(s).into());
-                }
-                Ok(None) | Err(_) => {
-                    // try reattaching
-                    let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
-
-                    let stream = Grpc::attach(&mut self.client, data).await?;
-                    self.stream = SyncWrapper::new(stream);
-                }
-            }
-        }
-    }
-
-    fn deserialize_individual(
-        &self,
-        _mapping: &MappingRef<'_, &Interface>,
-        payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error> {
-        let data = match payload.data {
-            ProtoPayload::AstarteData(data) => data,
-            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
-                debug!("unset received");
-
-                return Ok(None);
-            }
-        };
-
-        trace!("unset received");
-        let individual = data
-            .take_individual()
-            .ok_or(GrpcError::DeserializationExpectedIndividual)?;
-
-        let data: AstarteType = individual
-            .try_into()
-            .map_err(GrpcError::MessageHubProtoConversion)?;
-
-        trace!("received {}", data.display_type());
-
-        Ok(Some((data, payload.timestamp)))
-    }
-
-    fn deserialize_object(
-        &self,
-        _object: &ObjectRef,
-        _path: &MappingPath<'_>,
-        payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
-        let object = payload
-            .data
-            .take_data()
-            .and_then(|d| d.take_object())
-            .ok_or(GrpcError::DeserializationExpectedObject)?;
-
-        let data =
-            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
-
-        trace!("object received");
-
-        Ok((data, payload.timestamp))
-    }
-}
-
-#[async_trait]
-impl Register for Grpc {
+impl Register for GrpcClient {
     async fn add_interface(
         &mut self,
         _interfaces: &Interfaces,
@@ -359,6 +222,161 @@ impl Register for Grpc {
     }
 }
 
+/// This struct represents a GRPC connection handler for an Astarte device. It manages the
+/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and receiving [`AstarteMessage`]
+/// following the Astarte message hub protocol.
+pub struct Grpc {
+    uuid: Uuid,
+    client: MsgHubClient,
+    stream: SyncWrapper<Streaming<AstarteMessage>>,
+}
+
+impl Grpc {
+    pub(crate) fn new(client: MsgHubClient, stream: Streaming<AstarteMessage>, uuid: Uuid) -> Self {
+        Self {
+            uuid,
+            client,
+            stream: SyncWrapper::new(stream),
+        }
+    }
+
+    /// Polls a message from the tonic stream and tries reattaching if necessary
+    ///
+    /// An [`Option`] is returned directly from the [`tonic::codec::Streaming::message`] method.
+    /// A result of [`None`] signals a disconnection and should be handled by the caller
+    async fn next_message(&mut self) -> Result<Option<AstarteMessage>, tonic::Status> {
+        self.stream.get_mut().message().await
+    }
+
+    async fn attach(
+        client: &mut MsgHubClient,
+        data: NodeData,
+    ) -> Result<Streaming<AstarteMessage>, GrpcError> {
+        client
+            .attach(tonic::Request::new(data.node))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(GrpcError::from)
+    }
+
+    async fn detach(mut client: MsgHubClient, uuid: &Uuid) -> Result<(), GrpcError> {
+        // During the detach phase only the uuid is needed we can pass an empty array
+        // as the interface_json since the interfaces are already known to the message hub
+        // this api will change in the future
+        client
+            .detach(Node::new(uuid, Vec::new()))
+            .await
+            .map(|_| ())
+            .map_err(GrpcError::from)
+    }
+}
+
+impl std::fmt::Debug for Grpc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Grpc")
+            .field("uuid", &self.uuid)
+            .finish_non_exhaustive()
+    }
+}
+
+#[async_trait]
+impl Receive for Grpc {
+    type Payload = GrpcPayload;
+
+    async fn next_event<S>(
+        &mut self,
+        _store: &StoreWrapper<S>,
+    ) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>
+    where
+        S: PropertyStore,
+    {
+        match self.next_message().await {
+            Ok(Some(message)) => {
+                let event: ReceivedEvent<Self::Payload> = message
+                    .try_into()
+                    .map_err(GrpcError::MessageHubProtoConversion)?;
+
+                Ok(Some(event))
+            }
+            Err(s) => {
+                error!(status = %s, "error returned by the server");
+
+                Ok(None)
+            }
+            Ok(None) => {
+                warn!("Stream closed");
+
+                Ok(None)
+            }
+        }
+    }
+
+    fn deserialize_individual(
+        &self,
+        _mapping: &MappingRef<'_, &Interface>,
+        payload: Self::Payload,
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error> {
+        let data = match payload.data {
+            ProtoPayload::AstarteData(data) => data,
+            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
+                debug!("unset received");
+
+                return Ok(None);
+            }
+        };
+
+        trace!("unset received");
+        let individual = data
+            .take_individual()
+            .ok_or(GrpcError::DeserializationExpectedIndividual)?;
+
+        let data: AstarteType = individual
+            .try_into()
+            .map_err(GrpcError::MessageHubProtoConversion)?;
+
+        trace!("received {}", data.display_type());
+
+        Ok(Some((data, payload.timestamp)))
+    }
+
+    fn deserialize_object(
+        &self,
+        _object: &ObjectRef,
+        _path: &MappingPath<'_>,
+        payload: Self::Payload,
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
+        let object = payload
+            .data
+            .take_data()
+            .and_then(|d| d.take_object())
+            .ok_or(GrpcError::DeserializationExpectedObject)?;
+
+        let data =
+            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
+
+        trace!("object received");
+
+        Ok((data, payload.timestamp))
+    }
+}
+
+#[async_trait]
+impl Reconnect for Grpc {
+    async fn reconnect<S>(
+        &mut self,
+        interfaces: &Interfaces,
+        _store: &StoreWrapper<S>,
+    ) -> Result<(), crate::Error> {
+        // try reattaching
+        let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
+
+        let stream = Grpc::attach(&mut self.client, data).await?;
+        self.stream = SyncWrapper::new(stream);
+
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Disconnect for Grpc {
     async fn disconnect(mut self) -> Result<(), crate::Error> {
@@ -366,6 +384,10 @@ impl Disconnect for Grpc {
             .await
             .map_err(|e| e.into())
     }
+}
+
+impl Connection for Grpc {
+    type Sender = GrpcClient;
 }
 
 /// Internal struct holding the received grpc message
@@ -409,13 +431,16 @@ impl GrpcConfig {
 
 #[async_trait]
 impl ConnectionConfig for GrpcConfig {
-    type Con = Grpc;
+    type Conn = Grpc;
     type Err = GrpcError;
 
-    async fn connect<S, C>(self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
+    async fn connect<S, C>(
+        self,
+        builder: &DeviceBuilder<S, C>,
+    ) -> Result<(GrpcClient, Grpc), Self::Err>
     where
         S: PropertyStore,
-        C: Send + Sync,
+        C: Connection + Send + Sync,
     {
         let channel = self.endpoint.connect().await?;
 
@@ -426,7 +451,10 @@ impl ConnectionConfig for GrpcConfig {
         let node_data = NodeData::try_from_interfaces(self.uuid, &builder.interfaces)?;
         let stream = Grpc::attach(&mut client, node_data).await?;
 
-        Ok(Grpc::new(client, stream, self.uuid))
+        let sender = GrpcClient::new(client.clone());
+        let receiver = Grpc::new(client, stream, self.uuid);
+
+        Ok((sender, receiver))
     }
 }
 
@@ -466,7 +494,6 @@ mod test {
     use uuid::uuid;
 
     use crate::{
-        error,
         store::memory::MemoryStore,
         transport::test::{mock_validate_individual, mock_validate_object},
         AstarteAggregate, DeviceEvent, Value,
@@ -600,7 +627,7 @@ mod test {
     async fn make_client(
         addr: SocketAddr,
         interceptor: NodeIdInterceptor,
-    ) -> impl Future<Output = MessageHubClientWithInterceptor> {
+    ) -> impl Future<Output = MsgHubClient> {
         async move {
             let channel = loop {
                 let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
@@ -621,10 +648,7 @@ mod test {
     async fn mock_grpc_actors(
         server_impl: TestMessageHubServer,
     ) -> Result<
-        (
-            impl Future<Output = ()>,
-            impl Future<Output = MessageHubClientWithInterceptor>,
-        ),
+        (impl Future<Output = ()>, impl Future<Output = MsgHubClient>),
         Box<dyn std::error::Error>,
     > {
         // bind to port 0 to make the kernel choose an open port
@@ -644,13 +668,15 @@ mod test {
     const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
     async fn mock_astarte_grpc_client(
-        mut message_hub_client: MessageHubClientWithInterceptor,
+        mut message_hub_client: MsgHubClient,
         interfaces: &Interfaces,
-    ) -> Result<Grpc, Box<dyn std::error::Error>> {
+    ) -> Result<(GrpcClient, Grpc), Box<dyn std::error::Error>> {
         let node_data = NodeData::try_from_interfaces(ID, interfaces)?;
         let stream = Grpc::attach(&mut message_hub_client, node_data).await?;
 
-        Ok(Grpc::new(message_hub_client, stream, ID))
+        let client = GrpcClient::new(message_hub_client.clone());
+        let grcp = Grpc::new(message_hub_client, stream, ID);
+        Ok((client, grcp))
     }
 
     struct TestServerChannels {
@@ -727,7 +753,7 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let connection = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (_client, connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
@@ -782,18 +808,31 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let mut connection = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (_client, mut connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
-            let interfaces = Interfaces::new();
             let store = StoreWrapper::new(MemoryStore::new());
 
             // poll the three messages the first two received errors will simply reconnect without returning
+            assert!(matches!(connection.next_event(&store).await, Ok(None)));
+
+            // to reconnect but errors
             assert!(matches!(
-                connection.next_event(&interfaces, &store).await,
-                Err(error::Error::Grpc(GrpcError::Status(_)))
+                connection.reconnect(&Interfaces::new(), &store).await,
+                Ok(())
             ));
+
+            // second error
+            assert!(matches!(connection.next_event(&store).await, Ok(None)));
+
+            assert!(matches!(
+                connection.reconnect(&Interfaces::new(), &store).await,
+                Ok(())
+            ));
+
+            // third error
+            assert!(matches!(connection.next_event(&store).await, Ok(None)));
 
             // manually calling detach
             connection.disconnect().await.unwrap();
@@ -827,7 +866,7 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let mut connection = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (mut client, connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
@@ -836,12 +875,9 @@ mod test {
             let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
             let validated = interfaces.validate(interface.clone()).unwrap().unwrap();
 
-            connection
-                .add_interface(&interfaces, &validated)
-                .await
-                .unwrap();
+            client.add_interface(&interfaces, &validated).await.unwrap();
 
-            connection
+            client
                 .remove_interface(&interfaces, &validated)
                 .await
                 .unwrap();
@@ -852,7 +888,7 @@ mod test {
                 .validate_many([interface.clone(), additional_interface.clone()])
                 .unwrap();
 
-            connection
+            client
                 .extend_interfaces(&interfaces, &to_add)
                 .await
                 .unwrap();
@@ -862,7 +898,7 @@ mod test {
                 (additional_interface.interface_name(), &additional_interface),
             ]);
 
-            connection
+            client
                 .remove_interfaces(&interfaces, &to_remove)
                 .await
                 .unwrap();
@@ -934,7 +970,8 @@ mod test {
                 ]);
             let mapping_ref = interfaces.interface_mapping(INTERFACE_NAME, &path).unwrap();
 
-            let mut connection = mock_astarte_grpc_client(client, &interfaces).await.unwrap();
+            let (mut client, connection) =
+                mock_astarte_grpc_client(client, &interfaces).await.unwrap();
 
             let validated_individual = mock_validate_individual(
                 mapping_ref,
@@ -944,10 +981,7 @@ mod test {
             )
             .unwrap();
 
-            connection
-                .send_individual(validated_individual)
-                .await
-                .unwrap();
+            client.send_individual(validated_individual).await.unwrap();
 
             connection.disconnect().await.unwrap();
         };
@@ -1005,7 +1039,8 @@ mod test {
             let path = MappingPath::try_from("/1").unwrap();
             let interfaces = Interfaces::from_iter([interface.clone()]);
 
-            let mut connection = mock_astarte_grpc_client(client, &interfaces).await.unwrap();
+            let (mut client, _connection) =
+                mock_astarte_grpc_client(client, &interfaces).await.unwrap();
 
             let validated_object = mock_validate_object(
                 &interface,
@@ -1015,7 +1050,7 @@ mod test {
             )
             .unwrap();
 
-            connection.send_object(validated_object).await.unwrap()
+            client.send_object(validated_object).await.unwrap()
         };
 
         tokio::select! {
@@ -1074,7 +1109,7 @@ mod test {
             mock_astarte_grpc_client(client, &interfaces).await
         };
 
-        let mut connection = tokio::select! {
+        let (_client, mut connection) = tokio::select! {
             _ = server_future => panic!("The server closed before the client could complete sending the data"),
             res = client_connection => {
                 println!("Client connected correctly: {}", res.is_ok());
@@ -1085,15 +1120,15 @@ mod test {
 
         let store = StoreWrapper::new(MemoryStore::new());
 
-        expect_messages!(connection.next_event(&interfaces, &store).await;
-            ReceivedEvent {
+        expect_messages!(connection.next_event(&store).await;
+            Some(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {
                     data,
                     timestamp: None,
                 },
-            } if interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
+            }) if interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
                 && path == "/1"
                 && data == proto_payload
         );
@@ -1134,7 +1169,7 @@ mod test {
             mock_astarte_grpc_client(client, &interfaces).await
         };
 
-        let mut connection = tokio::select! {
+        let (_client, mut connection) = tokio::select! {
             _ = server_future => panic!("The server closed before the client could complete sending the data"),
             res = client_connection => {
                 println!("Client connected correctly: {}", res.is_ok());
@@ -1145,15 +1180,15 @@ mod test {
 
         let store = StoreWrapper::new(MemoryStore::new());
 
-        expect_messages!(connection.next_event(&interfaces, &store).await;
-            ReceivedEvent {
+        expect_messages!(connection.next_event( &store).await;
+            Some(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {
                     data,
                     timestamp: None,
                 },
-            } if interface == exp_interface
+            }) if interface == exp_interface
                 && path == exp_path
                 && data == proto_payload
         );

@@ -63,7 +63,7 @@ async fn main() -> Result<(), Error> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (client, mut connection) = DeviceBuilder::new()
+    let (client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connect(mqtt_config)
@@ -94,12 +94,12 @@ async fn main() -> Result<(), Error> {
     });
 
     // Use the current thread to receive (no incoming messages are expected in this example)
-    loop {
-        match connection.handle_events().await {
-            Ok(data) => {
-                info!("incoming: {data:?}");
-            }
-            Err(err) => error!("{err}"),
+    match connection.handle_events().await {
+        Ok(data) => {
+            info!("incoming: {data:?}");
         }
+        Err(err) => error!("{err}"),
     }
+
+    Ok(())
 }

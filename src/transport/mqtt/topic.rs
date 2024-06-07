@@ -57,7 +57,7 @@ pub(crate) struct ParsedTopic<'a> {
 }
 
 impl<'a> ParsedTopic<'a> {
-    pub(crate) fn try_parse(client_id: ClientId<'_>, topic: &'a str) -> Result<Self, TopicError> {
+    pub(crate) fn try_parse(client_id: ClientId<&str>, topic: &'a str) -> Result<Self, TopicError> {
         if topic.is_empty() {
             return Err(TopicError::Empty);
         }
@@ -100,7 +100,7 @@ impl<'a> ParsedTopic<'a> {
 mod tests {
     use super::*;
 
-    const CLIENT_ID: ClientId<'static> = ClientId {
+    const CLIENT_ID: ClientId<&'static str> = ClientId {
         realm: "test",
         device_id: "u-WraCwtK_G_fjJf63TiAw",
     };

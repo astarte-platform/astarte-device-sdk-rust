@@ -43,7 +43,7 @@ use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
-use crate::transport::{Publish, Receive, Register};
+use crate::transport::Connection;
 
 /// Default capacity of the channels
 ///
@@ -91,7 +91,10 @@ pub enum BuilderError {
 ///
 /// This trait is already implemented generically for the [`DeviceBuilder`]
 /// and implementing it should be avoided since it has no practical use.
-pub trait DeviceSdkBuild<S, C> {
+pub trait DeviceSdkBuild<S, C>
+where
+    C: Connection,
+{
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
     fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
@@ -100,7 +103,7 @@ pub trait DeviceSdkBuild<S, C> {
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
 where
     S: PropertyStore,
-    C: Publish + Receive + Register + Send,
+    C: Connection,
 {
     fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
         // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
@@ -121,6 +124,7 @@ where
             rx_connection,
             self.store,
             self.connection,
+            self.sender,
         );
 
         (client, connection)
@@ -130,10 +134,14 @@ where
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
 /// [`DeviceConnection`].
 #[derive(Clone)]
-pub struct DeviceBuilder<S, C> {
+pub struct DeviceBuilder<S, C>
+where
+    C: Connection,
+{
     pub(crate) channel_size: usize,
     pub(crate) interfaces: Interfaces,
     pub(crate) connection: C,
+    pub(crate) sender: C::Sender,
     pub(crate) store: StoreWrapper<S>,
     pub(crate) writable_dir: Option<PathBuf>,
 }
@@ -158,13 +166,17 @@ impl DeviceBuilder<(), ()> {
             channel_size: DEFAULT_CHANNEL_SIZE,
             interfaces: Interfaces::new(),
             connection: (),
+            sender: (),
             store: StoreWrapper::new(()),
             writable_dir: None,
         }
     }
 }
 
-impl<S, C> DeviceBuilder<S, C> {
+impl<S, C> DeviceBuilder<S, C>
+where
+    C: Connection,
+{
     /// Add a single interface from the provided `.json` file.
     ///
     /// If an interface with the same name is present, the code will validate
@@ -287,6 +299,7 @@ impl<S, C> DeviceBuilder<S, C> {
             channel_size: self.channel_size,
             interfaces: self.interfaces,
             connection: self.connection,
+            sender: self.sender,
             store: StoreWrapper::new(store),
             writable_dir: self.writable_dir,
         }
@@ -296,26 +309,30 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If the connection gets established correctly, the caller can than construct
     /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceSdkBuild::build`] method.
-    pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Con>, crate::Error>
+    pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Conn>, crate::Error>
     where
         S: PropertyStore,
         T: ConnectionConfig,
         crate::Error: From<<T as ConnectionConfig>::Err>,
         C: Send + Sync,
     {
-        let connection = config.connect(&self).await?;
+        let (sender, connection) = config.connect(&self).await?;
 
         Ok(DeviceBuilder {
             channel_size: self.channel_size,
             interfaces: self.interfaces,
             connection,
+            sender,
             store: self.store,
             writable_dir: self.writable_dir,
         })
     }
 }
 
-impl<S, C> Debug for DeviceBuilder<S, C> {
+impl<S, C> Debug for DeviceBuilder<S, C>
+where
+    C: Connection,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("channel_size", &self.channel_size)
@@ -342,16 +359,19 @@ impl Default for DeviceBuilder<(), ()> {
 #[async_trait]
 pub trait ConnectionConfig {
     /// Type of the constructed Connection
-    type Con;
+    type Conn: Connection;
     /// Type of the error got while opening the connection
     type Err;
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
-    async fn connect<S, C>(self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
+    async fn connect<S, C>(
+        self,
+        builder: &DeviceBuilder<S, C>,
+    ) -> Result<(<Self::Conn as Connection>::Sender, Self::Conn), Self::Err>
     where
         S: PropertyStore,
-        C: Send + Sync;
+        C: Connection + Send + Sync;
 }
 
 /// Walks a directory returning an array of json files
@@ -383,6 +403,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use mockito::Server;
     use rumqttc::{ConnAck, ConnectReturnCode, Event, Packet, QoS};
     use tempfile::TempDir;
@@ -479,46 +501,102 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         let ctx = AsyncClient::new_context();
-        ctx.expect().once().returning(|_, _| {
+        ctx.expect().once().returning(move |_, _| {
             let mut client = AsyncClient::default();
             let mut ev_loop = EventLoop::default();
 
+            let mut seq = mockall::Sequence::new();
+
             ev_loop
                 .expect_set_network_options()
+                .once()
+                .in_sequence(&mut seq)
                 .returning(|_| EventLoop::default());
 
-            ev_loop.expect_poll().returning(|| {
-                Ok(Event::Incoming(Packet::ConnAck(ConnAck {
-                    session_present: false,
-                    code: ConnectReturnCode::Success,
-                })))
-            });
-
             client
-                .expect_subscribe::<String>()
-                .withf(|topic, qos| {
-                    topic == "realm/device_id/control/consumer/properties"
-                        && *qos == QoS::ExactlyOnce
-                })
-                .returning(|_, _| Ok(()));
+                .expect_clone()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|| {
+                    let mut client = AsyncClient::default();
 
-            client
-                .expect_publish::<String, String>()
-                .withf(|topic, qos, _, introspection| {
-                    topic == "realm/device_id"
-                        && *qos == QoS::ExactlyOnce
-                        && introspection.is_empty()
-                })
-                .returning(|_, _, _, _| Ok(()));
+                    let mut seq = mockall::Sequence::new();
 
-            client
-                .expect_publish::<String, &str>()
-                .withf(|topic, qos, _, payload| {
-                    topic == "realm/device_id/control/emptyCache"
-                        && *qos == QoS::ExactlyOnce
-                        && *payload == "1"
-                })
-                .returning(|_, _, _, _| Ok(()));
+                    client
+                        .expect_clone()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .returning(|| {
+                            let mut client = AsyncClient::default();
+
+                            let mut seq = mockall::Sequence::new();
+
+                            client
+                                .expect_subscribe::<String>()
+                                .once()
+                                .in_sequence(&mut seq)
+                                .withf(|topic, qos| {
+                                    topic == "realm/device_id/control/consumer/properties"
+                                        && *qos == QoS::ExactlyOnce
+                                })
+                                .returning(|_, _| {
+                                    let (tx, future) = rumqttc::NoticeTx::new();
+
+                                    tx.success();
+
+                                    Ok(future)
+                                });
+
+                            client
+                                .expect_publish::<String, String>()
+                                .once()
+                                .in_sequence(&mut seq)
+                                .withf(|topic, qos, _, introspection| {
+                                    topic == "realm/device_id"
+                                        && *qos == QoS::ExactlyOnce
+                                        && introspection.is_empty()
+                                })
+                                .returning(|_, _, _, _| {
+                                    let (tx, future) = rumqttc::NoticeTx::new();
+
+                                    tx.success();
+
+                                    Ok(future)
+                                });
+
+                            client
+                                .expect_publish::<String, &str>()
+                                .once()
+                                .in_sequence(&mut seq)
+                                .withf(|topic, qos, _, payload| {
+                                    topic == "realm/device_id/control/emptyCache"
+                                        && *qos == QoS::ExactlyOnce
+                                        && *payload == "1"
+                                })
+                                .returning(|_, _, _, _| {
+                                    let (tx, future) = rumqttc::NoticeTx::new();
+
+                                    tx.success();
+
+                                    Ok(future)
+                                });
+
+                            client
+                        });
+
+                    client
+                });
+
+            ev_loop
+                .expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|| {
+                    Ok(Event::Incoming(Packet::ConnAck(ConnAck {
+                        session_present: false,
+                        code: ConnectReturnCode::Success,
+                    })))
+                });
 
             (client, ev_loop)
         });
@@ -528,19 +606,23 @@ mod test {
         let mock_url = mock_get_broker_url(&mut server).create_async().await;
         let mock_cert = mock_create_certificate(&mut server).create_async().await;
 
-        let (_client, _connection) = DeviceBuilder::new()
-            .store_dir(dir.path())
-            .await
-            .unwrap()
-            .connect(MqttConfig::with_credential_secret(
-                "realm",
-                "device_id",
-                "secret",
-                server.url(),
-            ))
-            .await
-            .unwrap()
-            .build();
+        let (_client, _connection) = tokio::time::timeout(
+            Duration::from_secs(3),
+            DeviceBuilder::new()
+                .store_dir(dir.path())
+                .await
+                .unwrap()
+                .connect(MqttConfig::with_credential_secret(
+                    "realm",
+                    "device_id",
+                    "secret",
+                    server.url(),
+                )),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .build();
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;

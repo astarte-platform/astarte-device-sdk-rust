@@ -27,7 +27,7 @@ pub(crate) static NEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 
 #[cfg(test)]
 pub(crate) mod mock {
-    use std::fmt::{Debug, Formatter};
+    use std::fmt::Debug;
 
     use mockall::mock;
     use rumqttc::{
@@ -45,6 +45,10 @@ pub(crate) mod mock {
         }
         impl Clone for AsyncClient {
             fn clone(&self) -> Self;
+        }
+
+        impl Debug for AsyncClient {
+            fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result;
         }
     );
 

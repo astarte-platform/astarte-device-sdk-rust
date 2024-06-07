@@ -144,6 +144,8 @@ mod test {
 
         let store = StoreWrapper::new(store);
 
+        let (mqtt_client, mqtt_connection) = mock_mqtt_connection(async_client, eventloop);
+
         let client =
             DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
         let device = DeviceConnection::new(
@@ -151,7 +153,8 @@ mod test {
             tx_connection,
             rx_connection,
             store,
-            mock_mqtt_connection(async_client, eventloop),
+            mqtt_connection,
+            mqtt_client,
         );
 
         (client, device)
@@ -323,10 +326,25 @@ mod test {
 
         let mut client = AsyncClient::default();
 
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
+
         client
             .expect_publish::<String, Vec<u8>>()
             .times(2)
-            .returning(|_, _, _, _| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (device, mut connection) = mock_astarte_device(
             client,
@@ -344,8 +362,8 @@ mod test {
             .await
             .expect("Failed to send property");
 
-        let msg = connection.client.recv().await.unwrap();
-        connection.handle_client_msg(msg).await.unwrap();
+        let msg = connection.sender.client.recv().await.unwrap();
+        connection.sender.handle_client_msg(msg).await.unwrap();
 
         let val = device
             .property(
@@ -365,8 +383,8 @@ mod test {
             .await
             .expect("Failed to unset property");
 
-        let msg = connection.client.recv().await.unwrap();
-        connection.handle_client_msg(msg).await.unwrap();
+        let msg = connection.sender.client.recv().await.unwrap();
+        connection.sender.handle_client_msg(msg).await.unwrap();
 
         let val = device
             .property(
@@ -383,6 +401,8 @@ mod test {
     async fn test_handle_event() {
         let mut client = AsyncClient::default();
 
+        let mut seq = mockall::Sequence::new();
+
         client
             .expect_clone()
             // number of calls not limited since the clone it's inside a loop
@@ -391,6 +411,7 @@ mod test {
         client
             .expect_publish::<String, Vec<u8>>()
             .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
                 predicate::always(),
@@ -403,7 +424,13 @@ mod test {
                     value == "name number 1"
                 }),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx,notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let mut eventloop = MqttEventLoop::default();
 
@@ -433,7 +460,7 @@ mod test {
             )))
         });
 
-        let (client, mut connection) = mock_astarte_device(
+        let (client, connection) = mock_astarte_device(
             client,
             eventloop,
             [
@@ -482,25 +509,47 @@ mod test {
 
         let unset = Vec::new();
 
+        let mut seq = mockall::Sequence::new();
+
         client
-            .expect_publish::<String, Vec<u8>>()
+            .expect_clone()
             .once()
-            .withf(move |topic,_,_,payload |
-                topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name"
-                && *payload == buf
-            )
-            .returning(|_, _, _, _| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
 
         client
             .expect_publish::<String, Vec<u8>>()
             .once()
+            .in_sequence(&mut seq)
+            .withf(move |topic,_,_,payload |
+                topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name"
+                && *payload == buf
+            )
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name".to_string()),
                 predicate::always(),
                 predicate::always(),
                 predicate::eq(unset)
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let eventloop = MqttEventLoop::default();
 
@@ -527,10 +576,10 @@ mod test {
             .await
             .unwrap();
 
-        let msg = connection.client.recv().await.unwrap();
-        connection.handle_client_msg(msg).await.unwrap();
-        let msg = connection.client.recv().await.unwrap();
-        connection.handle_client_msg(msg).await.unwrap();
+        let msg = connection.sender.client.recv().await.unwrap();
+        connection.sender.handle_client_msg(msg).await.unwrap();
+        let msg = connection.sender.client.recv().await.unwrap();
+        connection.sender.handle_client_msg(msg).await.unwrap();
     }
 
     #[tokio::test]
@@ -563,7 +612,7 @@ mod test {
             )))
         });
 
-        let (client, mut connection) = mock_astarte_device(
+        let (client, connection) = mock_astarte_device(
             client,
             eventloop,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
@@ -642,7 +691,13 @@ mod test {
                 predicate::always(),
                 predicate::always()
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (device, mut connection) = mock_astarte_device(
             client,
@@ -660,7 +715,7 @@ mod test {
             .await
             .unwrap();
 
-        let msg = connection.client.recv().await.unwrap();
-        connection.handle_client_msg(msg).await.unwrap();
+        let msg = connection.sender.client.recv().await.unwrap();
+        connection.sender.handle_client_msg(msg).await.unwrap();
     }
 }

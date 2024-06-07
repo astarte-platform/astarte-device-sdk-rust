@@ -35,9 +35,12 @@ use url::Url;
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
     store::PropertyStore,
-    transport::mqtt::{
-        config::transport::TransportProvider, connection::MqttState, error::MqttError,
-        registration::register_device, ClientId,
+    transport::{
+        mqtt::{
+            config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
+            registration::register_device, ClientId,
+        },
+        Connection,
     },
     Error,
 };
@@ -45,8 +48,8 @@ use crate::{
 use self::tls::is_env_ignore_ssl;
 
 use super::{
-    client::AsyncClient, pairing::ApiClient, Mqtt, PairingError, DEFAULT_CONNECTION_TIMEOUT,
-    DEFAULT_KEEP_ALIVE,
+    client::AsyncClient, pairing::ApiClient, Mqtt, MqttClient, PairingError,
+    DEFAULT_CONNECTION_TIMEOUT, DEFAULT_KEEP_ALIVE,
 };
 
 mod tls;
@@ -265,7 +268,10 @@ impl MqttConfig {
     async fn credentials<S, C>(
         &mut self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<String, MqttError> {
+    ) -> Result<String, MqttError>
+    where
+        C: Connection,
+    {
         // We need to clone to not return something owning a mutable reference to self
         match &self.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
@@ -365,13 +371,16 @@ impl MqttConfig {
 
 #[async_trait]
 impl ConnectionConfig for MqttConfig {
-    type Con = Mqtt;
+    type Conn = Mqtt;
     type Err = Error;
 
-    async fn connect<S, C>(mut self, builder: &DeviceBuilder<S, C>) -> Result<Self::Con, Self::Err>
+    async fn connect<S, C>(
+        mut self,
+        builder: &DeviceBuilder<S, C>,
+    ) -> Result<(MqttClient, Mqtt), Self::Err>
     where
         S: PropertyStore,
-        C: Send + Sync,
+        C: Connection + Send + Sync,
     {
         let secret = self.credentials(builder).await?;
 
@@ -408,22 +417,23 @@ impl ConnectionConfig for MqttConfig {
         eventloop.set_network_options(net_opts);
 
         let client_id = ClientId {
-            device_id: &self.device_id,
-            realm: &self.realm,
+            device_id: self.device_id.clone(),
+            realm: self.realm.clone(),
         };
-        let state = MqttState::wait_connack(
-            client,
+        let connection = MqttConnection::wait_connack(
+            client.clone(),
             eventloop,
             provider,
-            client_id,
+            client_id.as_ref(),
             &builder.interfaces,
             &builder.store,
         )
         .await?;
 
-        let connection = Mqtt::new(self.realm, self.device_id, state);
+        let client = MqttClient::new(client_id.clone(), client);
+        let connection = Mqtt::new(client_id, connection);
 
-        Ok(connection)
+        Ok((client, connection))
     }
 }
 

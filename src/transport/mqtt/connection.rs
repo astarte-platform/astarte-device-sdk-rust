@@ -44,26 +44,20 @@
 //! Incoming messages must be processed as they arrive. If an error occurs during this process, it should be propagated up to the client with appropriate error-handling mechanisms.
 
 use std::{
+    collections::VecDeque,
     fmt::{Debug, Display},
-    pin::pin,
 };
 
-use itertools::Itertools;
-use log::{debug, error, info, trace, warn};
-use rumqttc::{
-    ClientError, ConnectionError, Event, NoticeError, NoticeFuture, Packet, Publish, QoS,
-    SubscribeFilter, Transport,
-};
+use rumqttc::{ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, Transport};
 use sync_wrapper::SyncWrapper;
-use tokio::{
-    select,
-    task::{JoinError, JoinHandle},
-};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
+    error::Report,
     interfaces::Interfaces,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
-    transport::mqtt::{pairing::ApiClient, payload::Payload},
+    transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
 };
 
 use super::{
@@ -71,549 +65,6 @@ use super::{
     config::transport::TransportProvider,
     ClientId, PayloadError, SessionData,
 };
-
-pub struct MqttState {
-    connection: Connection,
-    state: State,
-}
-
-impl MqttState {
-    pub(crate) async fn wait_connack<S>(
-        client: AsyncClient,
-        eventloop: EventLoop,
-        provider: TransportProvider,
-        client_id: ClientId<'_>,
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> Result<Self, StoreError>
-    where
-        S: PropertyStore,
-    {
-        let mut connection = Connection {
-            client,
-            eventloop: SyncWrapper::new(eventloop),
-            provider,
-        };
-
-        let mut state = State::WaitConnack(WaitConnack);
-
-        // We wait till the state of the connection is not init, since the messages to the broker
-        // should have been queued firs and we have yet to receive any publish.
-        while !state.is_init() {
-            let publish = state
-                .poll(client_id, &mut connection, interfaces, store)
-                .await?;
-
-            if let Some(publish) = publish {
-                debug!("unexpected publish {publish:?}");
-
-                unreachable!("BUG: publish received in non init state");
-            }
-        }
-
-        Ok(Self { state, connection })
-    }
-
-    pub(crate) async fn next_publish<S>(
-        &mut self,
-        client_id: ClientId<'_>,
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> Result<Publish, StoreError>
-    where
-        S: PropertyStore,
-    {
-        // TODO: implement a timeout
-        loop {
-            let publish = self
-                .state
-                .poll(client_id, &mut self.connection, interfaces, store)
-                .await?;
-
-            if let Some(publish) = publish {
-                return Ok(publish);
-            }
-        }
-    }
-
-    pub(crate) fn client(&self) -> &AsyncClient {
-        &self.connection.client
-    }
-
-    /// Sends the introspection [`String`].
-    pub(crate) async fn send_introspection(
-        &self,
-        client_id: ClientId<'_>,
-        introspection: String,
-    ) -> Result<(), ClientError> {
-        StartInit::send_introspection(self.client(), client_id, introspection)
-            .await
-            .map(drop)
-    }
-
-    /// Subscribe to many interfaces
-    pub(crate) async fn subscribe_many(
-        &self,
-        client_id: ClientId<'_>,
-        interfaces_names: &[&str],
-    ) -> Result<(), ClientError> {
-        Connection::subscribe_many(self.client(), client_id, interfaces_names)
-            .await
-            .map(drop)
-    }
-}
-
-struct Connection {
-    client: AsyncClient,
-    // NOTE: this should be replaces by Exclusive<EventLoop> when the feature `exclusive_wrapper`
-    //       is stabilized or the EventLoop becomes Sync
-    //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
-    eventloop: SyncWrapper<EventLoop>,
-    provider: TransportProvider,
-}
-
-impl Connection {
-    fn eventloop(&mut self) -> &mut EventLoop {
-        self.eventloop.get_mut()
-    }
-
-    /// Subscribe to many interfaces
-    async fn subscribe_many<S>(
-        client: &AsyncClient,
-        client_id: ClientId<'_>,
-        interfaces_names: &[S],
-    ) -> Result<Option<NoticeFuture>, ClientError>
-    where
-        S: Display + Debug,
-    {
-        // should not subscribe if there are no interfaces
-        if interfaces_names.is_empty() {
-            debug!("empty subscribe many");
-
-            return Ok(None);
-        } else if interfaces_names.len() == 1 {
-            trace!("subscribing on single interface");
-
-            let name = &interfaces_names[0];
-
-            return client
-                .subscribe(format!("{client_id}/{name}/#"), rumqttc::QoS::ExactlyOnce)
-                .await
-                .map(Some);
-        }
-
-        trace!("subscribing on {interfaces_names:?}");
-
-        let topics = interfaces_names
-            .iter()
-            .map(|name| SubscribeFilter {
-                path: format!("{client_id}/{name}/#"),
-                qos: rumqttc::QoS::ExactlyOnce,
-            })
-            .collect_vec();
-
-        debug!("topics {topics:?}");
-
-        client.subscribe_many(topics).await.map(Some)
-    }
-}
-
-#[derive(Debug)]
-enum State {
-    Disconnected(Disconnected),
-    WaitConnack(WaitConnack),
-    StartInit(StartInit),
-    Init(Init),
-    Connected(Connected),
-}
-
-impl State {
-    fn from_error<T>(state: T, err: ConnectionError) -> State
-    where
-        T: Into<State>,
-    {
-        error!("error received from mqtt connection: {err}");
-
-        match err {
-            ConnectionError::MqttState(_)
-            | ConnectionError::NetworkTimeout
-            | ConnectionError::FlushTimeout
-            | ConnectionError::Io(_)
-            | ConnectionError::RequestsDone => {
-                trace!("no state change");
-
-                state.into()
-            }
-            ConnectionError::NotConnAck(_) => State::WaitConnack(WaitConnack),
-            ConnectionError::Tls(_) | ConnectionError::ConnectionRefused(_) => {
-                State::Disconnected(Disconnected)
-            }
-        }
-    }
-
-    /// Sets the default state and returns the current state.
-    fn take(&mut self) -> State {
-        std::mem::take(self)
-    }
-
-    /// Returns `true` if the state is [`Init`].
-    ///
-    /// [`Init`]: State::Init
-    #[must_use]
-    fn is_init(&self) -> bool {
-        matches!(self, Self::Init(..))
-    }
-
-    async fn poll<S>(
-        &mut self,
-        client_id: ClientId<'_>,
-        connection: &mut Connection,
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> Result<Option<Publish>, StoreError>
-    where
-        S: PropertyStore,
-    {
-        trace!("state {}", self);
-
-        let (state, packet) = match self.take() {
-            State::Disconnected(disconnected) => {
-                let state = disconnected.poll(connection, client_id).await;
-
-                (state, None)
-            }
-            State::WaitConnack(wait_connack) => {
-                let state = wait_connack.poll(connection).await;
-
-                (state, None)
-            }
-            State::StartInit(start_init) => {
-                let session_data = SessionData::try_from_props(interfaces, store).await?;
-
-                let state = start_init.poll(&connection, client_id, session_data);
-
-                (state, None)
-            }
-            State::Init(init) => match init.poll(connection).await {
-                Next::State(state) => (state, None),
-                Next::Publish(publish, state) => (state, Some(publish)),
-            },
-            State::Connected(connected) => match connected.poll(connection).await {
-                Next::State(state) => (state, None),
-                Next::Publish(publish, state) => (state, Some(publish)),
-            },
-        };
-
-        *self = state;
-
-        Ok(packet)
-    }
-}
-
-impl Display for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let state = match self {
-            State::Disconnected(_) => "Disconnected",
-            State::WaitConnack(_) => "WaitConnack",
-            State::StartInit(_) => "StartInit",
-            State::Init(_) => "Init",
-            State::Connected(_) => "Connected",
-        };
-
-        write!(f, "{state}")
-    }
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self::Disconnected(Disconnected)
-    }
-}
-
-/// Next state or next publish after polling the connection.
-#[derive(Debug)]
-enum Next {
-    State(State),
-    Publish(Publish, State),
-}
-
-impl Next {
-    fn from_event<T>(state: T, event: Event) -> Next
-    where
-        T: Into<State>,
-    {
-        let incoming = match event {
-            Event::Incoming(incoming) => {
-                trace!("incoming packet {incoming:?}");
-
-                incoming
-            }
-            Event::Outgoing(outgoing) => {
-                trace!("outgoing packet {outgoing:?}");
-
-                return Next::State(state.into());
-            }
-        };
-
-        match incoming {
-            rumqttc::Packet::ConnAck(connack) => {
-                debug!("connack received, initializing connection");
-
-                Next::State(State::StartInit(StartInit {
-                    session_present: connack.session_present,
-                }))
-            }
-            rumqttc::Packet::Publish(publish) => {
-                trace!("incoming publish");
-
-                Next::Publish(publish, state.into())
-            }
-            Packet::Disconnect => {
-                debug!("server sent a disconnect packet");
-
-                Next::State(State::Disconnected(Disconnected))
-            }
-            _ => {
-                trace!("incoming packet");
-
-                Next::State(state.into())
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Disconnected;
-
-impl Disconnected {
-    /// Recreate the MQTT transport (TLS) to the broker.
-    ///
-    /// It recreate the credentials and reconnect to the broker, using the same
-    /// session. If it fails, it returns an error so that the whole connection process can
-    /// be retried.
-    async fn poll(self, connection: &mut Connection, client_id: ClientId<'_>) -> State {
-        let api =
-            ApiClient::from_transport(&connection.provider, client_id.realm, client_id.device_id);
-
-        let transport = match connection.provider.recreate_transport(&api).await {
-            Ok(transport) => transport,
-            Err(err) => {
-                error!("couldn't pair device: {err}");
-
-                return State::Disconnected(self);
-            }
-        };
-
-        debug!("created a new transport, reconnecting");
-
-        connection.eventloop().clean();
-        Self::set_transport(connection.eventloop(), transport);
-
-        State::WaitConnack(WaitConnack)
-    }
-
-    #[cfg(not(test))]
-    fn set_transport(eventloop: &mut EventLoop, transport: Transport) {
-        eventloop.mqtt_options.set_transport(transport);
-    }
-
-    #[cfg(test)]
-    fn set_transport(_eventloop: &mut EventLoop, _transport: Transport) {}
-}
-
-/// Waits for an incoming MQTT Connack packet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WaitConnack;
-
-impl WaitConnack {
-    async fn poll(self, connection: &mut Connection) -> State {
-        let event = match connection.eventloop().poll().await {
-            Ok(event) => event,
-            Err(err) => return State::from_error(self, err),
-        };
-
-        match event {
-            Event::Incoming(Packet::ConnAck(connack)) => {
-                trace!("connack received");
-
-                State::StartInit(StartInit {
-                    session_present: connack.session_present,
-                })
-            }
-            Event::Incoming(incoming) => {
-                error!("unexpected packet received while waiting for connack {incoming:?}");
-
-                State::Disconnected(Disconnected)
-            }
-            Event::Outgoing(outgoing) => {
-                warn!("unexpected outgoing packet while waiting for connack {outgoing:?}");
-
-                // We stay in connack since we shouldn't have any outgoing packet in this state, but
-                // the specification doesn't disallow the client to send packet while waiting for
-                // the ConnAck
-                State::WaitConnack(self)
-            }
-        }
-    }
-}
-
-impl From<WaitConnack> for State {
-    fn from(value: WaitConnack) -> Self {
-        Self::WaitConnack(value)
-    }
-}
-
-/// State that gets called when a [`rumqttc::ConnAck`] is received.
-/// Following the astarte protocol it performs the following tasks:
-///  - Subscribes to the server owned interfaces in the interface list
-///  - Sends the introspection
-///  - Sends the emptycache command
-///  - Sends the device owned properties stored locally
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct StartInit {
-    session_present: bool,
-}
-
-impl StartInit {
-    fn poll(
-        self,
-        connection: &Connection,
-        client_id: ClientId<'_>,
-        session_data: SessionData,
-    ) -> State {
-        let client = connection.client.clone();
-
-        let realm = client_id.realm.to_string();
-        let device_id = client_id.device_id.to_string();
-
-        let handle: JoinHandle<Result<(), InitError>> = tokio::spawn(async move {
-            let client_id = ClientId {
-                realm: &realm,
-                device_id: &device_id,
-            };
-
-            Self::subscribe_server_interfaces(&client, client_id, &session_data.server_interfaces)
-                .await?;
-            Self::send_introspection(&client, client_id, session_data.interfaces)
-                .await
-                .map_err(InitError::client("send introspection"))?
-                .wait_async()
-                .await
-                .map_err(InitError::notice("subscribe server interface"))?;
-
-            debug!("session present {}", self.session_present);
-            if !self.session_present {
-                Self::send_empty_cache(&client, client_id).await?;
-                Self::send_device_properties(&client, client_id, &session_data.device_properties)
-                    .await?;
-            }
-
-            Ok(())
-        });
-
-        State::Init(Init { handle })
-    }
-
-    /// Subscribes to the passed list of interfaces
-    async fn subscribe_server_interfaces(
-        client: &AsyncClient,
-        client_id: ClientId<'_>,
-        server_interfaces: &[String],
-    ) -> Result<(), InitError> {
-        debug!("subscribing server properties");
-
-        client
-            .subscribe(
-                format!("{client_id}/control/consumer/properties"),
-                QoS::ExactlyOnce,
-            )
-            .await
-            .map_err(InitError::client("subscribe consumer properties"))?
-            .wait_async()
-            .await
-            .map_err(InitError::notice("subscribe consumer properties"))?;
-
-        debug!(
-            "subscribing on {} server interfaces",
-            server_interfaces.len()
-        );
-
-        let notice = Connection::subscribe_many(client, client_id, server_interfaces)
-            .await
-            .map_err(InitError::client("subscribe server interface"))?;
-
-        if let Some(notice) = notice {
-            notice
-                .wait_async()
-                .await
-                .map_err(InitError::notice("subscribe server interface"))?;
-        }
-
-        Ok(())
-    }
-
-    /// Sends the introspection [`String`].
-    async fn send_introspection(
-        client: &AsyncClient,
-        client_id: ClientId<'_>,
-        introspection: String,
-    ) -> Result<NoticeFuture, ClientError> {
-        debug!("sending introspection: {introspection}");
-
-        let path = client_id.to_string();
-
-        client
-            .publish(path, QoS::ExactlyOnce, false, introspection)
-            .await
-    }
-
-    /// Sends the empty cache command as per the astarte protocol definition
-    async fn send_empty_cache(
-        client: &AsyncClient,
-        client_id: ClientId<'_>,
-    ) -> Result<(), InitError> {
-        debug!("sending emptyCache");
-
-        client
-            .publish(
-                format!("{client_id}/control/emptyCache"),
-                QoS::ExactlyOnce,
-                false,
-                "1",
-            )
-            .await
-            .map_err(InitError::client("empty cache"))?
-            .wait_async()
-            .await
-            .map_err(InitError::notice("empty cache"))
-    }
-
-    /// Sends the passed device owned properties
-    async fn send_device_properties(
-        client: &AsyncClient,
-        client_id: ClientId<'_>,
-        device_properties: &[StoredProp],
-    ) -> Result<(), InitError> {
-        for prop in device_properties {
-            let topic = format!("{}/{}{}", client_id, prop.interface, prop.path);
-
-            debug!(
-                "sending device-owned property = {}{}",
-                prop.interface, prop.path
-            );
-
-            let payload = Payload::new(&prop.value).to_vec()?;
-
-            // Don't wait for the ack since it's not fundamental for the connection
-            client
-                .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
-                .await
-                .map_err(InitError::client("device property"))?;
-        }
-
-        Ok(())
-    }
-}
 
 /// Errors while initializing the MQTT connection.
 #[non_exhaustive]
@@ -648,91 +99,803 @@ impl InitError {
     }
 }
 
+/// MQTT connection to Astarte that can be pulled to receive packets.
+#[derive(Debug)]
+pub(crate) struct MqttConnection {
+    connection: Connection,
+    /// Queue for the packet published while during the connection.
+    buff: VecDeque<Publish>,
+    state: State,
+}
+
+impl MqttConnection {
+    pub(crate) fn new(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        provider: TransportProvider,
+        state: impl Into<State>,
+    ) -> Self {
+        let connection = Connection {
+            client,
+            eventloop: SyncWrapper::new(eventloop),
+            provider,
+        };
+
+        Self {
+            connection,
+            buff: VecDeque::new(),
+            state: state.into(),
+        }
+    }
+
+    /// Iterate for the next publish event from the connection.
+    ///
+    /// Return [`None`] when disconnected.
+    pub(crate) async fn next_publish(&mut self) -> Option<Publish> {
+        // Check if there are backed up publishes.
+        if let Some(publish) = self.buff.pop_front() {
+            return Some(publish);
+        }
+
+        // Here we only get the connected state so we don't need to pass all the arguments, like the
+        // interfaces or the store.
+        let State::Connected(connected) = &mut self.state else {
+            return None;
+        };
+
+        loop {
+            match connected.poll(&mut self.connection).await {
+                Next::Same => {}
+                Next::Publish(publish) => return Some(publish),
+                Next::State(next) => {
+                    debug_assert!(!next.is_connected());
+
+                    self.state = next;
+
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Wait for the connection to be established to the Astarte.
+    ///
+    /// This function assumes that the connection is valid, but will handle disconnection and
+    /// reconnection automatically.
+    pub(crate) async fn wait_connack<S>(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        provider: TransportProvider,
+        client_id: ClientId<&str>,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> Result<Self, StoreError>
+    where
+        S: PropertyStore,
+    {
+        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
+
+        mqtt_connection
+            .reconnect(client_id, interfaces, store)
+            .await?;
+
+        Ok(mqtt_connection)
+    }
+
+    /// Connect to astarte, wait till the state is [`Connected`].
+    pub(crate) async fn reconnect<S>(
+        &mut self,
+        client_id: ClientId<&str>,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> Result<(), StoreError>
+    where
+        S: PropertyStore,
+    {
+        // Wait till we are in the Init state, so we do not need to handle the incoming publishes,
+        // but all the initialization packets are being queued.
+        while !self.state.is_connected() {
+            let opt_publish = self
+                .state
+                .poll(&mut self.connection, client_id, interfaces, store)
+                .await?;
+
+            if let Some(publish) = opt_publish {
+                self.buff.push_back(publish);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Struct to hold the connection and client to be passed to the state.
+///
+/// We pass a mutable reference to the connection from outside the state so we can freely move from
+/// one state to the other, returning a new one. This without having to move the connection from
+/// behind the mutable reference.
+#[derive(Debug)]
+struct Connection {
+    client: AsyncClient,
+    // NOTE: this should be replaces by Exclusive<EventLoop> when the feature `exclusive_wrapper`
+    //       is stabilized or the EventLoop becomes Sync
+    //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
+    eventloop: SyncWrapper<EventLoop>,
+    provider: TransportProvider,
+}
+
+impl Connection {
+    fn eventloop_mut(&mut self) -> &mut EventLoop {
+        self.eventloop.get_mut()
+    }
+}
+
+/// This cannot be a type state machine, because any additional data cannot be moved out of the enum
+/// when polling. The only data that can be easily changed is the current state into the next one.
+#[derive(Debug)]
+pub(crate) enum State {
+    /// The device is disconnected from Astarte, it will need to recreate the connection.
+    Disconnected(Disconnected),
+    /// The CONNECT packet has been sent, we need to wait for the ConACK packet.
+    Connecting(Connecting),
+    /// A connection has been established with the broker. We need to publish and subscribe to the
+    /// information need for the communication with Astarte.
+    ///
+    /// See the documentation for [Connect and Disconnect](https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#connection-and-disconnection).
+    Handshake(Handshake),
+    /// The publish and subscribe packets have been sent, we need to wait for all of them to be
+    /// ACKed.
+    WaitAcks(WaitAcks),
+    /// Connected with Astarte.
+    Connected(Connected),
+}
+
+impl State {
+    async fn poll<S>(
+        &mut self,
+        conn: &mut Connection,
+        client_id: ClientId<&str>,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> Result<Option<Publish>, StoreError>
+    where
+        S: PropertyStore,
+    {
+        trace!("state {}", self);
+
+        let next = match self {
+            State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await,
+            State::Connecting(connecting) => connecting.wait_connack(conn).await,
+            State::Handshake(start_init) => {
+                let session_data = SessionData::try_from_props(interfaces, store).await?;
+
+                start_init.init(conn, client_id, session_data)
+            }
+            State::WaitAcks(init) => init.wait_connection(conn).await,
+            State::Connected(connected) => connected.poll(conn).await,
+        };
+
+        let res = match next {
+            Next::Same => None,
+            Next::Publish(publish) => Some(publish),
+            Next::State(state) => {
+                *self = state;
+
+                None
+            }
+        };
+
+        Ok(res)
+    }
+
+    /// Returns `true` if the state is [`Connected`].
+    ///
+    /// [`Connected`]: State::Connected
+    #[must_use]
+    fn is_connected(&self) -> bool {
+        matches!(self, Self::Connected(..))
+    }
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self {
+            State::Disconnected(_) => "Disconnected",
+            State::Connecting(_) => "Connecting",
+            State::Handshake(_) => "Handshake",
+            State::WaitAcks(_) => "WaitAcks",
+            State::Connected(_) => "Connected",
+        };
+
+        write!(f, "{state}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Disconnected;
+
+impl Disconnected {
+    /// Recreate the MQTT transport (TLS) to the broker.
+    ///
+    /// It recreate the credentials and reconnect to the broker, using the same
+    /// session. If it fails, it returns an error so that the whole connection process can
+    /// be retried.
+    async fn reconnect(&mut self, conn: &mut Connection, client_id: ClientId<&str>) -> Next {
+        let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id);
+
+        let transport = match conn.provider.recreate_transport(&api).await {
+            Ok(transport) => transport,
+            Err(err) => {
+                error!(error = %Report::new(err),"couldn't pair device");
+
+                return Next::Same;
+            }
+        };
+
+        debug!("created a new transport, reconnecting");
+
+        let eventloop = conn.eventloop_mut();
+        eventloop.clean();
+        Self::set_transport(eventloop, transport);
+
+        Next::state(Connecting)
+    }
+
+    #[cfg(not(test))]
+    fn set_transport(eventloop: &mut EventLoop, transport: Transport) {
+        eventloop.mqtt_options.set_transport(transport);
+    }
+
+    #[cfg(test)]
+    fn set_transport(_eventloop: &mut EventLoop, _transport: Transport) {}
+}
+
+impl From<Disconnected> for State {
+    fn from(value: Disconnected) -> Self {
+        State::Disconnected(value)
+    }
+}
+
+/// Waits for an incoming MQTT Connack packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Connecting;
+
+impl Connecting {
+    async fn wait_connack(&mut self, conn: &mut Connection) -> Next {
+        let event = match conn.eventloop_mut().poll().await {
+            Ok(event) => event,
+            Err(err) => return Next::handle_error(err),
+        };
+
+        match event {
+            Event::Incoming(Packet::ConnAck(connack)) => {
+                trace!("connack received");
+
+                Next::state(Handshake {
+                    session_present: connack.session_present,
+                })
+            }
+            Event::Incoming(incoming) => {
+                error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
+
+                Next::state(Disconnected)
+            }
+            Event::Outgoing(outgoing) => {
+                warn!("unexpected outgoing packet while waiting for connack {outgoing:?}");
+
+                // We stay in connack since we shouldn't have any outgoing packet in this state, but
+                // the specification doesn't disallow the client to send packet while waiting for
+                // the ConnAck
+                Next::Same
+            }
+        }
+    }
+}
+
+impl From<Connecting> for State {
+    fn from(value: Connecting) -> Self {
+        State::Connecting(value)
+    }
+}
+
+/// State that gets called when a [`rumqttc::ConnAck`] is received.
 /// Following the astarte protocol it performs the following tasks:
 ///  - Subscribes to the server owned interfaces in the interface list
 ///  - Sends the introspection
 ///  - Sends the emptycache command
 ///  - Sends the device owned properties stored locally
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Handshake {
+    session_present: bool,
+}
+
+impl Handshake {
+    fn init(
+        self,
+        conn: &mut Connection,
+        client_id: ClientId<&str>,
+        session_data: SessionData,
+    ) -> Next {
+        let client = conn.client.clone();
+
+        let client_id_cl: ClientId = client_id.into();
+
+        let handle: JoinHandle<Result<(), InitError>> = tokio::spawn(async move {
+            let client_id = client_id_cl.as_ref();
+            Self::subscribe_server_interfaces(&client, client_id, &session_data.server_interfaces)
+                .await?;
+            client
+                .send_introspection(client_id, session_data.interfaces)
+                .await
+                .map_err(InitError::client("send introspection"))?
+                .wait_async()
+                .await
+                .map_err(InitError::notice("subscribe server interface"))?;
+
+            debug!("session present {}", self.session_present);
+            if !self.session_present {
+                Self::send_empty_cache(&client, client_id).await?;
+                Self::send_device_properties(&client, client_id, &session_data.device_properties)
+                    .await?;
+            }
+
+            Ok(())
+        });
+
+        Next::state(WaitAcks { handle })
+    }
+
+    /// Subscribes to the passed list of interfaces
+    async fn subscribe_server_interfaces(
+        client: &AsyncClient,
+        client_id: ClientId<&str>,
+        server_interfaces: &[String],
+    ) -> Result<(), InitError> {
+        debug!("subscribing server properties");
+
+        client
+            .subscribe(
+                format!("{client_id}/control/consumer/properties"),
+                QoS::ExactlyOnce,
+            )
+            .await
+            .map_err(InitError::client("subscribe consumer properties"))?
+            .wait_async()
+            .await
+            .map_err(InitError::notice("subscribe consumer properties"))?;
+
+        debug!(
+            "subscribing on {} server interfaces",
+            server_interfaces.len()
+        );
+
+        let notice = client
+            .subscribe_interfaces(client_id, server_interfaces)
+            .await
+            .map_err(InitError::client("subscribe server interface"))?;
+
+        if let Some(notice) = notice {
+            notice
+                .wait_async()
+                .await
+                .map_err(InitError::notice("subscribe server interface"))?;
+        }
+
+        Ok(())
+    }
+
+    /// Sends the empty cache command as per the astarte protocol definition
+    async fn send_empty_cache(
+        client: &AsyncClient,
+        client_id: ClientId<&str>,
+    ) -> Result<(), InitError> {
+        debug!("sending emptyCache");
+
+        client
+            .publish(
+                format!("{client_id}/control/emptyCache"),
+                QoS::ExactlyOnce,
+                false,
+                "1",
+            )
+            .await
+            .map_err(InitError::client("empty cache"))?
+            .wait_async()
+            .await
+            .map_err(InitError::notice("empty cache"))
+    }
+
+    /// Sends the passed device owned properties
+    async fn send_device_properties(
+        client: &AsyncClient,
+        client_id: ClientId<&str>,
+        device_properties: &[StoredProp],
+    ) -> Result<(), InitError> {
+        for prop in device_properties {
+            let topic = format!("{}/{}{}", client_id, prop.interface, prop.path);
+
+            debug!(
+                "sending device-owned property = {}{}",
+                prop.interface, prop.path
+            );
+
+            let payload = Payload::new(&prop.value).to_vec()?;
+
+            // Don't wait for the ack since it's not fundamental for the connection
+            client
+                .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
+                .await
+                .map_err(InitError::client("device property"))?;
+        }
+
+        Ok(())
+    }
+}
+
+impl From<Handshake> for State {
+    fn from(value: Handshake) -> Self {
+        State::Handshake(value)
+    }
+}
+
+/// Waits for all the packets sent in the [`Init`] to be ACK-ed by Astarte.
 #[derive(Debug)]
-struct Init {
+pub(crate) struct WaitAcks {
     handle: JoinHandle<Result<(), InitError>>,
 }
 
-impl Init {
-    async fn poll(mut self, connection: &mut Connection) -> Next {
-        dbg!("cacca");
+impl WaitAcks {
+    /// Waits for the initialization task to complete.
+    ///
+    /// We check that the task is finished, or we pull the connection. This ensures that all the
+    /// packets in are sent correctly and the handle can advance to completion. Eventual published
+    /// packets are returned.
+    async fn wait_connection(&mut self, conn: &mut Connection) -> Next {
+        // HACK: This is to make the function pass with mockall, since the poll function would never
+        //       yield while using the mocks. With the real implementation the `Eventloop::poll`
+        //       would have to wait for the connection and the sent packets.
+        #[cfg(test)]
+        tokio::task::yield_now().await;
 
-        let mut a = pin!(&mut self.handle);
+        if self.handle.is_finished() {
+            debug!("init task finished");
 
-        let next = select! {
-            res = &mut a => {
-                dbg!("join");
-                Next::State(Self::handle_join(res))
-            },
-            event = connection.eventloop().poll() => {
-                dbg!("evnt");
-                Self::handle_event(self, event)
-            }
-        };
+            return self.handle_join().await;
+        }
 
-        dbg!(&next);
+        trace!("polling next event");
 
-        next
+        match conn.eventloop_mut().poll().await {
+            Ok(event) => Next::handle_event(event),
+            Err(err) => Next::handle_error(err),
+        }
     }
 
-    fn handle_join(res: Result<Result<(), InitError>, JoinError>) -> State {
-        match res {
+    async fn handle_join(&mut self) -> Next {
+        // Don't move the handle to await the task
+        match (&mut self.handle).await {
             Ok(Ok(())) => {
                 info!("device connected");
-                State::Connected(Connected)
+                Next::state(Connected)
             }
             Ok(Err(err)) => {
-                error!("init task failed: {err}");
+                error!(error = %Report::new(err), "init task failed");
 
-                State::Disconnected(Disconnected)
+                Next::state(Disconnected)
             }
             Err(err) => {
-                error!("failed to join init task: {err}");
+                error!(error = %Report::new(&err), "failed to join init task");
 
-                State::Disconnected(Disconnected)
+                // We should never panic, but return an error instead. This is probably a test/mock
+                // expectation failing.
+                debug_assert!(!err.is_panic(), "task panicked while waiting for acks");
+
+                Next::state(Disconnected)
             }
-        }
-    }
-
-    fn handle_event(self, event: Result<Event, ConnectionError>) -> Next {
-        match event {
-            Ok(event) => {
-                trace!("event received {event:?}");
-
-                Next::from_event(self, event)
-            }
-            Err(err) => Next::State(State::from_error(self, err)),
         }
     }
 }
 
-impl From<Init> for State {
-    fn from(value: Init) -> Self {
-        State::Init(value)
+/// Abort the task when there a change of state (e.g. [`Disconnected`]) while the handle is not
+/// finished.
+impl Drop for WaitAcks {
+    fn drop(&mut self) {
+        if !self.handle.is_finished() {
+            self.handle.abort();
+        }
     }
 }
 
+impl From<WaitAcks> for State {
+    fn from(value: WaitAcks) -> Self {
+        State::WaitAcks(value)
+    }
+}
+
+/// Established connection to Astarte
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Connected;
+pub(crate) struct Connected;
 
 impl Connected {
-    async fn poll(self, connection: &mut Connection) -> Next {
-        let event = match connection.eventloop().poll().await {
-            Ok(event) => event,
-            Err(err) => return Next::State(State::from_error(self, err)),
-        };
-
-        Next::from_event(self, event)
+    async fn poll(&mut self, conn: &mut Connection) -> Next {
+        match conn.eventloop_mut().poll().await {
+            Ok(event) => Next::handle_event(event),
+            Err(err) => Next::handle_error(err),
+        }
     }
 }
 
 impl From<Connected> for State {
     fn from(value: Connected) -> Self {
-        Self::Connected(value)
+        State::Connected(value)
+    }
+}
+
+/// Enum to better represent the semantic of the next value, is a tuple of (Option<State>, Option<Publish>).
+#[derive(Debug)]
+#[must_use]
+enum Next {
+    /// Keep the same state
+    Same,
+    /// A packet was published
+    Publish(Publish),
+    /// Change to the next state.
+    State(State),
+}
+
+impl Next {
+    /// Handles a connection error.
+    fn handle_error(err: ConnectionError) -> Self {
+        error!(error = %Report::new(&err),"error received from mqtt connection");
+
+        match err {
+            ConnectionError::MqttState(_)
+            | ConnectionError::NetworkTimeout
+            | ConnectionError::FlushTimeout
+            | ConnectionError::Io(_)
+            | ConnectionError::RequestsDone => {
+                trace!("no state change");
+
+                Next::Same
+            }
+            ConnectionError::NotConnAck(_) => {
+                trace!("wait for connack");
+
+                Next::state(Connecting)
+            }
+            ConnectionError::Tls(_) | ConnectionError::ConnectionRefused(_) => {
+                trace!("recreate the connection");
+
+                Next::state(Disconnected)
+            }
+        }
+    }
+
+    fn handle_event(event: Event) -> Next {
+        trace!("handling event");
+
+        let incoming = match event {
+            Event::Incoming(incoming) => {
+                trace!("incoming packet {incoming:?}");
+
+                incoming
+            }
+            Event::Outgoing(outgoing) => {
+                trace!("outgoing packet {outgoing:?}");
+
+                return Next::Same;
+            }
+        };
+
+        match incoming {
+            rumqttc::Packet::ConnAck(connack) => {
+                debug!("connack received, initializing connection");
+
+                Next::state(Handshake {
+                    session_present: connack.session_present,
+                })
+            }
+            rumqttc::Packet::Publish(publish) => {
+                debug!("incoming publish on {}", publish.topic);
+
+                Next::Publish(publish)
+            }
+            Packet::Disconnect => {
+                debug!("server sent a disconnect packet");
+
+                Next::state(Disconnected)
+            }
+            _ => {
+                trace!("incoming packet");
+
+                Next::Same
+            }
+        }
+    }
+
+    fn state<T>(value: T) -> Self
+    where
+        T: Into<State>,
+    {
+        Self::State(value.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{str::FromStr, time::Duration};
+
+    use mockall::predicate;
+
+    use crate::{
+        store::memory::MemoryStore,
+        test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
+        AstarteType, Interface,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_connect_client_response() {
+        let mut eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let mut seq = mockall::Sequence::new();
+
+        // Connak response for loop in connect method
+        eventl
+            .expect_poll()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| {
+                Ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                    rumqttc::ConnAck {
+                        session_present: false,
+                        code: rumqttc::ConnectReturnCode::Success,
+                    },
+                )))
+            });
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| {
+                let mut client = AsyncClient::default();
+
+                let mut seq = mockall::Sequence::new();
+
+                client
+                    .expect_subscribe::<String>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq("realm/device_id/control/consumer/properties".to_string()),
+                        predicate::always(),
+                    )
+                    .returning(|_topic, _qos| {
+                        let (tx, notice) = rumqttc::NoticeTx::new();
+
+                        tx.success();
+
+                        Ok(notice)
+                    });
+
+                client
+                    .expect_subscribe()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()), predicate::always())
+                    .returning(|_: String, _| {
+                        let (tx, notice) = rumqttc::NoticeTx::new();
+
+                        tx.success();
+
+                        Ok(notice)
+                    });
+
+                // Client id
+                client
+                    .expect_publish::<String, String>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq("realm/device_id".to_string()),
+                        predicate::always(),
+                        predicate::always(),
+                        predicate::always(),
+                    )
+                    .returning(|_, _, _, _| {
+                        let (tx, notice) = rumqttc::NoticeTx::new();
+
+                        tx.success();
+
+                        Ok(notice)
+                    });
+
+                // empty cache
+                client
+                    .expect_publish::<String, &str>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq("realm/device_id/control/emptyCache".to_string()),
+                        predicate::always(),
+                        predicate::always(),
+                        predicate::eq("1"),
+                    )
+                    .returning(|_, _, _, _| {
+                        let (tx, notice) = rumqttc::NoticeTx::new();
+
+                        tx.success();
+
+                        Ok(notice)
+                    });
+
+                // device property publish
+                client
+                    .expect_publish::<String, Vec<u8>>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/sensor1/name".to_string()), predicate::always(), predicate::always(), predicate::always())
+                    .returning(|_, _, _, _| {
+                        let (tx, notice) = rumqttc::NoticeTx::new();
+
+                        tx.success();
+
+                        Ok(notice)
+                    });
+
+                client
+            });
+
+        let interfaces = [
+            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap(),
+            Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+        ];
+
+        let interfaces = Interfaces::from_iter(interfaces);
+        let store = StoreWrapper::new(MemoryStore::new());
+
+        let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+
+        let prop = StoredProp {
+            interface: interface.interface_name(),
+            path: "/sensor1/name",
+            value: &AstarteType::String("temperature".to_string()),
+            interface_major: 0,
+            ownership: interface.ownership(),
+        };
+
+        store
+            .store_prop(prop)
+            .await
+            .expect("Error while storing test property");
+
+        let connection = tokio::time::timeout(
+            Duration::from_secs(3),
+            MqttConnection::wait_connack(
+                client,
+                eventl,
+                TransportProvider::new(
+                    "http://api.astarte.localhost/pairing".parse().unwrap(),
+                    "secret".to_string(),
+                    None,
+                    true,
+                ),
+                ClientId {
+                    realm: "realm",
+                    device_id: "device_id",
+                },
+                &interfaces,
+                &store,
+            ),
+        )
+        .await
+        .expect("taimeout reached")
+        .expect("failed to connect");
+
+        assert!(connection.state.is_connected());
     }
 }

@@ -161,7 +161,7 @@ async fn main() -> eyre::Result<()> {
         mqtt_config.ignore_ssl_errors();
     }
 
-    let (client, mut connection) = DeviceBuilder::new()
+    let (client, connection) = DeviceBuilder::new()
         .store_dir(&test_cfg.store_directory)
         .await?
         .interface_directory(&test_cfg.interfaces_fld)?

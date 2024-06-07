@@ -32,6 +32,7 @@ use crate::{
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
 
 /// Structure to create an authenticated [`Transport`]
+#[derive(Debug)]
 pub(crate) struct TransportProvider {
     pairing_url: Url,
     credential_secret: String,
@@ -81,7 +82,7 @@ impl TransportProvider {
             error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
         }
         if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
-            error!("couldn't write private key file {private_key_file}, {err}",);
+            error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
         }
     }
 

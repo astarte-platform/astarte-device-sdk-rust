@@ -56,7 +56,7 @@ async fn main() -> Result<(), Error> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, mut connection) = DeviceBuilder::new()
+    let (client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connect(mqtt_config)

@@ -80,7 +80,7 @@ async fn main() -> Result<(), DynError> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (client, mut connection) = DeviceBuilder::new()
+    let (client, connection) = DeviceBuilder::new()
         .interface_directory("./examples/individual_properties/interfaces")?
         .store(db)
         .connect(mqtt_config)

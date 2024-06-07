@@ -165,17 +165,34 @@ mod tests {
         let eventloop = MqttEventLoop::default();
         let mut client = AsyncClient::default();
 
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
+
         client
             .expect_subscribe::<String>()
             .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
                 predicate::always()
             )
-            .returning(|_, _| { Ok(()) });
+            .returning(|_, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id".to_string()),
                 predicate::always(),
@@ -185,7 +202,13 @@ mod tests {
                         .to_string(),
                 ),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_publish::<String, String>()
@@ -195,19 +218,31 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_unsubscribe::<String>()
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
-            .returning(|_| Ok(()));
+            .returning(|_|{
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
             for _ in 0..3 {
-                let msg = connection.client.recv().await.unwrap();
-                connection.handle_client_msg(msg).await.unwrap();
+                let msg = connection.sender.client.recv().await.unwrap();
+                connection.sender.handle_client_msg(msg).await.unwrap();
             }
         });
 
@@ -257,16 +292,31 @@ mod tests {
             .collect_vec();
         introspection.sort_unstable();
 
-        let introspection_cpy = introspection.clone();
+        let mut seq = mockall::Sequence::new();
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
 
         client
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
-            .returning(|_| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
+
+        let introspection_cpy = introspection.clone();
 
         client
             .expect_publish::<String, String>()
             .once()
+            .in_sequence(&mut seq)
             .withf(move |publish, _, _, payload| {
                 let mut intro = payload.split(';').collect_vec();
 
@@ -274,13 +324,19 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection_cpy
             })
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
-            let msg = connection.client.recv().await.unwrap();
-            connection.handle_client_msg(msg).await.unwrap();
+            let msg = connection.sender.client.recv().await.unwrap();
+            connection.sender.handle_client_msg(msg).await.unwrap();
         });
 
         let mut res = client.extend_interfaces(to_add.clone()).await.unwrap();
@@ -312,28 +368,50 @@ mod tests {
         let mut names = to_remove.clone();
         names.sort();
 
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
+
         client
             .expect_publish::<String, String>()
             .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id".to_string()),
                 predicate::always(),
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
-            .returning(|_| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces);
 
         let handle = tokio::spawn(async move {
-            let msg = connection.client.recv().await.unwrap();
-            connection.handle_client_msg(msg).await.unwrap();
+            let msg = connection.sender.client.recv().await.unwrap();
+            connection.sender.handle_client_msg(msg).await.unwrap();
         });
 
         let mut res = client.remove_interfaces(to_remove).await.unwrap();
@@ -373,14 +451,29 @@ mod tests {
 
         introspection.sort_unstable();
 
+        let mut seq = mockall::Sequence::new();
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
+
         client
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
-            .returning(|_| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_publish::<String, String>()
             .once()
+            .in_sequence(&mut seq)
             .withf(move |publish, _, _, payload| {
                 let mut intro = payload.split(';').collect_vec();
 
@@ -388,31 +481,51 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection
             })
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_publish::<String, String>()
             .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id".to_string()),
                 predicate::always(),
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
-            .returning(|_| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
-                let msg = connection.client.recv().await.unwrap();
-                connection.handle_client_msg(msg).await.unwrap();
+                let msg = connection.sender.client.recv().await.unwrap();
+                connection.sender.handle_client_msg(msg).await.unwrap();
             }
         });
 
@@ -430,7 +543,9 @@ mod tests {
     #[tokio::test]
     async fn should_not_extend_interfaces() {
         let eventloop = MqttEventLoop::default();
-        let client = AsyncClient::default();
+        let mut client = AsyncClient::default();
+
+        client.expect_clone().once().returning(AsyncClient::default);
 
         let to_add = [
             Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
@@ -444,8 +559,8 @@ mod tests {
         let (client, mut connection) = mock_astarte_device(client, eventloop, to_add.clone());
 
         let handle = tokio::spawn(async move {
-            let msg = connection.client.recv().await.unwrap();
-            connection.handle_client_msg(msg).await.unwrap();
+            let msg = connection.sender.client.recv().await.unwrap();
+            connection.sender.handle_client_msg(msg).await.unwrap();
         });
 
         let res = client.extend_interfaces(to_add).await.unwrap();
@@ -477,23 +592,45 @@ mod tests {
 
         introspection.sort_unstable();
 
-        // no subscribe many is expected since no server-owned interfaces are added
+        // No subscribe many is expected since no server-owned interfaces are added
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
 
         client
             .expect_publish::<String, String>()
             .once()
-            .returning(|_, _, _, _| Ok(()));
+            .in_sequence(&mut seq)
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         client
             .expect_publish::<String, String>()
             .once()
+            .in_sequence(&mut seq)
             .with(
                 predicate::eq("realm/device_id".to_string()),
                 predicate::always(),
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| {
+                let (tx, notice) = rumqttc::NoticeTx::new();
+
+                tx.success();
+
+                Ok(notice)
+            });
 
         // no unsubscribe is called since no server-owned interfaces have been added
 
@@ -501,8 +638,8 @@ mod tests {
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
-                let msg = connection.client.recv().await.unwrap();
-                connection.handle_client_msg(msg).await.unwrap();
+                let msg = connection.sender.client.recv().await.unwrap();
+                connection.sender.handle_client_msg(msg).await.unwrap();
             }
         });
 
@@ -520,14 +657,22 @@ mod tests {
     #[tokio::test]
     async fn remove_non_existing_interfaces() {
         let eventloop = MqttEventLoop::default();
-        let client = AsyncClient::default();
+        let mut client = AsyncClient::default();
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
-                let msg = connection.client.recv().await.unwrap();
-                connection.handle_client_msg(msg).await.unwrap();
+                let msg = connection.sender.client.recv().await.unwrap();
+                connection.sender.handle_client_msg(msg).await.unwrap();
             }
         });
 
@@ -588,7 +733,9 @@ mod tests {
     #[tokio::test]
     async fn should_get_interface() {
         let eventloop = MqttEventLoop::default();
-        let client = AsyncClient::default();
+        let mut client = AsyncClient::default();
+
+        client.expect_clone().once().returning(AsyncClient::default);
 
         let (device, _) = mock_astarte_device(
             client,
