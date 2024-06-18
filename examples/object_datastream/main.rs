@@ -28,7 +28,6 @@ use astarte_device_sdk::{
 };
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
-use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -93,13 +92,8 @@ async fn main() -> Result<(), Error> {
         }
     });
 
-    // Use the current thread to receive (no incoming messages are expected in this example)
-    match connection.handle_events().await {
-        Ok(data) => {
-            info!("incoming: {data:?}");
-        }
-        Err(err) => error!("{err}"),
-    }
+    // Use the current thread to handle the connection (no incoming messages are expected in this example)
+    connection.handle_events().await?;
 
     Ok(())
 }
