@@ -159,6 +159,7 @@ mod tests {
         mock_astarte_device, E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY,
     };
     use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
+    use crate::transport::mqtt::test::notify_success;
 
     #[tokio::test]
     async fn test_add_remove_interface() {
@@ -181,13 +182,7 @@ mod tests {
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
                 predicate::always()
             )
-            .returning(|_, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -202,13 +197,7 @@ mod tests {
                         .to_string(),
                 ),
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -218,24 +207,12 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_unsubscribe::<String>()
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
-            .returning(|_|{
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_|notify_success());
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -303,13 +280,7 @@ mod tests {
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_| notify_success());
 
         let introspection_cpy = introspection.clone();
 
@@ -324,13 +295,7 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection_cpy
             })
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -386,26 +351,14 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_| notify_success());
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces);
 
@@ -462,13 +415,7 @@ mod tests {
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -481,13 +428,7 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection
             })
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -499,26 +440,14 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_| notify_success());
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -606,13 +535,7 @@ mod tests {
             .expect_publish::<String, String>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -624,13 +547,7 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         // no unsubscribe is called since no server-owned interfaces have been added
 

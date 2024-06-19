@@ -612,6 +612,14 @@ pub(crate) mod test {
 
     use super::*;
 
+    pub(crate) fn notify_success<E>() -> Result<NoticeFuture, E> {
+        let (tx, notice) = rumqttc::NoticeTx::new();
+
+        tx.success();
+
+        Ok(notice)
+    }
+
     pub(crate) fn mock_mqtt_connection(
         client: AsyncClient,
         eventloop: EventLoop,
@@ -682,13 +690,7 @@ pub(crate) mod test {
                 && *qos == QoS::ExactlyOnce
             })
             .in_sequence(&mut seq)
-            .returning(|_, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -701,13 +703,7 @@ pub(crate) mod test {
 
                 publish == "realm/device_id" && intro == introspection
             })
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl);
 
@@ -761,13 +757,7 @@ pub(crate) mod test {
 
                 publish == "realm/device_id" && intro == introspection && *qos == QoS::ExactlyOnce
             })
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let (mut client, _connection) = mock_mqtt_connection(client, eventl);
 
@@ -806,13 +796,7 @@ pub(crate) mod test {
                 *qos == QoS::ExactlyOnce && s == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/#"
             })
             .in_sequence(&mut seq)
-            .returning(|_, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _| notify_success());
 
         client
             .expect_publish::<String, String>()
@@ -887,13 +871,7 @@ pub(crate) mod test {
                                     topic == "realm/device_id/control/consumer/properties"
                                         && *qos == QoS::ExactlyOnce
                                 })
-                                .returning(|_, _| {
-                                    let (tx, notice) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(notice)
-                                })
+                                .returning(|_, _| notify_success())
                                 .once()
                                 .in_sequence(&mut seq);
 
@@ -906,13 +884,7 @@ pub(crate) mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && introspection.is_empty()
                                 })
-                                .returning(|_, _, _, _| {
-                                    let (tx, notice) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(notice)
-                                });
+                                .returning(|_, _, _, _| notify_success());
 
                             client
                                 .expect_publish::<String, &str>()
@@ -923,13 +895,7 @@ pub(crate) mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && *payload == "1"
                                 })
-                                .returning(|_, _, _, _| {
-                                    let (tx, notice) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(notice)
-                                });
+                                .returning(|_, _, _, _| notify_success());
 
                             client
                         });

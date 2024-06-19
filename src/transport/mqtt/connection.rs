@@ -730,6 +730,7 @@ mod tests {
     use crate::{
         store::memory::MemoryStore,
         test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
+        transport::mqtt::test::notify_success,
         AstarteType, Interface,
     };
 
@@ -773,26 +774,14 @@ mod tests {
                         predicate::eq("realm/device_id/control/consumer/properties".to_string()),
                         predicate::always(),
                     )
-                    .returning(|_topic, _qos| {
-                        let (tx, notice) = rumqttc::NoticeTx::new();
-
-                        tx.success();
-
-                        Ok(notice)
-                    });
+                    .returning(|_topic, _qos| notify_success());
 
                 client
                     .expect_subscribe()
                     .once()
                     .in_sequence(&mut seq)
                     .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()), predicate::always())
-                    .returning(|_: String, _| {
-                        let (tx, notice) = rumqttc::NoticeTx::new();
-
-                        tx.success();
-
-                        Ok(notice)
-                    });
+                    .returning(|_: String, _| notify_success());
 
                 // Client id
                 client
@@ -805,13 +794,7 @@ mod tests {
                         predicate::always(),
                         predicate::always(),
                     )
-                    .returning(|_, _, _, _| {
-                        let (tx, notice) = rumqttc::NoticeTx::new();
-
-                        tx.success();
-
-                        Ok(notice)
-                    });
+                    .returning(|_, _, _, _| notify_success());
 
                 // empty cache
                 client
@@ -824,13 +807,7 @@ mod tests {
                         predicate::always(),
                         predicate::eq("1"),
                     )
-                    .returning(|_, _, _, _| {
-                        let (tx, notice) = rumqttc::NoticeTx::new();
-
-                        tx.success();
-
-                        Ok(notice)
-                    });
+                    .returning(|_, _, _, _| notify_success());
 
                 // device property publish
                 client
@@ -838,13 +815,7 @@ mod tests {
                     .once()
                     .in_sequence(&mut seq)
                     .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/sensor1/name".to_string()), predicate::always(), predicate::always(), predicate::always())
-                    .returning(|_, _, _, _| {
-                        let (tx, notice) = rumqttc::NoticeTx::new();
-
-                        tx.success();
-
-                        Ok(notice)
-                    });
+                    .returning(|_, _, _, _| notify_success());
 
                 client
             });

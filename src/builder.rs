@@ -412,6 +412,7 @@ mod test {
     use crate::transport::mqtt::{
         client::{AsyncClient, EventLoop, NEW_LOCK},
         pairing::tests::{mock_create_certificate, mock_get_broker_url},
+        test::notify_success,
         MqttConfig,
     };
 
@@ -539,13 +540,7 @@ mod test {
                                     topic == "realm/device_id/control/consumer/properties"
                                         && *qos == QoS::ExactlyOnce
                                 })
-                                .returning(|_, _| {
-                                    let (tx, future) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(future)
-                                });
+                                .returning(|_, _| notify_success());
 
                             client
                                 .expect_publish::<String, String>()
@@ -556,13 +551,7 @@ mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && introspection.is_empty()
                                 })
-                                .returning(|_, _, _, _| {
-                                    let (tx, future) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(future)
-                                });
+                                .returning(|_, _, _, _| notify_success());
 
                             client
                                 .expect_publish::<String, &str>()
@@ -573,13 +562,7 @@ mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && *payload == "1"
                                 })
-                                .returning(|_, _, _, _| {
-                                    let (tx, future) = rumqttc::NoticeTx::new();
-
-                                    tx.success();
-
-                                    Ok(future)
-                                });
+                                .returning(|_, _, _, _| notify_success());
 
                             client
                         });

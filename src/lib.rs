@@ -83,7 +83,7 @@ mod test {
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
     use crate::transport::mqtt::payload::Payload as MqttPayload;
-    use crate::transport::mqtt::test::mock_mqtt_connection;
+    use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
     use crate::transport::mqtt::Mqtt;
     use crate::{
         self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop, Interface,
@@ -338,13 +338,7 @@ mod test {
             .expect_publish::<String, Vec<u8>>()
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let (device, mut connection) = mock_astarte_device(
             client,
@@ -424,13 +418,7 @@ mod test {
                     value == "name number 1"
                 }),
             )
-            .returning(|_, _, _, _| {
-                let (tx,notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let mut eventloop = MqttEventLoop::default();
 
@@ -525,13 +513,7 @@ mod test {
                 topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name"
                 && *payload == buf
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         client
             .expect_publish::<String, Vec<u8>>()
@@ -543,13 +525,7 @@ mod test {
                 predicate::always(),
                 predicate::eq(unset)
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let eventloop = MqttEventLoop::default();
 
@@ -691,13 +667,7 @@ mod test {
                 predicate::always(),
                 predicate::always()
             )
-            .returning(|_, _, _, _| {
-                let (tx, notice) = rumqttc::NoticeTx::new();
-
-                tx.success();
-
-                Ok(notice)
-            });
+            .returning(|_, _, _, _| notify_success());
 
         let (device, mut connection) = mock_astarte_device(
             client,
