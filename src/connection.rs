@@ -129,7 +129,7 @@ where
 impl<S, C> EventLoop for DeviceConnection<S, C>
 where
     C: Connection + Reconnect + Receive + Send + Sync + 'static,
-    C::Sender: Register + Publish + Send + Sync + 'static,
+    C::Sender: Register + Publish + 'static,
     S: PropertyStore,
 {
     async fn handle_events(mut self) -> Result<(), crate::Error> {
