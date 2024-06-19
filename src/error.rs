@@ -18,8 +18,6 @@
 
 //! Error types for the Astarte SDK.
 
-use std::convert::Infallible;
-
 use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceTypeDef};
@@ -29,6 +27,7 @@ use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
+use std::convert::Infallible;
 
 /// Astarte error.
 ///
@@ -105,6 +104,17 @@ pub enum Error {
     #[cfg(feature = "message-hub")]
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),
+    /// Error when receiving events from Message Hub Server
+    #[cfg(feature = "message-hub")]
+    #[error(transparent)]
+    Recv(#[from] crate::transport::grpc::RecvError),
+}
+
+impl Error {
+    #[cfg(feature = "message-hub")]
+    pub(crate) fn is_recv(&self) -> bool {
+        matches!(self, Error::Recv(_))
+    }
 }
 
 /// An error reporter that prints an error and its sources.

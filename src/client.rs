@@ -18,9 +18,8 @@
 
 //! Client to send data to astarte, add interfaces or access properties.
 
-use std::{path::Path, str::FromStr, sync::Arc};
-
 use async_trait::async_trait;
+use std::{path::Path, str::FromStr, sync::Arc};
 use tokio::{
     fs,
     sync::{mpsc, oneshot, RwLock},

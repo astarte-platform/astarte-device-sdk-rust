@@ -153,7 +153,16 @@ where
         tasks.spawn(async move {
             // The event is null, reconnect the device
             loop {
-                let event = receiver.connection.next_event(&receiver.store).await?;
+                let res = receiver.connection.next_event(&receiver.store).await;
+
+                let event = match res {
+                    Ok(event) => event,
+                    #[cfg(feature = "message-hub")]
+                    Err(err) if err.is_recv() => {
+                        return receiver.handle_connection_event_error(err).await
+                    }
+                    Err(err) => return Err(err),
+                };
 
                 let Some(event) = event else {
                     debug!("reconnecting");
@@ -572,6 +581,21 @@ impl<S, C> DeviceReceiver<S, C> {
 
         self.tx
             .send_async(data)
+            .await
+            .map_err(|_| Error::Disconnected)
+    }
+
+    /// Send a Message Hub server error to the Node
+    ///
+    /// The error sent should only be a [RecvError]
+    #[cfg(feature = "message-hub")]
+    async fn handle_connection_event_error(&self, err: Error) -> Result<(), Error>
+    where
+        C: Receive + Sync,
+        S: PropertyStore,
+    {
+        self.tx
+            .send_async(Err(err))
             .await
             .map_err(|_| Error::Disconnected)
     }
