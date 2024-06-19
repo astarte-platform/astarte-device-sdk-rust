@@ -46,6 +46,7 @@
 use std::{
     collections::VecDeque,
     fmt::{Debug, Display},
+    time::Duration,
 };
 
 use rumqttc::{ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, Transport};
@@ -56,6 +57,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
+    retry::ExponentialIter,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
     transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
 };
@@ -192,6 +194,8 @@ impl MqttConnection {
     where
         S: PropertyStore,
     {
+        let mut exp_back = ExponentialIter::default();
+
         // Wait till we are in the Init state, so we do not need to handle the incoming publishes,
         // but all the initialization packets are being queued.
         while !self.state.is_connected() {
@@ -202,6 +206,15 @@ impl MqttConnection {
 
             if let Some(publish) = opt_publish {
                 self.buff.push_back(publish);
+            }
+
+            // Check if an error occurred
+            if self.state.is_disconnected() {
+                let timeout = exp_back.next();
+
+                debug!("waiting {timeout} seconds before retring");
+
+                tokio::time::sleep(Duration::from_secs(timeout)).await;
             }
         }
 
@@ -294,6 +307,14 @@ impl State {
     #[must_use]
     fn is_connected(&self) -> bool {
         matches!(self, Self::Connected(..))
+    }
+
+    /// Returns `true` if the state is [`Disconnected`].
+    ///
+    /// [`Disconnected`]: State::Disconnected
+    #[must_use]
+    pub(crate) fn is_disconnected(&self) -> bool {
+        matches!(self, Self::Disconnected(..))
     }
 }
 

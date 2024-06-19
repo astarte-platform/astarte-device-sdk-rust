@@ -31,6 +31,7 @@ mod interfaces;
 pub mod introspection;
 pub mod prelude;
 pub mod properties;
+mod retry;
 pub mod store;
 pub mod transport;
 pub mod types;

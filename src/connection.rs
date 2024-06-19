@@ -27,7 +27,7 @@ use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinSet,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     error::Report,
@@ -159,6 +159,7 @@ where
                     debug!("reconnecting");
 
                     let interfaces = receiver.interfaces.read().await;
+
                     receiver
                         .connection
                         .reconnect(&interfaces, &receiver.store)
@@ -178,7 +179,7 @@ where
                     error!(error = %Report::new(err), "task errored")
                 }
                 Err(err) if err.is_cancelled() => {
-                    trace!("task cancelled");
+                    debug!("task cancelled");
                 }
                 Err(err) => {
                     error!(error = %Report::new(err), "failed to join task");

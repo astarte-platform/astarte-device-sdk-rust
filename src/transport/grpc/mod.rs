@@ -28,6 +28,7 @@ pub mod convert;
 
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::time::Duration;
 
 use astarte_message_hub_proto::tonic::codec::Streaming;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
@@ -45,6 +46,7 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use crate::retry::ExponentialIter;
 use crate::store::wrapper::StoreWrapper;
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder},
@@ -370,7 +372,23 @@ impl Reconnect for Grpc {
         // try reattaching
         let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
 
-        let stream = Grpc::attach(&mut self.client, data).await?;
+        let mut exp_back = ExponentialIter::default();
+
+        let stream = loop {
+            match Grpc::attach(&mut self.client, data.clone()).await {
+                Ok(stream) => break stream,
+                Err(err) => {
+                    error!("Grpc error while trying to reconnect {err}");
+
+                    let timeout = exp_back.next();
+
+                    debug!("waiting {timeout} seconds before retring");
+
+                    tokio::time::sleep(Duration::from_secs(timeout)).await;
+                }
+            };
+        };
+
         self.stream = SyncWrapper::new(stream);
 
         Ok(())
@@ -459,6 +477,7 @@ impl ConnectionConfig for GrpcConfig {
 }
 
 /// Wrapper that contains data needed while connecting the node to the astarte message hub.
+#[derive(Debug, Clone)]
 struct NodeData {
     node: Node,
 }
