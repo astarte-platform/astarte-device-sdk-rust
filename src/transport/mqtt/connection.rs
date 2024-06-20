@@ -105,7 +105,7 @@ impl InitError {
 #[derive(Debug)]
 pub(crate) struct MqttConnection {
     connection: Connection,
-    /// Queue for the packet published while during the connection.
+    /// Queue for the packet published while re/connecting.
     buff: VecDeque<Publish>,
     state: State,
 }
@@ -212,7 +212,7 @@ impl MqttConnection {
             if self.state.is_disconnected() {
                 let timeout = exp_back.next();
 
-                debug!("waiting {timeout} seconds before retring");
+                debug!("waiting {timeout} seconds before retying");
 
                 tokio::time::sleep(Duration::from_secs(timeout)).await;
             }
@@ -338,7 +338,7 @@ pub(crate) struct Disconnected;
 impl Disconnected {
     /// Recreate the MQTT transport (TLS) to the broker.
     ///
-    /// It recreate the credentials and reconnect to the broker, using the same
+    /// It recreates the credentials and reconnect to the broker, using the same
     /// session. If it fails, it returns an error so that the whole connection process can
     /// be retried.
     async fn reconnect(&mut self, conn: &mut Connection, client_id: ClientId<&str>) -> Next {
