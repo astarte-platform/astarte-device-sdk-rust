@@ -46,6 +46,7 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
+    error::Report,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -285,18 +286,18 @@ impl Mqtt {
         match self.eventloop.get_mut().poll().await {
             Ok(event) => Ok(event),
             Err(ConnectionError::Tls(err)) => {
-                error!("couldn't poll the event loop, tls error: {err}");
+                error!(error = %Report::new(&err), "couldn't poll the event loop, tls error");
 
                 self.reconnect().await?;
 
                 self.eventloop.get_mut().poll().await.map_err(|err| {
-                    error!("poll fatal error {err}");
+                    error!(error = %Report::new(&err), "poll fatal error");
 
                     Error::Disconnected
                 })
             }
             Err(err) => {
-                error!("couldn't poll the event loop: {err}");
+                error!(error = %Report::new(&err), "couldn't poll the event loop");
 
                 DelayedPoll::retry_poll_event(self.eventloop.get_mut()).await
             }
@@ -596,7 +597,9 @@ impl Register for Mqtt {
             for srv_interface in server_interfaces {
                 if let Err(err) = self.unsubscribe(srv_interface).await {
                     error!(
-                        "failed to unsubscribing to server interface {srv_interface} with: {err}"
+                        error = %Report::new(&err),
+                        interface = srv_interface,
+                        "failed to unsubscribing to server interface"
                     );
                 }
             }

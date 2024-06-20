@@ -24,7 +24,10 @@ use tokio::fs;
 use tracing::{debug, error, info};
 use url::Url;
 
-use crate::transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError};
+use crate::{
+    error::Report,
+    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
+};
 
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
 
@@ -75,7 +78,7 @@ impl TransportProvider {
     ) {
         // Don't fail here since the SDK can always regenerate the certificate,
         if let Err(err) = fs::write(&certificate_file, &certificate).await {
-            error!("couldn't write certificate file {certificate_file}, {err}",);
+            error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
         }
         if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
             error!("couldn't write private key file {private_key_file}, {err}",);

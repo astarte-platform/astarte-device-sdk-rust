@@ -106,3 +106,62 @@ pub enum Error {
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }
+
+/// An error reporter that prints an error and its sources.
+///
+/// This is a stub until the std library implementation get stabilized[^1]
+///
+/// [^1]: https://doc.rust-lang.org/std/error/struct.Report.html
+pub(crate) struct Report<E = Box<dyn std::error::Error>> {
+    /// The error being reported.
+    error: E,
+}
+
+impl<E> Report<E>
+where
+    Report<E>: From<E>,
+{
+    /// Create a new Report from an input error.
+    pub(crate) fn new(error: E) -> Self {
+        Self::from(error)
+    }
+}
+
+impl<E> From<E> for Report<E>
+where
+    E: std::error::Error,
+{
+    fn from(value: E) -> Self {
+        Self { error: value }
+    }
+}
+
+impl<E> std::fmt::Display for Report<E>
+where
+    E: std::error::Error,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)?;
+
+        let mut cause: &dyn std::error::Error = &self.error;
+
+        while let Some(source) = cause.source() {
+            cause = source;
+
+            write!(f, ": {cause}")?;
+        }
+
+        Ok(())
+    }
+}
+
+// This type intentionally outputs the same format for `Display` and `Debug`for
+// situations where you unwrap a `Report` or return it from main.
+impl<E> std::fmt::Debug for Report<E>
+where
+    Report<E>: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}

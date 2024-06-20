@@ -272,12 +272,12 @@ async fn main() -> eyre::Result<()> {
             Ok(Ok(())) => {}
             Err(err) if err.is_cancelled() => {}
             Err(err) => {
-                error!("Task panicked {err}");
+                error!(error = %err, "Task panicked");
 
                 return Err(err.into());
             }
             Ok(Err(err)) => {
-                error!("Task returned an error {err}");
+                error!(error = %err, "Task returned an error");
 
                 return Err(err);
             }

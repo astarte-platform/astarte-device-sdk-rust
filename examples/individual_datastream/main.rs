@@ -130,7 +130,7 @@ async fn main() -> Result<(), Error> {
                     }
                 }
                 Err(Error::Disconnected) => break,
-                Err(err) => error!("{:?}", err),
+                Err(err) => error!(%err),
             }
         }
 

@@ -28,7 +28,7 @@ use astarte_device_sdk::{
 };
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -97,9 +97,9 @@ async fn main() -> Result<(), Error> {
     loop {
         match connection.handle_events().await {
             Ok(data) => {
-                println!("incoming: {data:?}");
+                info!("incoming: {data:?}");
             }
-            Err(err) => error!("{err:?}"),
+            Err(err) => error!("{err}"),
         }
     }
 }

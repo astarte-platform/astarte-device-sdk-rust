@@ -155,7 +155,7 @@ async fn main() -> Result<(), DynError> {
                     }
                 }
                 Err(Error::Disconnected) => break,
-                Err(err) => error!("{:?}", err),
+                Err(err) => error!(error = %err, "error returned by the client"),
             }
         }
 
