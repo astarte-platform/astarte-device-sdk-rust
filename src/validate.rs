@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     interface::{

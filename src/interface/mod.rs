@@ -26,8 +26,8 @@ pub mod mapping;
 pub mod reference;
 pub(crate) mod validation;
 
-use log::info;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use std::collections::BTreeSet;
 use std::fmt::Display;

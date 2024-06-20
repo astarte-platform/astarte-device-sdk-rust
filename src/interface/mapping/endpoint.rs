@@ -23,7 +23,7 @@ use std::{
 };
 
 use itertools::{EitherOrBoth, Itertools};
-use log::{error, trace};
+use tracing::{error, trace};
 
 use super::path::MappingPath;
 

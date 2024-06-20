@@ -23,11 +23,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use itertools::Itertools;
-use log::{debug, error, info, warn};
 use tokio::{
     select,
     sync::{mpsc, oneshot, RwLock},
 };
+use tracing::{debug, error, info, warn};
 
 use crate::{
     event::DeviceEvent,

@@ -21,11 +21,11 @@
 use std::{path::Path, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-use log::{debug, error, trace};
 use tokio::{
     fs,
     sync::{mpsc, oneshot, RwLock},
 };
+use tracing::{debug, error, trace};
 
 use crate::{
     connection::ClientMessage,

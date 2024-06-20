@@ -26,6 +26,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder, error::Error, prelude::*, store::SqliteStore,
     transport::mqtt::MqttConfig, Value,
 };
+use tracing::error;
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;
 
@@ -154,7 +155,7 @@ async fn main() -> Result<(), DynError> {
                     }
                 }
                 Err(Error::Disconnected) => break,
-                Err(err) => log::error!("{:?}", err),
+                Err(err) => error!("{:?}", err),
             }
         }
 

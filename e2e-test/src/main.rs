@@ -36,12 +36,12 @@ use astarte_device_sdk::transport::mqtt::Credential;
 use astarte_device_sdk::{Interface, Value};
 use eyre::{bail, eyre, OptionExt, WrapErr};
 use itertools::Itertools;
-use log::{debug, error, info};
 use reqwest::StatusCode;
 use serde_json::Value as JsonValue;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
+use tracing::{debug, error, info};
 
 use astarte_device_sdk::{
     builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig, types::AstarteType,
@@ -55,6 +55,9 @@ mod utils;
 use mock_data_aggregate::MockDataAggregate;
 use mock_data_datastream::MockDataDatastream;
 use mock_data_property::MockDataProperty;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 
@@ -129,7 +132,11 @@ impl TestCfg {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::try_init()?;
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init()?;
 
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 

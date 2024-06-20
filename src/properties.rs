@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
 use futures::{future, StreamExt, TryStreamExt};
-use log::{error, warn};
+use tracing::{error, warn};
 
 use crate::{
     client::DeviceClient,

@@ -24,8 +24,8 @@ use std::collections::HashMap;
 
 use bson::Bson;
 
-use log::{debug, trace};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, trace};
 
 use crate::{
     interface::{

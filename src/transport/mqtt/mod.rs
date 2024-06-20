@@ -40,10 +40,10 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use itertools::Itertools;
-use log::{debug, error, info, trace, warn};
 use once_cell::sync::OnceCell;
 use rumqttc::{ConnectionError, Event as MqttEvent, Packet, SubscribeFilter, Transport};
 use sync_wrapper::SyncWrapper;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     interface::{

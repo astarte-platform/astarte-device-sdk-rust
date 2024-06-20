@@ -18,7 +18,7 @@
 
 //! Parses a topic into the different components.
 
-use log::trace;
+use tracing::trace;
 
 /// Error returned when parsing a topic.
 ///

@@ -21,8 +21,8 @@
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 
 use async_trait::async_trait;
-use log::error;
 use tokio::sync::RwLock;
+use tracing::error;
 
 use super::{PropertyStore, StoredProp};
 use crate::{interface::Ownership, types::AstarteType};

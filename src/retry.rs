@@ -20,8 +20,8 @@
 
 use std::time::Duration;
 
-use log::{debug, error};
 use rumqttc::Event;
+use tracing::{debug, error};
 
 use crate::{transport::mqtt::client::EventLoop, Error};
 

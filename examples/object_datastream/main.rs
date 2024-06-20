@@ -28,6 +28,7 @@ use astarte_device_sdk::{
 };
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
+use tracing::error;
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -98,7 +99,7 @@ async fn main() -> Result<(), Error> {
             Ok(data) => {
                 println!("incoming: {data:?}");
             }
-            Err(err) => log::error!("{err:?}"),
+            Err(err) => error!("{err:?}"),
         }
     }
 }

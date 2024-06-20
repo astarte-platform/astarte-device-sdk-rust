@@ -18,10 +18,10 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use log::{debug, error, info};
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::fs;
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError};
