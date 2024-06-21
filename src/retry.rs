@@ -20,10 +20,10 @@
 
 use std::time::Duration;
 
-use log::{debug, error};
 use rumqttc::Event;
+use tracing::{debug, error};
 
-use crate::{transport::mqtt::client::EventLoop, Error};
+use crate::{error::Report, transport::mqtt::client::EventLoop, Error};
 
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
@@ -45,7 +45,7 @@ impl DelayedPoll {
             match eventloop.poll().await {
                 Ok(event) => return Ok(event),
                 Err(err) => {
-                    error!("couldn't poll for next event: {err:#?}");
+                    error!(error = %Report::new(err), "couldn't poll for next event");
                 }
             }
         }

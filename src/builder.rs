@@ -30,9 +30,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::debug;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;

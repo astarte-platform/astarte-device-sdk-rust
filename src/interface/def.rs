@@ -24,9 +24,9 @@
 
 use std::{fmt::Display, time::Duration};
 
-use log::warn;
 use rumqttc::QoS;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{
     interface::{DatastreamIndividual, DatastreamObject, Properties},
@@ -529,8 +529,8 @@ pub(super) enum DatabaseRetentionPolicyDef {
 
 #[cfg(not(feature = "interface-doc"))]
 mod doc {
-    use log::trace;
     use serde::{de::Visitor, Deserializer};
+    use tracing::trace;
 
     pub(super) fn deserialize_doc<'de, D>(de: D) -> Result<(), D::Error>
     where

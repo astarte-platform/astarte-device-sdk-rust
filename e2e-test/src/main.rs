@@ -17,6 +17,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+
 //! End to end tests for the Astarte SDK.
 //!
 //! Three sequential and bidirectional tests are performed:
@@ -36,12 +37,12 @@ use astarte_device_sdk::transport::mqtt::Credential;
 use astarte_device_sdk::{Interface, Value};
 use eyre::{bail, eyre, OptionExt, WrapErr};
 use itertools::Itertools;
-use log::{debug, error, info};
 use reqwest::StatusCode;
 use serde_json::Value as JsonValue;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
+use tracing::{debug, error, info};
 
 use astarte_device_sdk::{
     builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig, types::AstarteType,
@@ -55,6 +56,9 @@ mod utils;
 use mock_data_aggregate::MockDataAggregate;
 use mock_data_datastream::MockDataDatastream;
 use mock_data_property::MockDataProperty;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 
@@ -129,7 +133,11 @@ impl TestCfg {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    env_logger::try_init()?;
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init()?;
 
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 
@@ -265,12 +273,12 @@ async fn main() -> eyre::Result<()> {
             Ok(Ok(())) => {}
             Err(err) if err.is_cancelled() => {}
             Err(err) => {
-                error!("Task panicked {err}");
+                error!(error = %err, "Task panicked");
 
                 return Err(err.into());
             }
             Ok(Err(err)) => {
-                error!("Task returned an error {err}");
+                error!(error = %err, "Task returned an error");
 
                 return Err(err);
             }
@@ -345,8 +353,10 @@ async fn test_datastream_device_to_server(
 /// Run the end to end tests from server to device for individual datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_datastream_server_to_device(
@@ -426,8 +436,10 @@ async fn test_aggregate_device_to_server(
 /// Run the end to end tests from server to device for aggregate datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_aggregate_server_to_device(
@@ -467,6 +479,7 @@ async fn test_aggregate_server_to_device(
 /// Run the end to end tests from device to server for properties.
 ///
 /// # Arguments
+///
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_property_device_to_server(
@@ -537,8 +550,10 @@ async fn test_property_device_to_server(
 /// Run the end to end tests from server to device for properties.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received properties.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_property_server_to_device(
@@ -605,6 +620,7 @@ async fn test_property_server_to_device(
 /// Perform an HTTP GET request to an Astarte interface.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface for which to perform the GET request.
 async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> eyre::Result<String> {
@@ -672,6 +688,7 @@ async fn http_post_to_intf(
 /// Perform an HTTP DELETE request to an Astarte interface.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface on which to perform the DELETE request.
 /// - *path*: path for the endpoint for which the data should be deleted.

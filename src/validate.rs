@@ -20,9 +20,10 @@
 
 use std::collections::HashMap;
 
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
+    error::Report,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef, PropertyRef},
@@ -101,7 +102,7 @@ impl ValidatedIndividual {
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedIndividual, UserValidationError> {
         if let Err(err) = optional_individual_checks(mapping, &timestamp) {
-            error!("send validation failed: {err}");
+            error!(error = %Report::new(&err), "send validation failed");
 
             #[cfg(debug_assertions)]
             return Err(err);
@@ -141,7 +142,7 @@ impl ValidatedObject {
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedObject, UserValidationError> {
         if let Err(err) = optional_object_checks(object, &timestamp) {
-            error!("Send validation failed: {err}");
+            error!(error = %Report::new(&err), "send validation failed");
 
             #[cfg(debug_assertions)]
             return Err(err);

@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use log::{debug, error};
+use tracing::{debug, error};
 
 use crate::{interface::error::InterfaceError, Error, Interface};
 

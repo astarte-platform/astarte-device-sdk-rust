@@ -23,7 +23,9 @@ use std::{
 };
 
 use itertools::{EitherOrBoth, Itertools};
-use log::{error, trace};
+use tracing::{error, trace};
+
+use crate::error::Report;
 
 use super::path::MappingPath;
 
@@ -57,7 +59,7 @@ impl<T> Endpoint<T> {
         match MappingPath::try_from(mapping.as_ref()) {
             Ok(mapping) => mapping.eq(self),
             Err(err) => {
-                error!("failed to parse mapping {err}");
+                error!(error = %Report::new(&err), "failed to parse mapping");
 
                 false
             }

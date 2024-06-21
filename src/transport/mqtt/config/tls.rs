@@ -25,11 +25,11 @@ use std::{
 };
 
 use itertools::Itertools;
-use log::{debug, error, warn};
 use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
     RootCertStore,
 };
+use tracing::{debug, error, warn};
 
 use crate::transport::mqtt::PairingError;
 

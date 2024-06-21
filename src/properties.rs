@@ -21,7 +21,7 @@
 use async_trait::async_trait;
 use flate2::bufread::ZlibDecoder;
 use futures::{future, StreamExt, TryStreamExt};
-use log::{error, warn};
+use tracing::{error, warn};
 
 use crate::{
     client::DeviceClient,
@@ -176,7 +176,11 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
     );
     // Signal the error in production
     if bytes_read != size {
-        error!("Byte red and size mismatch: {} != {}", bytes_read, size);
+        error!(
+            bytes_read = bytes_read,
+            size = size,
+            "Byte red and size mismatch",
+        );
     }
 
     Ok(s.split(';').map(|x| x.to_string()).collect())

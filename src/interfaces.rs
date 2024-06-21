@@ -24,7 +24,7 @@ use std::fmt::Display;
 use std::ops::Deref;
 
 use itertools::Itertools;
-use log::{debug, trace};
+use tracing::{debug, trace};
 
 use crate::{
     interface::{

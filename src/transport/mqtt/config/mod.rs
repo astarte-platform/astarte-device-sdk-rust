@@ -26,10 +26,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use log::debug;
 use rumqttc::{MqttOptions, NetworkOptions, Transport};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
+use tracing::debug;
 use url::Url;
 
 use crate::{

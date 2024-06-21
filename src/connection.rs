@@ -23,13 +23,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use itertools::Itertools;
-use log::{debug, error, info, warn};
 use tokio::{
     select,
     sync::{mpsc, oneshot, RwLock},
 };
+use tracing::{debug, error, info, warn};
 
 use crate::{
+    error::Report,
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
@@ -297,7 +298,7 @@ impl<S, C> DeviceConnection<S, C> {
         if let Some(prop) = to_remove.as_prop() {
             // We cannot error here since we have already unsubscribed from the interface
             if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
-                error!("failed to remove property {err}");
+                error!(error = %Report::new(err), "failed to remove property");
             }
         }
 
@@ -339,7 +340,7 @@ impl<S, C> DeviceConnection<S, C> {
             // We cannot error here since we have already unsubscribed from the interface
             if let Some(prop) = iface.as_prop() {
                 if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
-                    error!("failed to remove property {err}");
+                    error!(error = %Report::new(err), "failed to remove property");
                 }
             }
         }
@@ -421,7 +422,7 @@ impl<S, C> DeviceConnection<S, C> {
                 let res = self.add_interface(interface).await;
 
                 if let Err(Err(err)) = response.send(res) {
-                    error!("client disconnected while failing to add interface: {err}");
+                    error!(error = %Report::new(err), "client disconnected while failing to add interface");
                 }
 
                 Ok(())
@@ -433,7 +434,7 @@ impl<S, C> DeviceConnection<S, C> {
                 let res = self.extend_interfaces(interfaces).await;
 
                 if let Err(Err(err)) = response.send(res) {
-                    error!("client disconnected while failing to extend interfaces: {err}");
+                    error!(error = %Report::new(err), "client disconnected while failing to extend interfaces");
                 }
 
                 Ok(())
@@ -445,7 +446,7 @@ impl<S, C> DeviceConnection<S, C> {
                 let res = self.remove_interface(&interface).await;
 
                 if let Err(Err(err)) = response.send(res) {
-                    error!("client disconnected while failing to remove interfaces: {err}");
+                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
                 }
 
                 Ok(())
@@ -459,7 +460,7 @@ impl<S, C> DeviceConnection<S, C> {
                     .await;
 
                 if let Err(Err(err)) = response.send(res) {
-                    error!("client disconnected while failing to remove interfaces: {err}");
+                    error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
                 }
 
                 Ok(())
@@ -507,8 +508,8 @@ where
     C: Disconnect + Send,
 {
     async fn disconnect(self) {
-        if let Err(e) = self.connection.disconnect().await {
-            error!("Could not close the connection gracefully: {}", e);
+        if let Err(err) = self.connection.disconnect().await {
+            error!(error = %Report::new(err), "Could not close the connection gracefully");
         }
     }
 }

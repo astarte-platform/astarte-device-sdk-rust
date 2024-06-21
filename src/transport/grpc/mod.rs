@@ -40,8 +40,8 @@ use astarte_message_hub_proto::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use log::{debug, trace};
 use sync_wrapper::SyncWrapper;
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 use crate::store::wrapper::StoreWrapper;

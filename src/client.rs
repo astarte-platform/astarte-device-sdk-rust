@@ -21,11 +21,11 @@
 use std::{path::Path, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
-use log::{debug, error, trace};
 use tokio::{
     fs,
     sync::{mpsc, oneshot, RwLock},
 };
+use tracing::{debug, error, trace};
 
 use crate::{
     connection::ClientMessage,
@@ -266,9 +266,9 @@ impl<S> DeviceClient<S> {
         let value = match value {
             Some(value) if value != mapping.mapping_type() => {
                 error!(
-                    "stored property type mismatch, expected {} got {:?}",
+                    ?value,
+                    "stored property type mismatch, expected {}",
                     mapping.mapping_type(),
-                    value
                 );
                 self.store.delete_prop(interface, path).await?;
 

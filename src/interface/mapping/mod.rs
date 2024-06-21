@@ -20,7 +20,7 @@
 
 use std::{borrow::Borrow, ops::Deref};
 
-use log::warn;
+use tracing::warn;
 
 use self::endpoint::Endpoint;
 
