@@ -810,6 +810,54 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_send_message_hub_event_error() {
+        let (server_impl, mut channels) = build_test_message_hub_server();
+        let (server_future, client_future) = mock_grpc_actors(server_impl)
+            .await
+            .expect("Could not construct test client and server");
+
+        // send a generic error on a message hub event that the server will receive. This should
+        // cause the connection to return a Recv error (that can be handled by the end user).
+        let error =
+            MessageHubEvent::from_error(&Error::Grpc(GrpcError::DeserializationExpectedIndividual));
+
+        channels
+            .server_response_sender
+            .send(vec![Ok(error)])
+            .await
+            .unwrap();
+
+        let client_operations = async move {
+            let client = client_future.await;
+
+            let (_client, mut connection) = mock_astarte_grpc_client(client, &Interfaces::new())
+                .await
+                .unwrap();
+
+            // send a MessageHubEvent::Error followed by a MessageHubEvent::Message.
+            // the error should be printed with logging and then everything should proceed as normal
+            let store = StoreWrapper::new(MemoryStore::new());
+            let Err(err) = connection.next_event(&store).await else {
+                panic!("next_event failed");
+            };
+
+            assert!(err.is_recv());
+
+            connection.disconnect().await.unwrap();
+        };
+
+        tokio::select! {
+            _ = server_future => panic!("The server closed before the client could complete sending the data"),
+            _ = client_operations => println!("Client sent its data"),
+        }
+
+        expect_messages!(channels.server_request_receiver.try_recv();
+            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Detach(_),
+        );
+    }
+
+    #[tokio::test]
     async fn test_server_error() {
         let (server_impl, mut channels) = build_test_message_hub_server();
         let (server_future, client_future) = mock_grpc_actors(server_impl)
