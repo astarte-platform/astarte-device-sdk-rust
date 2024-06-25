@@ -466,7 +466,7 @@ impl Reconnect for Mqtt {
         S: PropertyStore,
     {
         self.connection
-            .reconnect(self.client_id.as_ref(), interfaces, store)
+            .connect(self.client_id.as_ref(), interfaces, store)
             .await?;
 
         Ok(())

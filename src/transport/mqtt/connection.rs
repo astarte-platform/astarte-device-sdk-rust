@@ -178,14 +178,14 @@ impl MqttConnection {
         let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
 
         mqtt_connection
-            .reconnect(client_id, interfaces, store)
+            .connect(client_id, interfaces, store)
             .await?;
 
         Ok(mqtt_connection)
     }
 
     /// Connect to astarte, wait till the state is [`Connected`].
-    pub(crate) async fn reconnect<S>(
+    pub(crate) async fn connect<S>(
         &mut self,
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
@@ -212,7 +212,7 @@ impl MqttConnection {
             if self.state.is_disconnected() {
                 let timeout = exp_back.next();
 
-                debug!("waiting {timeout} seconds before retying");
+                debug!("waiting {timeout} seconds before retrying");
 
                 tokio::time::sleep(Duration::from_secs(timeout)).await;
             }
@@ -279,10 +279,10 @@ impl State {
         let next = match self {
             State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await,
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
-            State::Handshake(start_init) => {
+            State::Handshake(handshake) => {
                 let session_data = SessionData::try_from_props(interfaces, store).await?;
 
-                start_init.init(conn, client_id, session_data)
+                handshake.start(conn, client_id, session_data)
             }
             State::WaitAcks(init) => init.wait_connection(conn).await,
             State::Connected(connected) => connected.poll(conn).await,
@@ -431,7 +431,7 @@ pub(crate) struct Handshake {
 }
 
 impl Handshake {
-    fn init(
+    fn start(
         self,
         conn: &mut Connection,
         client_id: ClientId<&str>,

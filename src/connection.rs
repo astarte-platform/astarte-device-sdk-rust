@@ -27,7 +27,7 @@ use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinSet,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     error::Report,
@@ -236,7 +236,7 @@ impl<S, T> DeviceSender<S, T> {
 
                 self.store.store_prop(prop).await?;
 
-                info!(
+                debug!(
                     "property stored {}{}:{version_major}",
                     data.interface, data.path,
                 );
@@ -509,7 +509,7 @@ impl<S, C> DeviceReceiver<S, C> {
 
                     self.store.store_prop(prop).await?;
 
-                    info!(
+                    debug!(
                         "property stored {}{path}:{}",
                         interface.interface_name(),
                         interface.version_major()
@@ -524,7 +524,7 @@ impl<S, C> DeviceReceiver<S, C> {
                     .delete_prop(interface.interface_name(), path.as_str())
                     .await?;
 
-                info!(
+                debug!(
                     "property unset {}{path}:{}",
                     interface.interface_name(),
                     interface.version_major()
