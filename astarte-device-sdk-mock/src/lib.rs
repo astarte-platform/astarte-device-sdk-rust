@@ -213,7 +213,7 @@ mock! {
 
     #[async_trait]
     impl<S: Send, C: Send> astarte_device_sdk::EventLoop for DeviceConnection<S,C> {
-        async fn handle_events(&mut self) -> Result<(), crate::Error>;
+        async fn handle_events(self) -> Result<(), crate::Error>;
     }
 
     #[async_trait]

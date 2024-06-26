@@ -27,21 +27,28 @@ pub(crate) static NEW_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 
 #[cfg(test)]
 pub(crate) mod mock {
+    use std::fmt::Debug;
+
     use mockall::mock;
     use rumqttc::{
-        ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, QoS, SubscribeFilter,
+        ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, NoticeFuture, QoS,
+        SubscribeFilter,
     };
 
     mock!(
         pub AsyncClient {
             pub fn new(options: MqttOptions, cap: usize) -> (MockAsyncClient, MockEventLoop);
-            pub async fn subscribe<S: Into<String> + 'static>(&self, topic: S, qos: QoS) -> Result<(), ClientError>;
-            pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<(), ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
-            pub async fn unsubscribe<S: Into<String> + 'static>(&self, topic: S) -> Result<(), ClientError>;
-            pub async fn subscribe_many<T>(&self, topics: T) -> Result<(), ClientError> where T: IntoIterator<Item = SubscribeFilter> + 'static;
+            pub async fn subscribe<S: Into<String> + 'static>(&self, topic: S, qos: QoS) -> Result<NoticeFuture, ClientError>;
+            pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<NoticeFuture, ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
+            pub async fn unsubscribe<S: Into<String> + 'static>(&self, topic: S) -> Result<NoticeFuture, ClientError>;
+            pub async fn subscribe_many<T>(&self, topics: T) -> Result<NoticeFuture, ClientError> where T: IntoIterator<Item = SubscribeFilter> + 'static;
         }
         impl Clone for AsyncClient {
             fn clone(&self) -> Self;
+        }
+
+        impl Debug for AsyncClient {
+            fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result;
         }
     );
 

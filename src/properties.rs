@@ -269,8 +269,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
+        let mut client = AsyncClient::default();
+
+        client.expect_clone().once().returning(AsyncClient::default);
+
         let (sdk, _) = mock_astarte_device_store(
-            AsyncClient::default(),
+            client,
             EventLoop::default(),
             [
                 Interface::from_str(SERVER_PROP).unwrap(),

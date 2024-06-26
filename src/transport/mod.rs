@@ -56,6 +56,20 @@ pub(crate) struct ReceivedEvent<P> {
     pub(crate) payload: P,
 }
 
+/// Trait to link a Sender to a Connection.
+pub trait Connection {
+    /// Sender for the connection.
+    ///
+    /// This reduces the number of generics for connection, since a single client type is associated
+    /// with a connection.
+    type Sender: Send + Sync;
+}
+
+/// Blank implementation for the builder
+impl Connection for () {
+    type Sender = ();
+}
+
 #[async_trait]
 pub(crate) trait Publish {
     /// Sends validated individual values over this connection
@@ -77,11 +91,12 @@ pub(crate) trait Receive {
     /// every received incoming event must get returned from this method.
     /// Implementations could decide to process internally some types of
     /// incoming messages.
+    ///
+    /// This function returns [`None`] to signal a disconnection from Astarte.
     async fn next_event<S>(
         &mut self,
-        interfaces: &Interfaces,
         store: &StoreWrapper<S>,
-    ) -> Result<ReceivedEvent<Self::Payload>, crate::Error>
+    ) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>
     where
         S: PropertyStore;
 
@@ -99,6 +114,20 @@ pub(crate) trait Receive {
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
+}
+
+/// Reconnect the device to Astarte.
+#[async_trait]
+pub(crate) trait Reconnect {
+    /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
+    /// [`Receive::next_event`] returns [`None`].
+    async fn reconnect<S>(
+        &mut self,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> Result<(), crate::Error>
+    where
+        S: PropertyStore;
 }
 
 #[async_trait]

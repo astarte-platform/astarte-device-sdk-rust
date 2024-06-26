@@ -1452,6 +1452,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2256,12 +2262,12 @@ dependencies = [
 [[package]]
 name = "rumqttc"
 version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1568e15fab2d546f940ed3a21f48bbbd1c494c90c99c4481339364a497f94a9"
+source = "git+https://github.com/joshuachp/rumqtt?rev=146962ee07861b7e187b040ba92d482248294f8c#146962ee07861b7e187b040ba92d482248294f8c"
 dependencies = [
  "bytes",
  "flume",
  "futures-util",
+ "linked-hash-map",
  "log",
  "rustls-native-certs",
  "rustls-pemfile 2.1.1",
@@ -2269,6 +2275,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]

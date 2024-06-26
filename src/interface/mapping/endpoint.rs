@@ -317,8 +317,7 @@ where
         match (self, other) {
             (Self::Simple(a), Self::Simple(b)) => a.cmp(b),
             // If any is a parameter, the two levels are equal.
-            (Self::Parameter(_), Self::Parameter(_))
-            | (Self::Simple(_), Self::Parameter(_))
+            (Self::Parameter(_) | Self::Simple(_), Self::Parameter(_))
             | (Self::Parameter(_), Self::Simple(_)) => std::cmp::Ordering::Equal,
         }
     }
