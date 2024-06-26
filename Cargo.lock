@@ -190,7 +190,7 @@ dependencies = [
 [[package]]
 name = "astarte-message-hub-proto"
 version = "0.6.2"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto#474c1433846562af6d3bf0fd1d8d7561ff44cee2"
+source = "git+https://github.com/astarte-platform/astarte-message-hub-proto#08ff0df376995d56b6c9d823ccf884afaeb7bdc7"
 dependencies = [
  "chrono",
  "pbjson-types",
