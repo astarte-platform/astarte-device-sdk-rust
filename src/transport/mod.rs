@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 
 use crate::{
+    client::RecvError,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -45,6 +46,20 @@ use crate::{
 #[cfg(feature = "message-hub")]
 pub mod grpc;
 pub mod mqtt;
+
+/// Connection event
+#[derive(Debug)]
+pub(crate) enum ConnectionEvent<P> {
+    Disconnected,
+    Event(ReceivedEvent<P>),
+    ReceiveError(RecvError),
+}
+
+impl<P> ConnectionEvent<P> {
+    pub(crate) fn error(err: RecvError) -> Self {
+        Self::ReceiveError(err)
+    }
+}
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
@@ -96,7 +111,7 @@ pub(crate) trait Receive {
     async fn next_event<S>(
         &mut self,
         store: &StoreWrapper<S>,
-    ) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>
+    ) -> Result<ConnectionEvent<Self::Payload>, crate::Error>
     where
         S: PropertyStore;
 
@@ -105,7 +120,7 @@ pub(crate) trait Receive {
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error>;
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -113,7 +128,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError>;
 }
 
 /// Reconnect the device to Astarte.

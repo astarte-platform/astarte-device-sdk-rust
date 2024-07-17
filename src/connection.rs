@@ -30,13 +30,17 @@ use tokio::{
 use tracing::{debug, error, warn};
 
 use crate::{
+    client::RecvError,
     error::Report,
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
     introspection::AddInterfaceError,
     store::{wrapper::StoreWrapper, PropertyStore, StoredProp},
-    transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
+    transport::{
+        Connection, ConnectionEvent, Disconnect, Publish, Receive, ReceivedEvent, Reconnect,
+        Register,
+    },
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Value,
 };
@@ -99,7 +103,7 @@ where
 {
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
-        tx: flume::Sender<Result<DeviceEvent, Error>>,
+        tx: flume::Sender<Result<DeviceEvent, RecvError>>,
         client: mpsc::Receiver<ClientMessage>,
         store: StoreWrapper<S>,
         connection: C,
@@ -151,24 +155,32 @@ where
         });
 
         tasks.spawn(async move {
-            // The event is null, reconnect the device
             loop {
-                let event = receiver.connection.next_event(&receiver.store).await?;
+                match receiver.connection.next_event(&receiver.store).await? {
+                    ConnectionEvent::Disconnected => {
+                        debug!("reconnecting");
 
-                let Some(event) = event else {
-                    debug!("reconnecting");
+                        let interfaces = receiver.interfaces.read().await;
 
-                    let interfaces = receiver.interfaces.read().await;
+                        receiver
+                            .connection
+                            .reconnect(&interfaces, &receiver.store)
+                            .await?;
 
-                    receiver
-                        .connection
-                        .reconnect(&interfaces, &receiver.store)
-                        .await?;
-
-                    continue;
-                };
-
-                receiver.handle_connection_event(event).await?;
+                        continue;
+                    }
+                    ConnectionEvent::Event(event) => {
+                        receiver.handle_connection_event(event).await?;
+                    }
+                    // send the error to the client
+                    ConnectionEvent::ReceiveError(err) => {
+                        receiver
+                            .tx
+                            .send_async(Err(err))
+                            .await
+                            .map_err(|_| Error::Disconnected)?;
+                    }
+                }
             }
         });
 
@@ -440,7 +452,7 @@ impl<S, T> DeviceSender<S, T> {
 
 pub(crate) struct DeviceReceiver<S, C> {
     interfaces: Arc<RwLock<Interfaces>>,
-    tx: flume::Sender<Result<DeviceEvent, Error>>,
+    tx: flume::Sender<Result<DeviceEvent, RecvError>>,
     store: StoreWrapper<S>,
     connection: C,
 }
@@ -451,19 +463,20 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Value, crate::Error>
+    ) -> Result<Value, RecvError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let path = MappingPath::try_from(path)?;
+        let path = MappingPath::try_from(path)
+            .map_err(|err| RecvError::Recoverable(Error::InvalidEndpoint(err)))?;
 
         let interfaces = self.interfaces.read().await;
         let interface = interfaces.get(interface).ok_or_else(|| {
             warn!("publish on missing interface {interface} ({path})");
-            Error::InterfaceNotFound {
+            RecvError::Recoverable(Error::InterfaceNotFound {
                 name: interface.to_string(),
-            }
+            })
         })?;
 
         let (data, timestamp) = match interface.aggregation() {
@@ -488,17 +501,17 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), RecvError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let mapping = interface
-            .as_mapping_ref(path)
-            .ok_or_else(|| Error::MappingNotFound {
+        let mapping = interface.as_mapping_ref(path).ok_or_else(|| {
+            RecvError::Recoverable(Error::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
-            })?;
+            })
+        })?;
 
         let individual = self.connection.deserialize_individual(&mapping, payload)?;
 
@@ -507,7 +520,10 @@ impl<S, C> DeviceReceiver<S, C> {
                 if let Some(prop) = mapping.as_prop() {
                     let prop = StoredProp::from_mapping(&prop, &value);
 
-                    self.store.store_prop(prop).await?;
+                    self.store
+                        .store_prop(prop)
+                        .await
+                        .map_err(|err| RecvError::Unrecoverable(Error::Store(err)))?;
 
                     debug!(
                         "property stored {}{path}:{}",
@@ -522,7 +538,8 @@ impl<S, C> DeviceReceiver<S, C> {
                 // Unset can only be received for a property
                 self.store
                     .delete_prop(interface.interface_name(), path.as_str())
-                    .await?;
+                    .await
+                    .map_err(|err| RecvError::Unrecoverable(Error::Store(err)))?;
 
                 debug!(
                     "property unset {}{path}:{}",
@@ -541,15 +558,18 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), RecvError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let object = interface.as_object_ref().ok_or(Error::Aggregation {
-            exp: InterfaceAggregation::Object,
-            got: InterfaceAggregation::Individual,
-        })?;
+        let object =
+            interface
+                .as_object_ref()
+                .ok_or(RecvError::Recoverable(Error::Aggregation {
+                    exp: InterfaceAggregation::Object,
+                    got: InterfaceAggregation::Individual,
+                }))?;
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
@@ -569,6 +589,10 @@ impl<S, C> DeviceReceiver<S, C> {
                 path: event.path,
                 data: aggregation,
             });
+
+        if let Err(RecvError::Unrecoverable(err)) = data {
+            return Err(err);
+        };
 
         self.tx
             .send_async(data)
