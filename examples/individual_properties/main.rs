@@ -23,7 +23,7 @@ use std::error::Error as StdError;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, error::Error, prelude::*, store::SqliteStore,
+    builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
     transport::mqtt::MqttConfig, Value,
 };
 use tracing::error;
@@ -155,7 +155,7 @@ async fn main() -> Result<(), DynError> {
                         }
                     }
                 }
-                Err(Error::Disconnected) => break,
+                Err(RecvError::Disconnected) => break,
                 Err(err) => error!(error = %err, "error returned by the client"),
             }
         }

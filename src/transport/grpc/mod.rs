@@ -41,7 +41,8 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient,
-    pbjson_types::Empty, tonic, AstarteMessage, InterfacesJson, InterfacesName, Node,
+    pbjson_types::Empty, tonic, AstarteMessage, InterfacesJson, InterfacesName, MessageHubEvent,
+    Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -49,6 +50,9 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
+use self::convert::MessageHubProtoError;
+use super::{Connection, ConnectionEvent, Disconnect, Publish, Receive, Reconnect, Register};
+use crate::client::RecvError;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::{
@@ -67,10 +71,6 @@ use crate::{
     Error, Interface, Timestamp,
 };
 
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register};
-
-use self::convert::MessageHubProtoError;
-
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
@@ -84,21 +84,31 @@ pub enum GrpcError {
     #[error("Error while serializing the interfaces")]
     /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
-    /// Expected an individual message but got an object one.
-    #[error("Attempting to deserialize individual message but got an object")]
-    DeserializationExpectedIndividual,
-    /// Expected an object message but got an individual one.
-    #[error("Attempting to deserialize object message but got an individual value")]
-    DeserializationExpectedObject,
     /// Couldn't close the connection gracefully.
     #[error("Graceful close of the grpc channel failed, the Arc is still shared")]
     GracefulClose,
-    /// Failed to convert a proto message.
-    #[error(transparent)]
-    MessageHubProtoConversion(#[from] MessageHubProtoError),
+    // TODO: check if it has to be moved to GrpcRecvError
     /// Couldn't decode gRPC message
     #[error("couldn't decode grpc message")]
     Decode(#[from] DecodeError),
+}
+
+/// Possible errors returned while handling gRPC connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum GrpcRecvError {
+    /// Failed to convert a proto message.
+    #[error(transparent)]
+    ProtoConversion(#[from] MessageHubProtoError),
+    /// Expected an individual message but got an object one.
+    #[error("Attempting to deserialize individual message but got an object")]
+    DeserializationIndividual,
+    /// Expected an object message but got an individual one.
+    #[error("Attempting to deserialize object message but got an individual value")]
+    DeserializationObject,
+    /// Message Hub server proto error
+    #[error("Message Hub server proto error, {0:?}")]
+    Server(astarte_message_hub_proto::MessageHubError),
 }
 
 type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
@@ -328,18 +338,23 @@ where
 }
 
 /// This struct represents a GRPC connection handler for an Astarte device. It manages the
-/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and receiving [`AstarteMessage`]
+/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub),
+/// sending and receiving [`AstarteMessage`](astarte_message_hub_proto::AstarteMessage)
 /// following the Astarte message hub protocol.
 pub struct Grpc<S> {
     uuid: Uuid,
     client: MsgHubClient,
-    stream: SyncWrapper<Streaming<AstarteMessage>>,
+    stream: SyncWrapper<Streaming<MessageHubEvent>>,
     /// Store used in the client
     _store: PhantomData<S>,
 }
 
 impl<S> Grpc<S> {
-    pub(crate) fn new(uuid: Uuid, client: MsgHubClient, stream: Streaming<AstarteMessage>) -> Self {
+    pub(crate) fn new(
+        uuid: Uuid,
+        client: MsgHubClient,
+        stream: Streaming<MessageHubEvent>,
+    ) -> Self {
         Self {
             uuid,
             client,
@@ -352,14 +367,14 @@ impl<S> Grpc<S> {
     ///
     /// An [`Option`] is returned directly from the [`tonic::codec::Streaming::message`] method.
     /// A result of [`None`] signals a disconnection and should be handled by the caller
-    async fn next_message(&mut self) -> Result<Option<AstarteMessage>, tonic::Status> {
+    async fn next_message(&mut self) -> Result<Option<MessageHubEvent>, tonic::Status> {
         self.stream.get_mut().message().await
     }
 
     async fn attach(
         client: &mut MsgHubClient,
         data: NodeData,
-    ) -> Result<Streaming<AstarteMessage>, GrpcError> {
+    ) -> Result<Streaming<MessageHubEvent>, GrpcError> {
         client
             .attach(tonic::Request::new(data.node))
             .await
@@ -394,24 +409,46 @@ where
 {
     type Payload = GrpcPayload;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error> {
+    async fn next_event(&mut self) -> Result<ConnectionEvent<Self::Payload>, crate::Error> {
         match self.next_message().await {
-            Ok(Some(message)) => {
-                let event: ReceivedEvent<Self::Payload> = message
-                    .try_into()
-                    .map_err(GrpcError::MessageHubProtoConversion)?;
+            Ok(Some(message_res)) => {
+                // log message hub proto errors
+                let Some(res) = message_res.event else {
+                    error!("empty MessageHubEvent should never occur");
+                    return Ok(ConnectionEvent::error(RecvError::Grpc(
+                        GrpcRecvError::ProtoConversion(MessageHubProtoError::ExpectedField(
+                            "event",
+                        )),
+                    )));
+                };
 
-                Ok(Some(event))
+                let message = match res {
+                    astarte_message_hub_proto::message_hub_event::Event::Message(msg) => msg,
+                    astarte_message_hub_proto::message_hub_event::Event::Error(proto_err) => {
+                        error!("message hub proto error: {proto_err:?}");
+                        return Ok(ConnectionEvent::error(RecvError::Grpc(
+                            GrpcRecvError::Server(proto_err),
+                        )));
+                    }
+                };
+
+                let con_event = message
+                    .try_into()
+                    .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))
+                    .map(ConnectionEvent::Event)
+                    .unwrap_or_else(ConnectionEvent::ReceiveError);
+
+                Ok(con_event)
             }
             Err(s) => {
                 error!(status = %s, "error returned by the server");
 
-                Ok(None)
+                Ok(ConnectionEvent::Disconnected)
             }
             Ok(None) => {
                 warn!("Stream closed");
 
-                Ok(None)
+                Ok(ConnectionEvent::Disconnected)
             }
         }
     }
@@ -420,7 +457,7 @@ where
         &self,
         _mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError> {
         let data = match payload.data {
             ProtoPayload::AstarteData(data) => data,
             ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
@@ -433,11 +470,11 @@ where
         trace!("unset received");
         let individual = data
             .take_individual()
-            .ok_or(GrpcError::DeserializationExpectedIndividual)?;
+            .ok_or(RecvError::Grpc(GrpcRecvError::DeserializationIndividual))?;
 
         let data: AstarteType = individual
             .try_into()
-            .map_err(GrpcError::MessageHubProtoConversion)?;
+            .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))?;
 
         trace!("received {}", data.display_type());
 
@@ -449,15 +486,15 @@ where
         _object: &ObjectRef,
         _path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError> {
         let object = payload
             .data
             .take_data()
             .and_then(|d| d.take_object())
-            .ok_or(GrpcError::DeserializationExpectedObject)?;
+            .ok_or(RecvError::Grpc(GrpcRecvError::DeserializationObject))?;
 
-        let data =
-            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = map_values_to_astarte_type(object)
+            .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))?;
 
         trace!("object received");
 
@@ -621,7 +658,7 @@ mod test {
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        AstarteUnset,
+        AstarteMessage, AstarteUnset,
     };
     use async_trait::async_trait;
     use tokio::{
@@ -634,6 +671,7 @@ mod test {
         builder::DEFAULT_VOLATILE_CAPACITY,
         store::memory::MemoryStore,
         transport::test::{mock_validate_individual, mock_validate_object},
+        transport::ReceivedEvent,
         AstarteAggregate, DeviceEvent, Value,
     };
 
@@ -648,7 +686,7 @@ mod test {
         RemoveInterfaces(InterfacesName),
     }
 
-    type ServerSenderValuesVec = Vec<Result<AstarteMessage, tonic::Status>>;
+    type ServerSenderValuesVec = Vec<Result<MessageHubEvent, tonic::Status>>;
 
     pub(crate) struct TestMessageHubServer {
         /// This stream can be used to send test events that will be handled by the astarte device sdk code
@@ -663,7 +701,7 @@ mod test {
 
     impl TestMessageHubServer {
         fn new(
-            server_send: mpsc::Receiver<Vec<Result<AstarteMessage, tonic::Status>>>,
+            server_send: mpsc::Receiver<Vec<Result<MessageHubEvent, tonic::Status>>>,
             server_received: mpsc::Sender<ServerReceivedRequest>,
         ) -> Self {
             Self {
@@ -676,7 +714,7 @@ mod test {
     #[async_trait]
     impl MessageHub for TestMessageHubServer {
         type AttachStream =
-            futures::stream::Iter<std::vec::IntoIter<Result<AstarteMessage, tonic::Status>>>;
+            futures::stream::Iter<std::vec::IntoIter<Result<MessageHubEvent, tonic::Status>>>;
 
         async fn attach(
             &self,
@@ -813,7 +851,7 @@ mod test {
     }
 
     struct TestServerChannels {
-        server_response_sender: mpsc::Sender<Vec<Result<AstarteMessage, tonic::Status>>>,
+        server_response_sender: mpsc::Sender<Vec<Result<MessageHubEvent, tonic::Status>>>,
         server_request_receiver: mpsc::Receiver<ServerReceivedRequest>,
     }
 
@@ -946,7 +984,10 @@ mod test {
                 .unwrap();
 
             // poll the three messages the first two received errors will simply reconnect without returning
-            assert!(matches!(connection.next_event().await, Ok(None)));
+            assert!(matches!(
+                connection.next_event().await,
+                Ok(ConnectionEvent::Disconnected)
+            ));
 
             // to reconnect but errors
             assert!(matches!(
@@ -955,7 +996,10 @@ mod test {
             ));
 
             // second error
-            assert!(matches!(connection.next_event().await, Ok(None)));
+            assert!(matches!(
+                connection.next_event().await,
+                Ok(ConnectionEvent::Disconnected)
+            ));
 
             assert!(matches!(
                 connection.reconnect(&Interfaces::new()).await,
@@ -963,7 +1007,10 @@ mod test {
             ));
 
             // third error
-            assert!(matches!(connection.next_event().await, Ok(None)));
+            assert!(matches!(
+                connection.next_event().await,
+                Ok(ConnectionEvent::Disconnected)
+            ));
 
             // manually calling detach
             connection.disconnect().await.unwrap();
@@ -1225,7 +1272,7 @@ mod test {
         // Send object from server
         channels
             .server_response_sender
-            .send(vec![Ok(astarte_message)])
+            .send(vec![Ok(astarte_message.into())])
             .await
             .unwrap();
 
@@ -1250,7 +1297,7 @@ mod test {
         };
 
         expect_messages!(connection.next_event().await;
-            Some(ReceivedEvent {
+            ConnectionEvent::Event(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {
@@ -1285,7 +1332,7 @@ mod test {
         // Send object from server
         channels
             .server_response_sender
-            .send(vec![Ok(astarte_message)])
+            .send(vec![Ok(astarte_message.into())])
             .await
             .unwrap();
 
@@ -1307,18 +1354,18 @@ mod test {
             },
         };
 
-        expect_messages!(connection.next_event().await;
-            Some(ReceivedEvent {
+        assert!(
+            matches!(connection.next_event().await, Ok(ConnectionEvent::Event(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {
                     data,
                     timestamp: None,
                 },
-            }) if interface == exp_interface
+            })) if interface == exp_interface
                 && path == exp_path
-                && data == proto_payload
-        );
+                && data == proto_payload)
+        )
     }
 
     #[test]

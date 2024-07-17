@@ -19,8 +19,10 @@
 use std::path::Path;
 
 use astarte_device_sdk::{
-    client::ClientDisconnect, properties::PropAccess, store::StoredProp, AstarteAggregate,
-    AstarteType, DeviceEvent, Error, Interface,
+    client::{ClientDisconnect, RecvError},
+    properties::PropAccess,
+    store::StoredProp,
+    AstarteAggregate, AstarteType, DeviceEvent, Error, Interface,
 };
 use async_trait::async_trait;
 use mockall::mock;
@@ -70,7 +72,7 @@ pub trait Client {
 
     async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
 
-    async fn recv(&self) -> Result<DeviceEvent, Error>;
+    async fn recv(&self) -> Result<DeviceEvent, RecvError>;
 }
 
 #[async_trait]
@@ -156,7 +158,7 @@ mock! {
 
         async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
 
-        async fn recv(&self) -> Result<DeviceEvent, Error>;
+        async fn recv(&self) -> Result<DeviceEvent, RecvError>;
     }
 
 
@@ -300,7 +302,7 @@ mod tests {
             astarte_device_sdk::Client::unset(self, interface_name, interface_path).await
         }
 
-        async fn recv(&self) -> Result<DeviceEvent, Error> {
+        async fn recv(&self) -> Result<DeviceEvent, RecvError> {
             astarte_device_sdk::Client::recv(self).await
         }
     }
@@ -361,7 +363,7 @@ mod tests {
             Ok(())
         }
 
-        async fn recv(&self) -> Result<DeviceEvent, Error> {
+        async fn recv(&self) -> Result<DeviceEvent, RecvError> {
             Ok(DeviceEvent {
                 interface: Default::default(),
                 path: Default::default(),

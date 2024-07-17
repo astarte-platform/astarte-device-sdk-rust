@@ -52,9 +52,6 @@ pub enum MqttError {
     /// Errors that can occur handling the payload.
     #[error("couldn't process payload")]
     Payload(#[from] PayloadError),
-    /// Couldn't parse the topic
-    #[error("couldn't parse the topic")]
-    Topic(#[from] TopicError),
     /// Couldn't authenticate with the pairing token, because we are missing a writable directory
     ///
     /// See the [`ParingToken`](super::Credential::ParingToken) for more information.
@@ -72,4 +69,16 @@ impl MqttError {
             backtrace: error,
         }
     }
+}
+
+/// Possible errors returned while handling Mqtt connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum MqttRecvError {
+    /// Couldn't parse the topic
+    #[error("couldn't parse the topic")]
+    Topic(#[from] TopicError),
+    /// Errors that can occur handling the payload.
+    #[error("couldn't process payload")]
+    Payload(#[from] PayloadError),
 }

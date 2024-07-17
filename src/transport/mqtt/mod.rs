@@ -49,7 +49,12 @@ use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, info, trace};
 
+use super::{
+    Connection, ConnectionEvent, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register,
+};
+
 use crate::{
+    client::RecvError,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -69,7 +74,7 @@ use crate::{
     Error, Interface, Timestamp,
 };
 
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register};
+pub use crate::transport::mqtt::error::MqttRecvError;
 
 pub use self::config::Credential;
 pub use self::config::MqttConfig;
@@ -673,7 +678,7 @@ where
 {
     type Payload = Bytes;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, Error>
+    async fn next_event(&mut self) -> Result<ConnectionEvent<Self::Payload>, crate::Error>
     where
         S: PropertyStore,
     {
@@ -691,27 +696,34 @@ where
 
                 self.store.purge_server_properties(&publish.payload).await?;
             } else {
-                let ParsedTopic { interface, path } =
-                    ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                        .map_err(MqttError::Topic)?;
+                let con_event =
+                    match ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic) {
+                        Ok(ParsedTopic { interface, path }) => {
+                            ConnectionEvent::Event(ReceivedEvent {
+                                interface: interface.to_string(),
+                                path: path.to_string(),
+                                payload: publish.payload,
+                            })
+                        }
+                        Err(err) => {
+                            ConnectionEvent::error(RecvError::Mqtt(MqttRecvError::Topic(err)))
+                        }
+                    };
 
-                return Ok(Some(ReceivedEvent {
-                    interface: interface.to_string(),
-                    path: path.to_string(),
-                    payload: publish.payload,
-                }));
+                return Ok(con_event);
             }
         }
-        Ok(None)
+
+        Ok(ConnectionEvent::Disconnected)
     }
 
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError> {
         payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
     }
 
     fn deserialize_object(
@@ -719,9 +731,9 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError> {
         payload::deserialize_object(object, path, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
     }
 }
 

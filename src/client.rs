@@ -44,6 +44,34 @@ use crate::{
     AstarteAggregate, Error, Interface,
 };
 
+/// Possible errors returned while handling connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum RecvError {
+    /// MQTT
+    #[error("Mqtt error")]
+    Mqtt(#[from] crate::transport::mqtt::MqttRecvError),
+
+    /// gRPC
+    #[cfg(feature = "message-hub")]
+    #[error("grpc error")]
+    Grpc(#[from] crate::transport::grpc::GrpcRecvError),
+
+    /// Recoverable astarte error
+    #[error("recoverable astarte error, {0}")]
+    Recoverable(#[source] Error),
+
+    /// Unrecoverable astarte error
+    #[error("unrecoverable astarte error, {0}")]
+    Unrecoverable(#[source] Error),
+
+    /// Error when the Device is disconnected from Astarte or client.
+    ///
+    /// This is an unrecoverable error for the SDK.
+    #[error("disconnected from astarte")]
+    Disconnected,
+}
+
 /// A trait representing the behavior of an Astarte device client. A device client is responsible
 /// for interacting with the Astarte platform by sending properties and datastreams, handling events, and managing
 /// device interfaces.
@@ -182,7 +210,7 @@ pub trait Client {
     ///
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
-    async fn recv(&self) -> Result<DeviceEvent, Error>;
+    async fn recv(&self) -> Result<DeviceEvent, RecvError>;
 }
 
 /// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
@@ -206,7 +234,7 @@ pub struct DeviceClient<S> {
     // channel/queue that fits our needs and doesn't suffer from the "slow receiver" problem.
     // Since it doesn't block the sender till all the receivers have read the msg. Unlike the
     // Tokio broadcast channel (another mpmc channel implementation).
-    pub(crate) rx: flume::Receiver<Result<DeviceEvent, Error>>,
+    pub(crate) rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
     pub(crate) connection: mpsc::Sender<ClientMessage>,
     pub(crate) store: StoreWrapper<S>,
 }
@@ -214,7 +242,7 @@ pub struct DeviceClient<S> {
 impl<S> DeviceClient<S> {
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
-        rx: flume::Receiver<Result<DeviceEvent, Error>>,
+        rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
         connection: mpsc::Sender<ClientMessage>,
         store: StoreWrapper<S>,
     ) -> Self {
@@ -470,11 +498,11 @@ where
         self.unset_prop(interface_name, &path).await
     }
 
-    async fn recv(&self) -> Result<DeviceEvent, Error> {
+    async fn recv(&self) -> Result<DeviceEvent, RecvError> {
         self.rx
             .recv_async()
             .await
-            .map_err(|_| Error::Disconnected)?
+            .map_err(|_| RecvError::Disconnected)?
     }
 }
 
