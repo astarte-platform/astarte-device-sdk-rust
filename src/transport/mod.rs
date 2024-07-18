@@ -30,6 +30,8 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use crate::transport::mqtt::topic::TopicError;
+use crate::transport::mqtt::PayloadError;
 use crate::{
     client::RecvError,
     interface::{
@@ -46,6 +48,27 @@ use crate::{
 #[cfg(feature = "message-hub")]
 pub mod grpc;
 pub mod mqtt;
+
+/// Possible errors returned while handling Mqtt connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum ConnectionRecvError {
+    /// Couldn't parse the topic
+    #[error("couldn't parse the topic")]
+    Topic(#[from] TopicError),
+    /// Errors that can occur handling the payload.
+    #[error("couldn't process payload")]
+    Payload(#[from] PayloadError),
+
+    /// Failed to convert a proto message.
+    #[cfg(feature = "message-hub")]
+    #[error(transparent)]
+    ProtoConversion(#[from] grpc::convert::MessageHubProtoError),
+    /// Message Hub server proto error
+    #[cfg(feature = "message-hub")]
+    #[error("Message Hub server proto error, {0}")]
+    Server(astarte_message_hub_proto::MessageHubError),
+}
 
 /// Connection event
 #[derive(Debug)]
@@ -151,7 +174,7 @@ pub(crate) trait Receive {
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError>;
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -159,7 +182,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError>;
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
 }
 
 /// Reconnect the device to Astarte.

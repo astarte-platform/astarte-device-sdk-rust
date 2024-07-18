@@ -262,6 +262,7 @@ async fn main() -> eyre::Result<()> {
                 }
                 Err(RecvError::Disconnected) => break,
                 Err(err) => {
+                    // TODO: change behavior
                     panic!("poll error {err:?}");
                 }
             }

@@ -33,13 +33,7 @@ pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
 mod retention;
-mod topic;
-
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    future::IntoFuture,
-};
+pub mod topic;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -47,10 +41,16 @@ use futures::future::Either;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    future::IntoFuture,
+};
 use tracing::{debug, error, info, trace};
 
 use super::{
-    Connection, ConnectionEvent, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register,
+    Connection, ConnectionEvent, ConnectionRecvError, Disconnect, Publish, Receive, ReceivedEvent,
+    Reconnect, Register,
 };
 
 use crate::{
@@ -73,8 +73,6 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
-
-pub use crate::transport::mqtt::error::MqttRecvError;
 
 pub use self::config::Credential;
 pub use self::config::MqttConfig;
@@ -705,9 +703,9 @@ where
                                 payload: publish.payload,
                             })
                         }
-                        Err(err) => {
-                            ConnectionEvent::error(RecvError::Mqtt(MqttRecvError::Topic(err)))
-                        }
+                        Err(err) => ConnectionEvent::error(RecvError::Connection(
+                            ConnectionRecvError::Topic(err),
+                        )),
                     };
 
                 return Ok(con_event);
@@ -721,9 +719,9 @@ where
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
         payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
+            .map_err(|err| MqttError::Payload(err).into())
     }
 
     fn deserialize_object(
@@ -731,9 +729,9 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
         payload::deserialize_object(object, path, &payload)
-            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
+            .map_err(|err| MqttError::Payload(err).into())
     }
 }
 

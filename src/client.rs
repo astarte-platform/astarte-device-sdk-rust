@@ -27,6 +27,8 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
+use crate::interface::mapping::path::MappingError;
+use crate::interface::Aggregation;
 use crate::{
     connection::ClientMessage,
     error::Report,
@@ -48,22 +50,38 @@ use crate::{
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum RecvError {
-    /// MQTT
-    #[error("Mqtt error")]
-    Mqtt(#[from] crate::transport::mqtt::MqttRecvError),
+    /// Connection error, either gRPC or MQTT
+    #[error("connection error, {0:?}")]
+    Connection(#[source] crate::transport::ConnectionRecvError),
 
-    /// gRPC
-    #[cfg(feature = "message-hub")]
-    #[error("grpc error")]
-    Grpc(#[from] crate::transport::grpc::GrpcRecvError),
+    /// Couldn't parse the mapping path.
+    #[error("invalid mapping path '{}'", .0.path())]
+    InvalidEndpoint(#[from] MappingError),
 
-    /// Recoverable astarte error
-    #[error("recoverable astarte error, {0}")]
-    Recoverable(#[source] Error),
+    /// Couldn't find an interface with the given name.
+    #[error("couldn't find interface '{name}'")]
+    InterfaceNotFound {
+        /// Name of the missing interface.
+        name: String,
+    },
 
-    /// Unrecoverable astarte error
-    #[error("unrecoverable astarte error, {0}")]
-    Unrecoverable(#[source] Error),
+    /// Couldn't find missing mapping in the interface.
+    #[error("couldn't find mapping {mapping} in interface {interface}")]
+    MappingNotFound {
+        /// Name of the interface.
+        interface: String,
+        /// Path of the missing mapping.
+        mapping: String,
+    },
+
+    /// Invalid aggregation between the interface and the data.
+    #[error("invalid aggregation, expected {exp} but got {got}")]
+    Aggregation {
+        /// Expected aggregation of the interface.
+        exp: Aggregation,
+        /// The actual aggregation.
+        got: Aggregation,
+    },
 
     /// Error when the Device is disconnected from Astarte or client.
     ///

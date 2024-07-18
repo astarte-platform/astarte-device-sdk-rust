@@ -22,7 +22,7 @@ use rumqttc::ClientError;
 
 use crate::store::error::StoreError;
 
-use super::{topic::TopicError, PairingError, PayloadError};
+use super::{PairingError, PayloadError};
 
 /// Errors raised during construction of the [`Mqtt`](super::Mqtt) struct
 #[non_exhaustive]
@@ -69,16 +69,4 @@ impl MqttError {
             backtrace: error,
         }
     }
-}
-
-/// Possible errors returned while handling Mqtt connection messages
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum MqttRecvError {
-    /// Couldn't parse the topic
-    #[error("couldn't parse the topic")]
-    Topic(#[from] TopicError),
-    /// Errors that can occur handling the payload.
-    #[error("couldn't process payload")]
-    Payload(#[from] PayloadError),
 }
