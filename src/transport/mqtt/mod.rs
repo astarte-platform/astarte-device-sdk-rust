@@ -32,7 +32,7 @@ pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
-mod topic;
+pub mod topic;
 
 use std::{
     collections::HashMap,
@@ -50,10 +50,12 @@ pub use self::config::Credential;
 pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
-use super::{Connection, ConnectionEvent, Publish, Receive, ReceivedEvent, Reconnect, Register};
-use crate::client::RecvError;
-pub use crate::transport::mqtt::error::MqttRecvError;
+use super::{
+    Connection, ConnectionEvent, ConnectionRecvError, Publish, Receive, ReceivedEvent, Reconnect,
+    Register,
+};
 use crate::{
+    client::RecvError,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -427,7 +429,9 @@ impl Receive for Mqtt {
                         path: path.to_string(),
                         payload: publish.payload,
                     }),
-                    Err(err) => ConnectionEvent::error(RecvError::Mqtt(MqttRecvError::Topic(err))),
+                    Err(err) => ConnectionEvent::error(RecvError::Connection(
+                        ConnectionRecvError::Topic(err),
+                    )),
                 };
 
                 return Ok(con_event);
@@ -441,9 +445,9 @@ impl Receive for Mqtt {
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
         payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
+            .map_err(|err| MqttError::Payload(err).into())
     }
 
     fn deserialize_object(
@@ -451,9 +455,9 @@ impl Receive for Mqtt {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
         payload::deserialize_object(object, path, &payload)
-            .map_err(|err| RecvError::Mqtt(MqttRecvError::Payload(err)))
+            .map_err(|err| MqttError::Payload(err).into())
     }
 }
 

@@ -463,20 +463,19 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Value, RecvError>
+    ) -> Result<Value, Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let path = MappingPath::try_from(path)
-            .map_err(|err| RecvError::Recoverable(Error::InvalidEndpoint(err)))?;
+        let path = MappingPath::try_from(path).map_err(Error::InvalidEndpoint)?;
 
         let interfaces = self.interfaces.read().await;
         let interface = interfaces.get(interface).ok_or_else(|| {
             warn!("publish on missing interface {interface} ({path})");
-            RecvError::Recoverable(Error::InterfaceNotFound {
+            Error::InterfaceNotFound {
                 name: interface.to_string(),
-            })
+            }
         })?;
 
         let (data, timestamp) = match interface.aggregation() {
@@ -501,17 +500,17 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), RecvError>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let mapping = interface.as_mapping_ref(path).ok_or_else(|| {
-            RecvError::Recoverable(Error::MappingNotFound {
+        let mapping = interface
+            .as_mapping_ref(path)
+            .ok_or_else(|| Error::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
-            })
-        })?;
+            })?;
 
         let individual = self.connection.deserialize_individual(&mapping, payload)?;
 
@@ -520,10 +519,7 @@ impl<S, C> DeviceReceiver<S, C> {
                 if let Some(prop) = mapping.as_prop() {
                     let prop = StoredProp::from_mapping(&prop, &value);
 
-                    self.store
-                        .store_prop(prop)
-                        .await
-                        .map_err(|err| RecvError::Unrecoverable(Error::Store(err)))?;
+                    self.store.store_prop(prop).await?;
 
                     debug!(
                         "property stored {}{path}:{}",
@@ -538,8 +534,7 @@ impl<S, C> DeviceReceiver<S, C> {
                 // Unset can only be received for a property
                 self.store
                     .delete_prop(interface.interface_name(), path.as_str())
-                    .await
-                    .map_err(|err| RecvError::Unrecoverable(Error::Store(err)))?;
+                    .await?;
 
                 debug!(
                     "property unset {}{path}:{}",
@@ -558,18 +553,15 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), RecvError>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let object =
-            interface
-                .as_object_ref()
-                .ok_or(RecvError::Recoverable(Error::Aggregation {
-                    exp: InterfaceAggregation::Object,
-                    got: InterfaceAggregation::Individual,
-                }))?;
+        let object = interface.as_object_ref().ok_or(Error::Aggregation {
+            exp: InterfaceAggregation::Object,
+            got: InterfaceAggregation::Individual,
+        })?;
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
@@ -581,7 +573,7 @@ impl<S, C> DeviceReceiver<S, C> {
         C: Receive + Sync,
         S: PropertyStore,
     {
-        let data = self
+        let res = self
             .handle_event(&event.interface, &event.path, event.payload)
             .await
             .map(|aggregation| DeviceEvent {
@@ -590,8 +582,13 @@ impl<S, C> DeviceReceiver<S, C> {
                 data: aggregation,
             });
 
-        if let Err(RecvError::Unrecoverable(err)) = data {
-            return Err(err);
+        let data = match res {
+            Ok(data) => Ok(data),
+            Err(err) => {
+                // this way, if there is an unrecoverable error the application will return Err
+                let recv_err = RecvError::try_from(err)?;
+                Err(recv_err)
+            }
         };
 
         self.tx

@@ -57,10 +57,7 @@ pub enum MessageHubProtoError {
     ExpectedField(&'static str),
 
     /// Date conversion error
-    #[error(
-        "Error while conv
-erting a proto date: {0}"
-    )]
+    #[error("Error while converting a proto date: {0}")]
     DateConversion(String),
 }
 

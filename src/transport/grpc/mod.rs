@@ -47,8 +47,12 @@ use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
-use super::{Connection, ConnectionEvent, Disconnect, Publish, Receive, Reconnect, Register};
+use super::{
+    Connection, ConnectionEvent, ConnectionRecvError, Disconnect, Publish, Receive, Reconnect,
+    Register,
+};
 use crate::client::RecvError;
+use crate::interface::Aggregation;
 use crate::retry::ExponentialIter;
 use crate::store::wrapper::StoreWrapper;
 use crate::{
@@ -78,27 +82,9 @@ pub enum GrpcError {
     #[error("Error while serializing the interfaces")]
     /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
-    /// Couldn't close the connection gracefully.
-    #[error("Graceful close of the grpc channel failed, the Arc is still shared")]
-    GracefulClose,
-}
-
-/// Possible errors returned while handling gRPC connection messages
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum GrpcRecvError {
     /// Failed to convert a proto message.
     #[error(transparent)]
-    ProtoConversion(#[from] MessageHubProtoError),
-    /// Expected an individual message but got an object one.
-    #[error("Attempting to deserialize individual message but got an object")]
-    DeserializationIndividual,
-    /// Expected an object message but got an individual one.
-    #[error("Attempting to deserialize object message but got an individual value")]
-    DeserializationObject,
-    /// Message Hub server proto error
-    #[error("Message Hub server proto error, {0:?}")]
-    Server(astarte_message_hub_proto::MessageHubError),
+    MessageHubProtoConversion(#[from] MessageHubProtoError),
 }
 
 type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
@@ -310,8 +296,8 @@ impl Receive for Grpc {
                 // log message hub proto errors
                 let Some(res) = message_res.event else {
                     error!("empty MessageHubEvent should never occur");
-                    return Ok(ConnectionEvent::error(RecvError::Grpc(
-                        GrpcRecvError::ProtoConversion(MessageHubProtoError::ExpectedField(
+                    return Ok(ConnectionEvent::error(RecvError::Connection(
+                        ConnectionRecvError::ProtoConversion(MessageHubProtoError::ExpectedField(
                             "event",
                         )),
                     )));
@@ -320,16 +306,16 @@ impl Receive for Grpc {
                 let message = match res {
                     astarte_message_hub_proto::message_hub_event::Event::Message(msg) => msg,
                     astarte_message_hub_proto::message_hub_event::Event::Error(proto_err) => {
-                        error!("message hub proto error: {proto_err:?}");
-                        return Ok(ConnectionEvent::error(RecvError::Grpc(
-                            GrpcRecvError::Server(proto_err),
+                        error!("message hub proto error: {proto_err}");
+                        return Ok(ConnectionEvent::error(RecvError::Connection(
+                            ConnectionRecvError::Server(proto_err),
                         )));
                     }
                 };
 
                 let con_event = message
                     .try_into()
-                    .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))
+                    .map_err(|err| RecvError::Connection(ConnectionRecvError::ProtoConversion(err)))
                     .map(ConnectionEvent::Event)
                     .unwrap_or_else(ConnectionEvent::ReceiveError);
 
@@ -352,7 +338,7 @@ impl Receive for Grpc {
         &self,
         _mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, RecvError> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
         let data = match payload.data {
             ProtoPayload::AstarteData(data) => data,
             ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
@@ -363,13 +349,14 @@ impl Receive for Grpc {
         };
 
         trace!("unset received");
-        let individual = data
-            .take_individual()
-            .ok_or(RecvError::Grpc(GrpcRecvError::DeserializationIndividual))?;
+        let individual = data.take_individual().ok_or(Error::Aggregation {
+            exp: Aggregation::Individual,
+            got: Aggregation::Object,
+        })?;
 
         let data: AstarteType = individual
             .try_into()
-            .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))?;
+            .map_err(GrpcError::MessageHubProtoConversion)?;
 
         trace!("received {}", data.display_type());
 
@@ -381,15 +368,18 @@ impl Receive for Grpc {
         _object: &ObjectRef,
         _path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), RecvError> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
         let object = payload
             .data
             .take_data()
             .and_then(|d| d.take_object())
-            .ok_or(RecvError::Grpc(GrpcRecvError::DeserializationObject))?;
+            .ok_or(Error::Aggregation {
+                exp: Aggregation::Object,
+                got: Aggregation::Individual,
+            })?;
 
-        let data = map_values_to_astarte_type(object)
-            .map_err(|err| RecvError::Grpc(GrpcRecvError::ProtoConversion(err)))?;
+        let data =
+            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
 
         trace!("object received");
 
