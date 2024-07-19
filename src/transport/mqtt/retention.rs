@@ -29,6 +29,7 @@ use std::collections::HashMap;
 
 use flume::TryRecvError;
 use rumqttc::{NoticeError, NoticeFuture};
+use tracing::trace;
 
 use crate::{retention::Id, Error};
 
@@ -83,6 +84,8 @@ impl MqttRetention {
             .find_map(|(id, v)| v.try_wait().map(|res| (*id, res)))?;
 
         self.packets.remove(&id);
+
+        trace!("remove packet {id}");
 
         Some(res.map(|()| id))
     }

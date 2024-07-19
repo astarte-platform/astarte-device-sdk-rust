@@ -538,7 +538,11 @@ impl<S> Mqtt<S> {
                 None
             }
         }))
-        .then(|id| async move { retention.mark_received(&id).await })
+        .then(|id| {
+            debug!("marking {id} as received");
+
+            async move { retention.mark_received(&id).await }
+        })
         .try_collect::<()>()
         .await?;
 
