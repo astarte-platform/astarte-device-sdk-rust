@@ -34,11 +34,11 @@ use url::Url;
 
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
-    store::PropertyStore,
+    store::{PropertyStore, StoreCapabilities},
     transport::{
         mqtt::{
             config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-            registration::register_device, ClientId,
+            registration::register_device, retention::MqttRetention, ClientId,
         },
         Connection,
     },
@@ -370,16 +370,18 @@ impl MqttConfig {
 }
 
 #[async_trait]
-impl ConnectionConfig for MqttConfig {
-    type Conn = Mqtt;
+impl<S> ConnectionConfig<S> for MqttConfig
+where
+    S: StoreCapabilities + PropertyStore + Send + Sync,
+{
+    type Conn = Mqtt<S>;
     type Err = Error;
 
-    async fn connect<S, C>(
+    async fn connect<C>(
         mut self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<(MqttClient, Mqtt), Self::Err>
+    ) -> Result<(MqttClient<S>, Mqtt<S>), Self::Err>
     where
-        S: PropertyStore,
         C: Connection + Send + Sync,
     {
         let secret = self.credentials(builder).await?;
@@ -430,8 +432,19 @@ impl ConnectionConfig for MqttConfig {
         )
         .await?;
 
-        let client = MqttClient::new(client_id.clone(), client);
-        let connection = Mqtt::new(client_id, connection);
+        let (retention_tx, retention_rx) = flume::bounded(builder.channel_size);
+
+        let retention = MqttRetention::new(retention_rx);
+
+        let client = MqttClient::new(
+            client_id.clone(),
+            client,
+            retention_tx,
+            builder.store.clone(),
+        );
+        let connection = Mqtt::new(client_id, connection, retention, builder.store.clone());
+
+        client.resend_stored_publishes(&builder.interfaces).await?;
 
         Ok((client, connection))
     }

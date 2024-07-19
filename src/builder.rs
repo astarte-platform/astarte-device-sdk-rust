@@ -312,8 +312,8 @@ where
     pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Conn>, crate::Error>
     where
         S: PropertyStore,
-        T: ConnectionConfig,
-        crate::Error: From<<T as ConnectionConfig>::Err>,
+        T: ConnectionConfig<S>,
+        crate::Error: From<<T as ConnectionConfig<S>>::Err>,
         C: Send + Sync,
     {
         let (sender, connection) = config.connect(&self).await?;
@@ -357,7 +357,7 @@ impl Default for DeviceBuilder<(), ()> {
 /// This trait is already implemented internally
 /// and implementing it should be avoided since it has no practical use.
 #[async_trait]
-pub trait ConnectionConfig {
+pub trait ConnectionConfig<S> {
     /// Type of the constructed Connection
     type Conn: Connection;
     /// Type of the error got while opening the connection
@@ -365,7 +365,7 @@ pub trait ConnectionConfig {
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
-    async fn connect<S, C>(
+    async fn connect<C>(
         self,
         builder: &DeviceBuilder<S, C>,
     ) -> Result<(<Self::Conn as Connection>::Sender, Self::Conn), Self::Err>

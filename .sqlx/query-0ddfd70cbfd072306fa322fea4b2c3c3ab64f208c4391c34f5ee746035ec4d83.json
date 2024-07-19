@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n    path,\n    major_version AS \"major_version: i32\",\n    reliability AS \"qos: u8\",\n    expiry_sec\nFROM retention_mapping\nWHERE path = ?\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "path",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "major_version: i32",
+        "ordinal": 1,
+        "type_info": "Int64"
+      },
+      {
+        "name": "qos: u8",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "expiry_sec",
+        "ordinal": 3,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "0ddfd70cbfd072306fa322fea4b2c3c3ab64f208c4391c34f5ee746035ec4d83"
+}

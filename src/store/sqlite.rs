@@ -27,9 +27,10 @@ use sqlx::{
 };
 use tracing::{debug, error, trace};
 
-use super::{PropertyStore, StoredProp};
+use super::{PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
+    retention::Context,
     transport::mqtt::payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
@@ -248,7 +249,8 @@ impl TryFrom<StoredRecord> for StoredProp {
 /// respective [`AstarteType`].
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
-    db_conn: sqlx::SqlitePool,
+    pub(crate) db_conn: sqlx::SqlitePool,
+    pub(crate) retention_ctx: Context,
 }
 
 impl SqliteStore {
@@ -260,7 +262,10 @@ impl SqliteStore {
             .await
             .map_err(SqliteError::Migration)?;
 
-        Ok(SqliteStore { db_conn: pool })
+        Ok(SqliteStore {
+            db_conn: pool,
+            retention_ctx: Context::new(),
+        })
     }
 
     /// Creates a sqlite database for the Astarte device.
@@ -311,6 +316,14 @@ impl SqliteStore {
             .map_err(SqliteError::Connection)?;
 
         Self::new(pool).await
+    }
+}
+
+impl StoreCapabilities for SqliteStore {
+    type Retention = Self;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        Some(self)
     }
 }
 

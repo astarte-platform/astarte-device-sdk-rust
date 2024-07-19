@@ -32,6 +32,7 @@ pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
+mod retention;
 mod topic;
 
 use std::{
@@ -41,6 +42,8 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures::StreamExt;
+use futures::TryStreamExt;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeFuture, QoS, SubscribeFilter};
@@ -55,7 +58,10 @@ use crate::{
     },
     interfaces::{self, Interfaces, Introspection},
     properties,
-    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
+    retention::{StoredRetention, StoredRetentionExt},
+    store::{
+        error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
+    },
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
@@ -68,7 +74,13 @@ pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 
-use self::{client::AsyncClient, connection::MqttConnection, error::MqttError, topic::ParsedTopic};
+use self::{
+    client::AsyncClient,
+    connection::MqttConnection,
+    error::MqttError,
+    retention::{MqttRetention, RetSender},
+    topic::ParsedTopic,
+};
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
@@ -130,15 +142,27 @@ impl From<ClientId<&str>> for ClientId<String> {
 /// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
 /// following the Astarte protocol.
 #[derive(Clone, Debug)]
-pub struct MqttClient {
+pub struct MqttClient<S> {
     client_id: ClientId,
     client: AsyncClient,
+    retention: RetSender,
+    store: StoreWrapper<S>,
 }
 
-impl MqttClient {
+impl<S> MqttClient<S> {
     /// Create a new client.
-    pub(crate) fn new(client_id: ClientId, client: AsyncClient) -> Self {
-        Self { client_id, client }
+    pub(crate) fn new(
+        client_id: ClientId,
+        client: AsyncClient,
+        retention: RetSender,
+        store: StoreWrapper<S>,
+    ) -> Self {
+        Self {
+            client_id,
+            client,
+            retention,
+            store,
+        }
     }
 
     /// Send a binary payload over this mqtt connection.
@@ -148,7 +172,7 @@ impl MqttClient {
         path: &str,
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
-    ) -> Result<(), Error> {
+    ) -> Result<NoticeFuture, MqttError> {
         self.client
             .publish(
                 format!("{}/{interface}{path}", self.client_id),
@@ -157,9 +181,7 @@ impl MqttClient {
                 payload,
             )
             .await
-            .map_err(|err| MqttError::publish("send", err))?;
-
-        Ok(())
+            .map_err(|err| MqttError::publish("send", err))
     }
 
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
@@ -180,10 +202,47 @@ impl MqttClient {
             .map_err(MqttError::Unsubscribe)
             .map(drop)
     }
+
+    /// Resend the packets stored in the retention.
+    async fn resend_stored_publishes(&self, interfaces: &Interfaces) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        if let Some(retention) = self.store.get_retention() {
+            retention.cleanup_introspection(interfaces).await?;
+
+            retention
+                .all_publishes()
+                .await?
+                .map_err(Error::from)
+                .try_for_each(|(id, publish)| async move {
+                    let notice = self
+                        .send(
+                            &publish.interface,
+                            &publish.path,
+                            publish.reliability.into(),
+                            publish.value.into(),
+                        )
+                        .await?;
+
+                    self.retention
+                        .send((id, notice))
+                        .map_err(|_| Error::Disconnected)?;
+
+                    Ok(())
+                })
+                .await?;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
-impl Publish for MqttClient {
+impl<S> Publish for MqttClient<S>
+where
+    S: StoreCapabilities + Send + Sync,
+{
     async fn send_individual(&mut self, validated: ValidatedIndividual) -> Result<(), Error> {
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
             .map_err(MqttError::Payload)?;
@@ -195,6 +254,8 @@ impl Publish for MqttClient {
             buf,
         )
         .await
+        .map(drop)
+        .map_err(Error::Mqtt)
     }
 
     async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), Error> {
@@ -208,6 +269,63 @@ impl Publish for MqttClient {
             buf,
         )
         .await
+        .map(drop)
+        .map_err(Error::Mqtt)
+    }
+
+    async fn send_individual_stored(
+        &mut self,
+        validated: ValidatedIndividual,
+    ) -> Result<(), crate::Error> {
+        let Some(retention) = self.store.get_retention() else {
+            return self.send_individual(validated).await;
+        };
+
+        let buf = payload::serialize_individual(&validated.data, validated.timestamp)
+            .map_err(MqttError::Payload)?;
+
+        let id = retention.store_publish_individual(&validated, &buf).await?;
+
+        let notice = self
+            .send(
+                &validated.interface,
+                &validated.path,
+                validated.reliability.into(),
+                buf,
+            )
+            .await?;
+
+        self.retention
+            .send((id, notice))
+            .map_err(|_| Error::Disconnected)?;
+
+        Ok(())
+    }
+
+    async fn send_object_stored(&mut self, validated: ValidatedObject) -> Result<(), crate::Error> {
+        let Some(retention) = self.store.get_retention() else {
+            return self.send_object(validated).await;
+        };
+
+        let buf = payload::serialize_object(&validated.data, validated.timestamp)
+            .map_err(MqttError::Payload)?;
+
+        let id = retention.store_publish_obj(&validated, &buf).await?;
+
+        let notice = self
+            .send(
+                &validated.interface,
+                &validated.path,
+                validated.reliability.into(),
+                buf,
+            )
+            .await?;
+
+        self.retention
+            .send((id, notice))
+            .map_err(|_| Error::Disconnected)?;
+
+        Ok(())
     }
 
     async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {
@@ -219,11 +337,16 @@ impl Publish for MqttClient {
             Vec::new(),
         )
         .await
+        .map(drop)
+        .map_err(Error::Mqtt)
     }
 }
 
 #[async_trait]
-impl Register for MqttClient {
+impl<S> Register for MqttClient<S>
+where
+    S: Send + Sync,
+{
     async fn add_interface(
         &mut self,
         interfaces: &Interfaces,
@@ -337,7 +460,7 @@ impl Register for MqttClient {
     }
 }
 
-impl Display for MqttClient {
+impl<S> Display for MqttClient<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Mqtt Client {}", self.client_id)
     }
@@ -346,64 +469,97 @@ impl Display for MqttClient {
 /// This struct represents an MQTT connection handler for an Astarte device. It manages the
 /// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
 /// following the Astarte protocol.
-pub struct Mqtt {
+pub struct Mqtt<S> {
     client_id: ClientId,
     connection: MqttConnection,
+    retention: MqttRetention,
+    store: StoreWrapper<S>,
 }
 
-impl Mqtt {
+impl<S> Mqtt<S> {
     /// Initializes values for this struct
     ///
     /// This method should only be used for testing purposes since it does not fully
     /// connect to the mqtt broker as described by the astarte protocol.
     /// This struct should be constructed with the [`Mqtt::connected`] associated function.
-    fn new(client_id: ClientId, connection: MqttConnection) -> Self {
+    fn new(
+        client_id: ClientId,
+        connection: MqttConnection,
+        retention: MqttRetention,
+        store: StoreWrapper<S>,
+    ) -> Self {
         Self {
             client_id,
             connection,
+            retention,
+            store,
         }
     }
 
     /// This function deletes all the stored server owned properties after receiving a publish on
     /// `/control/consumer/properties`
-    async fn purge_server_properties<S>(
-        &self,
-        store: &StoreWrapper<S>,
-        bdata: &[u8],
-    ) -> Result<(), Error>
+    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error>
     where
         S: PropertyStore,
     {
         let paths = properties::extract_set_properties(bdata)?;
 
-        let stored_props = store.server_props().await?;
+        let stored_props = self.store.server_props().await?;
 
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            store
+            self.store
                 .delete_prop(&stored_prop.interface, &stored_prop.path)
                 .await?;
         }
 
         Ok(())
     }
+
+    /// Marks the packets as received for the retention.
+    async fn mark_received_packets(&mut self) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            return Ok(());
+        };
+
+        self.retention.queue()?;
+
+        futures::stream::iter((&mut self.retention).filter_map(|res| match res {
+            Ok(id) => Some(id),
+            Err(err) => {
+                error!(error=%Report::new(err), "notice error while waiting for packet");
+
+                None
+            }
+        }))
+        .then(|id| async move { retention.mark_received(&id).await })
+        .try_collect::<()>()
+        .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
-impl Receive for Mqtt {
+impl<S> Receive for Mqtt<S>
+where
+    S: StoreCapabilities + PropertyStore,
+{
     type Payload = Bytes;
 
-    async fn next_event<S>(
-        &mut self,
-        store: &StoreWrapper<S>,
-    ) -> Result<Option<ReceivedEvent<Self::Payload>>, Error>
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, Error>
     where
         S: PropertyStore,
     {
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
+
+        self.mark_received_packets().await?;
 
         // We need to construct the ClientId ourselves to not borrow self wail calling the method.
         let client_id = self.client_id.as_ref();
@@ -418,8 +574,7 @@ impl Receive for Mqtt {
             if purge_topic == &publish.topic {
                 debug!("Purging properties");
 
-                self.purge_server_properties(store, &publish.payload)
-                    .await?;
+                self.purge_server_properties(&publish.payload).await?;
             } else {
                 let ParsedTopic { interface, path } =
                     ParsedTopic::try_parse(client_id, &publish.topic).map_err(MqttError::Topic)?;
@@ -456,25 +611,24 @@ impl Receive for Mqtt {
 }
 
 #[async_trait]
-impl Reconnect for Mqtt {
-    async fn reconnect<S>(
-        &mut self,
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> Result<(), crate::Error>
-    where
-        S: PropertyStore,
-    {
+impl<S> Reconnect for Mqtt<S>
+where
+    S: StoreCapabilities + PropertyStore,
+{
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
         self.connection
-            .connect(self.client_id.as_ref(), interfaces, store)
+            .connect(self.client_id.as_ref(), interfaces, &self.store)
             .await?;
 
         Ok(())
     }
 }
 
-impl Connection for Mqtt {
-    type Sender = MqttClient;
+impl<S> Connection for Mqtt<S>
+where
+    S: Send + Sync,
+{
+    type Sender = MqttClient<S>;
 }
 
 /// Wrapper structs that holds data used when connecting/reconnecting
@@ -603,7 +757,10 @@ pub(crate) mod test {
         pairing::tests::{mock_create_certificate, mock_get_broker_url},
     };
 
-    use crate::builder::{ConnectionConfig, DeviceBuilder};
+    use crate::{
+        builder::{ConnectionConfig, DeviceBuilder},
+        store::memory::MemoryStore,
+    };
 
     use self::{
         client::{AsyncClient, EventLoop},
@@ -620,16 +777,23 @@ pub(crate) mod test {
         Ok(notice)
     }
 
-    pub(crate) fn mock_mqtt_connection(
+    pub(crate) fn mock_mqtt_connection<S>(
         client: AsyncClient,
         eventloop: EventLoop,
-    ) -> (MqttClient, Mqtt) {
+        store: S,
+    ) -> (MqttClient<S>, Mqtt<S>)
+    where
+        S: Clone,
+    {
         let client_id: ClientId = ClientId {
             realm: "realm",
             device_id: "device_id",
         }
         .into();
 
+        let (ret_tx, ret_rx) = flume::unbounded();
+
+        let store = StoreWrapper::new(store);
         let mqtt = Mqtt::new(
             client_id.clone(),
             MqttConnection::new(
@@ -643,9 +807,11 @@ pub(crate) mod test {
                 ),
                 self::connection::Connected,
             ),
+            MqttRetention::new(ret_rx),
+            store.clone(),
         );
 
-        let mqtt_client = MqttClient::new(client_id, client);
+        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store);
 
         (mqtt_client, mqtt)
     }
@@ -705,7 +871,8 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success());
 
-        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl);
+        let (mut client, _mqtt_connection) =
+            mock_mqtt_connection(client, eventl, MemoryStore::new());
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -759,7 +926,7 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success());
 
-        let (mut client, _connection) = mock_mqtt_connection(client, eventl);
+        let (mut client, _connection) = mock_mqtt_connection(client, eventl, MemoryStore::new());
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -820,7 +987,8 @@ pub(crate) mod test {
                 Err(ClientError::Request(rumqttc::Request::Disconnect(rumqttc::Disconnect)))
             });
 
-        let (mut mqtt_client, _mqtt_connection) = mock_mqtt_connection(client, eventl);
+        let (mut mqtt_client, _mqtt_connection) =
+            mock_mqtt_connection(client, eventl, MemoryStore::new());
 
         mqtt_client
             .extend_interfaces(&interfaces, &to_add)

@@ -1,7 +1,7 @@
 /*
  * This file is part of Astarte.
  *
- * Copyright 2021 SECO Mind Srl
+ * Copyright 2021-2024 SECO Mind Srl
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ mod interfaces;
 pub mod introspection;
 pub mod prelude;
 pub mod properties;
+pub mod retention;
 mod retry;
 pub mod store;
 pub mod transport;
@@ -120,7 +121,7 @@ mod test {
         interfaces: I,
     ) -> (
         DeviceClient<MemoryStore>,
-        DeviceConnection<MemoryStore, Mqtt>,
+        DeviceConnection<MemoryStore, Mqtt<MemoryStore>>,
     )
     where
         I: IntoIterator<Item = Interface>,
@@ -133,7 +134,7 @@ mod test {
         eventloop: MqttEventLoop,
         interfaces: I,
         store: S,
-    ) -> (DeviceClient<S>, DeviceConnection<S, Mqtt>)
+    ) -> (DeviceClient<S>, DeviceConnection<S, Mqtt<S>>)
     where
         I: IntoIterator<Item = Interface>,
         S: PropertyStore,
@@ -143,10 +144,10 @@ mod test {
 
         let interfaces = Arc::new(RwLock::new(Interfaces::from_iter(interfaces)));
 
+        let (mqtt_client, mqtt_connection) =
+            mock_mqtt_connection(async_client, eventloop, store.clone());
+
         let store = StoreWrapper::new(store);
-
-        let (mqtt_client, mqtt_connection) = mock_mqtt_connection(async_client, eventloop);
-
         let client =
             DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
         let device = DeviceConnection::new(

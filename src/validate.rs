@@ -27,7 +27,7 @@ use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef, PropertyRef},
-        MappingAccess, Ownership, Reliability,
+        MappingAccess, Ownership, Reliability, Retention,
     },
     types::AstarteType,
     Interface, Timestamp,
@@ -89,7 +89,9 @@ fn optional_object_checks(
 pub(crate) struct ValidatedIndividual {
     pub(crate) interface: String,
     pub(crate) path: String,
+    pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
+    pub(crate) retention: Retention,
     pub(crate) data: AstarteType,
     pub(crate) timestamp: Option<Timestamp>,
 }
@@ -115,10 +117,13 @@ impl ValidatedIndividual {
             });
         }
 
+        let interface = mapping.interface();
         Ok(ValidatedIndividual {
-            interface: mapping.interface().interface_name().to_string(),
+            interface: interface.interface_name().to_string(),
             path: path.to_string(),
+            version_major: interface.version_major(),
             reliability: mapping.mapping().reliability(),
+            retention: mapping.mapping().retention(),
             data,
             timestamp,
         })
@@ -129,7 +134,9 @@ impl ValidatedIndividual {
 pub(crate) struct ValidatedObject {
     pub(crate) interface: String,
     pub(crate) path: String,
+    pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
+    pub(crate) retention: Retention,
     pub(crate) data: HashMap<String, AstarteType>,
     pub(crate) timestamp: Option<Timestamp>,
 }
@@ -178,7 +185,9 @@ impl ValidatedObject {
         Ok(ValidatedObject {
             interface: object.interface.interface_name().to_string(),
             path: path.to_string(),
+            version_major: object.interface.version_major(),
             reliability: object.reliability(),
+            retention: object.retention(),
             data: aggregate,
             timestamp,
         })

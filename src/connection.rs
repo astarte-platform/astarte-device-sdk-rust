@@ -35,7 +35,7 @@ use crate::{
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
     introspection::AddInterfaceError,
-    store::{wrapper::StoreWrapper, PropertyStore, StoredProp},
+    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
     transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Value,
@@ -129,8 +129,8 @@ where
 impl<S, C> EventLoop for DeviceConnection<S, C>
 where
     C: Connection + Reconnect + Receive + Send + Sync + 'static,
-    C::Sender: Register + Publish + 'static,
-    S: PropertyStore,
+    C::Sender: Send + Register + Publish + 'static,
+    S: PropertyStore + StoreCapabilities,
 {
     async fn handle_events(mut self) -> Result<(), crate::Error> {
         let Self {
@@ -153,17 +153,14 @@ where
         tasks.spawn(async move {
             // The event is null, reconnect the device
             loop {
-                let event = receiver.connection.next_event(&receiver.store).await?;
+                let event = receiver.connection.next_event().await?;
 
                 let Some(event) = event else {
                     debug!("reconnecting");
 
                     let interfaces = receiver.interfaces.read().await;
 
-                    receiver
-                        .connection
-                        .reconnect(&interfaces, &receiver.store)
-                        .await?;
+                    receiver.connection.reconnect(&interfaces).await?;
 
                     continue;
                 };
@@ -194,7 +191,7 @@ where
 #[async_trait]
 impl<S, C> ClientDisconnect for DeviceConnection<S, C>
 where
-    S: Send,
+    S: StoreCapabilities + Send,
     C: Connection + Disconnect + Send,
     C::Sender: Send,
 {
@@ -212,14 +209,23 @@ pub(crate) struct DeviceSender<S, T> {
     sender: T,
 }
 
-impl<S, T> DeviceSender<S, T> {
+impl<S, T> DeviceSender<S, T>
+where
+    S: StoreCapabilities,
+{
     pub(crate) async fn handle_client_msg(&mut self, msg: ClientMessage) -> Result<(), Error>
     where
         T: Publish + Register,
         S: PropertyStore,
     {
         match msg {
-            ClientMessage::Individual(data) => self.sender.send_individual(data).await,
+            ClientMessage::Individual(data) => {
+                if data.retention.is_stored() {
+                    return self.sender.send_individual_stored(data).await;
+                }
+
+                self.sender.send_individual(data).await
+            }
             ClientMessage::Property {
                 data,
                 version_major,
@@ -243,7 +249,13 @@ impl<S, T> DeviceSender<S, T> {
 
                 Ok(())
             }
-            ClientMessage::Object(data) => self.sender.send_object(data).await,
+            ClientMessage::Object(data) => {
+                if data.retention.is_stored() {
+                    return self.sender.send_object_stored(data).await;
+                }
+
+                self.sender.send_object(data).await
+            }
             ClientMessage::Unset(data) => {
                 self.sender.unset(data.clone()).await?;
 

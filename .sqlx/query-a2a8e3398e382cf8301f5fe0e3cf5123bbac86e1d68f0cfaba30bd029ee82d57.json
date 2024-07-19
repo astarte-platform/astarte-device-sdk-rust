@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR REPLACE INTO retention_mapping (\n    path,\n    major_version,\n    reliability,\n    expiry_sec\n) VALUES (?, ?, ?, ?)\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "a2a8e3398e382cf8301f5fe0e3cf5123bbac86e1d68f0cfaba30bd029ee82d57"
+}
