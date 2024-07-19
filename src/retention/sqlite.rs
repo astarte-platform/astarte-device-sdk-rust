@@ -23,7 +23,7 @@ use std::{array::TryFromSliceError, borrow::Cow, time::Duration};
 use async_trait::async_trait;
 use futures::{stream::BoxStream, Stream, StreamExt, TryStreamExt};
 use sqlx::{query_file, Sqlite, Transaction};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{interface::Reliability, store::SqliteStore};
 
@@ -92,7 +92,6 @@ pub enum SqliteRetentionError {
     Expired(#[source] sqlx::Error),
     /// Couldn't fetch mapping
     #[error("couldn't fetch mapping {path}")]
-    #[cfg(test)]
     Mapping {
         /// The source of the error
         #[source]
@@ -174,6 +173,7 @@ impl<'a> RetentionPublish<'a> {
 /// Gets the [`Reliability`] from a stored [`u8`].
 fn reliability_from_row(qos: u8) -> Option<Reliability> {
     match qos {
+        0 => Some(Reliability::Unreliable),
         1 => Some(Reliability::Guaranteed),
         2 => Some(Reliability::Unique),
         _ => None,
@@ -237,8 +237,16 @@ impl SqliteStore {
         mapping: &RetentionMapping<'_>,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), SqliteRetentionError> {
+        if let Some(stored) = self.mapping(&mapping.path, transaction).await? {
+            if stored == *mapping {
+                return Ok(());
+            }
+
+            warn!("mappings differ, replacing");
+        }
+
         let retention: u8 = match mapping.reliability {
-            Reliability::Unreliable => return Err(SqliteRetentionError::Reliability(0)),
+            Reliability::Unreliable => 0,
             Reliability::Guaranteed => 1,
             Reliability::Unique => 2,
         };
@@ -297,13 +305,13 @@ impl SqliteStore {
         Ok(())
     }
 
-    #[cfg(test)]
     async fn mapping(
         &self,
         path: &str,
+        transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<Option<RetentionMapping<'static>>, SqliteRetentionError> {
         let Some(row) = query_file!("queries/retention/mapping.sql", path)
-            .fetch_optional(&self.db_conn)
+            .fetch_optional(&mut **transaction)
             .await
             .map_err(|err| SqliteRetentionError::Mapping {
                 backtrace: err,
@@ -485,9 +493,9 @@ mod tests {
 
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
-        t.commit().await.unwrap();
 
-        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -507,9 +515,9 @@ mod tests {
 
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
-        t.commit().await.unwrap();
 
-        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
 
@@ -517,9 +525,9 @@ mod tests {
 
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
-        t.commit().await.unwrap();
 
-        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -539,9 +547,9 @@ mod tests {
 
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
-        t.commit().await.unwrap();
 
-        let res = store.mapping(&mapping.path).await.unwrap().unwrap();
+        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        t.commit().await.unwrap();
 
         mapping.expiry = None;
 
