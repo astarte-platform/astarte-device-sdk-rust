@@ -670,14 +670,17 @@ impl Next {
         error!(error = %Report::new(&err),"error received from mqtt connection");
 
         match err {
-            ConnectionError::MqttState(_)
-            | ConnectionError::NetworkTimeout
-            | ConnectionError::FlushTimeout
-            | ConnectionError::Io(_)
-            | ConnectionError::RequestsDone => {
+            ConnectionError::MqttState(_) | ConnectionError::RequestsDone => {
                 trace!("no state change");
 
                 Next::Same
+            }
+            ConnectionError::NetworkTimeout
+            | ConnectionError::Io(_)
+            | ConnectionError::FlushTimeout => {
+                trace!("disconnected, wait for connack");
+
+                Next::state(Connecting)
             }
             ConnectionError::NotConnAck(_) => {
                 trace!("wait for connack");
