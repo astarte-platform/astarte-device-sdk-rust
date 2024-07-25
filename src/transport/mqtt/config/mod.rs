@@ -444,8 +444,6 @@ where
         );
         let connection = Mqtt::new(client_id, connection, retention, builder.store.clone());
 
-        client.resend_stored_publishes(&builder.interfaces).await?;
-
         Ok((client, connection))
     }
 }

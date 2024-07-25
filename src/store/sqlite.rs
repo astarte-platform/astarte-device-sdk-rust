@@ -18,7 +18,7 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{fmt::Debug, path::Path, str::FromStr};
+use std::{fmt::Debug, path::Path, str::FromStr, time::Duration};
 
 use async_trait::async_trait;
 use sqlx::{
@@ -283,16 +283,15 @@ impl SqliteStore {
     /// }
     /// ```
     pub async fn from_uri(uri: &str) -> Result<Self, SqliteError> {
-        let options = SqliteConnectOptions::from_str(uri)
-            .map_err(|err| SqliteError::Uri {
-                backtrace: err,
-                uri: uri.to_string(),
-            })?
-            .create_if_missing(true)
-            .foreign_keys(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let options = SqliteConnectOptions::from_str(uri).map_err(|err| SqliteError::Uri {
+            backtrace: err,
+            uri: uri.to_string(),
+        })?;
+
+        let options = set_sqlite_options(options);
 
         let pool = SqlitePoolOptions::new()
+            .max_connections(1)
             .connect_with(options)
             .await
             .map_err(SqliteError::Connection)?;
@@ -304,19 +303,24 @@ impl SqliteStore {
     pub(crate) async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
         let db = writable_path.as_ref().join("prop-cache.db");
 
-        let options = SqliteConnectOptions::new()
-            .filename(db)
-            .foreign_keys(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-            .create_if_missing(true);
+        let options = set_sqlite_options(SqliteConnectOptions::new().filename(db));
 
         let pool = SqlitePoolOptions::new()
+            .max_connections(1)
             .connect_with(options)
             .await
             .map_err(SqliteError::Connection)?;
 
         Self::new(pool).await
     }
+}
+
+fn set_sqlite_options(options: SqliteConnectOptions) -> SqliteConnectOptions {
+    options
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(Duration::from_secs(5))
+        .create_if_missing(true)
 }
 
 impl StoreCapabilities for SqliteStore {

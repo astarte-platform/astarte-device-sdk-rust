@@ -756,6 +756,22 @@ impl Retention {
             Retention::Stored { expiry } => *expiry,
         }
     }
+
+    /// Returns `true` if the retention is [`Volatile`].
+    ///
+    /// [`Volatile`]: Retention::Volatile
+    #[must_use]
+    pub const fn is_volatile(&self) -> bool {
+        matches!(self, Self::Volatile { .. })
+    }
+
+    /// Returns `true` if the retention is [`Discard`].
+    ///
+    /// [`Discard`]: Retention::Discard
+    #[must_use]
+    pub const fn is_discard(&self) -> bool {
+        matches!(self, Self::Discard)
+    }
 }
 
 impl Default for Retention {

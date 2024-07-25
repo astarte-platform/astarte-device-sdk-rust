@@ -22,12 +22,17 @@ use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::Mq
 
 type DynError = Box<dyn Error + Send + Sync + 'static>;
 
-const INTERFACE: &str = include_str!(
+const INTERFACE_STORED: &str = include_str!(
     "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json"
 );
+const INTERFACE_VOLATILE: &str = include_str!(
+    "./interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream.json"
+);
 
-const INTERFACE_NAME: &str =
+const INTERFACE_STORED_NAME: &str =
     "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream";
+const INTERFACE_VOLATILE_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream";
 
 #[derive(Debug, thiserror::Error)]
 #[error("couldn't find variable {name}")]
@@ -65,7 +70,8 @@ async fn main() -> Result<(), DynError> {
     let (client, connection) = DeviceBuilder::new()
         .store_dir(&tmp_dir)
         .await?
-        .interface_str(INTERFACE)?
+        .interface_str(INTERFACE_STORED)?
+        .interface_str(INTERFACE_VOLATILE)?
         .connect(mqtt_config)
         .await?
         .build();
@@ -80,8 +86,18 @@ async fn main() -> Result<(), DynError> {
         let mut flag: bool = false;
 
         loop {
-            client.send(INTERFACE_NAME, "/endpoint1", counter).await?;
-            client.send(INTERFACE_NAME, "/endpoint2", flag).await?;
+            client
+                .send(INTERFACE_STORED_NAME, "/endpoint1", counter)
+                .await?;
+            client
+                .send(INTERFACE_STORED_NAME, "/endpoint2", flag)
+                .await?;
+            client
+                .send(INTERFACE_VOLATILE_NAME, "/endpoint1", counter)
+                .await?;
+            client
+                .send(INTERFACE_VOLATILE_NAME, "/endpoint2", flag)
+                .await?;
 
             counter += 1;
             flag = !flag;

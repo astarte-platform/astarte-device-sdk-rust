@@ -25,11 +25,10 @@
 //! When an interface major version is updated the retention cache must be invalidated. Since the
 //! payload will be publish on the new introspection.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
-use flume::TryRecvError;
 use rumqttc::{NoticeError, NoticeFuture};
-use tracing::trace;
+use tracing::{error, trace};
 
 use crate::{retention::Id, Error};
 
@@ -50,31 +49,32 @@ impl MqttRetention {
     }
 
     pub(crate) fn queue(&mut self) -> Result<usize, Error> {
+        if self.rx.is_disconnected() {
+            error!("rx disconnected, cannot queue packets");
+
+            return Err(Error::Disconnected);
+        }
+
         if self.rx.is_empty() {
+            trace!("rx empty, queued 0 packets");
+
             return Ok(0);
         }
 
         let mut count: usize = 0;
-        loop {
-            // get all the already present publishes
-            match self.rx.try_recv() {
-                Ok((id, notice)) => {
-                    self.insert(id, notice);
+        // get all the already present publishes
+        for (id, notice) in self.rx.drain() {
+            let prev = self.packets.insert(id, notice);
 
-                    count = count.saturating_add(1);
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return Err(Error::Disconnected),
-            }
+            debug_assert!(prev.is_none(), "The IDs should be unique");
+
+            count = count.saturating_add(1);
         }
 
+        debug_assert!(count > 0, "the rx shouldn't be empty");
+        trace!("queued {count} packets");
+
         Ok(count)
-    }
-
-    fn insert(&mut self, id: Id, notice: NoticeFuture) {
-        let prev = self.packets.insert(id, notice);
-
-        debug_assert!(prev.is_none(), "The IDs should be unique");
     }
 
     fn next_received(&mut self) -> Option<Result<Id, NoticeError>> {
@@ -91,11 +91,41 @@ impl MqttRetention {
     }
 }
 
+impl<'a> IntoFuture for &'a mut MqttRetention {
+    type Output = Result<Result<Id, NoticeError>, Error>;
+
+    type IntoFuture = MqttRetentionFuture<'a>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        MqttRetentionFuture(self)
+    }
+}
+
 impl Iterator for MqttRetention {
     type Item = Result<Id, NoticeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_received()
+    }
+}
+
+pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
+
+impl<'a> std::future::Future for MqttRetentionFuture<'a> {
+    type Output = Result<Result<Id, NoticeError>, Error>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        this.0.queue()?;
+
+        match this.0.next() {
+            Some(res) => Poll::Ready(Ok(res)),
+            None => Poll::Pending,
+        }
     }
 }
 

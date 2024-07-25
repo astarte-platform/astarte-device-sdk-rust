@@ -39,6 +39,7 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
+use crate::retention::memory::VolatileRetention;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -51,6 +52,9 @@ use crate::transport::Connection;
 /// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
 /// events data to the external receiver and between each component.
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
+
+/// Default capacity for the number of packets with retention volatile to store in memory.
+pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Astarte builder error.
 ///
@@ -118,10 +122,14 @@ where
             tx_client,
             self.store.clone(),
         );
+
+        let volatile_store = VolatileRetention::with_capacity(self.volatile_retention);
+
         let connection = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
+            volatile_store,
             self.store,
             self.connection,
             self.sender,
@@ -139,6 +147,7 @@ where
     C: Connection,
 {
     pub(crate) channel_size: usize,
+    pub(crate) volatile_retention: usize,
     pub(crate) interfaces: Interfaces,
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
@@ -164,6 +173,7 @@ impl DeviceBuilder<(), ()> {
     pub fn new() -> Self {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
+            volatile_retention: DEFAULT_VOLATILE_CAPACITY,
             interfaces: Interfaces::new(),
             connection: (),
             sender: (),
@@ -245,6 +255,14 @@ where
         self
     }
 
+    /// Sets the number of elements with retention volatile that will be kept in memory if
+    /// disconnected.
+    pub fn volatile_retention(mut self, items: usize) -> Self {
+        self.volatile_retention = items;
+
+        self
+    }
+
     /// Configure a writable directory for the device.
     pub fn writable_dir<P>(mut self, path: P) -> Result<Self, BuilderError>
     where
@@ -297,6 +315,7 @@ where
     {
         DeviceBuilder {
             channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
             connection: self.connection,
             sender: self.sender,
@@ -320,6 +339,7 @@ where
 
         Ok(DeviceBuilder {
             channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
             connection,
             sender,

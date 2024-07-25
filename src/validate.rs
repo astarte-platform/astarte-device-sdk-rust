@@ -85,7 +85,7 @@ fn optional_object_checks(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ValidatedIndividual {
     pub(crate) interface: String,
     pub(crate) path: String,
@@ -130,7 +130,7 @@ impl ValidatedIndividual {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ValidatedObject {
     pub(crate) interface: String,
     pub(crate) path: String,
@@ -194,7 +194,7 @@ impl ValidatedObject {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ValidatedUnset {
     pub(crate) interface: String,
     pub(crate) path: String,

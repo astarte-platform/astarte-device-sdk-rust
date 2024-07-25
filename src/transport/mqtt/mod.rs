@@ -38,15 +38,15 @@ mod topic;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
+    future::IntoFuture,
 };
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::StreamExt;
-use futures::TryStreamExt;
+use futures::future::Either;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use rumqttc::{ClientError, NoticeFuture, QoS, SubscribeFilter};
+use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -58,7 +58,7 @@ use crate::{
     },
     interfaces::{self, Interfaces, Introspection},
     properties,
-    retention::{StoredRetention, StoredRetentionExt},
+    retention::{Id as RetentionId, PublishInfo, StoredRetention, StoredRetentionExt},
     store::{
         error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
     },
@@ -202,40 +202,6 @@ impl<S> MqttClient<S> {
             .map_err(MqttError::Unsubscribe)
             .map(drop)
     }
-
-    /// Resend the packets stored in the retention.
-    async fn resend_stored_publishes(&self, interfaces: &Interfaces) -> Result<(), Error>
-    where
-        S: StoreCapabilities,
-    {
-        if let Some(retention) = self.store.get_retention() {
-            retention.cleanup_introspection(interfaces).await?;
-
-            retention
-                .all_publishes()
-                .await?
-                .map_err(Error::from)
-                .try_for_each(|(id, publish)| async move {
-                    let notice = self
-                        .send(
-                            &publish.interface,
-                            &publish.path,
-                            publish.reliability.into(),
-                            publish.value.into(),
-                        )
-                        .await?;
-
-                    self.retention
-                        .send((id, notice))
-                        .map_err(|_| Error::Disconnected)?;
-
-                    Ok(())
-                })
-                .await?;
-        }
-
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -275,16 +241,51 @@ where
 
     async fn send_individual_stored(
         &mut self,
+        id: RetentionId,
         validated: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
-        let Some(retention) = self.store.get_retention() else {
-            return self.send_individual(validated).await;
-        };
-
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
             .map_err(MqttError::Payload)?;
 
-        let id = retention.store_publish_individual(&validated, &buf).await?;
+        let notice = self
+            .send(
+                &validated.interface,
+                &validated.path,
+                validated.reliability.into(),
+                buf,
+            )
+            .await?;
+
+        debug_assert!(
+            self.store.get_retention().is_some(),
+            "resend stored called without store that supports retention"
+        );
+        if let Some(retention) = self.store.get_retention() {
+            match validated.reliability {
+                // Since it's Unreliable we will never know the broker received it
+                Reliability::Unreliable => {
+                    retention.mark_received(&id).await?;
+                }
+                Reliability::Guaranteed | Reliability::Unique => {
+                    retention.mark_as_sent(&id).await?;
+
+                    self.retention
+                        .send((id, notice))
+                        .map_err(|_| Error::Disconnected)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_object_stored(
+        &mut self,
+        id: RetentionId,
+        validated: ValidatedObject,
+    ) -> Result<(), crate::Error> {
+        let buf = payload::serialize_object(&validated.data, validated.timestamp)
+            .map_err(MqttError::Payload)?;
 
         let notice = self
             .send(
@@ -302,28 +303,39 @@ where
         Ok(())
     }
 
-    async fn send_object_stored(&mut self, validated: ValidatedObject) -> Result<(), crate::Error> {
-        let Some(retention) = self.store.get_retention() else {
-            return self.send_object(validated).await;
-        };
-
-        let buf = payload::serialize_object(&validated.data, validated.timestamp)
-            .map_err(MqttError::Payload)?;
-
-        let id = retention.store_publish_obj(&validated, &buf).await?;
-
+    async fn resend_stored(
+        &mut self,
+        id: RetentionId,
+        data: PublishInfo<'_>,
+    ) -> Result<(), crate::Error> {
         let notice = self
             .send(
-                &validated.interface,
-                &validated.path,
-                validated.reliability.into(),
-                buf,
+                &data.interface,
+                &data.path,
+                data.reliability.into(),
+                data.value.into(),
             )
             .await?;
 
-        self.retention
-            .send((id, notice))
-            .map_err(|_| Error::Disconnected)?;
+        debug_assert!(
+            self.store.get_retention().is_some(),
+            "resend stored called without store that supports retention"
+        );
+        if let Some(retention) = self.store.get_retention() {
+            match data.reliability {
+                // Since it's Unreliable we will never know the broker received it
+                Reliability::Unreliable => {
+                    retention.mark_received(&id).await?;
+                }
+                Reliability::Guaranteed | Reliability::Unique => {
+                    retention.mark_as_sent(&id).await?;
+
+                    self.retention
+                        .send((id, notice))
+                        .map_err(|_| Error::Disconnected)?;
+                }
+            }
+        }
 
         Ok(())
     }
@@ -339,6 +351,19 @@ where
         .await
         .map(drop)
         .map_err(Error::Mqtt)
+    }
+
+    fn serialize_individual(
+        &self,
+        validated: &ValidatedIndividual,
+    ) -> Result<Vec<u8>, crate::Error> {
+        payload::serialize_individual(&validated.data, validated.timestamp)
+            .map_err(|err| Error::Mqtt(MqttError::Payload(err)))
+    }
+
+    fn serialize_object(&self, validated: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
+        payload::serialize_object(&validated.data, validated.timestamp)
+            .map_err(|err| Error::Mqtt(MqttError::Payload(err)))
     }
 }
 
@@ -496,59 +521,84 @@ impl<S> Mqtt<S> {
         }
     }
 
+    /// Marks the packets as received for the retention.
+    async fn mark_packet_received(
+        retention: &impl StoredRetention,
+        res_id: Result<crate::retention::Id, NoticeError>,
+    ) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        let id = match res_id {
+            Ok(id) => id,
+            Err(err) => {
+                error!(error=%Report::new(err), "notice error while waiting for packet");
+
+                return Ok(());
+            }
+        };
+
+        debug!("marking {id} as received");
+
+        retention.mark_received(&id).await?;
+
+        Ok(())
+    }
+
+    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, Error>
+    where
+        S: StoreCapabilities,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            // No retention, just pull the connection
+            return Ok(self.connection.next_publish().await);
+        };
+
+        loop {
+            let mut conn_future = std::pin::pin!(self.connection.next_publish());
+
+            match futures::future::select(self.retention.into_future(), &mut conn_future).await {
+                Either::Left((res, _)) => {
+                    let res = res?;
+
+                    Self::mark_packet_received(retention, res).await?;
+                }
+                // the retention future can be dropped safely
+                Either::Right((publish, _)) => {
+                    return Ok(publish);
+                }
+            };
+        }
+    }
+}
+
+/// Trait to implement functionality on the store.
+#[async_trait]
+trait MqttStoreExt: PropertyStore
+where
+    Error: From<Self::Err>,
+{
     /// This function deletes all the stored server owned properties after receiving a publish on
     /// `/control/consumer/properties`
-    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error>
-    where
-        S: PropertyStore,
-    {
+    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error> {
         let paths = properties::extract_set_properties(bdata)?;
 
-        let stored_props = self.store.server_props().await?;
+        let stored_props = self.server_props().await?;
 
         for stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            self.store
-                .delete_prop(&stored_prop.interface, &stored_prop.path)
+            self.delete_prop(&stored_prop.interface, &stored_prop.path)
                 .await?;
         }
 
         Ok(())
     }
-
-    /// Marks the packets as received for the retention.
-    async fn mark_received_packets(&mut self) -> Result<(), Error>
-    where
-        S: StoreCapabilities,
-    {
-        let Some(retention) = self.store.get_retention() else {
-            return Ok(());
-        };
-
-        self.retention.queue()?;
-
-        futures::stream::iter((&mut self.retention).filter_map(|res| match res {
-            Ok(id) => Some(id),
-            Err(err) => {
-                error!(error=%Report::new(err), "notice error while waiting for packet");
-
-                None
-            }
-        }))
-        .then(|id| {
-            debug!("marking {id} as received");
-
-            async move { retention.mark_received(&id).await }
-        })
-        .try_collect::<()>()
-        .await?;
-
-        Ok(())
-    }
 }
+
+impl<S> MqttStoreExt for StoreWrapper<S> where S: PropertyStore {}
 
 #[async_trait]
 impl<S> Receive for Mqtt<S>
@@ -563,13 +613,8 @@ where
     {
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
 
-        self.mark_received_packets().await?;
-
-        // We need to construct the ClientId ourselves to not borrow self wail calling the method.
-        let client_id = self.client_id.as_ref();
-
         // Wait for next data or until its disconnected
-        while let Some(publish) = self.connection.next_publish().await {
+        while let Some(publish) = self.poll().await? {
             let purge_topic = PURGE_PROPERTIES_TOPIC
                 .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));
 
@@ -578,10 +623,11 @@ where
             if purge_topic == &publish.topic {
                 debug!("Purging properties");
 
-                self.purge_server_properties(&publish.payload).await?;
+                self.store.purge_server_properties(&publish.payload).await?;
             } else {
                 let ParsedTopic { interface, path } =
-                    ParsedTopic::try_parse(client_id, &publish.topic).map_err(MqttError::Topic)?;
+                    ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
+                        .map_err(MqttError::Topic)?;
 
                 return Ok(Some(ReceivedEvent {
                     interface: interface.to_string(),
@@ -590,7 +636,6 @@ where
                 }));
             }
         }
-
         Ok(None)
     }
 
@@ -620,9 +665,34 @@ where
     S: StoreCapabilities + PropertyStore,
 {
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
-        self.connection
-            .connect(self.client_id.as_ref(), interfaces, &self.store)
-            .await?;
+        if let Some(retention) = self.store.get_retention() {
+            let mut conn_fut = std::pin::pin!(self.connection.connect(
+                self.client_id.as_ref(),
+                interfaces,
+                &self.store
+            ));
+
+            let mut ret_fut = self.retention.into_future();
+
+            loop {
+                match futures::future::select(&mut ret_fut, &mut conn_fut).await {
+                    Either::Left((res, _)) => {
+                        let res = res?;
+
+                        Self::mark_packet_received(retention, res).await?;
+                    }
+                    Either::Right((res, _)) => {
+                        res?;
+
+                        return Ok(());
+                    }
+                };
+            }
+        } else {
+            self.connection
+                .connect(self.client_id.as_ref(), interfaces, &self.store)
+                .await?;
+        }
 
         Ok(())
     }

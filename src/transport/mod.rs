@@ -36,6 +36,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
     },
     interfaces::{self, Interfaces},
+    retention::{Id as RetentionId, PublishInfo},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
@@ -87,16 +88,34 @@ pub(crate) trait Publish {
     /// The id is to identify the packet to confirm it was received by the server.
     async fn send_individual_stored(
         &mut self,
+        id: RetentionId,
         data: ValidatedIndividual,
     ) -> Result<(), crate::Error>;
 
     /// Sends validated objects values with stored retention over this connection
     ///
     /// The id is to identify the packet to confirm it was received by the server.
-    async fn send_object_stored(&mut self, data: ValidatedObject) -> Result<(), crate::Error>;
+    async fn send_object_stored(
+        &mut self,
+        id: RetentionId,
+        data: ValidatedObject,
+    ) -> Result<(), crate::Error>;
 
-    /// Unset a property value over this connection
+    /// Resend previously stored publish.
+    async fn resend_stored(
+        &mut self,
+        id: RetentionId,
+        data: PublishInfo<'_>,
+    ) -> Result<(), crate::Error>;
+
+    /// Unset a property value over this connection.
     async fn unset(&mut self, data: ValidatedUnset) -> Result<(), crate::Error>;
+
+    /// Serializes an individual astarte value.
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
+
+    /// Serializes an aggregate object.
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error>;
 }
 
 #[async_trait]

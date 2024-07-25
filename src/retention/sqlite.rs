@@ -18,24 +18,27 @@
 
 //! Retention implemented using an SQLite database.
 
-use std::{array::TryFromSliceError, borrow::Cow, time::Duration};
+use std::{array::TryFromSliceError, borrow::Cow, collections::HashSet, time::Duration};
 
 use async_trait::async_trait;
-use futures::{stream::BoxStream, Stream, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use sqlx::{query_file, Sqlite, Transaction};
 use tracing::{error, warn};
 
 use crate::{interface::Reliability, store::SqliteStore};
 
-use super::{Id, PublishInfo, RetentionError, StoredRetention, TimestampMillis};
+use super::{Id, PublishInfo, RetentionError, StoredInterface, StoredRetention, TimestampMillis};
 
 /// Error returned by the retention.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SqliteRetentionError {
-    /// Couldn't get all the packets.
+    /// Couldn't reset all the sent publishes.
+    #[error("couldn't reset all the sent packets")]
+    ResetSent(#[source] sqlx::Error),
+    /// Couldn't get unsent publishes.
     #[error("couldn't get all the packets")]
-    AllPackets(#[source] sqlx::Error),
+    UnsetPublishes(#[source] sqlx::Error),
     /// Couldn't convert timestamp bytes
     #[error("couldn't convert timestamp bytes")]
     Timestamp(#[source] TryFromSliceError),
@@ -60,14 +63,23 @@ pub enum SqliteRetentionError {
         /// Topic of the mapping
         path: String,
     },
-    /// Couldn't mark publish as received.
-    #[error("coudln't mark publish with id {id} as received")]
-    Delete {
+    /// Couldn't delete publish by id.
+    #[error("coudln't delete publish with id {id}")]
+    DeleteId {
         /// The source of the error
         #[source]
         backtrace: sqlx::Error,
         /// Id of the publish
         id: Id,
+    },
+    /// Couldn't delete publish by id.
+    #[error("coudln't delete publish with interface {interface}")]
+    DeleteInterface {
+        /// The source of the error
+        #[source]
+        backtrace: sqlx::Error,
+        /// Interface to delete.
+        interface: String,
     },
     /// Wrong number of row deleted.
     #[error("error while deleting received publish {id}, rows affected {rows}")]
@@ -84,9 +96,6 @@ pub enum SqliteRetentionError {
         #[source]
         backtrace: sqlx::Error,
     },
-    /// Couldn't split the interface in name and path
-    #[error("couldn't split interface and path for {id} in {path}")]
-    Path { path: String, id: Id },
     /// Couldn't delete expired publishes
     #[error("couldn't delete expired publishes")]
     Expired(#[source] sqlx::Error),
@@ -99,6 +108,9 @@ pub enum SqliteRetentionError {
         /// Path of the packet
         path: String,
     },
+    /// Couldn't fetch interfaces
+    #[error("couldn't fetch interfaces")]
+    AllInterfaces(#[source] sqlx::Error),
     /// Couldn't fetch publish
     #[error("couldn't fetch publish {id}")]
     #[cfg(test)]
@@ -129,6 +141,7 @@ impl SqliteRetentionError {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RetentionMapping<'a> {
+    interface: Cow<'a, str>,
     path: Cow<'a, str>,
     version_major: i32,
     reliability: Reliability,
@@ -138,7 +151,8 @@ pub(crate) struct RetentionMapping<'a> {
 impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
     fn from(value: &'a PublishInfo<'a>) -> Self {
         Self {
-            path: format!("{}{}", value.interface, value.path).into(),
+            interface: Cow::Borrowed(&value.interface),
+            path: Cow::Borrowed(&value.path),
             version_major: value.version_major,
             reliability: value.reliability,
             expiry: value.expiry,
@@ -149,9 +163,11 @@ impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RetentionPublish<'a> {
     id: Id,
+    interface: Cow<'a, str>,
     path: Cow<'a, str>,
-    payload: Cow<'a, [u8]>,
     expiry: Option<TimestampMillis>,
+    sent: bool,
+    payload: Cow<'a, [u8]>,
 }
 
 impl<'a> RetentionPublish<'a> {
@@ -163,9 +179,11 @@ impl<'a> RetentionPublish<'a> {
 
         Self {
             id,
-            path: format!("{}{}", info.interface, info.path).into(),
-            payload: Cow::Borrowed(&info.value),
+            interface: Cow::Borrowed(&info.interface),
+            path: Cow::Borrowed(&info.path),
             expiry,
+            sent: info.sent,
+            payload: Cow::Borrowed(&info.value),
         }
     }
 }
@@ -180,56 +198,76 @@ fn reliability_from_row(qos: u8) -> Option<Reliability> {
     }
 }
 
-fn split_interface_and_path(
-    id: &Id,
-    mut full: String,
-) -> Result<(String, String), SqliteRetentionError> {
-    let Some(idx) = full.find('/') else {
-        return Err(SqliteRetentionError::Path {
-            path: full,
-            id: *id,
-        });
-    };
-
-    let path = full.split_off(idx);
-
-    Ok((full, path))
-}
-
 // Implementation of utilities used in the retention
 impl SqliteStore {
-    fn fetch_publishes(
+    async fn fetch_mapping_interfaces(
         &self,
-    ) -> impl Stream<Item = Result<(Id, PublishInfo<'static>), SqliteRetentionError>> + '_ {
-        query_file!("queries/retention/all_publishes.sql")
+    ) -> Result<HashSet<StoredInterface>, SqliteRetentionError> {
+        query_file!("queries/retention/all_interfaces.sql")
             .fetch(&self.db_conn)
-            .map_err(SqliteRetentionError::AllPackets)
-            .and_then(|row| async move {
-                let id = Id::from_row(&row.t_millis, row.counter)
-                    .map_err(SqliteRetentionError::Timestamp)?;
-
-                let reliability = reliability_from_row(row.reliability)
-                    .ok_or(SqliteRetentionError::Reliability(row.reliability))?;
-
-                let (interface, path) = split_interface_and_path(&id, row.path)?;
-
-                let expiry = row.expiry_sec.and_then(|exp| {
-                    // If the conversion fails, let's keep the packet forever.
-                    exp.try_into().ok().map(Duration::from_secs)
-                });
-
-                Ok((
-                    id,
-                    PublishInfo {
-                        interface: interface.into(),
-                        path: path.into(),
-                        version_major: row.major_version,
-                        reliability,
-                        expiry,
-                        value: row.payload.into(),
-                    },
-                ))
+            .map_err(SqliteRetentionError::AllInterfaces)
+            .map_ok(|e| StoredInterface {
+                name: e.interface,
+                version_major: e.major_version,
             })
+            .try_collect::<HashSet<StoredInterface>>()
+            .await
+    }
+
+    async fn fetch_unsent(
+        &self,
+        now: &TimestampMillis,
+        limit: usize,
+        buf: &mut Vec<(Id, PublishInfo<'static>)>,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<usize, SqliteRetentionError> {
+        let now = now.to_bytes();
+        let now = now.as_slice();
+
+        // Cap to max
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut count: usize = 0;
+
+        query_file!("queries/retention/unsent_publishes.sql", now, limit)
+            .fetch(&mut **transaction)
+            .map(|res| {
+                res.map_err(SqliteRetentionError::UnsetPublishes)
+                    .and_then(|row| {
+                        let id = Id::from_row(&row.t_millis, row.counter)
+                            .map_err(SqliteRetentionError::Timestamp)?;
+
+                        let reliability = reliability_from_row(row.reliability)
+                            .ok_or(SqliteRetentionError::Reliability(row.reliability))?;
+
+                        let expiry = row.expiry_sec.and_then(|exp| {
+                            // If the conversion fails, let's keep the packet forever.
+                            exp.try_into().ok().map(Duration::from_secs)
+                        });
+
+                        Ok((
+                            id,
+                            PublishInfo {
+                                interface: row.interface.into(),
+                                path: row.path.into(),
+                                version_major: row.major_version,
+                                reliability,
+                                expiry,
+                                sent: row.sent,
+                                value: row.payload.into(),
+                            },
+                        ))
+                    })
+            })
+            .try_for_each(|val| {
+                buf.push(val);
+
+                count = count.saturating_add(1);
+
+                futures::future::ok(())
+            })
+            .await?;
+
+        Ok(count)
     }
 
     async fn store_mapping(
@@ -237,7 +275,10 @@ impl SqliteStore {
         mapping: &RetentionMapping<'_>,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), SqliteRetentionError> {
-        if let Some(stored) = self.mapping(&mapping.path, transaction).await? {
+        if let Some(stored) = self
+            .mapping(&mapping.interface, &mapping.path, transaction)
+            .await?
+        {
             if stored == *mapping {
                 return Ok(());
             }
@@ -258,6 +299,7 @@ impl SqliteStore {
 
         query_file!(
             "queries/retention/store_mapping.sql",
+            mapping.interface,
             mapping.path,
             mapping.version_major,
             retention,
@@ -291,8 +333,10 @@ impl SqliteStore {
             "queries/retention/store_publish.sql",
             timestamp,
             counter,
+            publish.interface,
             publish.path,
             expiry,
+            publish.sent,
             payload,
         )
         .execute(&mut **transaction)
@@ -307,10 +351,11 @@ impl SqliteStore {
 
     async fn mapping(
         &self,
+        interface: &str,
         path: &str,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<Option<RetentionMapping<'static>>, SqliteRetentionError> {
-        let Some(row) = query_file!("queries/retention/mapping.sql", path)
+        let Some(row) = query_file!("queries/retention/mapping.sql", interface, path)
             .fetch_optional(&mut **transaction)
             .await
             .map_err(|err| SqliteRetentionError::Mapping {
@@ -330,6 +375,7 @@ impl SqliteStore {
         });
 
         Ok(Some(RetentionMapping {
+            interface: row.interface.into(),
             path: row.path.into(),
             version_major: row.major_version,
             reliability,
@@ -368,9 +414,11 @@ impl SqliteStore {
 
         Ok(Some(RetentionPublish {
             id,
+            interface: row.interface.into(),
             path: row.path.into(),
-            payload: row.payload.into(),
             expiry,
+            sent: row.sent,
+            payload: row.payload.into(),
         }))
     }
 
@@ -385,7 +433,7 @@ impl SqliteStore {
         )
         .execute(&self.db_conn)
         .await
-        .map_err(|err| SqliteRetentionError::Delete {
+        .map_err(|err| SqliteRetentionError::DeleteId {
             backtrace: err,
             id: *id,
         })?;
@@ -394,6 +442,45 @@ impl SqliteStore {
         if rows != 1 {
             return Err(SqliteRetentionError::DeletedRows { id: *id, rows });
         }
+
+        Ok(())
+    }
+
+    async fn delete_publish_and_mappings(
+        &self,
+        interface: &str,
+    ) -> Result<(), SqliteRetentionError> {
+        let mut t = self
+            .db_conn
+            .begin()
+            .await
+            .map_err(SqliteRetentionError::begin)?;
+
+        let t_ref = &mut t;
+
+        query_file!(
+            "queries/retention/delete_publish_by_interface.sql",
+            interface,
+        )
+        .execute(&mut **t_ref)
+        .await
+        .map_err(|err| SqliteRetentionError::DeleteInterface {
+            interface: interface.to_string(),
+            backtrace: err,
+        })?;
+
+        query_file!(
+            "queries/retention/delete_mapping_by_interface.sql",
+            interface,
+        )
+        .execute(&mut **t_ref)
+        .await
+        .map_err(|err| SqliteRetentionError::DeleteInterface {
+            interface: interface.to_string(),
+            backtrace: err,
+        })?;
+
+        t.commit().await.map_err(SqliteRetentionError::commit)?;
 
         Ok(())
     }
@@ -418,14 +505,51 @@ impl SqliteStore {
             .map_err(SqliteRetentionError::commit)
     }
 
-    async fn delete_expired(&self) -> Result<(), SqliteRetentionError> {
-        let now = TimestampMillis::now().to_bytes();
+    async fn delete_expired(
+        &self,
+        now: &TimestampMillis,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<(), SqliteRetentionError> {
+        let now = now.to_bytes();
         let now = now.as_slice();
 
         query_file!("queries/retention/delete_expired.sql", now)
-            .execute(&self.db_conn)
+            .execute(&mut **transaction)
             .await
             .map_err(SqliteRetentionError::Expired)?;
+
+        Ok(())
+    }
+
+    async fn update_publish_sent_flag(
+        &self,
+        id: &Id,
+        sent: bool,
+    ) -> Result<(), SqliteRetentionError> {
+        let timestamp = id.timestamp.to_bytes();
+        let timestamp = timestamp.as_slice();
+
+        query_file!(
+            "queries/retention/update_sent.sql",
+            sent,
+            timestamp,
+            id.counter
+        )
+        .execute(&self.db_conn)
+        .await
+        .map_err(SqliteRetentionError::Expired)?;
+
+        Ok(())
+    }
+
+    async fn reset_all_sent(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<(), SqliteRetentionError> {
+        query_file!("queries/retention/reset_all_sent.sql")
+            .execute(&mut **transaction)
+            .await
+            .map_err(SqliteRetentionError::ResetSent)?;
 
         Ok(())
     }
@@ -433,7 +557,6 @@ impl SqliteStore {
 
 #[async_trait]
 impl StoredRetention for SqliteStore {
-    /// Store a publish.
     async fn store_publish(&self, publish: PublishInfo<'_>) -> Result<Id, RetentionError> {
         let id = self.retention_ctx.next();
 
@@ -447,26 +570,85 @@ impl StoredRetention for SqliteStore {
         Ok(id)
     }
 
-    /// It will mark the stored publish as received.
+    async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError> {
+        self.update_publish_sent_flag(id, sent)
+            .await
+            .map_err(|err| RetentionError::update_sent(*id, sent, err))
+    }
+
     async fn mark_received(&self, id: &Id) -> Result<(), RetentionError> {
         self.delete_publish_by_id(id)
             .await
             .map_err(|err| RetentionError::received(*id, err))
     }
 
-    /// Resend all the packets.
-    async fn all_publishes(
-        &self,
-    ) -> Result<BoxStream<Result<(Id, PublishInfo<'static>), RetentionError>>, RetentionError> {
-        self.delete_expired().await.map_err(RetentionError::all)?;
-
-        Ok(self.fetch_publishes().map_err(RetentionError::all).boxed())
-    }
-
     async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError> {
         self.delete_publish_by_id(id)
             .await
-            .map_err(|err| RetentionError::delete(*id, err))
+            .map_err(|err| RetentionError::delete_publish(*id, err))
+    }
+
+    async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {
+        self.delete_publish_and_mappings(interface)
+            .await
+            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))
+    }
+
+    async fn unsent_publishes(
+        &self,
+        limit: usize,
+        buf: &mut Vec<(Id, PublishInfo<'static>)>,
+    ) -> Result<usize, RetentionError> {
+        let mut t = self
+            .db_conn
+            .begin()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::begin(err)))?;
+
+        let now = TimestampMillis::now();
+
+        self.delete_expired(&now, &mut t)
+            .await
+            .map_err(RetentionError::unsent)?;
+
+        let count = self
+            .fetch_unsent(&now, limit, buf, &mut t)
+            .await
+            .map_err(RetentionError::unsent)?;
+
+        t.commit()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::commit(err)))?;
+
+        Ok(count)
+    }
+
+    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
+        let mut t = self
+            .db_conn
+            .begin()
+            .await
+            .map_err(|err| RetentionError::reset(SqliteRetentionError::begin(err)))?;
+
+        self.delete_expired(&TimestampMillis::now(), &mut t)
+            .await
+            .map_err(RetentionError::reset)?;
+
+        self.reset_all_sent(&mut t)
+            .await
+            .map_err(RetentionError::reset)?;
+
+        t.commit()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::commit(err)))?;
+
+        Ok(())
+    }
+
+    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+        self.fetch_mapping_interfaces()
+            .await
+            .map_err(RetentionError::fetch_interfaces)
     }
 }
 
@@ -485,7 +667,8 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mapping = RetentionMapping {
-            path: "realm/device_id/com.Foo/bar".into(),
+            interface: "com.Foo".into(),
+            path: "/bar".into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -494,7 +677,11 @@ mod tests {
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
 
-        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        let res = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap()
+            .unwrap();
         t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
@@ -507,7 +694,8 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = RetentionMapping {
-            path: "realm/device_id/com.Foo/bar".into(),
+            interface: "com.Foo".into(),
+            path: "/bar".into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -516,7 +704,11 @@ mod tests {
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
 
-        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        let res = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap()
+            .unwrap();
         t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
@@ -526,7 +718,11 @@ mod tests {
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
 
-        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        let res = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap()
+            .unwrap();
         t.commit().await.unwrap();
 
         assert_eq!(res, mapping);
@@ -539,7 +735,8 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = RetentionMapping {
-            path: "realm/device_id/com.Foo/bar".into(),
+            interface: "com.Foo".into(),
+            path: "/bar".into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: Some(Duration::from_secs(u64::MAX)),
@@ -548,7 +745,11 @@ mod tests {
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_mapping(&mapping, &mut t).await.unwrap();
 
-        let res = store.mapping(&mapping.path, &mut t).await.unwrap().unwrap();
+        let res = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap()
+            .unwrap();
         t.commit().await.unwrap();
 
         mapping.expiry = None;
@@ -574,10 +775,12 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let topic = "realm/device_id/com.Foo/bar";
+        let interface = "com.Foo";
+        let path = "/bar";
 
         let mapping = RetentionMapping {
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -591,8 +794,10 @@ mod tests {
                 timestamp: TimestampMillis(1),
                 counter: 2,
             },
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             payload: [].as_slice().into(),
+            sent: false,
             expiry: None,
         };
         let mut t = store.db_conn.begin().await.unwrap();
@@ -605,15 +810,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_update_sent_flag() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_mapping(&mapping, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        let mut packet = RetentionPublish {
+            id: Id {
+                timestamp: TimestampMillis(1),
+                counter: 2,
+            },
+            interface: interface.into(),
+            path: path.into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry: None,
+        };
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_publish(&packet, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        store.update_sent_flag(&packet.id, true).await.unwrap();
+
+        let res = store.publish(&packet.id).await.unwrap().unwrap();
+
+        packet.sent = true;
+
+        assert_eq!(res, packet);
+
+        store.update_sent_flag(&packet.id, false).await.unwrap();
+
+        let res = store.publish(&packet.id).await.unwrap().unwrap();
+
+        packet.sent = false;
+
+        assert_eq!(res, packet);
+    }
+
+    #[tokio::test]
     async fn should_remove_sent_packet() {
         let dir = tempfile::tempdir().unwrap();
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let topic = "realm/device_id/com.Foo/bar";
+        let interface = "com.Foo";
+        let path = "/bar";
 
         let mapping = RetentionMapping {
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -628,9 +887,11 @@ mod tests {
         };
         let exp = RetentionPublish {
             id,
-            path: topic.into(),
-            payload: [].as_slice().into(),
+            interface: interface.into(),
+            path: path.into(),
             expiry: None,
+            sent: false,
+            payload: [].as_slice().into(),
         };
 
         let mut t = store.db_conn.begin().await.unwrap();
@@ -642,6 +903,58 @@ mod tests {
         let packet = store.publish(&exp.id).await.unwrap();
 
         assert_eq!(packet, None);
+    }
+
+    #[tokio::test]
+    async fn should_delete_interface() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_mapping(&mapping, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        let id = Id {
+            timestamp: TimestampMillis(1),
+            counter: 1,
+        };
+        let exp = RetentionPublish {
+            id,
+            interface: interface.into(),
+            path: path.into(),
+            expiry: None,
+            sent: false,
+            payload: [].as_slice().into(),
+        };
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_publish(&exp, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        store.delete_interface(interface).await.unwrap();
+
+        let packet = store.publish(&exp.id).await.unwrap();
+
+        assert_eq!(packet, None);
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        let mapping = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap();
+
+        assert_eq!(mapping, None);
     }
 
     #[tokio::test]
@@ -663,10 +976,12 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let topic = "realm/device_id/com.Foo/bar";
+        let interface = "com.Foo";
+        let path = "/bar";
 
         let mapping = RetentionMapping {
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -682,27 +997,33 @@ mod tests {
                     timestamp: TimestampMillis(1),
                     counter: 2,
                 },
-                path: topic.into(),
-                payload: [].as_slice().into(),
+                interface: interface.into(),
+                path: path.into(),
                 expiry: None,
+                sent: false,
+                payload: [].as_slice().into(),
             },
             RetentionPublish {
                 id: Id {
                     timestamp: TimestampMillis(2),
                     counter: 0,
                 },
-                path: topic.into(),
-                payload: [].as_slice().into(),
+                interface: interface.into(),
+                path: path.into(),
                 expiry: None,
+                sent: false,
+                payload: [].as_slice().into(),
             },
             RetentionPublish {
                 id: Id {
                     timestamp: TimestampMillis(2),
                     counter: 1,
                 },
-                path: topic.into(),
-                payload: [].as_slice().into(),
+                interface: interface.into(),
+                path: path.into(),
                 expiry: None,
+                sent: false,
+                payload: [].as_slice().into(),
             },
         ];
 
@@ -715,110 +1036,31 @@ mod tests {
         let expected = packets
             .into_iter()
             .map(|p| {
-                let (intf, path) = split_interface_and_path(&p.id, p.path.into()).unwrap();
-
                 (
                     p.id,
                     PublishInfo {
-                        path: path.into(),
+                        interface: p.interface,
+                        path: p.path,
                         reliability: mapping.reliability,
-                        interface: intf.into(),
                         version_major: mapping.version_major,
-                        expiry: mapping.expiry,
                         value: p.payload,
+                        sent: p.sent,
+                        expiry: mapping.expiry,
                     },
                 )
             })
             .collect_vec();
 
-        let res = store
-            .fetch_publishes()
-            .try_collect::<Vec<_>>()
+        let mut t = store.db_conn.begin().await.unwrap();
+
+        let mut res = Vec::new();
+        let count = store
+            .fetch_unsent(&TimestampMillis::now(), 100, &mut res, &mut t)
             .await
             .unwrap();
-
-        assert_eq!(res, expected);
-    }
-
-    #[tokio::test]
-    async fn should_resend_all() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
-
-        let topic = "realm/device_id/com.Foo/bar";
-
-        let mapping = RetentionMapping {
-            path: topic.into(),
-            version_major: 1,
-            reliability: Reliability::Guaranteed,
-            expiry: None,
-        };
-
-        let mut t = store.db_conn.begin().await.unwrap();
-        store.store_mapping(&mapping, &mut t).await.unwrap();
         t.commit().await.unwrap();
 
-        let packets = [
-            RetentionPublish {
-                id: Id {
-                    timestamp: TimestampMillis(1),
-                    counter: 2,
-                },
-                path: topic.into(),
-                payload: [].as_slice().into(),
-                expiry: None,
-            },
-            RetentionPublish {
-                id: Id {
-                    timestamp: TimestampMillis(2),
-                    counter: 0,
-                },
-                path: topic.into(),
-                payload: [].as_slice().into(),
-                expiry: None,
-            },
-            RetentionPublish {
-                id: Id {
-                    timestamp: TimestampMillis(2),
-                    counter: 1,
-                },
-                path: topic.into(),
-                payload: [].as_slice().into(),
-                expiry: None,
-            },
-        ];
-
-        let mut t = store.db_conn.begin().await.unwrap();
-        for packet in &packets {
-            store.store_publish(packet, &mut t).await.unwrap();
-        }
-        t.commit().await.unwrap();
-
-        let expected = packets
-            .into_iter()
-            .map(|p| {
-                let (intf, path) = split_interface_and_path(&p.id, p.path.into()).unwrap();
-
-                (
-                    p.id,
-                    PublishInfo {
-                        path: path.into(),
-                        reliability: mapping.reliability,
-                        interface: intf.into(),
-                        version_major: mapping.version_major,
-                        expiry: mapping.expiry,
-                        value: p.payload,
-                    },
-                )
-            })
-            .collect_vec();
-
-        let res = store
-            .fetch_publishes()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
+        assert_eq!(count, 3);
 
         assert_eq!(res, expected);
     }
@@ -829,10 +1071,12 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let topic = "realm/device_id/com.Foo/bar";
+        let interface = "com.Foo";
+        let path = "/bar";
 
         let mapping = RetentionMapping {
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: None,
@@ -846,9 +1090,11 @@ mod tests {
                 timestamp: TimestampMillis(1),
                 counter: 2,
             },
-            path: topic.into(),
-            payload: [].as_slice().into(),
+            interface: interface.into(),
+            path: path.into(),
             expiry: None,
+            sent: false,
+            payload: [].as_slice().into(),
         };
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_publish(&packet, &mut t).await.unwrap();
@@ -865,33 +1111,18 @@ mod tests {
         assert!(res.is_none());
     }
 
-    #[test]
-    fn should_split_path() {
-        let (interface, path) = ("foo", "/bar/other");
-
-        let (i, p) = split_interface_and_path(
-            &Id {
-                timestamp: TimestampMillis(0),
-                counter: 0,
-            },
-            format!("{interface}{path}"),
-        )
-        .unwrap();
-
-        assert_eq!(i, interface);
-        assert_eq!(p, path);
-    }
-
     #[tokio::test]
     async fn should_resend_all_without_expired() {
         let dir = tempfile::tempdir().unwrap();
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let topic = "realm/device_id/com.Foo/bar";
+        let interface = "com.Foo";
+        let path = "/bar";
 
         let mapping = RetentionMapping {
-            path: topic.into(),
+            interface: interface.into(),
+            path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
             expiry: Some(Duration::from_secs(3600)),
@@ -904,13 +1135,14 @@ mod tests {
         let ctx = Context::new();
 
         let info = PublishInfo::from_ref(
-            "realm/device_id/com.Foo",
-            "/bar",
+            interface,
+            path,
             mapping.version_major,
             mapping.reliability,
             crate::interface::Retention::Stored {
                 expiry: mapping.expiry,
             },
+            false,
             &[],
         );
 
@@ -944,30 +1176,159 @@ mod tests {
             // Only the first
             .take(1)
             .map(|p| {
-                let (intf, path) = split_interface_and_path(&p.id, p.path.into()).unwrap();
-
                 (
                     p.id,
                     PublishInfo {
-                        path: path.into(),
+                        interface: p.interface,
+                        path: p.path,
                         reliability: mapping.reliability,
-                        interface: intf.into(),
                         version_major: mapping.version_major,
                         expiry: mapping.expiry,
+                        sent: p.sent,
                         value: p.payload,
                     },
                 )
             })
             .collect_vec();
 
-        store.delete_expired().await.unwrap();
+        let mut res = Vec::new();
+        let count = store.unsent_publishes(100, &mut res).await.unwrap();
 
-        let res = store
-            .fetch_publishes()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
+        assert_eq!(count, 1);
 
         assert_eq!(res, expected);
+    }
+
+    #[tokio::test]
+    async fn should_get_unsent_publishes() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_mapping(&mapping, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        let ctx = Context::new();
+
+        let mut info = PublishInfo::from_ref(
+            interface,
+            path,
+            mapping.version_major,
+            mapping.reliability,
+            crate::interface::Retention::Stored {
+                expiry: mapping.expiry,
+            },
+            false,
+            &[],
+        );
+
+        // Only the first is still valid.
+        let info_cl = info.clone();
+        let mut packets = vec![RetentionPublish::from_info(ctx.next(), &info_cl)];
+
+        info.sent = true;
+
+        packets.push(RetentionPublish::from_info(
+            Id {
+                timestamp: TimestampMillis(2),
+                counter: 0,
+            },
+            &info,
+        ));
+
+        packets.push(RetentionPublish::from_info(
+            Id {
+                timestamp: TimestampMillis(2),
+                counter: 1,
+            },
+            &info,
+        ));
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        for packet in &packets {
+            store.store_publish(packet, &mut t).await.unwrap();
+        }
+        t.commit().await.unwrap();
+
+        let expected = packets
+            .into_iter()
+            // Only the first
+            .take(1)
+            .map(|p| {
+                (
+                    p.id,
+                    PublishInfo {
+                        interface: p.interface,
+                        path: p.path,
+                        reliability: mapping.reliability,
+                        version_major: mapping.version_major,
+                        expiry: mapping.expiry,
+                        sent: p.sent,
+                        value: p.payload,
+                    },
+                )
+            })
+            .collect_vec();
+
+        let mut res = Vec::new();
+        let count = store.unsent_publishes(100, &mut res).await.unwrap();
+
+        assert_eq!(count, 1);
+
+        assert_eq!(res, expected);
+    }
+
+    #[tokio::test]
+    async fn should_get_interfaces() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let mapping1 = RetentionMapping {
+            interface: "com.Foo".into(),
+            path: "/path".into(),
+            version_major: 1,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+
+        let mapping2 = RetentionMapping {
+            interface: "com.Bar".into(),
+            path: "path".into(),
+            version_major: 2,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_mapping(&mapping1, &mut t).await.unwrap();
+        store.store_mapping(&mapping2, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        let res = store.fetch_mapping_interfaces().await.unwrap();
+
+        let mut expected = HashSet::new();
+        expected.insert(StoredInterface {
+            name: "com.Foo".to_string(),
+            version_major: 1,
+        });
+        expected.insert(StoredInterface {
+            name: "com.Bar".to_string(),
+            version_major: 2,
+        });
+
+        assert_eq!(expected, res);
     }
 }

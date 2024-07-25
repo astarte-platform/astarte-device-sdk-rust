@@ -45,12 +45,11 @@ use astarte_message_hub_proto::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::TryStreamExt;
 use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-use crate::retention::StoredRetentionExt;
+use crate::retention::{Id as RetentionId, PublishInfo};
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder},
     interface::{
@@ -134,46 +133,12 @@ impl<S> GrpcClient<S> {
     pub(crate) fn new(client: MsgHubClient, store: StoreWrapper<S>) -> Self {
         Self { client, store }
     }
-
-    async fn resend_stored_publishes(&self, interfaces: &Interfaces) -> Result<(), Error>
-    where
-        S: StoreCapabilities,
-    {
-        if let Some(retention) = self.store.get_retention() {
-            retention.cleanup_introspection(interfaces).await?;
-
-            retention
-                .all_publishes()
-                .await?
-                .map_err(Error::from)
-                .try_for_each(|(id, publish)| {
-                    let mut client = self.client.clone();
-
-                    async move {
-                        let msg = AstarteMessage::decode(publish.value.borrow())
-                            .map_err(GrpcError::Decode)?;
-
-                        client
-                            .send(tonic::Request::new(msg))
-                            .await
-                            .map_err(GrpcError::from)?;
-
-                        retention.mark_received(&id).await?;
-
-                        Ok(())
-                    }
-                })
-                .await?;
-        }
-
-        Ok(())
-    }
 }
 
 #[async_trait]
 impl<S> Publish for GrpcClient<S>
 where
-    S: StoreCapabilities + Send,
+    S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
         self.client
@@ -195,16 +160,14 @@ where
 
     async fn send_individual_stored(
         &mut self,
+        id: crate::retention::Id,
         data: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
         let Some(retention) = self.store.get_retention() else {
             return self.send_individual(data).await;
         };
 
-        let value = AstarteMessage::from(data.clone());
-        let id = retention
-            .store_publish_individual(&data, &value.encode_to_vec())
-            .await?;
+        let value = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(value))
@@ -216,15 +179,16 @@ where
         Ok(())
     }
 
-    async fn send_object_stored(&mut self, data: ValidatedObject) -> Result<(), crate::Error> {
+    async fn send_object_stored(
+        &mut self,
+        id: crate::retention::Id,
+        data: ValidatedObject,
+    ) -> Result<(), crate::Error> {
         let Some(retention) = self.store.get_retention() else {
             return self.send_object(data).await;
         };
 
-        let value = AstarteMessage::from(data.clone());
-        let id = retention
-            .store_publish_obj(&data, &value.encode_to_vec())
-            .await?;
+        let value = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(value))
@@ -232,6 +196,29 @@ where
             .map_err(|e| Error::Grpc(GrpcError::from(e)))?;
 
         retention.mark_received(&id).await?;
+
+        Ok(())
+    }
+
+    async fn resend_stored(
+        &mut self,
+        id: RetentionId,
+        data: PublishInfo<'_>,
+    ) -> Result<(), crate::Error> {
+        let msg = AstarteMessage::decode(data.value.borrow()).map_err(GrpcError::Decode)?;
+
+        self.client
+            .send(tonic::Request::new(msg))
+            .await
+            .map_err(GrpcError::from)?;
+
+        debug_assert!(
+            self.store.get_retention().is_some(),
+            "resend_stored called without store that supports it"
+        );
+        if let Some(retention) = self.store.get_retention() {
+            retention.mark_received(&id).await?;
+        }
 
         Ok(())
     }
@@ -242,6 +229,14 @@ where
             .await
             .map(|_| ())
             .map_err(|e| GrpcError::from(e).into())
+    }
+
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error> {
+        Ok(AstarteMessage::from(data.clone()).encode_to_vec())
+    }
+
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
+        Ok(AstarteMessage::from(data.clone()).encode_to_vec())
     }
 }
 
@@ -576,8 +571,6 @@ where
 
         let sender = GrpcClient::new(client.clone(), builder.store.clone());
         let receiver = Grpc::new(self.uuid, client, stream);
-
-        sender.resend_stored_publishes(&builder.interfaces).await?;
 
         Ok((sender, receiver))
     }

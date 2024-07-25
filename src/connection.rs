@@ -18,23 +18,31 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
-use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::{collections::HashMap, sync::atomic::AtomicBool};
 
 use async_trait::async_trait;
+use futures::future::Either;
 use itertools::Itertools;
+use tokio::sync::Notify;
 use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinSet,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, trace, warn};
 
+use crate::builder::DEFAULT_CHANNEL_SIZE;
+use crate::interface::Retention;
+use crate::retention::memory::ItemValue;
+use crate::retention::{StoredRetention, StoredRetentionExt};
 use crate::{
     error::Report,
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
     introspection::AddInterfaceError,
+    retention::memory::VolatileRetention,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
     transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -101,6 +109,7 @@ where
         interfaces: Arc<RwLock<Interfaces>>,
         tx: flume::Sender<Result<DeviceEvent, Error>>,
         client: mpsc::Receiver<ClientMessage>,
+        volatile_store: VolatileRetention,
         store: StoreWrapper<S>,
         connection: C,
         sender: C::Sender,
@@ -108,18 +117,23 @@ where
     where
         S: Clone,
     {
+        let status = Arc::new(ConnectionStatus::new());
+
         Self {
             sender: DeviceSender {
                 interfaces: Arc::clone(&interfaces),
                 client,
                 store: store.clone(),
                 sender,
+                volatile_store,
+                status: Arc::clone(&status),
             },
             receiver: DeviceReceiver {
                 interfaces,
                 tx,
                 store,
                 connection,
+                status,
             },
         }
     }
@@ -138,15 +152,31 @@ where
             mut receiver,
         } = self;
 
+        if let Some(retention) = sender.store.get_retention() {
+            let interfaces = sender.interfaces.read().await;
+
+            retention.cleanup_introspection(&interfaces).await?;
+        }
+
         let mut tasks: JoinSet<Result<(), Error>> = JoinSet::new();
 
         tasks.spawn(async move {
+            sender.init_stored_retention().await?;
+
             // TODO: consider adding a cancellation token.
             loop {
-                // Last client disconnected or panicked
-                let msg = sender.client.recv().await.ok_or(Error::Disconnected)?;
+                let either = sender.poll_next().await.ok_or(Error::Disconnected)?;
 
-                sender.handle_client_msg(msg).await?;
+                match either {
+                    Either::Left(msg) => {
+                        sender.handle_client_msg(msg).await?;
+                    }
+                    Either::Right(()) => {
+                        sender.resend_volatile_publishes().await?;
+
+                        sender.resend_stored_publishes().await?;
+                    }
+                }
             }
         });
 
@@ -158,9 +188,13 @@ where
                 let Some(event) = event else {
                     debug!("reconnecting");
 
+                    receiver.status.set_connected(false);
+
                     let interfaces = receiver.interfaces.read().await;
 
                     receiver.connection.reconnect(&interfaces).await?;
+
+                    receiver.status.set_connected(true);
 
                     continue;
                 };
@@ -207,25 +241,38 @@ pub(crate) struct DeviceSender<S, T> {
     pub(crate) client: mpsc::Receiver<ClientMessage>,
     store: StoreWrapper<S>,
     sender: T,
+    status: Arc<ConnectionStatus>,
+    volatile_store: VolatileRetention,
 }
 
 impl<S, T> DeviceSender<S, T>
 where
     S: StoreCapabilities,
 {
+    async fn poll_next(&mut self) -> Option<Either<ClientMessage, ()>> {
+        let msg_fut = std::pin::pin!(self.client.recv());
+        let connected_fut = std::pin::pin!(self.status.wait_reconnection());
+
+        // drop the references to sender
+        let either = match futures::future::select(msg_fut, connected_fut).await {
+            Either::Left((msg, _)) => {
+                let msg = msg?;
+
+                Either::Left(msg)
+            }
+            Either::Right(((), _)) => Either::Right(()),
+        };
+
+        Some(either)
+    }
+
     pub(crate) async fn handle_client_msg(&mut self, msg: ClientMessage) -> Result<(), Error>
     where
         T: Publish + Register,
         S: PropertyStore,
     {
         match msg {
-            ClientMessage::Individual(data) => {
-                if data.retention.is_stored() {
-                    return self.sender.send_individual_stored(data).await;
-                }
-
-                self.sender.send_individual(data).await
-            }
+            ClientMessage::Individual(data) => self.send_individual(data).await,
             ClientMessage::Property {
                 data,
                 version_major,
@@ -249,13 +296,7 @@ where
 
                 Ok(())
             }
-            ClientMessage::Object(data) => {
-                if data.retention.is_stored() {
-                    return self.sender.send_object_stored(data).await;
-                }
-
-                self.sender.send_object(data).await
-            }
+            ClientMessage::Object(data) => self.send_object(data).await,
             ClientMessage::Unset(data) => {
                 self.sender.unset(data.clone()).await?;
 
@@ -319,6 +360,114 @@ where
                 Ok(())
             }
         }
+    }
+
+    async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        if !self.status.is_connected() {
+            trace!("publish individual while connection is offline");
+
+            return self.offline_send_individual(data).await;
+        }
+
+        if data.retention.is_stored() {
+            if let Some(retention) = self.store.get_retention() {
+                let value = self.sender.serialize_individual(&data)?;
+
+                let id = retention
+                    .store_sent_publish_individual(&data, &value)
+                    .await?;
+
+                return self.sender.send_individual_stored(id, data).await;
+            }
+
+            warn!("not storing interface with retention stored sinc the store doesn't support retention");
+        }
+
+        self.sender.send_individual(data).await
+    }
+
+    async fn send_object(&mut self, data: ValidatedObject) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        if !self.status.is_connected() {
+            trace!("publish individual while connection is offline");
+
+            return self.offline_send_object(data).await;
+        }
+
+        if data.retention.is_stored() {
+            if let Some(retention) = self.store.get_retention() {
+                let value = self.sender.serialize_object(&data)?;
+
+                let id = retention.store_sent_publish_obj(&data, &value).await?;
+
+                return self.sender.send_object_stored(id, data).await;
+            }
+
+            warn!("not storing interface with retention stored sinc the store doesn't support retention");
+        }
+
+        self.sender.send_object(data).await
+    }
+
+    async fn offline_send_individual(&mut self, data: ValidatedIndividual) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        match data.retention {
+            Retention::Discard => {
+                debug!("drop publish with retention discard since disconnected");
+            }
+            Retention::Volatile { .. } => {
+                self.volatile_store.push(data);
+            }
+            Retention::Stored { .. } => {
+                if let Some(retention) = self.store.get_retention() {
+                    let value = self.sender.serialize_individual(&data)?;
+
+                    let _ = retention
+                        .store_sent_publish_individual(&data, &value)
+                        .await?;
+                } else {
+                    warn!("storing interface with retention stored in volatile since the store doesn't support retention");
+
+                    self.volatile_store.push(data);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn offline_send_object(&mut self, data: ValidatedObject) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        match data.retention {
+            Retention::Discard => {
+                debug!("drop publish with retention discard since disconnected");
+            }
+            Retention::Volatile { .. } => {
+                self.volatile_store.push(data);
+            }
+            Retention::Stored { .. } => {
+                if let Some(retention) = self.store.get_retention() {
+                    let value = self.sender.serialize_object(&data)?;
+
+                    let _ = retention.store_sent_publish_obj(&data, &value).await?;
+                } else {
+                    warn!("storing interface with retention stored in volatile since the store doesn't support retention");
+
+                    self.volatile_store.push(data);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns a boolean to check if the interface was added.
@@ -448,12 +597,86 @@ where
 
         Ok(removed_names)
     }
+
+    async fn resend_volatile_publishes(&mut self) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        while let Some(item) = self.volatile_store.pop_next() {
+            match item {
+                ItemValue::Individual(individual) => {
+                    self.sender.send_individual(individual).await?;
+                }
+                ItemValue::Object(object) => {
+                    self.sender.send_object(object).await?;
+                }
+            }
+
+            // Let's check if we are still connected after the await
+            if self.status.is_connected() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn resend_stored_publishes(&mut self) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            return Ok(());
+        };
+
+        let mut buf = Vec::new();
+
+        debug!("start sending store publishes");
+        loop {
+            let count = retention
+                .unsent_publishes(DEFAULT_CHANNEL_SIZE, &mut buf)
+                .await?;
+
+            trace!("loaded {count} stored publishes");
+
+            for (id, info) in buf.drain(..) {
+                self.sender.resend_stored(id, info).await?;
+            }
+
+            if count == 0 || count < DEFAULT_CHANNEL_SIZE {
+                info!("all stored publishes sent");
+
+                break;
+            }
+
+            buf.clear();
+        }
+
+        Ok(())
+    }
+
+    /// This function is called once at the start to send all the stored packet.
+    async fn init_stored_retention(&mut self) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            return Ok(());
+        };
+
+        retention.reset_all_publishes().await?;
+
+        self.resend_stored_publishes().await?;
+
+        Ok(())
+    }
 }
 
 pub(crate) struct DeviceReceiver<S, C> {
     interfaces: Arc<RwLock<Interfaces>>,
     tx: flume::Sender<Result<DeviceEvent, Error>>,
     store: StoreWrapper<S>,
+    status: Arc<ConnectionStatus>,
     connection: C,
 }
 
@@ -615,4 +838,42 @@ pub(crate) enum ClientMessage {
         interfaces: Vec<String>,
         response: oneshot::Sender<Result<Vec<String>, Error>>,
     },
+}
+
+#[derive(Debug)]
+struct ConnectionStatus {
+    connected: AtomicBool,
+    reconnected: Notify,
+}
+
+impl ConnectionStatus {
+    fn new() -> Self {
+        // Assumes we are connected
+        Self {
+            connected: AtomicBool::new(true),
+            reconnected: Notify::new(),
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Acquire)
+    }
+
+    fn set_connected(&self, connected: bool) {
+        self.connected.store(connected, Ordering::Release);
+
+        if connected {
+            self.reconnected.notify_waiters();
+        }
+    }
+
+    async fn wait_reconnection(&self) {
+        self.reconnected.notified().await;
+    }
+}
+
+impl Default for ConnectionStatus {
+    fn default() -> Self {
+        Self::new()
+    }
 }

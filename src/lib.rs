@@ -81,6 +81,7 @@ mod test {
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
+    use crate::retention::memory::VolatileRetention;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
@@ -154,6 +155,7 @@ mod test {
             interfaces,
             tx_connection,
             rx_connection,
+            VolatileRetention::new(),
             store,
             mqtt_connection,
             mqtt_client,
