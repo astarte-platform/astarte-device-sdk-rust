@@ -43,7 +43,7 @@ use astarte_message_hub_proto::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use crate::retry::ExponentialIter;
@@ -400,7 +400,11 @@ impl Disconnect for Grpc {
     async fn disconnect(mut self) -> Result<(), crate::Error> {
         debug!("detaching node {}", self.uuid);
 
-        Self::detach(self.client).await.map_err(|e| e.into())
+        Self::detach(self.client).await.map_err(Error::Grpc)?;
+
+        info!("node {} detached", self.uuid);
+
+        Ok(())
     }
 }
 
