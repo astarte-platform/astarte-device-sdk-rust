@@ -256,6 +256,13 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// Deletes all the stored publishes for the interface.
     async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError>;
 
+    /// Deletes all the stored publishes for all the interfaces.
+    async fn delete_interface_many<I, S>(&self, interfaces: I) -> Result<(), RetentionError>
+    where
+        I: IntoIterator<Item = S> + Send,
+        <I as IntoIterator>::IntoIter: Send,
+        S: AsRef<str> + Send + Sync;
+
     /// Resend all the publishes that were not sent.
     ///
     /// It will fetch at most `limit` elements and store them in the [`Vec`], returning the actual
@@ -377,6 +384,15 @@ impl StoredRetention for Missing {
     }
 
     async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn delete_interface_many<I, S>(&self, _interfaces: I) -> Result<(), RetentionError>
+    where
+        I: IntoIterator<Item = S> + Send,
+        <I as IntoIterator>::IntoIter: Send,
+        S: AsRef<str> + Send + Sync,
+    {
         unreachable!("the type is Un-constructable");
     }
 

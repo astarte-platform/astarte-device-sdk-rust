@@ -490,6 +490,14 @@ where
 
         self.sender.add_interface(&interfaces, &to_add).await?;
 
+        if to_add.is_major_change() {
+            if let Some(retention) = self.store.get_retention() {
+                if let Err(err) = retention.delete_interface(to_add.interface_name()).await {
+                    error!(error = %Report::new(err),"failed to remove interface from retention");
+                }
+            }
+        }
+
         interfaces.add(to_add);
 
         Ok(true)
@@ -516,6 +524,19 @@ where
         debug!("Adding {} interfaces", to_add.len());
 
         self.sender.extend_interfaces(&interfaces, &to_add).await?;
+
+        if let Some(retention) = self.store.get_retention() {
+            let res = retention
+                .delete_interface_many(
+                    to_add
+                        .values()
+                        .filter_map(|v| v.is_major_change().then_some(v.interface_name())),
+                )
+                .await;
+            if let Err(err) = res {
+                error!(error = %Report::new(err),"failed to remove interfaces from retention");
+            }
+        }
 
         let names = to_add.keys().cloned().collect_vec();
 
@@ -545,6 +566,10 @@ where
             // We cannot error here since we have already unsubscribed from the interface
             if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
                 error!(error = %Report::new(err),"failed to remove property");
+            }
+        } else if let Some(retention) = self.store.get_retention() {
+            if let Err(err) = retention.delete_interface(to_remove.interface_name()).await {
+                error!(error = %Report::new(err),"failed to remove interface from retention");
             }
         }
 
@@ -581,6 +606,13 @@ where
         self.sender
             .remove_interfaces(&interfaces, &to_remove)
             .await?;
+
+        if let Some(retention) = self.store.get_retention() {
+            let res = retention.delete_interface_many(to_remove.keys()).await;
+            if let Err(err) = res {
+                error!(error = %Report::new(err),"failed to remove interfaces from retention");
+            }
+        }
 
         for (_, iface) in to_remove.iter() {
             // We cannot error here since we have already unsubscribed from the interface

@@ -265,7 +265,7 @@ where
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
     ) -> Result<(), crate::Error> {
-        let interfaces_json = InterfacesJson::try_from_iter(added.values())
+        let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
             .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
 
         self.client

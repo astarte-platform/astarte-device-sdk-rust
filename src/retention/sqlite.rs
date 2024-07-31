@@ -449,20 +449,13 @@ impl SqliteStore {
     async fn delete_publish_and_mappings(
         &self,
         interface: &str,
+        transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), SqliteRetentionError> {
-        let mut t = self
-            .db_conn
-            .begin()
-            .await
-            .map_err(SqliteRetentionError::begin)?;
-
-        let t_ref = &mut t;
-
         query_file!(
             "queries/retention/delete_publish_by_interface.sql",
             interface,
         )
-        .execute(&mut **t_ref)
+        .execute(&mut **transaction)
         .await
         .map_err(|err| SqliteRetentionError::DeleteInterface {
             interface: interface.to_string(),
@@ -473,14 +466,12 @@ impl SqliteStore {
             "queries/retention/delete_mapping_by_interface.sql",
             interface,
         )
-        .execute(&mut **t_ref)
+        .execute(&mut **transaction)
         .await
         .map_err(|err| SqliteRetentionError::DeleteInterface {
             interface: interface.to_string(),
             backtrace: err,
         })?;
-
-        t.commit().await.map_err(SqliteRetentionError::commit)?;
 
         Ok(())
     }
@@ -589,9 +580,48 @@ impl StoredRetention for SqliteStore {
     }
 
     async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {
-        self.delete_publish_and_mappings(interface)
+        let mut t = self
+            .db_conn
+            .begin()
             .await
-            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::begin(err)))?;
+
+        self.delete_publish_and_mappings(interface, &mut t)
+            .await
+            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))?;
+
+        t.commit()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::commit(err)))?;
+
+        Ok(())
+    }
+
+    async fn delete_interface_many<I, S>(&self, interfaces: I) -> Result<(), RetentionError>
+    where
+        I: IntoIterator<Item = S> + Send,
+        <I as IntoIterator>::IntoIter: Send,
+        S: AsRef<str> + Send + Sync,
+    {
+        let mut t = self
+            .db_conn
+            .begin()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::begin(err)))?;
+
+        for interface in interfaces {
+            let interface = interface.as_ref();
+
+            self.delete_publish_and_mappings(interface, &mut t)
+                .await
+                .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))?;
+        }
+
+        t.commit()
+            .await
+            .map_err(|err| RetentionError::unsent(SqliteRetentionError::commit(err)))?;
+
+        Ok(())
     }
 
     async fn unsent_publishes(
@@ -943,6 +973,58 @@ mod tests {
         t.commit().await.unwrap();
 
         store.delete_interface(interface).await.unwrap();
+
+        let packet = store.publish(&exp.id).await.unwrap();
+
+        assert_eq!(packet, None);
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        let mapping = store
+            .mapping(&mapping.interface, &mapping.path, &mut t)
+            .await
+            .unwrap();
+
+        assert_eq!(mapping, None);
+    }
+
+    #[tokio::test]
+    async fn should_delete_interface_many() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Guaranteed,
+            expiry: None,
+        };
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_mapping(&mapping, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        let id = Id {
+            timestamp: TimestampMillis(1),
+            counter: 1,
+        };
+        let exp = RetentionPublish {
+            id,
+            interface: interface.into(),
+            path: path.into(),
+            expiry: None,
+            sent: false,
+            payload: [].as_slice().into(),
+        };
+
+        let mut t = store.db_conn.begin().await.unwrap();
+        store.store_publish(&exp, &mut t).await.unwrap();
+        t.commit().await.unwrap();
+
+        store.delete_interface_many(&[interface]).await.unwrap();
 
         let packet = store.publish(&exp.id).await.unwrap();
 
