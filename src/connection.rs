@@ -29,6 +29,7 @@ use tokio::{
 };
 use tracing::{debug, error, warn};
 
+use crate::error::AggregateError;
 use crate::{
     client::RecvError,
     error::Report,
@@ -558,9 +559,14 @@ impl<S, C> DeviceReceiver<S, C> {
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let object = interface.as_object_ref().ok_or(Error::Aggregation {
-            exp: InterfaceAggregation::Object,
-            got: InterfaceAggregation::Individual,
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface.interface_name(),
+                path.to_string(),
+                InterfaceAggregation::Object,
+                InterfaceAggregation::Individual,
+            );
+            Error::Aggregation(aggr_err)
         })?;
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
