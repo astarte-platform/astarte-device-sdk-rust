@@ -30,7 +30,6 @@ use tracing::{debug, error, trace};
 use super::{PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
-    retention::Context,
     transport::mqtt::payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
@@ -250,7 +249,6 @@ impl TryFrom<StoredRecord> for StoredProp {
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
     pub(crate) db_conn: sqlx::SqlitePool,
-    pub(crate) retention_ctx: Context,
 }
 
 impl SqliteStore {
@@ -262,10 +260,7 @@ impl SqliteStore {
             .await
             .map_err(SqliteError::Migration)?;
 
-        Ok(SqliteStore {
-            db_conn: pool,
-            retention_ctx: Context::new(),
-        })
+        Ok(SqliteStore { db_conn: pool })
     }
 
     /// Creates a sqlite database for the Astarte device.

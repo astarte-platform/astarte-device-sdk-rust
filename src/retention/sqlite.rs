@@ -548,17 +548,15 @@ impl SqliteStore {
 
 #[async_trait]
 impl StoredRetention for SqliteStore {
-    async fn store_publish(&self, publish: PublishInfo<'_>) -> Result<Id, RetentionError> {
-        let id = self.retention_ctx.next();
-
+    async fn store_publish(&self, id: &Id, publish: PublishInfo<'_>) -> Result<(), RetentionError> {
         let ret_map = RetentionMapping::from(&publish);
-        let ret_pub = RetentionPublish::from_info(id, &publish);
+        let ret_pub = RetentionPublish::from_info(*id, &publish);
 
         self.store(&ret_map, &ret_pub)
             .await
             .map_err(|err| RetentionError::store(&publish, err))?;
 
-        Ok(id)
+        Ok(())
     }
 
     async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError> {

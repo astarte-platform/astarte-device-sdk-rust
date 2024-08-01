@@ -63,7 +63,7 @@ impl VolatileRetention {
         }
 
         let res = value.try_into();
-        debug_assert!(res.is_ok(), "BUG: value should hanve retention volatile");
+        debug_assert!(res.is_ok(), "BUG: value should have retention volatile");
 
         let item = match res {
             Ok(item) => item,

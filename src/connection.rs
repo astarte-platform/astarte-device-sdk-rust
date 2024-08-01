@@ -35,7 +35,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::interface::Retention;
 use crate::retention::memory::ItemValue;
-use crate::retention::{StoredRetention, StoredRetentionExt};
+use crate::retention::{self, StoredRetention, StoredRetentionExt};
 use crate::{
     error::Report,
     event::DeviceEvent,
@@ -125,6 +125,7 @@ where
                 client,
                 store: store.clone(),
                 sender,
+                retention_ctx: retention::Context::new(),
                 volatile_store,
                 status: Arc::clone(&status),
             },
@@ -241,6 +242,7 @@ pub(crate) struct DeviceSender<S, T> {
     pub(crate) client: mpsc::Receiver<ClientMessage>,
     store: StoreWrapper<S>,
     sender: T,
+    retention_ctx: retention::Context,
     status: Arc<ConnectionStatus>,
     volatile_store: VolatileRetention,
 }
@@ -376,8 +378,10 @@ where
             if let Some(retention) = self.store.get_retention() {
                 let value = self.sender.serialize_individual(&data)?;
 
-                let id = retention
-                    .store_sent_publish_individual(&data, &value)
+                let id = self.retention_ctx.next();
+
+                retention
+                    .store_sent_publish_individual(&id, &data, &value)
                     .await?;
 
                 return self.sender.send_individual_stored(id, data).await;
@@ -403,7 +407,9 @@ where
             if let Some(retention) = self.store.get_retention() {
                 let value = self.sender.serialize_object(&data)?;
 
-                let id = retention.store_sent_publish_obj(&data, &value).await?;
+                let id = self.retention_ctx.next();
+
+                retention.store_sent_publish_obj(&id, &data, &value).await?;
 
                 return self.sender.send_object_stored(id, data).await;
             }
@@ -429,8 +435,10 @@ where
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_individual(&data)?;
 
-                    let _ = retention
-                        .store_sent_publish_individual(&data, &value)
+                    let id = self.retention_ctx.next();
+
+                    retention
+                        .store_sent_publish_individual(&id, &data, &value)
                         .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
@@ -458,7 +466,9 @@ where
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_object(&data)?;
 
-                    let _ = retention.store_sent_publish_obj(&data, &value).await?;
+                    let id = self.retention_ctx.next();
+
+                    retention.store_sent_publish_obj(&id, &data, &value).await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 

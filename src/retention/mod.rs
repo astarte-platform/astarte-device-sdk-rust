@@ -242,7 +242,7 @@ impl<'a> PublishInfo<'a> {
 #[async_trait]
 pub trait StoredRetention: Clone + Send + Sync {
     /// Store a publish returning the id to access the publish in the future.
-    async fn store_publish(&self, publish: PublishInfo<'_>) -> Result<Id, RetentionError>;
+    async fn store_publish(&self, id: &Id, publish: PublishInfo<'_>) -> Result<(), RetentionError>;
 
     /// It will mark the stored publish as sent or unset given the flag.
     async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError>;
@@ -303,24 +303,26 @@ impl Display for StoredInterface {
 pub(crate) trait StoredRetentionExt: StoredRetention {
     async fn store_sent_publish_individual(
         &self,
+        id: &Id,
         individual: &ValidatedIndividual,
         value: &[u8],
-    ) -> Result<Id, RetentionError> {
+    ) -> Result<(), RetentionError> {
         // Always store as not sent, so we can mark it afterwards
         let publish = PublishInfo::from_individual(false, individual, value);
 
-        self.store_publish(publish).await
+        self.store_publish(id, publish).await
     }
 
     async fn store_sent_publish_obj(
         &self,
+        id: &Id,
         obj: &ValidatedObject,
         value: &[u8],
-    ) -> Result<Id, RetentionError> {
+    ) -> Result<(), RetentionError> {
         // Always store as not sent, so we can mark it afterwards
         let publish = PublishInfo::from_obj(false, obj, value);
 
-        self.store_publish(publish).await
+        self.store_publish(id, publish).await
     }
 
     /// Removes the outdated interfaces from the introspection
@@ -367,7 +369,11 @@ pub enum Missing {}
 
 #[async_trait]
 impl StoredRetention for Missing {
-    async fn store_publish(&self, _publish: PublishInfo<'_>) -> Result<Id, RetentionError> {
+    async fn store_publish(
+        &self,
+        _id: &Id,
+        _publish: PublishInfo<'_>,
+    ) -> Result<(), RetentionError> {
         unreachable!("the type is Un-constructable");
     }
 
