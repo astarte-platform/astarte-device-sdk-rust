@@ -61,7 +61,8 @@ async fn main() -> Result<(), Error> {
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connect(mqtt_config)
         .await?
-        .build();
+        .build()
+        .await;
 
     let device_cpy = client.clone();
     println!("Connection to Astarte established.");

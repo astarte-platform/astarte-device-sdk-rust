@@ -22,33 +22,88 @@
 
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
+use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::{
-    builder::DEFAULT_VOLATILE_CAPACITY,
     interface::Retention,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
-pub(crate) struct VolatileRetention {
+use super::Id;
+
+/// Shared struct for the volatile retention.
+///
+/// The methods will only require a `&self` and handle the locking internally to prevent problems
+/// in the critical sections.
+#[derive(Debug, Clone)]
+pub(crate) struct SharedVolataileStore {
+    store: Arc<Mutex<VolatileStore>>,
+}
+
+impl SharedVolataileStore {
+    pub(crate) fn new() -> Self {
+        Self {
+            store: Arc::new(Mutex::new(VolatileStore::new())),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(VolatileStore::with_capacity(capacity))),
+        }
+    }
+
+    pub(crate) async fn push<T>(&self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolitileItemError>,
+    {
+        self.store.lock().await.push(id, value);
+    }
+
+    pub(crate) async fn mark_sent(&self, id: &Id, sent: bool) -> Option<bool> {
+        self.store.lock().await.mark_sent(id, sent)
+    }
+
+    pub(crate) async fn mark_received(&self, id: &Id) -> Option<ItemValue> {
+        self.store.lock().await.mark_received(id)
+    }
+
+    pub(crate) async fn pop_next(&mut self) -> Option<ItemValue> {
+        self.store.lock().await.pop_next()
+    }
+
+    /// This method will swap the capacity.
+    pub(crate) async fn set_capacity(&self, capacity: usize) {
+        self.store.lock().await.set_capacity(capacity);
+    }
+}
+
+#[derive(Debug)]
+struct VolatileStore {
     store: VecDeque<VolitileItem>,
 }
 
-impl VolatileRetention {
-    pub(crate) fn new() -> Self {
-        Self::with_capacity(DEFAULT_VOLATILE_CAPACITY)
+impl VolatileStore {
+    fn new() -> Self {
+        Self {
+            store: VecDeque::new(),
+        }
     }
 
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    #[cfg(test)]
+    fn with_capacity(capacity: usize) -> Self {
         Self {
             store: VecDeque::with_capacity(capacity),
         }
     }
 
-    pub(crate) fn push<T>(&mut self, value: T)
+    fn push<T>(&mut self, id: Id, value: T)
     where
         T: TryInto<ItemValue, Error = VolitileItemError>,
     {
@@ -74,10 +129,27 @@ impl VolatileRetention {
             }
         };
 
-        self.store.push_back(VolitileItem::new(item));
+        self.store.push_back(VolitileItem::new(id, item));
     }
 
-    pub(crate) fn pop_next(&mut self) -> Option<ItemValue> {
+    fn mark_sent(&mut self, id: &Id, sent: bool) -> Option<bool> {
+        self.store
+            .iter_mut()
+            .find(|item| item.id == *id)
+            .map(|item| std::mem::replace(&mut item.sent, sent))
+    }
+
+    fn mark_received(&mut self, id: &Id) -> Option<ItemValue> {
+        let idx = self
+            .store
+            .iter()
+            .enumerate()
+            .find_map(|(idx, item)| (item.id == *id).then_some(idx))?;
+
+        self.store.remove(idx).map(|item| item.value)
+    }
+
+    fn pop_next(&mut self) -> Option<ItemValue> {
         let now = SystemTime::now();
 
         std::iter::from_fn(|| self.store.pop_front())
@@ -94,9 +166,26 @@ impl VolatileRetention {
     fn is_full(&mut self) -> bool {
         self.store.len() == self.store.capacity()
     }
+
+    fn set_capacity(&mut self, capacity: usize) {
+        let current = self.store.capacity();
+
+        if capacity < current {
+            let diff = current.saturating_sub(capacity);
+            // Remove first elements
+            self.store.drain(..diff);
+
+            self.store.shrink_to_fit();
+        } else {
+            // Number of elements that needed to be reserved
+            let additional = capacity.saturating_sub(self.store.len());
+
+            self.store.reserve_exact(additional);
+        }
+    }
 }
 
-impl Default for VolatileRetention {
+impl Default for VolatileStore {
     fn default() -> Self {
         Self::new()
     }
@@ -104,13 +193,17 @@ impl Default for VolatileRetention {
 
 #[derive(Debug, Clone, PartialEq)]
 struct VolitileItem {
+    id: Id,
     store_time: SystemTime,
+    sent: bool,
     value: ItemValue,
 }
 
 impl VolitileItem {
-    fn new(value: ItemValue) -> Self {
+    fn new(id: Id, value: ItemValue) -> Self {
         Self {
+            id,
+            sent: false,
             store_time: SystemTime::now(),
             value,
         }
@@ -185,6 +278,7 @@ mod tests {
 
     use crate::{
         interface::{Reliability, Retention},
+        retention::Context,
         AstarteType,
     };
 
@@ -202,9 +296,11 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileRetention::with_capacity(1);
+        let mut store = VolatileStore::with_capacity(1);
 
-        store.push(info);
+        let ctx = Context::new();
+
+        store.push(ctx.next(), info);
 
         assert!(store.is_full());
     }
@@ -231,13 +327,14 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileRetention::with_capacity(1);
+        let mut store = VolatileStore::with_capacity(1);
+        let ctx = Context::new();
 
-        store.push(info1);
+        store.push(ctx.next(), info1);
 
         assert!(store.is_full());
 
-        store.push(info2.clone());
+        store.push(ctx.next(), info2.clone());
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info2));
     }
@@ -276,16 +373,18 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileRetention::with_capacity(2);
+        let mut store = VolatileStore::with_capacity(2);
 
-        store.push(info1);
-        store.push(info2);
+        let ctx = Context::new();
+
+        store.push(ctx.next(), info1);
+        store.push(ctx.next(), info2);
 
         store.store[0].store_time -= Duration::from_secs(1);
 
         assert!(store.is_full());
 
-        store.push(info3.clone());
+        store.push(ctx.next(), info3.clone());
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info3));
     }
@@ -324,11 +423,13 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileRetention::with_capacity(3);
+        let mut store = VolatileStore::with_capacity(3);
 
-        store.push(info1);
-        store.push(info2);
-        store.push(info3.clone());
+        let ctx = Context::new();
+
+        store.push(ctx.next(), info1);
+        store.push(ctx.next(), info2);
+        store.push(ctx.next(), info3.clone());
 
         store.store[0].store_time -= Duration::from_secs(1);
         store.store[1].store_time -= Duration::from_secs(1);
@@ -336,6 +437,7 @@ mod tests {
         assert_eq!(store.pop_next(), Some(ItemValue::Individual(info3)));
         assert!(store.store.is_empty());
     }
+
     #[test]
     fn check_retention_volatile() {
         let info = ValidatedIndividual {
@@ -351,5 +453,102 @@ mod tests {
         let res = ItemValue::try_from(info);
 
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn should_mark_sent() {
+        let info1 = ValidatedIndividual {
+            interface: "interface1".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+        let info2 = ValidatedIndividual {
+            interface: "interface2".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+        let info3 = ValidatedIndividual {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile { expiry: None },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        let mut store = VolatileStore::with_capacity(3);
+
+        let ctx = Context::new();
+
+        store.push(ctx.next(), info1);
+        let id = ctx.next();
+        store.push(id, info2);
+        store.push(ctx.next(), info3.clone());
+
+        assert!(!store.mark_sent(&id, true).unwrap());
+
+        assert!(store.store[1].sent)
+    }
+
+    #[test]
+    fn should_mark_received() {
+        let info1 = ValidatedIndividual {
+            interface: "interface1".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+        let info2 = ValidatedIndividual {
+            interface: "interface2".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+        let info3 = ValidatedIndividual {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile { expiry: None },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        let mut store = VolatileStore::with_capacity(3);
+
+        let ctx = Context::new();
+
+        store.push(ctx.next(), info1);
+        let id = ctx.next();
+        store.push(id, info2);
+        store.push(ctx.next(), info3.clone());
+
+        assert!(store.mark_received(&id).is_some());
+
+        assert_eq!(store.store.len(), 2);
+        assert_eq!(store.store[1].value, ItemValue::Individual(info3));
     }
 }

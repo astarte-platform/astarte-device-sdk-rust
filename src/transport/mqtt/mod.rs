@@ -58,7 +58,9 @@ use crate::{
     },
     interfaces::{self, Interfaces, Introspection},
     properties,
-    retention::{Id as RetentionId, PublishInfo, StoredRetention, StoredRetentionExt},
+    retention::{
+        memory::SharedVolataileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
+    },
     store::{
         error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
     },
@@ -147,6 +149,7 @@ pub struct MqttClient<S> {
     client: AsyncClient,
     retention: RetSender,
     store: StoreWrapper<S>,
+    volatile: SharedVolataileStore,
 }
 
 impl<S> MqttClient<S> {
@@ -156,12 +159,14 @@ impl<S> MqttClient<S> {
         client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
+        volatile: SharedVolataileStore,
     ) -> Self {
         Self {
             client_id,
             client,
             retention,
             store,
+            volatile,
         }
     }
 
@@ -201,6 +206,42 @@ impl<S> MqttClient<S> {
             .await
             .map_err(MqttError::Unsubscribe)
             .map(drop)
+    }
+
+    async fn mark_received(&self, id: &RetentionId) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        match id {
+            RetentionId::Volatile(id) => {
+                self.volatile.mark_received(id).await;
+            }
+            RetentionId::Stored(id) => {
+                if let Some(retention) = self.store.get_retention() {
+                    retention.mark_received(id).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn mark_as_sent(&self, id: &RetentionId) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        match id {
+            RetentionId::Volatile(id) => {
+                self.volatile.mark_sent(id, true).await;
+            }
+            RetentionId::Stored(id) => {
+                if let Some(retention) = self.store.get_retention() {
+                    retention.mark_as_sent(id).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -257,22 +298,21 @@ where
             .await?;
 
         debug_assert!(
-            self.store.get_retention().is_some(),
-            "resend stored called without store that supports retention"
+            !validated.retention.is_discard(),
+            "send stored called for retention discard"
         );
-        if let Some(retention) = self.store.get_retention() {
-            match validated.reliability {
-                // Since it's Unreliable we will never know the broker received it
-                Reliability::Unreliable => {
-                    retention.mark_received(&id).await?;
-                }
-                Reliability::Guaranteed | Reliability::Unique => {
-                    retention.mark_as_sent(&id).await?;
 
-                    self.retention
-                        .send((id, notice))
-                        .map_err(|_| Error::Disconnected)?;
-                }
+        match validated.reliability {
+            // Since it's Unreliable we will never know the broker received it
+            Reliability::Unreliable => {
+                self.mark_received(&id).await?;
+            }
+            Reliability::Guaranteed | Reliability::Unique => {
+                self.mark_as_sent(&id).await?;
+
+                self.retention
+                    .send((id, notice))
+                    .map_err(|_| Error::Disconnected)?;
             }
         }
 
@@ -321,19 +361,17 @@ where
             self.store.get_retention().is_some(),
             "resend stored called without store that supports retention"
         );
-        if let Some(retention) = self.store.get_retention() {
-            match data.reliability {
-                // Since it's Unreliable we will never know the broker received it
-                Reliability::Unreliable => {
-                    retention.mark_received(&id).await?;
-                }
-                Reliability::Guaranteed | Reliability::Unique => {
-                    retention.mark_as_sent(&id).await?;
+        match data.reliability {
+            // Since it's Unreliable we will never know the broker received it
+            Reliability::Unreliable => {
+                self.mark_received(&id).await?;
+            }
+            Reliability::Guaranteed | Reliability::Unique => {
+                self.mark_as_sent(&id).await?;
 
-                    self.retention
-                        .send((id, notice))
-                        .map_err(|_| Error::Disconnected)?;
-                }
+                self.retention
+                    .send((id, notice))
+                    .map_err(|_| Error::Disconnected)?;
             }
         }
 
@@ -499,6 +537,7 @@ pub struct Mqtt<S> {
     connection: MqttConnection,
     retention: MqttRetention,
     store: StoreWrapper<S>,
+    volatile: SharedVolataileStore,
 }
 
 impl<S> Mqtt<S> {
@@ -512,19 +551,22 @@ impl<S> Mqtt<S> {
         connection: MqttConnection,
         retention: MqttRetention,
         store: StoreWrapper<S>,
+        volatile: SharedVolataileStore,
     ) -> Self {
         Self {
             client_id,
             connection,
             retention,
             store,
+            volatile,
         }
     }
 
     /// Marks the packets as received for the retention.
     async fn mark_packet_received(
-        retention: &impl StoredRetention,
-        res_id: Result<crate::retention::Id, NoticeError>,
+        volatile: &SharedVolataileStore,
+        stored: &impl StoreCapabilities,
+        res_id: Result<RetentionId, NoticeError>,
     ) -> Result<(), Error>
     where
         S: StoreCapabilities,
@@ -538,9 +580,18 @@ impl<S> Mqtt<S> {
             }
         };
 
-        debug!("marking {id} as received");
+        match id {
+            RetentionId::Volatile(id) => {
+                volatile.mark_received(&id).await;
+            }
+            RetentionId::Stored(id) => {
+                if let Some(retention) = stored.get_retention() {
+                    retention.mark_received(&id).await?;
+                }
+            }
+        }
 
-        retention.mark_received(&id).await?;
+        debug!("marking {id} as received");
 
         Ok(())
     }
@@ -549,11 +600,6 @@ impl<S> Mqtt<S> {
     where
         S: StoreCapabilities,
     {
-        let Some(retention) = self.store.get_retention() else {
-            // No retention, just pull the connection
-            return Ok(self.connection.next_publish().await);
-        };
-
         loop {
             let mut conn_future = std::pin::pin!(self.connection.next_publish());
 
@@ -561,7 +607,7 @@ impl<S> Mqtt<S> {
                 Either::Left((res, _)) => {
                     let res = res?;
 
-                    Self::mark_packet_received(retention, res).await?;
+                    Self::mark_packet_received(&self.volatile, &self.store, res).await?;
                 }
                 // the retention future can be dropped safely
                 Either::Right((publish, _)) => {
@@ -665,34 +711,9 @@ where
     S: StoreCapabilities + PropertyStore,
 {
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
-        if let Some(retention) = self.store.get_retention() {
-            let mut conn_fut = std::pin::pin!(self.connection.connect(
-                self.client_id.as_ref(),
-                interfaces,
-                &self.store
-            ));
-
-            let mut ret_fut = self.retention.into_future();
-
-            loop {
-                match futures::future::select(&mut ret_fut, &mut conn_fut).await {
-                    Either::Left((res, _)) => {
-                        let res = res?;
-
-                        Self::mark_packet_received(retention, res).await?;
-                    }
-                    Either::Right((res, _)) => {
-                        res?;
-
-                        return Ok(());
-                    }
-                };
-            }
-        } else {
-            self.connection
-                .connect(self.client_id.as_ref(), interfaces, &self.store)
-                .await?;
-        }
+        self.connection
+            .connect(self.client_id.as_ref(), interfaces, &self.store)
+            .await?;
 
         Ok(())
     }
@@ -832,7 +853,7 @@ pub(crate) mod test {
     };
 
     use crate::{
-        builder::{ConnectionConfig, DeviceBuilder},
+        builder::{ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
         store::memory::MemoryStore,
     };
 
@@ -867,6 +888,8 @@ pub(crate) mod test {
 
         let (ret_tx, ret_rx) = flume::unbounded();
 
+        let volatile = SharedVolataileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
+
         let store = StoreWrapper::new(store);
         let mqtt = Mqtt::new(
             client_id.clone(),
@@ -883,9 +906,10 @@ pub(crate) mod test {
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
+            volatile.clone(),
         );
 
-        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store);
+        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store, volatile);
 
         (mqtt_client, mqtt)
     }

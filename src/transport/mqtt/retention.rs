@@ -30,13 +30,13 @@ use std::{collections::HashMap, future::IntoFuture, task::Poll};
 use rumqttc::{NoticeError, NoticeFuture};
 use tracing::{error, trace};
 
-use crate::{retention::Id, Error};
+use crate::{retention::RetentionId, Error};
 
-pub(crate) type RetSender = flume::Sender<(Id, NoticeFuture)>;
-pub(crate) type RetReceiver = flume::Receiver<(Id, NoticeFuture)>;
+pub(crate) type RetSender = flume::Sender<(RetentionId, NoticeFuture)>;
+pub(crate) type RetReceiver = flume::Receiver<(RetentionId, NoticeFuture)>;
 
 pub(crate) struct MqttRetention {
-    packets: HashMap<Id, NoticeFuture>,
+    packets: HashMap<RetentionId, NoticeFuture>,
     rx: RetReceiver,
 }
 
@@ -77,7 +77,7 @@ impl MqttRetention {
         Ok(count)
     }
 
-    fn next_received(&mut self) -> Option<Result<Id, NoticeError>> {
+    fn next_received(&mut self) -> Option<Result<RetentionId, NoticeError>> {
         let (id, res) = self
             .packets
             .iter_mut()
@@ -92,7 +92,7 @@ impl MqttRetention {
 }
 
 impl<'a> IntoFuture for &'a mut MqttRetention {
-    type Output = Result<Result<Id, NoticeError>, Error>;
+    type Output = Result<Result<RetentionId, NoticeError>, Error>;
 
     type IntoFuture = MqttRetentionFuture<'a>;
 
@@ -102,7 +102,7 @@ impl<'a> IntoFuture for &'a mut MqttRetention {
 }
 
 impl Iterator for MqttRetention {
-    type Item = Result<Id, NoticeError>;
+    type Item = Result<RetentionId, NoticeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_received()
@@ -112,7 +112,7 @@ impl Iterator for MqttRetention {
 pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 
 impl<'a> std::future::Future for MqttRetentionFuture<'a> {
-    type Output = Result<Result<Id, NoticeError>, Error>;
+    type Output = Result<Result<RetentionId, NoticeError>, Error>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -154,9 +154,9 @@ mod tests {
         let i3 = ctx.next();
         let (_t3, n3) = NoticeTx::new();
 
-        tx.send((i1, n1)).unwrap();
-        tx.send((i2, n2)).unwrap();
-        tx.send((i3, n3)).unwrap();
+        tx.send((RetentionId::Stored(i1), n1)).unwrap();
+        tx.send((RetentionId::Stored(i2), n2)).unwrap();
+        tx.send((RetentionId::Stored(i3), n3)).unwrap();
 
         assert_eq!(retention.queue().unwrap(), 3);
 
@@ -166,7 +166,7 @@ mod tests {
         t2.success();
 
         let n = retention.next().unwrap().unwrap();
-        assert_eq!(n, i2);
+        assert_eq!(n, RetentionId::Stored(i2));
 
         t1.error(NoticeError::Recv);
         let res = retention.next().unwrap();

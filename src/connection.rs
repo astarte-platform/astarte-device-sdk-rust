@@ -34,15 +34,14 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::interface::Retention;
-use crate::retention::memory::ItemValue;
-use crate::retention::{self, StoredRetention, StoredRetentionExt};
+use crate::retention::memory::{ItemValue, SharedVolataileStore};
+use crate::retention::{self, RetentionId, StoredRetention, StoredRetentionExt};
 use crate::{
     error::Report,
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
     introspection::AddInterfaceError,
-    retention::memory::VolatileRetention,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
     transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -70,7 +69,7 @@ pub trait EventLoop {
     ///     let (client, mut connection) = DeviceBuilder::new()
     ///         .store(MemoryStore::new())
     ///         .connect(mqtt_config).await.unwrap()
-    ///         .build();
+    ///         .build().await;
     ///
     ///     tokio::spawn(async move {
     ///         loop {
@@ -109,7 +108,7 @@ where
         interfaces: Arc<RwLock<Interfaces>>,
         tx: flume::Sender<Result<DeviceEvent, Error>>,
         client: mpsc::Receiver<ClientMessage>,
-        volatile_store: VolatileRetention,
+        volatile_store: SharedVolataileStore,
         store: StoreWrapper<S>,
         connection: C,
         sender: C::Sender,
@@ -244,7 +243,7 @@ pub(crate) struct DeviceSender<S, T> {
     sender: T,
     retention_ctx: retention::Context,
     status: Arc<ConnectionStatus>,
-    volatile_store: VolatileRetention,
+    volatile_store: SharedVolataileStore,
 }
 
 impl<S, T> DeviceSender<S, T>
@@ -374,23 +373,47 @@ where
             return self.offline_send_individual(data).await;
         }
 
-        if data.retention.is_stored() {
-            if let Some(retention) = self.store.get_retention() {
-                let value = self.sender.serialize_individual(&data)?;
-
-                let id = self.retention_ctx.next();
-
-                retention
-                    .store_sent_publish_individual(&id, &data, &value)
-                    .await?;
-
-                return self.sender.send_individual_stored(id, data).await;
-            }
-
-            warn!("not storing interface with retention stored sinc the store doesn't support retention");
+        match data.retention {
+            Retention::Volatile { .. } => self.send_volatile_individual(data).await,
+            Retention::Stored { .. } => self.send_stored_individual(data).await,
+            Retention::Discard => self.sender.send_individual(data).await,
         }
+    }
 
-        self.sender.send_individual(data).await
+    async fn send_stored_individual(&mut self, data: ValidatedIndividual) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            warn!("not storing interface with retention stored since the store doesn't support retention");
+
+            return self.sender.send_individual(data).await;
+        };
+
+        let value = self.sender.serialize_individual(&data)?;
+
+        let id = self.retention_ctx.next();
+
+        retention
+            .store_publish_individual(&id, &data, &value)
+            .await?;
+
+        self.sender
+            .send_individual_stored(RetentionId::Stored(id), data)
+            .await
+    }
+
+    async fn send_volatile_individual(&mut self, data: ValidatedIndividual) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let id = self.retention_ctx.next();
+
+        self.volatile_store.push(id, data.clone()).await;
+
+        self.sender
+            .send_individual_stored(RetentionId::Volatile(id), data)
+            .await
     }
 
     async fn send_object(&mut self, data: ValidatedObject) -> Result<(), Error>
@@ -398,26 +421,50 @@ where
         T: Publish,
     {
         if !self.status.is_connected() {
-            trace!("publish individual while connection is offline");
+            trace!("publish object while connection is offline");
 
             return self.offline_send_object(data).await;
         }
 
-        if data.retention.is_stored() {
-            if let Some(retention) = self.store.get_retention() {
-                let value = self.sender.serialize_object(&data)?;
-
-                let id = self.retention_ctx.next();
-
-                retention.store_sent_publish_obj(&id, &data, &value).await?;
-
-                return self.sender.send_object_stored(id, data).await;
-            }
-
-            warn!("not storing interface with retention stored sinc the store doesn't support retention");
+        match data.retention {
+            Retention::Volatile { .. } => self.send_volatile_object(data).await,
+            Retention::Stored { .. } => self.send_stored_object(data).await,
+            Retention::Discard => self.sender.send_object(data).await,
         }
+    }
 
-        self.sender.send_object(data).await
+    async fn send_stored_object(&mut self, data: ValidatedObject) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let Some(retention) = self.store.get_retention() else {
+            warn!("not storing interface with retention stored since the store doesn't support retention");
+
+            return self.sender.send_object(data).await;
+        };
+
+        let value = self.sender.serialize_object(&data)?;
+
+        let id = self.retention_ctx.next();
+
+        retention.store_publish_object(&id, &data, &value).await?;
+
+        self.sender
+            .send_object_stored(RetentionId::Stored(id), data)
+            .await
+    }
+
+    async fn send_volatile_object(&mut self, data: ValidatedObject) -> Result<(), Error>
+    where
+        T: Publish,
+    {
+        let id = self.retention_ctx.next();
+
+        self.volatile_store.push(id, data.clone()).await;
+
+        self.sender
+            .send_object_stored(RetentionId::Volatile(id), data)
+            .await
     }
 
     async fn offline_send_individual(&mut self, data: ValidatedIndividual) -> Result<(), Error>
@@ -429,21 +476,22 @@ where
                 debug!("drop publish with retention discard since disconnected");
             }
             Retention::Volatile { .. } => {
-                self.volatile_store.push(data);
+                let id = self.retention_ctx.next();
+
+                self.volatile_store.push(id, data).await;
             }
             Retention::Stored { .. } => {
+                let id = self.retention_ctx.next();
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_individual(&data)?;
 
-                    let id = self.retention_ctx.next();
-
                     retention
-                        .store_sent_publish_individual(&id, &data, &value)
+                        .store_publish_individual(&id, &data, &value)
                         .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(data);
+                    self.volatile_store.push(id, data).await;
                 }
             }
         }
@@ -460,19 +508,20 @@ where
                 debug!("drop publish with retention discard since disconnected");
             }
             Retention::Volatile { .. } => {
-                self.volatile_store.push(data);
+                let id = self.retention_ctx.next();
+
+                self.volatile_store.push(id, data).await;
             }
             Retention::Stored { .. } => {
+                let id = self.retention_ctx.next();
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_object(&data)?;
 
-                    let id = self.retention_ctx.next();
-
-                    retention.store_sent_publish_obj(&id, &data, &value).await?;
+                    retention.store_publish_object(&id, &data, &value).await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(data);
+                    self.volatile_store.push(id, data).await;
                 }
             }
         }
@@ -644,7 +693,7 @@ where
     where
         T: Publish,
     {
-        while let Some(item) = self.volatile_store.pop_next() {
+        while let Some(item) = self.volatile_store.pop_next().await {
             match item {
                 ItemValue::Individual(individual) => {
                     self.sender.send_individual(individual).await?;
@@ -682,7 +731,9 @@ where
             trace!("loaded {count} stored publishes");
 
             for (id, info) in buf.drain(..) {
-                self.sender.resend_stored(id, info).await?;
+                self.sender
+                    .resend_stored(RetentionId::Stored(id), info)
+                    .await?;
             }
 
             if count == 0 || count < DEFAULT_CHANNEL_SIZE {

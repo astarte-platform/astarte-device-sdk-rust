@@ -49,7 +49,8 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-use crate::retention::{Id as RetentionId, PublishInfo};
+use crate::retention::memory::SharedVolataileStore;
+use crate::retention::{PublishInfo, RetentionId};
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder},
     interface::{
@@ -126,12 +127,39 @@ impl Interceptor for NodeIdInterceptor {
 pub struct GrpcClient<S> {
     client: MsgHubClient,
     store: StoreWrapper<S>,
+    volatile: SharedVolataileStore,
 }
 
 impl<S> GrpcClient<S> {
     /// Create a new client.
-    pub(crate) fn new(client: MsgHubClient, store: StoreWrapper<S>) -> Self {
-        Self { client, store }
+    pub(crate) fn new(
+        client: MsgHubClient,
+        store: StoreWrapper<S>,
+        volatile: SharedVolataileStore,
+    ) -> Self {
+        Self {
+            client,
+            store,
+            volatile,
+        }
+    }
+
+    async fn mark_received(&self, id: &RetentionId) -> Result<(), Error>
+    where
+        S: StoreCapabilities,
+    {
+        match id {
+            RetentionId::Volatile(id) => {
+                self.volatile.mark_received(id).await;
+            }
+            RetentionId::Stored(id) => {
+                if let Some(retention) = self.store.get_retention() {
+                    retention.mark_received(id).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -160,13 +188,9 @@ where
 
     async fn send_individual_stored(
         &mut self,
-        id: crate::retention::Id,
+        id: RetentionId,
         data: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
-        let Some(retention) = self.store.get_retention() else {
-            return self.send_individual(data).await;
-        };
-
         let value = AstarteMessage::from(data);
 
         self.client
@@ -174,20 +198,16 @@ where
             .await
             .map_err(|e| Error::Grpc(GrpcError::from(e)))?;
 
-        retention.mark_received(&id).await?;
+        self.mark_received(&id).await?;
 
         Ok(())
     }
 
     async fn send_object_stored(
         &mut self,
-        id: crate::retention::Id,
+        id: RetentionId,
         data: ValidatedObject,
     ) -> Result<(), crate::Error> {
-        let Some(retention) = self.store.get_retention() else {
-            return self.send_object(data).await;
-        };
-
         let value = AstarteMessage::from(data);
 
         self.client
@@ -195,7 +215,7 @@ where
             .await
             .map_err(|e| Error::Grpc(GrpcError::from(e)))?;
 
-        retention.mark_received(&id).await?;
+        self.mark_received(&id).await?;
 
         Ok(())
     }
@@ -212,13 +232,7 @@ where
             .await
             .map_err(GrpcError::from)?;
 
-        debug_assert!(
-            self.store.get_retention().is_some(),
-            "resend_stored called without store that supports it"
-        );
-        if let Some(retention) = self.store.get_retention() {
-            retention.mark_received(&id).await?;
-        }
+        self.mark_received(&id).await?;
 
         Ok(())
     }
@@ -569,7 +583,11 @@ where
         let node_data = NodeData::try_from_interfaces(self.uuid, &builder.interfaces)?;
         let stream = Grpc::<StoreWrapper<S>>::attach(&mut client, node_data).await?;
 
-        let sender = GrpcClient::new(client.clone(), builder.store.clone());
+        let sender = GrpcClient::new(
+            client.clone(),
+            builder.store.clone(),
+            builder.volatile.clone(),
+        );
         let receiver = Grpc::new(self.uuid, client, stream);
 
         Ok((sender, receiver))
@@ -613,6 +631,7 @@ mod test {
     use uuid::uuid;
 
     use crate::{
+        builder::DEFAULT_VOLATILE_CAPACITY,
         store::memory::MemoryStore,
         transport::test::{mock_validate_individual, mock_validate_object},
         AstarteAggregate, DeviceEvent, Value,
@@ -783,7 +802,11 @@ mod test {
 
         let store = StoreWrapper::new(MemoryStore::new());
 
-        let client = GrpcClient::new(message_hub_client.clone(), store.clone());
+        let client = GrpcClient::new(
+            message_hub_client.clone(),
+            store.clone(),
+            SharedVolataileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+        );
         let grcp = Grpc::new(ID, message_hub_client, stream);
 
         Ok((client, grcp))

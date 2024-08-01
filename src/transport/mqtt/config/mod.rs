@@ -441,8 +441,15 @@ where
             client,
             retention_tx,
             builder.store.clone(),
+            builder.volatile.clone(),
         );
-        let connection = Mqtt::new(client_id, connection, retention, builder.store.clone());
+        let connection = Mqtt::new(
+            client_id,
+            connection,
+            retention,
+            builder.store.clone(),
+            builder.volatile.clone(),
+        );
 
         Ok((client, connection))
     }

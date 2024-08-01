@@ -301,7 +301,7 @@ impl Display for StoredInterface {
 /// Utility trait that can be used to simplify the boilerplate for the connections.
 #[async_trait]
 pub(crate) trait StoredRetentionExt: StoredRetention {
-    async fn store_sent_publish_individual(
+    async fn store_publish_individual(
         &self,
         id: &Id,
         individual: &ValidatedIndividual,
@@ -313,7 +313,7 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         self.store_publish(id, publish).await
     }
 
-    async fn store_sent_publish_obj(
+    async fn store_publish_object(
         &self,
         id: &Id,
         obj: &ValidatedObject,
@@ -416,6 +416,22 @@ impl StoredRetention for Missing {
 
     async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
         unreachable!("the type is Un-constructable");
+    }
+}
+
+/// Retention Id to be passed to the connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum RetentionId {
+    Volatile(Id),
+    Stored(Id),
+}
+
+impl Display for RetentionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RetentionId::Volatile(id) => write!(f, "volatile {id}"),
+            RetentionId::Stored(id) => write!(f, "stored {id}"),
+        }
     }
 }
 

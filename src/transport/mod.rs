@@ -36,7 +36,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
     },
     interfaces::{self, Interfaces},
-    retention::{Id as RetentionId, PublishInfo},
+    retention::{PublishInfo, RetentionId},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,

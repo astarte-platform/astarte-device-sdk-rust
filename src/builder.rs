@@ -39,7 +39,7 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
-use crate::retention::memory::VolatileRetention;
+use crate::retention::memory::SharedVolataileStore;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -95,21 +95,23 @@ pub enum BuilderError {
 ///
 /// This trait is already implemented generically for the [`DeviceBuilder`]
 /// and implementing it should be avoided since it has no practical use.
+#[async_trait]
 pub trait DeviceSdkBuild<S, C>
 where
-    C: Connection,
+    C: Connection + Send,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
-    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
+    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
 }
 
+#[async_trait]
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
 where
     S: PropertyStore,
-    C: Connection,
+    C: Connection + Send,
 {
-    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
+    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
         // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
@@ -123,13 +125,13 @@ where
             self.store.clone(),
         );
 
-        let volatile_store = VolatileRetention::with_capacity(self.volatile_retention);
+        self.volatile.set_capacity(self.volatile_retention).await;
 
         let connection = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
-            volatile_store,
+            self.volatile,
             self.store,
             self.connection,
             self.sender,
@@ -152,6 +154,7 @@ where
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
     pub(crate) store: StoreWrapper<S>,
+    pub(crate) volatile: SharedVolataileStore,
     pub(crate) writable_dir: Option<PathBuf>,
 }
 
@@ -178,6 +181,7 @@ impl DeviceBuilder<(), ()> {
             connection: (),
             sender: (),
             store: StoreWrapper::new(()),
+            volatile: SharedVolataileStore::new(),
             writable_dir: None,
         }
     }
@@ -320,6 +324,7 @@ where
             connection: self.connection,
             sender: self.sender,
             store: StoreWrapper::new(store),
+            volatile: self.volatile,
             writable_dir: self.writable_dir,
         }
     }
@@ -344,6 +349,7 @@ where
             connection,
             sender,
             store: self.store,
+            volatile: self.volatile,
             writable_dir: self.writable_dir,
         })
     }
@@ -625,7 +631,8 @@ mod test {
         .await
         .unwrap()
         .unwrap()
-        .build();
+        .build()
+        .await;
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
