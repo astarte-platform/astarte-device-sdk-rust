@@ -27,8 +27,8 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
+use crate::error::AggregateError;
 use crate::interface::mapping::path::MappingError;
-use crate::interface::Aggregation;
 use crate::{
     connection::ClientMessage,
     error::Report,
@@ -75,13 +75,8 @@ pub enum RecvError {
     },
 
     /// Invalid aggregation between the interface and the data.
-    #[error("invalid aggregation, expected {exp} but got {got}")]
-    Aggregation {
-        /// Expected aggregation of the interface.
-        exp: Aggregation,
-        /// The actual aggregation.
-        got: Aggregation,
-    },
+    #[error(transparent)]
+    Aggregation(#[from] AggregateError),
 
     /// Error when the Device is disconnected from Astarte or client.
     ///
@@ -390,12 +385,15 @@ impl<S> DeviceClient<S> {
                 name: interface_name.to_string(),
             })?;
 
-        let object = interface
-            .as_object_ref()
-            .ok_or_else(|| Error::Aggregation {
-                exp: InterfaceAggregation::Object,
-                got: interface.aggregation(),
-            })?;
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface_name,
+                path.to_string(),
+                InterfaceAggregation::Object,
+                interface.aggregation(),
+            );
+            Error::Aggregation(aggr_err)
+        })?;
 
         debug!("sending {} {}", interface_name, path);
 

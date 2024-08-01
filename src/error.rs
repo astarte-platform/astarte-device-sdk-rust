@@ -18,8 +18,6 @@
 
 //! Error types for the Astarte SDK.
 
-use std::convert::Infallible;
-
 use crate::client::RecvError;
 use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
@@ -32,6 +30,8 @@ use crate::transport::mqtt::error::MqttError;
 use crate::transport::ConnectionRecvError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
+use std::convert::Infallible;
+use std::fmt::{Display, Formatter};
 
 /// Dynamic error type
 pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -89,13 +89,8 @@ pub enum Error {
     #[error("validation of the send payload failed")]
     Validation(#[from] UserValidationError),
     /// Invalid aggregation between the interface and the data.
-    #[error("invalid aggregation, expected {exp} but got {got}")]
-    Aggregation {
-        /// Expected aggregation of the interface.
-        exp: Aggregation,
-        /// The actual aggregation.
-        got: Aggregation,
-    },
+    #[error(transparent)]
+    Aggregation(#[from] AggregateError),
     /// Infallible conversion.
     #[error(transparent)]
     Infallible(#[from] Infallible),
@@ -116,6 +111,92 @@ pub enum Error {
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }
 
+/// Aggregate error variant.
+///
+/// This provides additional context in case of an aggregation error
+#[derive(Debug, thiserror::Error)]
+#[error("invalid aggregation in {ctx} for {interface}{path}, expected {exp} but got {got}")]
+#[non_exhaustive]
+pub struct AggregateError {
+    /// Interface name
+    interface: String,
+    /// Path
+    path: String,
+    /// Context to differentiate interface from payload error
+    ctx: AggregationCtx,
+    /// Expected aggregation of the interface.
+    exp: Aggregation,
+    /// The actual aggregation.
+    got: Aggregation,
+}
+
+impl AggregateError {
+    pub(crate) fn new(
+        interface: String,
+        path: String,
+        ctx: AggregationCtx,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
+        Self {
+            interface,
+            path,
+            ctx,
+            exp,
+            got,
+        }
+    }
+
+    pub(crate) fn for_interface(
+        interface: impl Into<String>,
+        path: impl Into<String>,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
+        Self::new(
+            interface.into(),
+            path.into(),
+            AggregationCtx::Interface,
+            exp,
+            got,
+        )
+    }
+
+    #[cfg(feature = "message-hub")]
+    pub(crate) fn for_payload(
+        interface: impl Into<String>,
+        path: impl Into<String>,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
+        Self::new(
+            interface.into(),
+            path.into(),
+            AggregationCtx::Payload,
+            exp,
+            got,
+        )
+    }
+}
+
+/// Context for the [AggregateError] error variant.
+#[derive(Debug, Clone)]
+pub enum AggregationCtx {
+    /// Error occurring when checking the interface.
+    Interface,
+    /// Error occurring when checking the payload data.
+    Payload,
+}
+
+impl Display for AggregationCtx {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AggregationCtx::Interface => write!(f, "interface"),
+            AggregationCtx::Payload => write!(f, "payload"),
+        }
+    }
+}
+
 impl TryFrom<Error> for RecvError {
     type Error = Error;
 
@@ -126,7 +207,7 @@ impl TryFrom<Error> for RecvError {
             Error::MappingNotFound { interface, mapping } => {
                 Ok(RecvError::MappingNotFound { interface, mapping })
             }
-            Error::Aggregation { exp, got } => Ok(RecvError::Aggregation { exp, got }),
+            Error::Aggregation(aggr_err) => Ok(RecvError::Aggregation(aggr_err)),
             Error::Disconnected => Ok(RecvError::Disconnected),
 
             Error::Mqtt(MqttError::Payload(err)) => {
@@ -172,11 +253,11 @@ where
     }
 }
 
-impl<E> std::fmt::Display for Report<E>
+impl<E> Display for Report<E>
 where
     E: std::error::Error,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.error)?;
 
         let mut cause: &dyn std::error::Error = &self.error;
@@ -195,9 +276,9 @@ where
 // situations where you unwrap a `Report` or return it from main.
 impl<E> std::fmt::Debug for Report<E>
 where
-    Report<E>: std::fmt::Display,
+    Report<E>: Display,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
     }
 }

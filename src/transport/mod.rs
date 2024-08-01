@@ -240,7 +240,7 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
-
+    use crate::error::AggregateError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
@@ -257,12 +257,15 @@ mod test {
     where
         D: AstarteAggregate + Send,
     {
-        let object = interface
-            .as_object_ref()
-            .ok_or_else(|| crate::Error::Aggregation {
-                exp: crate::interface::Aggregation::Object,
-                got: interface.aggregation(),
-            })?;
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface.interface_name(),
+                path.to_string(),
+                crate::interface::Aggregation::Object,
+                interface.aggregation(),
+            );
+            crate::Error::Aggregation(aggr_err)
+        })?;
 
         let aggregate = data.astarte_aggregate()?;
 

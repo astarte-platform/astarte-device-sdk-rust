@@ -56,6 +56,7 @@ use super::{
     Register,
 };
 use crate::client::RecvError;
+use crate::error::AggregateError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
@@ -441,7 +442,7 @@ where
 
     fn deserialize_individual(
         &self,
-        _mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
         let data = match payload.data {
@@ -453,10 +454,14 @@ where
             }
         };
 
-        trace!("unset received");
-        let individual = data.take_individual().ok_or(Error::Aggregation {
-            exp: Aggregation::Individual,
-            got: Aggregation::Object,
+        let individual = data.take_individual().ok_or_else(|| {
+            let aggr_err = AggregateError::for_payload(
+                mapping.interface().interface_name(),
+                mapping.path().to_string(),
+                Aggregation::Individual,
+                Aggregation::Object,
+            );
+            Error::Aggregation(aggr_err)
         })?;
 
         let data: AstarteType = individual
@@ -470,17 +475,22 @@ where
 
     fn deserialize_object(
         &self,
-        _object: &ObjectRef,
-        _path: &MappingPath<'_>,
+        object: &ObjectRef,
+        path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
         let object = payload
             .data
             .take_data()
             .and_then(|d| d.take_object())
-            .ok_or(Error::Aggregation {
-                exp: Aggregation::Object,
-                got: Aggregation::Individual,
+            .ok_or_else(|| {
+                let aggr_err = AggregateError::for_payload(
+                    object.interface.interface_name(),
+                    path.to_string(),
+                    Aggregation::Object,
+                    Aggregation::Individual,
+                );
+                Error::Aggregation(aggr_err)
             })?;
 
         let data =
