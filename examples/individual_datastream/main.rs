@@ -23,8 +23,8 @@ use std::time::SystemTime;
 use serde::Deserialize;
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, error::Error, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
+    builder::DeviceBuilder, client::RecvError, error::Error, prelude::*,
+    store::memory::MemoryStore, transport::mqtt::MqttConfig,
 };
 use tracing::error;
 
@@ -129,7 +129,7 @@ async fn main() -> Result<(), Error> {
                         }
                     }
                 }
-                Err(Error::Disconnected) => break,
+                Err(RecvError::Disconnected) => break,
                 Err(err) => error!(%err),
             }
         }

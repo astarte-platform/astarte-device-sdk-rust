@@ -27,6 +27,8 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
+use crate::error::AggregateError;
+use crate::interface::mapping::path::MappingError;
 use crate::{
     connection::ClientMessage,
     event::DeviceEvent,
@@ -42,6 +44,45 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteAggregate, Error, Interface,
 };
+
+/// Possible errors returned while handling connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum RecvError {
+    /// Connection error, either gRPC or MQTT
+    #[error("connection error, {0:?}")]
+    Connection(#[source] crate::transport::ConnectionRecvError),
+
+    /// Couldn't parse the mapping path.
+    #[error("invalid mapping path '{}'", .0.path())]
+    InvalidEndpoint(#[from] MappingError),
+
+    /// Couldn't find an interface with the given name.
+    #[error("couldn't find interface '{name}'")]
+    InterfaceNotFound {
+        /// Name of the missing interface.
+        name: String,
+    },
+
+    /// Couldn't find missing mapping in the interface.
+    #[error("couldn't find mapping {mapping} in interface {interface}")]
+    MappingNotFound {
+        /// Name of the interface.
+        interface: String,
+        /// Path of the missing mapping.
+        mapping: String,
+    },
+
+    /// Invalid aggregation between the interface and the data.
+    #[error(transparent)]
+    Aggregation(#[from] AggregateError),
+
+    /// Error when the Device is disconnected from Astarte or client.
+    ///
+    /// This is an unrecoverable error for the SDK.
+    #[error("disconnected from astarte")]
+    Disconnected,
+}
 
 /// A trait representing the behavior of an Astarte device client. A device client is responsible
 /// for interacting with the Astarte platform by sending properties and datastreams, handling events, and managing
@@ -181,7 +222,7 @@ pub trait Client {
     ///
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
-    async fn recv(&self) -> Result<DeviceEvent, Error>;
+    async fn recv(&self) -> Result<DeviceEvent, RecvError>;
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -198,7 +239,7 @@ pub struct DeviceClient<S> {
     // channel/queue that fits our needs and doesn't suffer from the "slow receiver" problem.
     // Since it doesn't block the sender till all the receivers have read the msg. Unlike the
     // Tokio broadcast channel (another mpmc channel implementation).
-    pub(crate) rx: flume::Receiver<Result<DeviceEvent, Error>>,
+    pub(crate) rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
     pub(crate) connection: mpsc::Sender<ClientMessage>,
     pub(crate) store: StoreWrapper<S>,
 }
@@ -206,7 +247,7 @@ pub struct DeviceClient<S> {
 impl<S> DeviceClient<S> {
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
-        rx: flume::Receiver<Result<DeviceEvent, Error>>,
+        rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
         connection: mpsc::Sender<ClientMessage>,
         store: StoreWrapper<S>,
     ) -> Self {
@@ -336,12 +377,15 @@ impl<S> DeviceClient<S> {
                 name: interface_name.to_string(),
             })?;
 
-        let object = interface
-            .as_object_ref()
-            .ok_or_else(|| Error::Aggregation {
-                exp: InterfaceAggregation::Object,
-                got: interface.aggregation(),
-            })?;
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface_name,
+                path.to_string(),
+                InterfaceAggregation::Object,
+                interface.aggregation(),
+            );
+            Error::Aggregation(aggr_err)
+        })?;
 
         debug!("sending {} {}", interface_name, path);
 
@@ -462,11 +506,11 @@ where
         self.unset_prop(interface_name, &path).await
     }
 
-    async fn recv(&self) -> Result<DeviceEvent, Error> {
+    async fn recv(&self) -> Result<DeviceEvent, RecvError> {
         self.rx
             .recv_async()
             .await
-            .map_err(|_| Error::Disconnected)?
+            .map_err(|_| RecvError::Disconnected)?
     }
 }
 

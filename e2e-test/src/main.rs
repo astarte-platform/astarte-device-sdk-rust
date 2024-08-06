@@ -45,7 +45,8 @@ use tokio::time;
 use tracing::{debug, error, info};
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig, types::AstarteType,
+    builder::DeviceBuilder, client::RecvError, prelude::*, transport::mqtt::MqttConfig,
+    types::AstarteType,
 };
 
 mod mock_data_aggregate;
@@ -258,8 +259,9 @@ async fn main() -> eyre::Result<()> {
                         };
                     }
                 }
-                Err(astarte_device_sdk::Error::Disconnected) => break,
+                Err(RecvError::Disconnected) => break,
                 Err(err) => {
+                    // TODO: change behavior
                     panic!("poll error {err:?}");
                 }
             }

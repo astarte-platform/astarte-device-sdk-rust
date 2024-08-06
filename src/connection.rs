@@ -29,14 +29,19 @@ use tokio::{
 };
 use tracing::{debug, error, warn};
 
+use crate::error::AggregateError;
 use crate::{
+    client::RecvError,
     error::Report,
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership},
     interfaces::Interfaces,
     introspection::AddInterfaceError,
     store::{wrapper::StoreWrapper, PropertyStore, StoredProp},
-    transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
+    transport::{
+        Connection, ConnectionEvent, Disconnect, Publish, Receive, ReceivedEvent, Reconnect,
+        Register,
+    },
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Value,
 };
@@ -99,7 +104,7 @@ where
 {
     pub(crate) fn new(
         interfaces: Arc<RwLock<Interfaces>>,
-        tx: flume::Sender<Result<DeviceEvent, Error>>,
+        tx: flume::Sender<Result<DeviceEvent, RecvError>>,
         client: mpsc::Receiver<ClientMessage>,
         store: StoreWrapper<S>,
         connection: C,
@@ -151,24 +156,32 @@ where
         });
 
         tasks.spawn(async move {
-            // The event is null, reconnect the device
             loop {
-                let event = receiver.connection.next_event(&receiver.store).await?;
+                match receiver.connection.next_event(&receiver.store).await? {
+                    ConnectionEvent::Disconnected => {
+                        debug!("reconnecting");
 
-                let Some(event) = event else {
-                    debug!("reconnecting");
+                        let interfaces = receiver.interfaces.read().await;
 
-                    let interfaces = receiver.interfaces.read().await;
+                        receiver
+                            .connection
+                            .reconnect(&interfaces, &receiver.store)
+                            .await?;
 
-                    receiver
-                        .connection
-                        .reconnect(&interfaces, &receiver.store)
-                        .await?;
-
-                    continue;
-                };
-
-                receiver.handle_connection_event(event).await?;
+                        continue;
+                    }
+                    ConnectionEvent::Event(event) => {
+                        receiver.handle_connection_event(event).await?;
+                    }
+                    // send the error to the client
+                    ConnectionEvent::ReceiveError(err) => {
+                        receiver
+                            .tx
+                            .send_async(Err(err))
+                            .await
+                            .map_err(|_| Error::Disconnected)?;
+                    }
+                }
             }
         });
 
@@ -440,7 +453,7 @@ impl<S, T> DeviceSender<S, T> {
 
 pub(crate) struct DeviceReceiver<S, C> {
     interfaces: Arc<RwLock<Interfaces>>,
-    tx: flume::Sender<Result<DeviceEvent, Error>>,
+    tx: flume::Sender<Result<DeviceEvent, RecvError>>,
     store: StoreWrapper<S>,
     connection: C,
 }
@@ -451,12 +464,12 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Value, crate::Error>
+    ) -> Result<Value, Error>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let path = MappingPath::try_from(path)?;
+        let path = MappingPath::try_from(path).map_err(Error::InvalidEndpoint)?;
 
         let interfaces = self.interfaces.read().await;
         let interface = interfaces.get(interface).ok_or_else(|| {
@@ -546,9 +559,14 @@ impl<S, C> DeviceReceiver<S, C> {
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let object = interface.as_object_ref().ok_or(Error::Aggregation {
-            exp: InterfaceAggregation::Object,
-            got: InterfaceAggregation::Individual,
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface.interface_name(),
+                path.to_string(),
+                InterfaceAggregation::Object,
+                InterfaceAggregation::Individual,
+            );
+            Error::Aggregation(aggr_err)
         })?;
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
@@ -561,7 +579,7 @@ impl<S, C> DeviceReceiver<S, C> {
         C: Receive + Sync,
         S: PropertyStore,
     {
-        let data = self
+        let res = self
             .handle_event(&event.interface, &event.path, event.payload)
             .await
             .map(|aggregation| DeviceEvent {
@@ -569,6 +587,15 @@ impl<S, C> DeviceReceiver<S, C> {
                 path: event.path,
                 data: aggregation,
             });
+
+        let data = match res {
+            Ok(data) => Ok(data),
+            Err(err) => {
+                // this way, if there is an unrecoverable error the application will return Err
+                let recv_err = RecvError::try_from(err)?;
+                Err(recv_err)
+            }
+        };
 
         self.tx
             .send_async(data)

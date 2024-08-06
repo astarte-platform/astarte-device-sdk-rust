@@ -32,7 +32,7 @@ pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
-mod topic;
+pub mod topic;
 
 use std::{
     collections::HashMap,
@@ -46,7 +46,16 @@ use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, trace};
 
+pub use self::config::Credential;
+pub use self::config::MqttConfig;
+pub use self::pairing::PairingError;
+pub use self::payload::PayloadError;
+use super::{
+    Connection, ConnectionEvent, ConnectionRecvError, Publish, Receive, ReceivedEvent, Reconnect,
+    Register,
+};
 use crate::{
+    client::RecvError,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -60,13 +69,6 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
-
-use super::{Connection, Publish, Receive, ReceivedEvent, Reconnect, Register};
-
-pub use self::config::Credential;
-pub use self::config::MqttConfig;
-pub use self::pairing::PairingError;
-pub use self::payload::PayloadError;
 
 use self::{client::AsyncClient, connection::MqttConnection, error::MqttError, topic::ParsedTopic};
 
@@ -399,7 +401,7 @@ impl Receive for Mqtt {
     async fn next_event<S>(
         &mut self,
         store: &StoreWrapper<S>,
-    ) -> Result<Option<ReceivedEvent<Self::Payload>>, Error>
+    ) -> Result<ConnectionEvent<Self::Payload>, crate::Error>
     where
         S: PropertyStore,
     {
@@ -421,18 +423,22 @@ impl Receive for Mqtt {
                 self.purge_server_properties(store, &publish.payload)
                     .await?;
             } else {
-                let ParsedTopic { interface, path } =
-                    ParsedTopic::try_parse(client_id, &publish.topic).map_err(MqttError::Topic)?;
+                let con_event = match ParsedTopic::try_parse(client_id, &publish.topic) {
+                    Ok(ParsedTopic { interface, path }) => ConnectionEvent::Event(ReceivedEvent {
+                        interface: interface.to_string(),
+                        path: path.to_string(),
+                        payload: publish.payload,
+                    }),
+                    Err(err) => ConnectionEvent::error(RecvError::Connection(
+                        ConnectionRecvError::Topic(err),
+                    )),
+                };
 
-                return Ok(Some(ReceivedEvent {
-                    interface: interface.to_string(),
-                    path: path.to_string(),
-                    payload: publish.payload,
-                }));
+                return Ok(con_event);
             }
         }
 
-        Ok(None)
+        Ok(ConnectionEvent::Disconnected)
     }
 
     fn deserialize_individual(

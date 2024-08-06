@@ -30,7 +30,10 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use crate::transport::mqtt::topic::TopicError;
+use crate::transport::mqtt::PayloadError;
 use crate::{
+    client::RecvError,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -45,6 +48,41 @@ use crate::{
 #[cfg(feature = "message-hub")]
 pub mod grpc;
 pub mod mqtt;
+
+/// Possible errors returned while handling Mqtt connection messages
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug)]
+pub enum ConnectionRecvError {
+    /// Couldn't parse the topic
+    #[error("couldn't parse the topic")]
+    Topic(#[from] TopicError),
+    /// Errors that can occur handling the payload.
+    #[error("couldn't process payload")]
+    Payload(#[from] PayloadError),
+
+    /// Failed to convert a proto message.
+    #[cfg(feature = "message-hub")]
+    #[error(transparent)]
+    ProtoConversion(#[from] grpc::convert::MessageHubProtoError),
+    /// Message Hub server proto error
+    #[cfg(feature = "message-hub")]
+    #[error("Message Hub server proto error, {0}")]
+    Server(astarte_message_hub_proto::MessageHubError),
+}
+
+/// Connection event
+#[derive(Debug)]
+pub(crate) enum ConnectionEvent<P> {
+    Disconnected,
+    Event(ReceivedEvent<P>),
+    ReceiveError(RecvError),
+}
+
+impl<P> ConnectionEvent<P> {
+    pub(crate) fn error(err: RecvError) -> Self {
+        Self::ReceiveError(err)
+    }
+}
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
@@ -96,7 +134,7 @@ pub(crate) trait Receive {
     async fn next_event<S>(
         &mut self,
         store: &StoreWrapper<S>,
-    ) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>
+    ) -> Result<ConnectionEvent<Self::Payload>, crate::Error>
     where
         S: PropertyStore;
 
@@ -177,7 +215,7 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
-
+    use crate::error::AggregateError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
@@ -194,12 +232,15 @@ mod test {
     where
         D: AstarteAggregate + Send,
     {
-        let object = interface
-            .as_object_ref()
-            .ok_or_else(|| crate::Error::Aggregation {
-                exp: crate::interface::Aggregation::Object,
-                got: interface.aggregation(),
-            })?;
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface.interface_name(),
+                path.to_string(),
+                crate::interface::Aggregation::Object,
+                interface.aggregation(),
+            );
+            crate::Error::Aggregation(aggr_err)
+        })?;
 
         let aggregate = data.astarte_aggregate()?;
 
