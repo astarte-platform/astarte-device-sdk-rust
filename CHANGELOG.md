@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Update the Dynamic Introspection to support adding or removing interfaces from a MessageHub Node [#330](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/330)
 
+### Changed
+- Use Empty type rather than Node to detach a Node [#340](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/340/).
+
 ## [0.8.2] - 2024-05-29
 
 ## [0.7.4] - 2024-05-27
