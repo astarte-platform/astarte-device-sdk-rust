@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS propcache (
-    interface TEXT NOT NULl,
+    interface TEXT NOT NULL,
     path TEXT NOT NULL,
     value BLOB NOT NULL,
     type INTEGER NOT NULL,

@@ -25,10 +25,14 @@ use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceTypeDef};
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
+use crate::retention::RetentionError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
+
+/// Dynamic error type
+pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Astarte error.
 ///
@@ -101,6 +105,9 @@ pub enum Error {
     /// This is an unrecoverable error for the SDK.
     #[error("disconnected from astarte")]
     Disconnected,
+    /// Retention operation failed.
+    #[error("retention operation failed")]
+    Retention(#[from] RetentionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
     #[error(transparent)]

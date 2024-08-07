@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT\n    interface,\n    major_version AS \"major_version: i32\"\nFROM retention_mapping;\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "interface",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "major_version: i32",
+        "ordinal": 1,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "d351c27420b6ba3c437b36aeebd27422971f8b847ef2834e47152a01b17f2e87"
+}

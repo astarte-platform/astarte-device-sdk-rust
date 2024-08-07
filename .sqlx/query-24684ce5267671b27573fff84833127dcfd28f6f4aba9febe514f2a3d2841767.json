@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM retention_publish\nWHERE t_millis = ? AND counter = ?;\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "24684ce5267671b27573fff84833127dcfd28f6f4aba9febe514f2a3d2841767"
+}

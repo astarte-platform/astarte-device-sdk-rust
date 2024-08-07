@@ -28,6 +28,7 @@ use crate::{
         reference::{MappingRef, PropertyRef},
         Ownership,
     },
+    retention::StoredRetention,
     types::AstarteType,
 };
 
@@ -35,6 +36,20 @@ pub mod error;
 pub mod memory;
 pub mod sqlite;
 pub mod wrapper;
+
+/// Inform what capabilities are implemented for a store.
+///
+/// This is a crutch until specialization is implemented in the std library, while still being
+/// generic and accept external store implementations.
+pub trait StoreCapabilities {
+    /// Type used for the [`StoredRetention`].
+    ///
+    /// This should be self, it's used as an associated type to not introduce dynamic dispatch.
+    type Retention: StoredRetention;
+
+    /// Returns the retention if the store supports it.
+    fn get_retention(&self) -> Option<&Self::Retention>;
+}
 
 /// Trait providing compatibility with Astarte devices to databases.
 ///

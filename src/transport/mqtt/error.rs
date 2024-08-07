@@ -60,6 +60,9 @@ pub enum MqttError {
     /// See the [`ParingToken`](super::Credential::ParingToken) for more information.
     #[error("missing writable directory to store credentials to use the pairing token")]
     NoStorePairintToken,
+    /// Couldn't send the disconnect
+    #[error("couldn't send the disconnect")]
+    Disconnect(#[source] ClientError),
 }
 
 impl MqttError {

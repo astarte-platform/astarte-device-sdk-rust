@@ -67,7 +67,8 @@ async fn main() -> Result<(), Error> {
         .interface_directory("./examples/object_datastream/interfaces")?
         .connect(mqtt_config)
         .await?
-        .build();
+        .build()
+        .await;
 
     // Create an thread to transmit
     tokio::task::spawn(async move {

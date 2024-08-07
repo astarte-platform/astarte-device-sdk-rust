@@ -24,8 +24,8 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{PropertyStore, StoredProp};
-use crate::{interface::Ownership, types::AstarteType};
+use super::{PropertyStore, StoreCapabilities, StoredProp};
+use crate::{interface::Ownership, retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
 ///
@@ -49,6 +49,14 @@ impl MemoryStore {
         MemoryStore {
             store: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+}
+
+impl StoreCapabilities for MemoryStore {
+    type Retention = Missing;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        None
     }
 }
 

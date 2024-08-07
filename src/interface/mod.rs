@@ -542,6 +542,11 @@ impl DatastreamObject {
     pub fn explicit_timestamp(&self) -> bool {
         self.explicit_timestamp
     }
+
+    /// Returns the retention of the object's mappings.
+    pub fn retention(&self) -> Retention {
+        self.retention
+    }
 }
 
 impl MappingAccess for DatastreamObject {
@@ -727,6 +732,45 @@ impl Retention {
                     .unwrap_or(0);
             }
         }
+    }
+
+    /// Returns `true` if the retention is [`Stored`].
+    ///
+    /// [`Stored`]: Retention::Stored
+    #[must_use]
+    pub const fn is_stored(&self) -> bool {
+        matches!(self, Self::Stored { .. })
+    }
+
+    /// Returns the expiry for the retention.
+    ///
+    /// For the [`Discard`](Retention::Discard) will always return [`None`], while for
+    /// [`Volatile`](Retention::Volatile) or [`Stored`](Retention::Stored) returns the inner expiry
+    /// only if set.
+    #[must_use]
+    pub const fn expiry(&self) -> Option<Duration> {
+        match self {
+            Retention::Discard => None,
+            // Duration is copy
+            Retention::Volatile { expiry } => *expiry,
+            Retention::Stored { expiry } => *expiry,
+        }
+    }
+
+    /// Returns `true` if the retention is [`Volatile`].
+    ///
+    /// [`Volatile`]: Retention::Volatile
+    #[must_use]
+    pub const fn is_volatile(&self) -> bool {
+        matches!(self, Self::Volatile { .. })
+    }
+
+    /// Returns `true` if the retention is [`Discard`].
+    ///
+    /// [`Discard`]: Retention::Discard
+    #[must_use]
+    pub const fn is_discard(&self) -> bool {
+        matches!(self, Self::Discard)
     }
 }
 
