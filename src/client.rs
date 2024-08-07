@@ -29,6 +29,7 @@ use tracing::{debug, error, trace};
 
 use crate::{
     connection::ClientMessage,
+    error::Report,
     event::DeviceEvent,
     interface::{
         mapping::path::MappingPath,
@@ -182,6 +183,13 @@ pub trait Client {
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
     async fn recv(&self) -> Result<DeviceEvent, Error>;
+}
+
+/// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
+#[async_trait]
+pub trait ClientDisconnect {
+    /// Cleanly disconnects the client consuming it.
+    async fn disconnect(self);
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -588,5 +596,17 @@ where
         .await?;
 
         rx.await.map_err(|_| Error::Disconnected)?
+    }
+}
+
+#[async_trait]
+impl<S> ClientDisconnect for DeviceClient<S>
+where
+    S: Send + Sync,
+{
+    async fn disconnect(self) {
+        if let Err(e) = self.send_msg(ClientMessage::Disconnect).await {
+            error!(error = %Report::new(e), "Could not close the connection gracefully");
+        }
     }
 }

@@ -47,7 +47,7 @@ use futures::future::Either;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     error::Report,
@@ -69,7 +69,7 @@ use crate::{
     Error, Interface, Timestamp,
 };
 
-use super::{Connection, Publish, Receive, ReceivedEvent, Reconnect, Register};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register};
 
 pub use self::config::Credential;
 pub use self::config::MqttConfig;
@@ -518,6 +518,24 @@ where
                 self.unsubscribe(iface.interface_name()).await?;
             }
         }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<S> Disconnect for MqttClient<S>
+where
+    S: Send,
+{
+    async fn disconnect(self) -> Result<(), crate::Error> {
+        self.client
+            .disconnect()
+            .await
+            .map(drop)
+            .map_err(MqttError::Disconnect)?;
+
+        info!("disconnect packet sent");
 
         Ok(())
     }

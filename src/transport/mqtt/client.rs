@@ -42,6 +42,7 @@ pub(crate) mod mock {
             pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<NoticeFuture, ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
             pub async fn unsubscribe<S: Into<String> + 'static>(&self, topic: S) -> Result<NoticeFuture, ClientError>;
             pub async fn subscribe_many<T>(&self, topics: T) -> Result<NoticeFuture, ClientError> where T: IntoIterator<Item = SubscribeFilter> + 'static;
+            pub async fn disconnect(&self) -> Result<NoticeFuture, ClientError>;
         }
         impl Clone for AsyncClient {
             fn clone(&self) -> Self;
