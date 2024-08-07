@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n    interface,\n    path,\n    major_version AS \"major_version: i32\",\n    reliability AS \"qos: u8\",\n    expiry_sec\nFROM retention_mapping\nWHERE interface = ? AND path = ?\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "interface",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "path",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "major_version: i32",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "qos: u8",
+        "ordinal": 3,
+        "type_info": "Int64"
+      },
+      {
+        "name": "expiry_sec",
+        "ordinal": 4,
+        "type_info": "Int64"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "0bc76296f1368209ff77b634b4cd6fef23cc21863baf86474843120e8561728e"
+}

@@ -85,7 +85,8 @@ async fn main() -> Result<(), DynError> {
         .store(db)
         .connect(mqtt_config)
         .await?
-        .build();
+        .build()
+        .await;
     let device_cpy = client.clone();
 
     println!("Connection to Astarte established.");

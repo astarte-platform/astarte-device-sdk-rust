@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM retention_publish\nWHERE expiry_t_millis < ?;\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9393f823dbbf0f13eac681ca9ef150894fa66d9d0febe10969a4765b947d0f64"
+}
