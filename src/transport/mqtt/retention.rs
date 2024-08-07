@@ -28,9 +28,9 @@
 use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
 use rumqttc::{NoticeError, NoticeFuture};
-use tracing::{error, trace};
+use tracing::trace;
 
-use crate::{retention::RetentionId, Error};
+use crate::retention::RetentionId;
 
 pub(crate) type RetSender = flume::Sender<(RetentionId, NoticeFuture)>;
 pub(crate) type RetReceiver = flume::Receiver<(RetentionId, NoticeFuture)>;
@@ -48,17 +48,16 @@ impl MqttRetention {
         }
     }
 
-    pub(crate) fn queue(&mut self) -> Result<usize, Error> {
-        if self.rx.is_disconnected() {
-            error!("rx disconnected, cannot queue packets");
+    /// The retention client is disconnected and all packets have been handled
+    pub(crate) fn is_empty(&self) -> bool {
+        self.rx.is_empty() && self.rx.is_disconnected() && self.packets.is_empty()
+    }
 
-            return Err(Error::Disconnected);
-        }
-
+    pub(crate) fn queue(&mut self) -> usize {
         if self.rx.is_empty() {
             trace!("rx empty, queued 0 packets");
 
-            return Ok(0);
+            return 0;
         }
 
         let mut count: usize = 0;
@@ -74,7 +73,7 @@ impl MqttRetention {
         debug_assert!(count > 0, "the rx shouldn't be empty");
         trace!("queued {count} packets");
 
-        Ok(count)
+        count
     }
 
     fn next_received(&mut self) -> Option<Result<RetentionId, NoticeError>> {
@@ -92,7 +91,7 @@ impl MqttRetention {
 }
 
 impl<'a> IntoFuture for &'a mut MqttRetention {
-    type Output = Result<Result<RetentionId, NoticeError>, Error>;
+    type Output = Result<RetentionId, NoticeError>;
 
     type IntoFuture = MqttRetentionFuture<'a>;
 
@@ -112,7 +111,7 @@ impl Iterator for MqttRetention {
 pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 
 impl<'a> std::future::Future for MqttRetentionFuture<'a> {
-    type Output = Result<Result<RetentionId, NoticeError>, Error>;
+    type Output = Result<RetentionId, NoticeError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -120,10 +119,10 @@ impl<'a> std::future::Future for MqttRetentionFuture<'a> {
     ) -> Poll<Self::Output> {
         let this = self.get_mut();
 
-        this.0.queue()?;
+        this.0.queue();
 
         match this.0.next() {
-            Some(res) => Poll::Ready(Ok(res)),
+            Some(res) => Poll::Ready(res),
             None => Poll::Pending,
         }
     }
@@ -158,7 +157,7 @@ mod tests {
         tx.send((RetentionId::Stored(i2), n2)).unwrap();
         tx.send((RetentionId::Stored(i3), n3)).unwrap();
 
-        assert_eq!(retention.queue().unwrap(), 3);
+        assert_eq!(retention.queue(), 3);
 
         let n = retention.next();
         assert!(n.is_none());

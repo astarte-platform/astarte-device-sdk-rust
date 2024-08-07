@@ -600,13 +600,15 @@ impl<S> Mqtt<S> {
     where
         S: StoreCapabilities,
     {
+        if self.retention.is_empty() {
+            return Ok(self.connection.next_publish().await);
+        }
+
         loop {
             let mut conn_future = std::pin::pin!(self.connection.next_publish());
 
             match futures::future::select(self.retention.into_future(), &mut conn_future).await {
                 Either::Left((res, _)) => {
-                    let res = res?;
-
                     Self::mark_packet_received(&self.volatile, &self.store, res).await?;
                 }
                 // the retention future can be dropped safely
