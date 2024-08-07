@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
@@ -26,6 +26,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder, error::Error, prelude::*, store::memory::MemoryStore,
     transport::mqtt::MqttConfig,
 };
+use tokio::{select, task::JoinSet};
 use tracing::error;
 
 type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -39,7 +40,7 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), DynError> {
     env_logger::init();
     let now = SystemTime::now();
 
@@ -64,43 +65,54 @@ async fn main() -> Result<(), Error> {
         .build()
         .await;
 
-    let device_cpy = client.clone();
+    let client_cl = client.clone();
     println!("Connection to Astarte established.");
 
+    let mut tasks = JoinSet::new();
+
     // Create a task to transmit
-    tokio::task::spawn(async move {
+    tasks.spawn(async move {
+        // Sleep 1 sec
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
+
         loop {
+            select! {
+                _ = interval.tick() => {},
+                _ = &mut ctrl_c => {
+                    client_cl.disconnect().await;
+
+                    return Ok(());
+                },
+            };
+
             // Send endpoint 1
-            let elapsed = now.elapsed().unwrap().as_secs() as i64;
-            device_cpy
+            let elapsed: i64 = now.elapsed()?.as_secs().try_into()?;
+            client_cl
                 .send(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint1",
                     elapsed,
                 )
-                .await
-                .unwrap();
+                .await?;
             println!("Data sent on endpoint 1, content: {elapsed}");
             // Sleep 1 sec
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
             // Send endpoint 2
-            let elapsed = now.elapsed().unwrap().as_secs() as f64;
-            device_cpy
+            let elapsed: f64 = now.elapsed()?.as_secs_f64();
+            client_cl
                 .send(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint2",
                     elapsed,
                 )
-                .await
-                .unwrap();
+                .await?;
             println!("Data sent on endpoint 2, content: {elapsed}");
-            // Sleep 1 sec
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
 
     // Spawn a task to receive
-    tokio::spawn(async move {
+    tasks.spawn(async move {
         loop {
             match client.recv().await {
                 Ok(data) => {
@@ -138,7 +150,15 @@ async fn main() -> Result<(), Error> {
         Ok::<_, DynError>(())
     });
 
-    connection.handle_events().await?;
+    tasks.spawn(async move {
+        connection.handle_events().await?;
+
+        Ok(())
+    });
+
+    while let Some(res) = tasks.join_next().await {
+        res??;
+    }
 
     Ok(())
 }
