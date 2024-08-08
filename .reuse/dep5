@@ -2,10 +2,6 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Astarte Device SDK Rust
 Source: https://github.com/astarte-platform/astarte-device-sdk-rust
 
-Files: .sqlx/*.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
 Files: queries/*.sql
 Copyright: SECO Mind Srl
 License: CC0-1.0

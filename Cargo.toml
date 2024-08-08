@@ -11,9 +11,7 @@ categories = ["embedded", "api-bindings"]
 documentation = "https://docs.rs/astarte-device-sdk"
 edition = { workspace = true }
 homepage = { workspace = true }
-# Needed to include the `.sqlx/` hidden folder
 include = [
-  "/.sqlx",
   "/LICENSES",
   "/examples",
   "/migrations",
@@ -75,10 +73,9 @@ rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 sync_wrapper = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["parking_lot", "macros"] }
+tokio = { workspace = true, features = ["parking_lot", "macros", "fs"] }
 tracing = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
@@ -98,12 +95,14 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["net"] }
 
 [features]
-default = ["interface-strict"]
+default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
 derive = ["dep:astarte-device-sdk-derive"]
-openssl = ["dep:openssl"]
-message-hub = ["dep:astarte-message-hub-proto"]
 interface-doc = []
 interface-strict = []
+message-hub = ["dep:astarte-message-hub-proto"]
+openssl = ["dep:openssl"]
+sqlite-trace = ["rusqlite/trace"]
+tokio-multi-thread = ["tokio/rt-multi-thread"]
 
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.8.3" }
@@ -139,8 +138,6 @@ rustls-native-certs = "0.7.0"
 rustls-pemfile = "2.1.0"
 serde = "1.0.184"
 serde_json = "1.0.85"
-# The version 0.7.4 is incompatible with MSRV 1.72
-sqlx = "0.7.0, < 0.7.4"
 structopt = "0.3.26"
 syn = "2.0.31"
 sync_wrapper = "1.0.0"

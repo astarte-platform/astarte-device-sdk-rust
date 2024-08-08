@@ -19,7 +19,6 @@
 //! Handles stored retention for the connections.
 
 use std::{
-    array::TryFromSliceError,
     borrow::Cow,
     collections::HashSet,
     fmt::Display,
@@ -107,7 +106,7 @@ pub enum RetentionError {
         backtrace: DynError,
     },
     /// Couldn't delete the publishes with interface.
-    #[error("couldn't delete the publish with interface {interface}")]
+    #[error("couldn't delete the publishes with interface {interface}")]
     DeleteInterface {
         /// The interface of the publishes to delete.
         interface: String,
@@ -115,6 +114,9 @@ pub enum RetentionError {
         #[source]
         backtrace: DynError,
     },
+    /// Couldn't delete the publishes for interfaces.
+    #[error("couldn't delete the publishes for interfaces")]
+    DeleteInterfaceMany(#[source] DynError),
     /// Couldn't fetch all the publishes' interfaces.
     #[error("couldn't fetch all the publishs' interfaces")]
     FetchInterfaces(#[source] DynError),
@@ -169,6 +171,10 @@ impl RetentionError {
             interface,
             backtrace: backtrace.into(),
         }
+    }
+
+    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
+        Self::DeleteInterfaceMany(backtrace.into())
     }
 
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
@@ -444,14 +450,6 @@ pub struct Id {
     counter: u32,
 }
 
-impl Id {
-    pub(crate) fn from_row(timestamp: &[u8], counter: u32) -> Result<Self, TryFromSliceError> {
-        let timestamp = timestamp.try_into()?;
-
-        Ok(Self { timestamp, counter })
-    }
-}
-
 impl Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}-{}", self.timestamp, self.counter)
@@ -493,17 +491,6 @@ impl TimestampMillis {
     /// Standardize the conversion of the timestamp to bytes.
     pub fn to_bytes(&self) -> [u8; 16] {
         self.0.to_be_bytes()
-    }
-}
-
-impl TryFrom<&[u8]> for TimestampMillis {
-    type Error = TryFromSliceError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let bytes = value.try_into()?;
-        let timestamp = u128::from_be_bytes(bytes);
-
-        Ok(Self(timestamp))
     }
 }
 
