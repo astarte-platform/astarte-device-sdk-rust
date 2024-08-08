@@ -1,4 +1,4 @@
 SELECT DISTINCT
     interface,
-    major_version AS "major_version: i32"
+    major_version
 FROM retention_mapping;

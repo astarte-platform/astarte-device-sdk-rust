@@ -5,4 +5,6 @@ SELECT
     reliability AS "qos: u8",
     expiry_sec
 FROM retention_mapping
-WHERE interface = ? AND path = ?
+WHERE
+    interface = ?
+    AND path = ?

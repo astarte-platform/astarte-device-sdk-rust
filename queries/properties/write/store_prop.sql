@@ -5,4 +5,4 @@ INSERT OR REPLACE INTO propcache (
     type,
     interface_major,
     ownership
-) VALUES (?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?);

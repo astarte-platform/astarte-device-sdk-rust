@@ -7,4 +7,6 @@ SELECT
     sent,
     payload
 FROM retention_publish
-WHERE t_millis = ? AND counter = ?;
+WHERE
+    t_millis = ?
+    AND counter = ?;

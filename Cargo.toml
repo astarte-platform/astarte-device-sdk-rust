@@ -98,10 +98,11 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-stream = { workspace = true, features = ["net"] }
 
 [features]
-default = ["interface-strict"]
+default = ["interface-strict", "sqlite-trace"]
 derive = ["dep:astarte-device-sdk-derive"]
 openssl = ["dep:openssl"]
 message-hub = ["dep:astarte-message-hub-proto"]
+sqlite-trace = ["rusqlite/trace"]
 interface-doc = []
 interface-strict = []
 

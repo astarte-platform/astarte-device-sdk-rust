@@ -373,6 +373,14 @@ pub enum Ownership {
 }
 
 impl Ownership {
+    /// Returns `true` if the ownership is [`Device`].
+    ///
+    /// [`Device`]: Ownership::Device
+    #[must_use]
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::Device)
+    }
+
     /// Returns `true` if the ownership is [`Server`].
     ///
     /// [`Server`]: Ownership::Server
