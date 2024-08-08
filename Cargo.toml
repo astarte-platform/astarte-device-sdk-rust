@@ -69,6 +69,7 @@ p384 = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
+rusqlite = { workspace = true }
 rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
@@ -132,6 +133,7 @@ quote = "1.0.28"
 rand_core = "0.6.4"
 reqwest = "0.12.0"
 rumqttc = { git = "https://github.com/joshuachp/rumqtt", rev = "9109f874ec10e1660448616e7054a887672dfd07" }
+rusqlite = "0.29.0"
 rustls = "0.22.2"
 rustls-native-certs = "0.7.0"
 rustls-pemfile = "2.1.0"
