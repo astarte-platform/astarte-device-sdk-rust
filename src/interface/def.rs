@@ -373,6 +373,14 @@ pub enum Ownership {
 }
 
 impl Ownership {
+    /// Returns `true` if the ownership is [`Device`].
+    ///
+    /// [`Device`]: Ownership::Device
+    #[must_use]
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::Device)
+    }
+
     /// Returns `true` if the ownership is [`Server`].
     ///
     /// [`Server`]: Ownership::Server
@@ -479,7 +487,7 @@ impl Display for MappingType {
 ///
 /// See [Reliability](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-reliability)
 /// for more information.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone, Default, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum Reliability {
     /// If the transport sends the data
@@ -489,6 +497,16 @@ pub enum Reliability {
     Guaranteed,
     /// When we know the data has been received exactly once.
     Unique,
+}
+
+impl Reliability {
+    /// Returns `true` if the reliability is [`Unreliable`].
+    ///
+    /// [`Unreliable`]: Reliability::Unreliable
+    #[must_use]
+    pub fn is_unreliable(&self) -> bool {
+        matches!(self, Self::Unreliable)
+    }
 }
 
 impl From<Reliability> for QoS {

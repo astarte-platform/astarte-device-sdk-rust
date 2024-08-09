@@ -59,7 +59,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
         .interface_directory("./examples/interfaces")?
         .store(db)
         .connect(mqtt_config).await?
-        .build();
+        .build().await;
 
     // Publishing new values can be performed using the send and send_object functions.
 

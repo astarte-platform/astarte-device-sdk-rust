@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM retention_mapping\nWHERE\n    interface = ?;\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "7611d7e407e548c276ec015435199d7bac06b2fca78d87d369a6d842820869aa"
+}

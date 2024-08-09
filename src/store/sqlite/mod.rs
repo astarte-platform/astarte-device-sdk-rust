@@ -18,21 +18,27 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{fmt::Debug, path::Path, str::FromStr};
+use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
-};
+use futures::lock::Mutex;
+use once_cell::unsync::OnceCell;
+use statements::{ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
 
-use super::{PropertyStore, StoredProp};
+use super::{PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
+
+pub(crate) mod statements;
+
+/// Milliseconds for the busy timeout
+///
+/// <https://www.sqlite.org/c3ref/busy_timeout.html>
+pub const SQLITE_BUSY_TIMEOUT: u16 = Duration::from_secs(5).as_millis() as u16;
 
 /// Error returned by the [`SqliteStore`].
 #[non_exhaustive]
@@ -49,13 +55,22 @@ pub enum SqliteError {
     },
     /// Error returned when the database connection fails.
     #[error("could not connect to database")]
-    Connection(#[source] sqlx::Error),
+    Connection(#[source] rusqlite::Error),
+    /// Couldn't set SQLite option.
+    #[error("could not connect to database")]
+    Option(#[source] rusqlite::Error),
+    /// Couldn't prepare the SQLite statement.
+    #[error("could not connect to database")]
+    Prepare(#[source] rusqlite::Error),
+    /// Couldn't start a transaction.
+    #[error("could not start a transaction database")]
+    Transaction(#[source] rusqlite::Error),
     /// Error returned when the database migration fails.
     #[error("could not run migration")]
     Migration(sqlx::migrate::MigrateError),
     /// Error returned when the database query fails.
     #[error("could not execute query")]
-    Query(#[from] sqlx::Error),
+    Query(#[from] rusqlite::Error),
     /// Couldn't convert the stored value.
     #[error("couldn't convert the stored value")]
     Value(#[from] ValueError),
@@ -240,77 +255,96 @@ impl TryFrom<StoredRecord> for StoredProp {
     }
 }
 
+thread_local! {
+    /// Read only connection to the SQLite database.
+    ///
+    /// Since SQLite supports multiple readers concurrently to an exclusive writer, guarantied that
+    /// a connection is used by a single thread at a time. We create a thread local read only
+    /// connection and share the read handle behind a [`Mutex`].
+    ///
+    // NOTE: we need nightly feature get_or_try_init to use the one in std
+    static READER: OnceCell<ReadConnection> = const { OnceCell::new() };
+}
+
 /// Data structure providing an implementation of a sqlite database.
 ///
-/// Can be used by an Astarte device to store permanently properties values.
+/// Can be used by an Astarte device to store permanently properties values and published with
+/// retention stored.
 ///
-/// The values are stored as a BSON serialized SQLite BLOB. That can be then deserialized in the
+/// The properties are stored as a BSON serialized SQLite BLOB. That can be then deserialized in the
 /// respective [`AstarteType`].
+///
+/// The retention is stored as a BLOB serialized by the connection.
+///
+///
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
-    db_conn: sqlx::SqlitePool,
+    pub(crate) db_file: Arc<Path>,
+    pub(crate) writer: Arc<Mutex<WriteConnection>>,
 }
 
 impl SqliteStore {
     /// Creates a sqlite database for the Astarte device.
-    pub async fn new(pool: SqlitePool) -> Result<Self, SqliteError> {
-        // Run the migrations if needed
-        sqlx::migrate!()
-            .run(&pool)
-            .await
-            .map_err(SqliteError::Migration)?;
+    fn new(db_path: impl AsRef<Path>, connection: WriteConnection) -> Result<Self, SqliteError> {
+        // TODO: handle migrations
 
-        Ok(SqliteStore { db_conn: pool })
+        Ok(SqliteStore {
+            db_file: db_path.as_ref().into(),
+            writer: Arc::new(Mutex::new(connection)),
+        })
     }
 
-    /// Creates a sqlite database for the Astarte device.
+    /// Connect to the SQLite database using the default db name in the writable path.
     ///
-    /// URI should follow sqlite's convention, read [SqliteConnectOptions] for more details.
+    /// # Example
     ///
     /// ```no_run
-    /// use astarte_device_sdk::store::sqlite::SqliteStore;
-    ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let database = SqliteStore::from_uri("sqlite://path/to/database/file.db")
-    ///         .await
-    ///         .unwrap();
-    /// }
+    /// let store = Sqlite::connect("/val/lib/astarte").unwrap().await;
     /// ```
-    pub async fn from_uri(uri: &str) -> Result<Self, SqliteError> {
-        let options = SqliteConnectOptions::from_str(uri)
-            .map_err(|err| SqliteError::Uri {
-                backtrace: err,
-                uri: uri.to_string(),
-            })?
-            .create_if_missing(true)
-            .foreign_keys(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-
-        let pool = SqlitePoolOptions::new()
-            .connect_with(options)
-            .await
-            .map_err(SqliteError::Connection)?;
-
-        Self::new(pool).await
-    }
-
-    /// Connect to the SQLite store with the default option for the sdk
     pub(crate) async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
+        // TODO: rename the database to store.db since it doesn't contain only  properties
         let db = writable_path.as_ref().join("prop-cache.db");
 
-        let options = SqliteConnectOptions::new()
-            .filename(db)
-            .foreign_keys(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-            .create_if_missing(true);
+        Self::connect_db(db).await
+    }
 
-        let pool = SqlitePoolOptions::new()
-            .connect_with(options)
-            .await
-            .map_err(SqliteError::Connection)?;
+    /// Connect to the SQLite database give as a filename.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// let store = Sqlite::connect("/val/lib/astarte/store.db").unwrap().await;
+    /// ```
+    pub(crate) async fn connect_db(database_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
+        let connection = WriteConnection::connect(&database_file).await?;
 
-        Self::new(pool).await
+        Self::new(database_file, connection)
+    }
+
+    /// Pass the thread local reference to the read only connection.
+    pub(crate) fn with_reader<F, O>(&self, f: F) -> Result<O, SqliteError>
+    where
+        F: FnOnce(&ReadConnection) -> Result<O, SqliteError>,
+    {
+        wrap_sync_call(|| {
+            READER.with(|tlv| {
+                let connection = tlv.get_or_try_init(|| ReadConnection::connect(&self.db_file))?;
+
+                debug_assert!(connection
+                    .path()
+                    .is_some_and(|path| path == self.db_file.to_string_lossy()));
+
+                (f)(connection)
+            })
+        })
+    }
+}
+
+impl StoreCapabilities for SqliteStore {
+    type Retention = Self;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        Some(self)
     }
 }
 
@@ -318,37 +352,17 @@ impl SqliteStore {
 impl PropertyStore for SqliteStore {
     type Err = SqliteError;
 
-    async fn store_prop(
-        &self,
-        StoredProp {
-            interface,
-            path,
-            value,
-            interface_major,
-            ownership,
-        }: StoredProp<&str, &AstarteType>,
-    ) -> Result<(), Self::Err> {
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
         debug!(
             "Storing property {} {} in db ({:?})",
-            interface, path, value
+            prop.interface, prop.path, prop.value
         );
 
-        let mapping_type = into_stored_type(value)?;
-        let buf = Payload::new(value).to_vec().map_err(ValueError::Encode)?;
+        let buf = Payload::new(prop.value)
+            .to_vec()
+            .map_err(ValueError::Encode)?;
 
-        let own = RecordOwnership::from(ownership) as u8;
-
-        sqlx::query_file!(
-            "queries/store_prop.sql",
-            interface,
-            path,
-            buf,
-            mapping_type,
-            interface_major,
-            own
-        )
-        .execute(&self.db_conn)
-        .await?;
+        self.writer.lock().await.store_prop(prop, &buf)?;
 
         Ok(())
     }
@@ -359,12 +373,9 @@ impl PropertyStore for SqliteStore {
         path: &str,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
-        let res: Option<PropRecord> =
-            sqlx::query_file_as!(PropRecord, "queries/load_prop.sql", interface, path)
-                .fetch_optional(&self.db_conn)
-                .await?;
+        let opt_record = self.with_reader(|reader| reader.load_prop(interface, path))?;
 
-        match res {
+        match opt_record {
             Some(record) => {
                 trace!("Loaded property {} {} in db {:?}", interface, path, record);
 
@@ -389,66 +400,53 @@ impl PropertyStore for SqliteStore {
     }
 
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        sqlx::query_file!("queries/delete_prop.sql", interface, path)
-            .execute(&self.db_conn)
-            .await?;
+        self.writer.lock().await.delete_prop(interface, path);
 
         Ok(())
     }
 
     async fn clear(&self) -> Result<(), Self::Err> {
-        sqlx::query_file!("queries/clear.sql")
-            .execute(&self.db_conn)
-            .await?;
+        self.writer.lock().await.clear_props()?;
 
         Ok(())
     }
 
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/load_all_props.sql")
-            .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
-            .fetch_all(&self.db_conn)
-            .await?;
-
-        Ok(res)
+        self.with_reader(|reader| reader.load_all_props())
     }
 
     async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/device_props.sql")
-            .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
-            .fetch_all(&self.db_conn)
-            .await?;
-
-        Ok(res)
+        self.with_reader(|reader| reader.props_with_ownership(Ownership::Device))
     }
 
     async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        let res: Vec<StoredProp> = sqlx::query_file_as!(StoredRecord, "queries/server_props.sql")
-            .try_map(|row| StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into())))
-            .fetch_all(&self.db_conn)
-            .await?;
-
-        Ok(res)
+        self.with_reader(|reader| reader.props_with_ownership(Ownership::Server))
     }
 
     async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
-        let res: Vec<StoredProp> =
-            sqlx::query_file_as!(StoredRecord, "queries/interface_props.sql", interface)
-                .try_map(|row| {
-                    StoredProp::try_from(row).map_err(|err| sqlx::Error::Decode(err.into()))
-                })
-                .fetch_all(&self.db_conn)
-                .await?;
-
-        Ok(res)
+        self.with_reader(|reader| reader.interface_props(interface))
     }
 
     async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
-        sqlx::query_file!("queries/delete_interface.sql", interface)
-            .execute(&self.db_conn)
-            .await?;
+        self.writer.lock().await.delete_interface_props(interface);
 
         Ok(())
+    }
+}
+
+/// Functions to wrap the sync calls to the database and not starve the other tasks.
+pub(crate) fn wrap_sync_call<F, O>(f: F) -> O
+where
+    F: FnOnce() -> O,
+{
+    let Ok(current) = tokio::runtime::Handle::try_current() else {
+        return (f)();
+    };
+
+    match current.runtime_flavor() {
+        // We cannot block in place, so we execute the call directly
+        tokio::runtime::RuntimeFlavor::CurrentThread => (f)(),
+        tokio::runtime::RuntimeFlavor::MultiThread | _ => tokio::task::block_in_place(f),
     }
 }
 
@@ -470,37 +468,9 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_store() {
         let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let path = db_path.as_path().to_str().unwrap();
 
-        let db = SqliteStore::from_uri(path).await.unwrap();
+        let db = SqliteStore::connect(dir.path()).await.unwrap();
 
         test_property_store(db).await;
-    }
-
-    #[tokio::test]
-    async fn should_parse_uri() {
-        let dir = tempfile::tempdir().unwrap();
-
-        SqliteStore::from_uri(&format!(
-            "sqlite://{}",
-            dir.path().join("success.sqlite").display()
-        ))
-        .await
-        .expect("should parse the correct uri");
-
-        SqliteStore::from_uri(&format!(
-            "sqlite:://{}",
-            dir.path().join("error.sqlite").display()
-        ))
-        .await
-        .expect_err("should error for the uri");
-
-        SqliteStore::from_uri(&format!(
-            "sqlite:///{}",
-            dir.path().join("error.sqlite").display()
-        ))
-        .await
-        .expect("should not error for multiple slashes");
     }
 }

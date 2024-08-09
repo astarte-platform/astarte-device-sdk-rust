@@ -49,7 +49,9 @@ use std::{
     time::Duration,
 };
 
-use rumqttc::{ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, Transport};
+use rumqttc::{
+    ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError, Transport,
+};
 use sync_wrapper::SyncWrapper;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
@@ -670,17 +672,21 @@ impl Next {
         error!(error = %Report::new(&err),"error received from mqtt connection");
 
         match err {
-            ConnectionError::MqttState(_)
-            | ConnectionError::NetworkTimeout
-            | ConnectionError::FlushTimeout
+            ConnectionError::NetworkTimeout
             | ConnectionError::Io(_)
-            | ConnectionError::RequestsDone => {
-                trace!("no state change");
+            | ConnectionError::FlushTimeout => {
+                trace!("disconnected, wait for connack");
 
-                Next::Same
+                Next::state(Connecting)
             }
             ConnectionError::NotConnAck(_) => {
                 trace!("wait for connack");
+
+                Next::state(Connecting)
+            }
+            ConnectionError::MqttState(StateError::ConnectionAborted)
+            | ConnectionError::RequestsDone => {
+                info!("MQTT connection closed");
 
                 Next::state(Connecting)
             }
@@ -688,6 +694,11 @@ impl Next {
                 trace!("recreate the connection");
 
                 Next::state(Disconnected)
+            }
+            ConnectionError::MqttState(_) => {
+                trace!("no state change");
+
+                Next::Same
             }
         }
     }

@@ -66,7 +66,7 @@ pub trait PropAccess {
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
     ///         .connect(mqtt_config).await.unwrap()
-    ///         .build();
+    ///         .build().await;
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .property("my.interface.name", "/endpoint/path")

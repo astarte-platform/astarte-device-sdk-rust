@@ -53,7 +53,7 @@ impl Interfaces {
     /// [`ValidationError`].
     pub(crate) fn add(&mut self, interface: Validated) -> Option<Interface> {
         self.interfaces
-            .insert(interface.interface_name().to_string(), interface.0)
+            .insert(interface.interface_name().to_string(), interface.interface)
     }
 
     /// Validate that an interface can be added.
@@ -63,6 +63,8 @@ impl Interfaces {
         &self,
         interface: Interface,
     ) -> Result<Option<Validated>, InterfaceError> {
+        let mut major_change = false;
+
         match self.interfaces.get(interface.interface_name()) {
             Some(prev) => {
                 trace!(
@@ -78,13 +80,18 @@ impl Interfaces {
                 }
 
                 interface.validate_with(prev)?;
+
+                major_change = interface.version_major() > prev.version_major();
             }
             None => {
                 trace!("Interface {} not present", interface.interface_name());
             }
         }
 
-        Ok(Some(Validated(interface)))
+        Ok(Some(Validated {
+            interface,
+            major_change,
+        }))
     }
 
     pub(crate) fn remove(&mut self, interface_name: &str) -> Option<Interface> {
@@ -188,7 +195,7 @@ impl Interfaces {
             .filter_map(|i| {
                 let res = self.validate(i).transpose()?;
 
-                Some(res.map(|i| (i.interface_name().to_string(), i.0)))
+                Some(res.map(|v| (v.interface_name().to_string(), v)))
             })
             .try_collect()
             .map(ValidatedCollection)
@@ -196,7 +203,8 @@ impl Interfaces {
 
     /// Extend the interfaces with the validated ones.
     pub(crate) fn extend(&mut self, interfaces: ValidatedCollection) {
-        self.interfaces.extend(interfaces.0);
+        self.interfaces
+            .extend(interfaces.0.into_iter().map(|(k, v)| (k, v.interface)));
     }
 
     /// Iterator over the interface with the added one
@@ -205,7 +213,9 @@ impl Interfaces {
         added: &'a Validated,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         // The validated is an interfaces that is not present
-        self.interfaces.values().chain(std::iter::once(&added.0))
+        self.interfaces
+            .values()
+            .chain(std::iter::once(&added.interface))
     }
 
     /// Iterator over the resulting added interfaces
@@ -214,7 +224,9 @@ impl Interfaces {
         added: &'a ValidatedCollection,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         // The validated collection contains only interfaces that are not already present
-        self.interfaces.values().chain(added.values())
+        self.interfaces
+            .values()
+            .chain(added.values().map(|v| &v.interface))
     }
 
     /// Iter without removed interface
@@ -250,11 +262,20 @@ impl FromIterator<Interface> for Interfaces {
 }
 
 #[derive(Debug)]
-pub(crate) struct Validated(Interface);
+pub(crate) struct Validated {
+    interface: Interface,
+    major_change: bool,
+}
+
+impl Validated {
+    pub(crate) fn is_major_change(&self) -> bool {
+        self.major_change
+    }
+}
 
 impl Borrow<Interface> for Validated {
     fn borrow(&self) -> &Interface {
-        &self.0
+        &self.interface
     }
 }
 
@@ -262,21 +283,28 @@ impl Deref for Validated {
     type Target = Interface;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.interface
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct ValidatedCollection(HashMap<String, Interface>);
+pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
-impl Borrow<HashMap<String, Interface>> for ValidatedCollection {
-    fn borrow(&self) -> &HashMap<String, Interface> {
+impl ValidatedCollection {
+    #[cfg(feature = "message-hub")]
+    pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
+        self.0.values().map(|v| &v.interface)
+    }
+}
+
+impl Borrow<HashMap<String, Validated>> for ValidatedCollection {
+    fn borrow(&self) -> &HashMap<String, Validated> {
         &self.0
     }
 }
 
 impl Deref for ValidatedCollection {
-    type Target = HashMap<String, Interface>;
+    type Target = HashMap<String, Validated>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
