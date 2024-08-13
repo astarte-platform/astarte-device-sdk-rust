@@ -66,8 +66,8 @@ pub enum ConnectionRecvError {
     ProtoConversion(#[from] grpc::convert::MessageHubProtoError),
     /// Message Hub server proto error
     #[cfg(feature = "message-hub")]
-    #[error("Message Hub server proto error, {0}")]
-    Server(astarte_message_hub_proto::MessageHubError),
+    #[error("Message Hub server proto error")]
+    Server(#[from] astarte_message_hub_proto::MessageHubError),
 }
 
 /// Connection event
