@@ -302,6 +302,7 @@ fn read_additional_interfaces() -> eyre::Result<Vec<Interface>> {
 /// Run the end to end tests from device to server for individual datastreams.
 ///
 /// # Arguments
+///
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_datastream_device_to_server(
@@ -345,8 +346,10 @@ async fn test_datastream_device_to_server(
 /// Run the end to end tests from server to device for individual datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_datastream_server_to_device(
@@ -379,6 +382,7 @@ async fn test_datastream_server_to_device(
 /// Run the end to end tests from device to server for aggregate datastreams.
 ///
 /// # Arguments
+///
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_aggregate_device_to_server(
@@ -426,8 +430,10 @@ async fn test_aggregate_device_to_server(
 /// Run the end to end tests from server to device for aggregate datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_aggregate_server_to_device(
@@ -467,6 +473,7 @@ async fn test_aggregate_server_to_device(
 /// Run the end to end tests from device to server for properties.
 ///
 /// # Arguments
+///
 /// - *device*: the Astarte SDK instance to use for the test.
 /// - *test_cfg*: struct containing configuration settings for the tests.
 async fn test_property_device_to_server(
@@ -537,8 +544,10 @@ async fn test_property_device_to_server(
 /// Run the end to end tests from server to device for properties.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received properties.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_property_server_to_device(
@@ -605,6 +614,7 @@ async fn test_property_server_to_device(
 /// Perform an HTTP GET request to an Astarte interface.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface for which to perform the GET request.
 async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> eyre::Result<String> {
@@ -630,6 +640,7 @@ async fn http_get_intf(test_cfg: &TestCfg, interface: &str) -> eyre::Result<Stri
 /// Perform an HTTP POST request to an Astarte interface.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface on which to perform the POST request.
 /// - *path*: path for the endpoint on which the data should be written.
@@ -672,6 +683,7 @@ async fn http_post_to_intf(
 /// Perform an HTTP DELETE request to an Astarte interface.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the request.
 /// - *interface*: interface on which to perform the DELETE request.
 /// - *path*: path for the endpoint for which the data should be deleted.

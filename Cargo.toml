@@ -85,6 +85,7 @@ x509-cert = { workspace = true, features = ["builder"] }
 
 # Transitive dependency
 ahash = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
@@ -135,9 +136,10 @@ rumqttc = "0.24.0"
 rustls = "0.22.2"
 rustls-native-certs = "0.7.0"
 rustls-pemfile = "2.1.0"
-serde = "1.0.145"
+serde = "1.0.184"
 serde_json = "1.0.85"
-sqlx = "0.7.0"
+# The version 0.7.4 is incompatible with MSRV 1.72
+sqlx = "0.7.0, < 0.7.4"
 structopt = "0.3.26"
 syn = "2.0.31"
 sync_wrapper = "1.0.0"
@@ -151,3 +153,4 @@ x509-cert = "0.2.2"
 
 # Transitive dependencies
 ahash = "0.8.8"
+time = "0.3.35"
