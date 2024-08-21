@@ -86,7 +86,7 @@ impl SharedVolataileStore {
 
 #[derive(Debug)]
 struct VolatileStore {
-    store: VecDeque<VolitileItem>,
+    store: VecDeque<VolatileItem>,
 }
 
 impl VolatileStore {
@@ -129,7 +129,7 @@ impl VolatileStore {
             }
         };
 
-        self.store.push_back(VolitileItem::new(id, item));
+        self.store.push_back(VolatileItem::new(id, item));
     }
 
     fn mark_sent(&mut self, id: &Id, sent: bool) -> Option<bool> {
@@ -153,14 +153,14 @@ impl VolatileStore {
         let now = SystemTime::now();
 
         std::iter::from_fn(|| self.store.pop_front())
-            .find(|item| !item.is_expiered(now))
+            .find(|item| !item.is_expired(now))
             .map(|item| item.value)
     }
 
     fn remove_expired(&mut self) {
         let now = SystemTime::now();
 
-        self.store.retain(|item| !item.is_expiered(now));
+        self.store.retain(|item| !item.is_expired(now));
     }
 
     fn is_full(&mut self) -> bool {
@@ -192,14 +192,14 @@ impl Default for VolatileStore {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct VolitileItem {
+struct VolatileItem {
     id: Id,
     store_time: SystemTime,
     sent: bool,
     value: ItemValue,
 }
 
-impl VolitileItem {
+impl VolatileItem {
     fn new(id: Id, value: ItemValue) -> Self {
         Self {
             id,
@@ -209,7 +209,7 @@ impl VolitileItem {
         }
     }
 
-    fn is_expiered(&self, now: SystemTime) -> bool {
+    fn is_expired(&self, now: SystemTime) -> bool {
         let Some(expiry) = self.value.expiry() else {
             return false;
         };

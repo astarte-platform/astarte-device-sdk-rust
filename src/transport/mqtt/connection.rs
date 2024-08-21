@@ -207,6 +207,8 @@ impl MqttConnection {
                 .await?;
 
             if let Some(publish) = opt_publish {
+                disable_clean_session(self.connection.eventloop_mut());
+
                 self.buff.push_back(publish);
             }
 
@@ -220,9 +222,19 @@ impl MqttConnection {
             }
         }
 
+        disable_clean_session(self.connection.eventloop_mut());
+
         Ok(())
     }
 }
+
+#[cfg(not(test))]
+fn disable_clean_session(eventloop: &mut EventLoop) {
+    eventloop.mqtt_options.set_clean_session(false);
+}
+
+#[cfg(test)]
+fn disable_clean_session(_eventloop: &mut EventLoop) {}
 
 /// Struct to hold the connection and client to be passed to the state.
 ///

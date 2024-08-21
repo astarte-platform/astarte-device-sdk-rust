@@ -661,7 +661,7 @@ where
     {
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
 
-        // Wait for next data or until its disconnected
+        // Wait for next data or until it's disconnected
         while let Some(publish) = self.poll().await? {
             let purge_topic = PURGE_PROPERTIES_TOPIC
                 .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));

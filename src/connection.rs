@@ -30,7 +30,7 @@ use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinSet,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::interface::Retention;
@@ -737,7 +737,7 @@ where
             }
 
             if count == 0 || count < DEFAULT_CHANNEL_SIZE {
-                info!("all stored publishes sent");
+                trace!("all stored publishes sent");
 
                 break;
             }
