@@ -18,11 +18,10 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
+use std::{cell::Cell, fmt::Debug, path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::lock::Mutex;
-use once_cell::unsync::OnceCell;
 use rusqlite::OptionalExtension;
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
@@ -254,8 +253,8 @@ thread_local! {
     /// a connection is used by a single thread at a time. We create a thread local read only
     /// connection and share the read handle behind a [`Mutex`].
     ///
-    // NOTE: we need nightly feature get_or_try_init to use the one in std
-    static READER: OnceCell<ReadConnection> = const { OnceCell::new() };
+    /// This is a [`Vec`] of connection to allow multiple connections with different paths.
+    static READER: Cell<Vec<ReadConnection>> = const { Cell::new(Vec::new()) };
 }
 
 /// Data structure providing an implementation of a sqlite database.
@@ -335,15 +334,38 @@ impl SqliteStore {
     {
         wrap_sync_call(|| {
             READER.with(|tlv| {
-                let connection = tlv.get_or_try_init(|| ReadConnection::connect(&self.db_file))?;
+                let mut v = tlv.take();
 
-                debug_assert!(connection
-                    .path()
-                    .is_some_and(|path| path == self.db_file.to_string_lossy()));
+                let res = self.get_or_init_reader(&mut v).and_then(f);
 
-                (f)(connection)
+                tlv.set(v);
+
+                res
             })
         })
+    }
+
+    fn get_or_init_reader<'a: 'b, 'b>(
+        &self,
+        v: &'a mut Vec<ReadConnection>,
+    ) -> Result<&'b ReadConnection, SqliteError> {
+        // get the index instead of the element to solve NLL error
+        let idx = v.iter().enumerate().find_map(|(i, r)| {
+            r.path()
+                .is_some_and(|p| p == self.db_file.to_string_lossy())
+                .then_some(i)
+        });
+
+        if let Some(idx) = idx {
+            return Ok(&v[idx]);
+        }
+
+        let new_connection = ReadConnection::connect(&self.db_file)?;
+
+        let idx = v.len();
+        v.push(new_connection);
+
+        Ok(&v[idx])
     }
 
     async fn migrate(&self) -> Result<(), SqliteError> {
@@ -521,5 +543,40 @@ mod tests {
         let db = SqliteStore::connect(dir.path()).await.unwrap();
 
         test_property_store(db).await;
+    }
+
+    #[tokio::test]
+    async fn multiple_db_per_thread() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+
+        let db1 = SqliteStore::connect(dir1.path()).await.unwrap();
+
+        let test = |store: SqliteStore| async move {
+            let value = AstarteType::Integer(42);
+            let prop = StoredProp {
+                interface: "com.test",
+                path: "/test",
+                value: &value,
+                interface_major: 1,
+                ownership: Ownership::Device,
+            };
+
+            store.store_prop(prop).await.unwrap();
+            assert_eq!(
+                store
+                    .load_prop("com.test", "/test", 1)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                value
+            );
+        };
+
+        (test)(db1).await;
+
+        let db2 = SqliteStore::connect(dir2.path()).await.unwrap();
+
+        (test)(db2).await;
     }
 }

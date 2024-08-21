@@ -34,7 +34,7 @@ use super::{
 /// Logs the execution of SQLite statements
 #[tracing::instrument(name = "statement", skip_all)]
 fn trace_sqlite(event: &str) {
-    tracing::trace!(%event)
+    tracing::trace!(event)
 }
 
 macro_rules! include_query {
