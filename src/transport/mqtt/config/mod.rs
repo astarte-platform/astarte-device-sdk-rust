@@ -63,7 +63,7 @@ pub const CERTIFICATE_FILE: &str = "certificate.pem";
 pub const PRIVATE_KEY_FILE: &str = "priv-key.der";
 
 /// Credentials for the [`Mqtt`] connection.
-#[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(untagged)]
 pub enum Credential {
     /// Credential secret to authenticate the device
@@ -102,7 +102,16 @@ impl Credential {
 
 impl Debug for Credential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "REDACTED")
+        match self {
+            Credential::Secret { .. } => f
+                .debug_struct("Credential::Secret")
+                .field("credentials_secret", &"REDACTED")
+                .finish(),
+            Credential::ParingToken { .. } => f
+                .debug_struct("Credential::PairingToken")
+                .field("pairing_token", &"REDACTED")
+                .finish(),
+        }
     }
 }
 
