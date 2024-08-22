@@ -6,7 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
-- Update the Dynamic Introspection to support adding or removing interfaces from a MessageHub Node [#330](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/330)
+- Update the Dynamic Introspection to support adding or removing interfaces from a MessageHub Node
+  [#330](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/330)
+- Implement the retention stored for the `SqliteStore` and the volatile with an in memory structure.
+  [#363](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/363)
 
 ### Changed
 - Use Empty type rather than Node to detach a Node [#340](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/340/).
