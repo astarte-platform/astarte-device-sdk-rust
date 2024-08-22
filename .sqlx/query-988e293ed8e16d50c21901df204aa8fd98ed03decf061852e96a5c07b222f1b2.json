@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n    retention_publish.t_millis,\n    retention_publish.counter AS \"counter: u32\",\n    retention_publish.interface,\n    retention_publish.path,\n    retention_publish.sent,\n    retention_publish.payload,\n    retention_mapping.reliability AS \"reliability: u8\",\n    retention_mapping.major_version AS \"major_version: i32\",\n    retention_mapping.expiry_sec\nFROM retention_publish\nINNER JOIN retention_mapping USING (interface, path)\nWHERE\n    retention_publish.sent = FALSE\n    AND (retention_publish.expiry_t_millis IS NULL OR retention_publish.expiry_t_millis >= ?)\nORDER BY t_millis ASC, counter ASC\nLIMIT ?;\n",
+  "query": "SELECT\n    retention_publish.t_millis,\n    retention_publish.counter AS \"counter: u32\",\n    retention_publish.interface,\n    retention_publish.path,\n    retention_publish.sent,\n    retention_publish.payload,\n    retention_mapping.reliability AS \"reliability: u8\",\n    retention_mapping.major_version AS \"major_version: i32\",\n    retention_mapping.expiry_sec\nFROM retention_publish\nINNER JOIN retention_mapping USING (interface, path)\nWHERE\n    retention_publish.sent = FALSE\n    AND (retention_publish.expiry_t_secs IS NULL OR retention_publish.expiry_t_secs >= ?)\nORDER BY t_millis ASC, counter ASC\nLIMIT ?;\n",
   "describe": {
     "columns": [
       {
@@ -64,5 +64,5 @@
       true
     ]
   },
-  "hash": "72ef2b07e49b25482fae84501b98ab5b1bbc66955a4557da719f7a5f58f4bc21"
+  "hash": "988e293ed8e16d50c21901df204aa8fd98ed03decf061852e96a5c07b222f1b2"
 }

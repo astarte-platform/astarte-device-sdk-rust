@@ -49,7 +49,7 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-use crate::retention::memory::SharedVolataileStore;
+use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder},
@@ -127,7 +127,7 @@ impl Interceptor for NodeIdInterceptor {
 pub struct GrpcClient<S> {
     client: MsgHubClient,
     store: StoreWrapper<S>,
-    volatile: SharedVolataileStore,
+    volatile: SharedVolatileStore,
 }
 
 impl<S> GrpcClient<S> {
@@ -135,7 +135,7 @@ impl<S> GrpcClient<S> {
     pub(crate) fn new(
         client: MsgHubClient,
         store: StoreWrapper<S>,
-        volatile: SharedVolataileStore,
+        volatile: SharedVolatileStore,
     ) -> Self {
         Self {
             client,
@@ -805,7 +805,7 @@ mod test {
         let client = GrpcClient::new(
             message_hub_client.clone(),
             store.clone(),
-            SharedVolataileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         );
         let grcp = Grpc::new(ID, message_hub_client, stream);
 

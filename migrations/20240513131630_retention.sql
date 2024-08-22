@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS retention_publish (
     interface TEXT NOT NULL,
     --- interface path
     path TEXT NOT NULL,
-    -- Timestamp as u128 milliseconds since the Unix epoch, when the publish expires
-    -- (t_millis + expiry_sec).
-    expiry_t_millis BLOB,
+    -- Timestamp as u64 milliseconds since the Unix epoch, when the publish expires
+    -- (t_millis as secs + expiry_sec).
+    expiry_t_secs BLOB,
     --  Whether the publish was sent or stored when offline.
     sent BOOLEAN NOT NULL,
     -- Payload for the packet

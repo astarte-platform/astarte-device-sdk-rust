@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n    t_millis,\n    counter AS \"counter: u32\",\n    interface,\n    path,\n    expiry_t_millis,\n    sent,\n    payload\nFROM retention_publish\nWHERE t_millis = ? AND counter = ?;\n",
+  "query": "SELECT\n    t_millis,\n    counter AS \"counter: u32\",\n    interface,\n    path,\n    expiry_t_secs,\n    sent,\n    payload\nFROM retention_publish\nWHERE t_millis = ? AND counter = ?;\n",
   "describe": {
     "columns": [
       {
@@ -24,7 +24,7 @@
         "type_info": "Text"
       },
       {
-        "name": "expiry_t_millis",
+        "name": "expiry_t_secs",
         "ordinal": 4,
         "type_info": "Blob"
       },
@@ -52,5 +52,5 @@
       false
     ]
   },
-  "hash": "029d1bf1055fc58cb60b2f466e04658c7f674a40b09bcee54411c9752c4d9855"
+  "hash": "29cd6033bd9263230502d3f070542a1338a41336c487e59d4a4ef57f9f2c6cf2"
 }

@@ -34,7 +34,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::interface::Retention;
-use crate::retention::memory::{ItemValue, SharedVolataileStore};
+use crate::retention::memory::{ItemValue, SharedVolatileStore};
 use crate::retention::{self, RetentionId, StoredRetention, StoredRetentionExt};
 use crate::{
     error::Report,
@@ -108,7 +108,7 @@ where
         interfaces: Arc<RwLock<Interfaces>>,
         tx: flume::Sender<Result<DeviceEvent, Error>>,
         client: mpsc::Receiver<ClientMessage>,
-        volatile_store: SharedVolataileStore,
+        volatile_store: SharedVolatileStore,
         store: StoreWrapper<S>,
         connection: C,
         sender: C::Sender,
@@ -243,7 +243,7 @@ pub(crate) struct DeviceSender<S, T> {
     sender: T,
     retention_ctx: retention::Context,
     status: Arc<ConnectionStatus>,
-    volatile_store: SharedVolataileStore,
+    volatile_store: SharedVolatileStore,
 }
 
 impl<S, T> DeviceSender<S, T>

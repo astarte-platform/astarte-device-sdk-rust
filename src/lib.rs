@@ -82,7 +82,7 @@ mod test {
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
-    use crate::retention::memory::SharedVolataileStore;
+    use crate::retention::memory::SharedVolatileStore;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
@@ -156,7 +156,7 @@ mod test {
             interfaces,
             tx_connection,
             rx_connection,
-            SharedVolataileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
             store,
             mqtt_connection,
             mqtt_client,

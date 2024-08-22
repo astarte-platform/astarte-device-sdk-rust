@@ -59,7 +59,7 @@ use crate::{
     interfaces::{self, Interfaces, Introspection},
     properties,
     retention::{
-        memory::SharedVolataileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
+        memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
     store::{
         error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
@@ -149,7 +149,7 @@ pub struct MqttClient<S> {
     client: AsyncClient,
     retention: RetSender,
     store: StoreWrapper<S>,
-    volatile: SharedVolataileStore,
+    volatile: SharedVolatileStore,
 }
 
 impl<S> MqttClient<S> {
@@ -159,7 +159,7 @@ impl<S> MqttClient<S> {
         client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
-        volatile: SharedVolataileStore,
+        volatile: SharedVolatileStore,
     ) -> Self {
         Self {
             client_id,
@@ -537,7 +537,7 @@ pub struct Mqtt<S> {
     connection: MqttConnection,
     retention: MqttRetention,
     store: StoreWrapper<S>,
-    volatile: SharedVolataileStore,
+    volatile: SharedVolatileStore,
 }
 
 impl<S> Mqtt<S> {
@@ -551,7 +551,7 @@ impl<S> Mqtt<S> {
         connection: MqttConnection,
         retention: MqttRetention,
         store: StoreWrapper<S>,
-        volatile: SharedVolataileStore,
+        volatile: SharedVolatileStore,
     ) -> Self {
         Self {
             client_id,
@@ -564,7 +564,7 @@ impl<S> Mqtt<S> {
 
     /// Marks the packets as received for the retention.
     async fn mark_packet_received(
-        volatile: &SharedVolataileStore,
+        volatile: &SharedVolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, NoticeError>,
     ) -> Result<(), Error>
@@ -890,7 +890,7 @@ pub(crate) mod test {
 
         let (ret_tx, ret_rx) = flume::unbounded();
 
-        let volatile = SharedVolataileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
+        let volatile = SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
 
         let store = StoreWrapper::new(store);
         let mqtt = Mqtt::new(

@@ -39,7 +39,7 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
-use crate::retention::memory::SharedVolataileStore;
+use crate::retention::memory::SharedVolatileStore;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -154,7 +154,7 @@ where
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
     pub(crate) store: StoreWrapper<S>,
-    pub(crate) volatile: SharedVolataileStore,
+    pub(crate) volatile: SharedVolatileStore,
     pub(crate) writable_dir: Option<PathBuf>,
 }
 
@@ -181,7 +181,7 @@ impl DeviceBuilder<(), ()> {
             connection: (),
             sender: (),
             store: StoreWrapper::new(()),
-            volatile: SharedVolataileStore::new(),
+            volatile: SharedVolatileStore::new(),
             writable_dir: None,
         }
     }

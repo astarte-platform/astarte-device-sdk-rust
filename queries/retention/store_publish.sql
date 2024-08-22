@@ -3,7 +3,7 @@ INSERT OR FAIL INTO retention_publish (
     counter,
     interface,
     path,
-    expiry_t_millis,
+    expiry_t_secs,
     sent,
     payload
 ) VALUES (?, ?, ?, ?, ?, ?, ?);

@@ -18,7 +18,10 @@
 
 //! Retention implemented using an SQLite database.
 
-use std::{array::TryFromSliceError, borrow::Cow, collections::HashSet, time::Duration};
+use std::{
+    array::TryFromSliceError, borrow::Cow, collections::HashSet, num::TryFromIntError,
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
@@ -27,7 +30,9 @@ use tracing::{error, warn};
 
 use crate::{interface::Reliability, store::SqliteStore};
 
-use super::{Id, PublishInfo, RetentionError, StoredInterface, StoredRetention, TimestampMillis};
+use super::{
+    duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
+};
 
 /// Error returned by the retention.
 #[derive(Debug, thiserror::Error)]
@@ -42,6 +47,9 @@ pub enum SqliteRetentionError {
     /// Couldn't convert timestamp bytes
     #[error("couldn't convert timestamp bytes")]
     Timestamp(#[source] TryFromSliceError),
+    /// Couldn't calculate the publish expiry.
+    #[error("couldn't calculate the publish expiry")]
+    Expiry(#[source] TryFromIntError),
     /// Reliability must not be at most once (0)
     #[error("invalid reliability ({0})")]
     Reliability(u8),
@@ -162,29 +170,67 @@ impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RetentionPublish<'a> {
+    /// Unique id of the publish.
     id: Id,
+    /// Composes with the path the relation with the [`RetentionMapping`].
     interface: Cow<'a, str>,
+    /// Composes with the interface the relation with the [`RetentionMapping`].
     path: Cow<'a, str>,
-    expiry: Option<TimestampMillis>,
+    /// Optional expiration time calculated from the store time from the [`Id::timestamp`] and
+    /// [`RetentionMapping::expiry`].
+    expiry_time: Option<TimestampSecs>,
+    /// Flag to check if the publish was sent.
     sent: bool,
+    /// The serialized payload of the publish
     payload: Cow<'a, [u8]>,
 }
 
-impl<'a> RetentionPublish<'a> {
-    fn from_info(id: Id, info: &'a PublishInfo<'a>) -> Self {
-        let expiry = info.expiry.map(|exp| {
-            let t = id.timestamp.saturating_add(exp.as_millis());
-            TimestampMillis(t)
-        });
+/// Expiration time of a [`RetentionPublish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TimestampSecs(u64);
 
-        Self {
+impl TimestampSecs {
+    /// Get the current timestamp in seconds.
+    fn now() -> Self {
+        Self(duration_from_epoch().as_secs())
+    }
+
+    /// Standardize the conversion of the timestamp to bytes.
+    fn from_id(id: &Id, expiry: Duration) -> Result<Self, TryFromIntError> {
+        Duration::try_from(id.timestamp)
+            .map(|timestamp| Self(timestamp.saturating_add(expiry).as_secs()))
+    }
+
+    #[cfg(test)]
+    fn try_from_row(blob: &[u8]) -> Result<Self, SqliteRetentionError> {
+        let bytes = blob.try_into().map_err(SqliteRetentionError::Timestamp)?;
+        let value = u64::from_be_bytes(bytes);
+
+        Ok(Self(value))
+    }
+
+    /// Standardize the conversion of the timestamp to bytes.
+    pub fn to_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl<'a> RetentionPublish<'a> {
+    fn from_info(id: Id, info: &'a PublishInfo<'a>) -> Result<Self, SqliteRetentionError> {
+        let expiry_time = info
+            .expiry
+            .map(|expiry| TimestampSecs::from_id(&id, expiry))
+            .transpose()
+            .map_err(SqliteRetentionError::Expiry)?;
+
+        Ok(Self {
             id,
             interface: Cow::Borrowed(&info.interface),
             path: Cow::Borrowed(&info.path),
-            expiry,
+            expiry_time,
             sent: info.sent,
             payload: Cow::Borrowed(&info.value),
-        }
+        })
     }
 }
 
@@ -216,7 +262,7 @@ impl SqliteStore {
 
     async fn fetch_unsent(
         &self,
-        now: &TimestampMillis,
+        now: &TimestampSecs,
         limit: usize,
         buf: &mut Vec<(Id, PublishInfo<'static>)>,
         transaction: &mut Transaction<'_, Sqlite>,
@@ -326,7 +372,7 @@ impl SqliteStore {
 
         let payload: &[u8] = &publish.payload;
 
-        let expiry = publish.expiry.map(|e| e.to_bytes());
+        let expiry = publish.expiry_time.map(|e| e.to_bytes());
         let expiry = expiry.as_ref().map(|e| e.as_slice());
 
         query_file!(
@@ -405,18 +451,16 @@ impl SqliteStore {
         let id =
             Id::from_row(&row.t_millis, row.counter).map_err(SqliteRetentionError::Timestamp)?;
 
-        let expiry = row
-            .expiry_t_millis
-            .map(|v| {
-                TimestampMillis::try_from(v.as_slice()).map_err(SqliteRetentionError::Timestamp)
-            })
+        let expiry_time = row
+            .expiry_t_secs
+            .map(|blob| TimestampSecs::try_from_row(&blob))
             .transpose()?;
 
         Ok(Some(RetentionPublish {
             id,
             interface: row.interface.into(),
             path: row.path.into(),
-            expiry,
+            expiry_time,
             sent: row.sent,
             payload: row.payload.into(),
         }))
@@ -498,7 +542,7 @@ impl SqliteStore {
 
     async fn delete_expired(
         &self,
-        now: &TimestampMillis,
+        now: &TimestampSecs,
         transaction: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), SqliteRetentionError> {
         let now = now.to_bytes();
@@ -550,7 +594,8 @@ impl SqliteStore {
 impl StoredRetention for SqliteStore {
     async fn store_publish(&self, id: &Id, publish: PublishInfo<'_>) -> Result<(), RetentionError> {
         let ret_map = RetentionMapping::from(&publish);
-        let ret_pub = RetentionPublish::from_info(*id, &publish);
+        let ret_pub = RetentionPublish::from_info(*id, &publish)
+            .map_err(|err| RetentionError::store(&publish, err))?;
 
         self.store(&ret_map, &ret_pub)
             .await
@@ -633,7 +678,7 @@ impl StoredRetention for SqliteStore {
             .await
             .map_err(|err| RetentionError::unsent(SqliteRetentionError::begin(err)))?;
 
-        let now = TimestampMillis::now();
+        let now = TimestampSecs::now();
 
         self.delete_expired(&now, &mut t)
             .await
@@ -658,7 +703,7 @@ impl StoredRetention for SqliteStore {
             .await
             .map_err(|err| RetentionError::reset(SqliteRetentionError::begin(err)))?;
 
-        self.delete_expired(&TimestampMillis::now(), &mut t)
+        self.delete_expired(&TimestampSecs::now(), &mut t)
             .await
             .map_err(RetentionError::reset)?;
 
@@ -684,7 +729,7 @@ impl StoredRetention for SqliteStore {
 mod tests {
     use itertools::Itertools;
 
-    use crate::retention::Context;
+    use crate::retention::{Context, TimestampMillis};
 
     use super::*;
 
@@ -787,9 +832,10 @@ mod tests {
 
     #[test]
     fn should_get_id_from_row() {
-        let exp_t = TimestampMillis(42u128);
+        let millis = 42u128;
+        let exp_t = TimestampMillis::from_millis(millis);
         let exp_c = 9;
-        let t = exp_t.to_be_bytes();
+        let t = millis.to_be_bytes();
 
         let id = Id::from_row(t.as_slice(), exp_c).unwrap();
 
@@ -819,14 +865,14 @@ mod tests {
 
         let packet = RetentionPublish {
             id: Id {
-                timestamp: TimestampMillis(1),
+                timestamp: TimestampMillis::from_millis(1),
                 counter: 2,
             },
             interface: interface.into(),
             path: path.into(),
             payload: [].as_slice().into(),
             sent: false,
-            expiry: None,
+            expiry_time: None,
         };
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_publish(&packet, &mut t).await.unwrap();
@@ -859,14 +905,14 @@ mod tests {
 
         let mut packet = RetentionPublish {
             id: Id {
-                timestamp: TimestampMillis(1),
+                timestamp: TimestampMillis::from_millis(1),
                 counter: 2,
             },
             interface: interface.into(),
             path: path.into(),
             payload: [].as_slice().into(),
             sent: false,
-            expiry: None,
+            expiry_time: None,
         };
         let mut t = store.db_conn.begin().await.unwrap();
         store.store_publish(&packet, &mut t).await.unwrap();
@@ -910,14 +956,14 @@ mod tests {
         t.commit().await.unwrap();
 
         let id = Id {
-            timestamp: TimestampMillis(1),
+            timestamp: TimestampMillis::from_millis(1),
             counter: 1,
         };
         let exp = RetentionPublish {
             id,
             interface: interface.into(),
             path: path.into(),
-            expiry: None,
+            expiry_time: None,
             sent: false,
             payload: [].as_slice().into(),
         };
@@ -954,14 +1000,14 @@ mod tests {
         t.commit().await.unwrap();
 
         let id = Id {
-            timestamp: TimestampMillis(1),
+            timestamp: TimestampMillis::from_millis(1),
             counter: 1,
         };
         let exp = RetentionPublish {
             id,
             interface: interface.into(),
             path: path.into(),
-            expiry: None,
+            expiry_time: None,
             sent: false,
             payload: [].as_slice().into(),
         };
@@ -1006,14 +1052,14 @@ mod tests {
         t.commit().await.unwrap();
 
         let id = Id {
-            timestamp: TimestampMillis(1),
+            timestamp: TimestampMillis::from_millis(1),
             counter: 1,
         };
         let exp = RetentionPublish {
             id,
             interface: interface.into(),
             path: path.into(),
-            expiry: None,
+            expiry_time: None,
             sent: false,
             payload: [].as_slice().into(),
         };
@@ -1044,7 +1090,7 @@ mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let id = Id {
-            timestamp: TimestampMillis(1),
+            timestamp: TimestampMillis::from_millis(1),
             counter: 1,
         };
         store.delete_publish_by_id(&id).await.unwrap_err();
@@ -1074,34 +1120,34 @@ mod tests {
         let packets = [
             RetentionPublish {
                 id: Id {
-                    timestamp: TimestampMillis(1),
+                    timestamp: TimestampMillis::from_millis(1),
                     counter: 2,
                 },
                 interface: interface.into(),
                 path: path.into(),
-                expiry: None,
+                expiry_time: None,
                 sent: false,
                 payload: [].as_slice().into(),
             },
             RetentionPublish {
                 id: Id {
-                    timestamp: TimestampMillis(2),
+                    timestamp: TimestampMillis::from_millis(2),
                     counter: 0,
                 },
                 interface: interface.into(),
                 path: path.into(),
-                expiry: None,
+                expiry_time: None,
                 sent: false,
                 payload: [].as_slice().into(),
             },
             RetentionPublish {
                 id: Id {
-                    timestamp: TimestampMillis(2),
+                    timestamp: TimestampMillis::from_millis(2),
                     counter: 1,
                 },
                 interface: interface.into(),
                 path: path.into(),
-                expiry: None,
+                expiry_time: None,
                 sent: false,
                 payload: [].as_slice().into(),
             },
@@ -1135,7 +1181,7 @@ mod tests {
 
         let mut res = Vec::new();
         let count = store
-            .fetch_unsent(&TimestampMillis::now(), 100, &mut res, &mut t)
+            .fetch_unsent(&TimestampSecs::now(), 100, &mut res, &mut t)
             .await
             .unwrap();
         t.commit().await.unwrap();
@@ -1167,12 +1213,12 @@ mod tests {
 
         let packet = RetentionPublish {
             id: Id {
-                timestamp: TimestampMillis(1),
+                timestamp: TimestampMillis::from_millis(1),
                 counter: 2,
             },
             interface: interface.into(),
             path: path.into(),
-            expiry: None,
+            expiry_time: None,
             sent: false,
             payload: [].as_slice().into(),
         };
@@ -1228,21 +1274,23 @@ mod tests {
 
         // Only the first is still valid.
         let packets = [
-            RetentionPublish::from_info(ctx.next(), &info),
+            RetentionPublish::from_info(ctx.next(), &info).unwrap(),
             RetentionPublish::from_info(
                 Id {
-                    timestamp: TimestampMillis(2),
+                    timestamp: TimestampMillis::from_millis(2),
                     counter: 0,
                 },
                 &info,
-            ),
+            )
+            .unwrap(),
             RetentionPublish::from_info(
                 Id {
-                    timestamp: TimestampMillis(2),
+                    timestamp: TimestampMillis::from_millis(2),
                     counter: 1,
                 },
                 &info,
-            ),
+            )
+            .unwrap(),
         ];
 
         let mut t = store.db_conn.begin().await.unwrap();
@@ -1316,25 +1364,31 @@ mod tests {
 
         // Only the first is still valid.
         let info_cl = info.clone();
-        let mut packets = vec![RetentionPublish::from_info(ctx.next(), &info_cl)];
+        let mut packets = vec![RetentionPublish::from_info(ctx.next(), &info_cl).unwrap()];
 
         info.sent = true;
 
-        packets.push(RetentionPublish::from_info(
-            Id {
-                timestamp: TimestampMillis(2),
-                counter: 0,
-            },
-            &info,
-        ));
+        packets.push(
+            RetentionPublish::from_info(
+                Id {
+                    timestamp: TimestampMillis::from_millis(2),
+                    counter: 0,
+                },
+                &info,
+            )
+            .unwrap(),
+        );
 
-        packets.push(RetentionPublish::from_info(
-            Id {
-                timestamp: TimestampMillis(2),
-                counter: 1,
-            },
-            &info,
-        ));
+        packets.push(
+            RetentionPublish::from_info(
+                Id {
+                    timestamp: TimestampMillis::from_millis(2),
+                    counter: 1,
+                },
+                &info,
+            )
+            .unwrap(),
+        );
 
         let mut t = store.db_conn.begin().await.unwrap();
         for packet in &packets {

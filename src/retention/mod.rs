@@ -24,6 +24,7 @@ use std::{
     collections::HashSet,
     fmt::Display,
     hash::Hash,
+    num::TryFromIntError,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -457,27 +458,38 @@ impl Display for Id {
     }
 }
 
+fn duration_from_epoch() -> Duration {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(t) => t,
+        Err(err) => {
+            warn!(error = %Report::new(&err), "untrusted system clock, time returned before unix epoch");
+
+            // Let's use the positive duration, this will wrap around in weird ways if its,
+            // close to the unix epoch
+            err.duration()
+        }
+    }
+}
+
 /// Wrapper to a u128 to easily convert it into bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TimestampMillis(pub u128);
+pub struct TimestampMillis(u128);
 
 impl TimestampMillis {
-    /// Get the current system time.
-    pub fn now() -> Self {
-        let timestamp = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(t) => t.as_millis(),
-            Err(err) => {
-                warn!(error = %Report::new(&err), "untrasted system clock, time returned before unix epoch");
-
-                // Let's use the positive duration, this will wrap around in weird ways if its,
-                // close to the unix epoch
-                err.duration().as_millis()
-            }
-        };
-
-        Self(timestamp)
+    /// Create a new timestamp from the specified milliseconds.
+    ///
+    /// This should be a [`u128`], but it's not supported from the rust std library and should be
+    /// converted manually.
+    pub fn from_millis(millis: u128) -> Self {
+        Self(millis)
     }
 
+    /// Get the current system time.
+    pub fn now() -> Self {
+        let timestamp = duration_from_epoch();
+
+        Self(timestamp.as_millis())
+    }
     /// Standardize the conversion of the timestamp to bytes.
     pub fn to_bytes(&self) -> [u8; 16] {
         self.0.to_be_bytes()
@@ -501,17 +513,11 @@ impl Display for TimestampMillis {
     }
 }
 
-impl std::ops::DerefMut for TimestampMillis {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+impl TryFrom<TimestampMillis> for Duration {
+    type Error = TryFromIntError;
 
-impl std::ops::Deref for TimestampMillis {
-    type Target = u128;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn try_from(value: TimestampMillis) -> Result<Self, Self::Error> {
+        value.0.try_into().map(Duration::from_millis)
     }
 }
 

@@ -41,11 +41,11 @@ use super::Id;
 /// The methods will only require a `&self` and handle the locking internally to prevent problems
 /// in the critical sections.
 #[derive(Debug, Clone)]
-pub(crate) struct SharedVolataileStore {
+pub(crate) struct SharedVolatileStore {
     store: Arc<Mutex<VolatileStore>>,
 }
 
-impl SharedVolataileStore {
+impl SharedVolatileStore {
     pub(crate) fn new() -> Self {
         Self {
             store: Arc::new(Mutex::new(VolatileStore::new())),
@@ -61,7 +61,7 @@ impl SharedVolataileStore {
 
     pub(crate) async fn push<T>(&self, id: Id, value: T)
     where
-        T: TryInto<ItemValue, Error = VolitileItemError>,
+        T: TryInto<ItemValue, Error = VolatileItemError>,
     {
         self.store.lock().await.push(id, value);
     }
@@ -105,7 +105,7 @@ impl VolatileStore {
 
     fn push<T>(&mut self, id: Id, value: T)
     where
-        T: TryInto<ItemValue, Error = VolitileItemError>,
+        T: TryInto<ItemValue, Error = VolatileItemError>,
     {
         if self.is_full() {
             // remote the expired only if its full, it will be done while iterating
@@ -222,7 +222,7 @@ impl VolatileItem {
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 #[error("interface {interface} has't retention volatile, but has {retention:?} instead")]
-pub(crate) struct VolitileItemError {
+pub(crate) struct VolatileItemError {
     interface: String,
     retention: Retention,
 }
@@ -243,11 +243,11 @@ impl ItemValue {
 }
 
 impl TryFrom<ValidatedIndividual> for ItemValue {
-    type Error = VolitileItemError;
+    type Error = VolatileItemError;
 
     fn try_from(value: ValidatedIndividual) -> Result<Self, Self::Error> {
         if !value.retention.is_volatile() {
-            return Err(VolitileItemError {
+            return Err(VolatileItemError {
                 interface: value.interface,
                 retention: value.retention,
             });
@@ -258,11 +258,11 @@ impl TryFrom<ValidatedIndividual> for ItemValue {
 }
 
 impl TryFrom<ValidatedObject> for ItemValue {
-    type Error = VolitileItemError;
+    type Error = VolatileItemError;
 
     fn try_from(value: ValidatedObject) -> Result<Self, Self::Error> {
         if !value.retention.is_volatile() {
-            return Err(VolitileItemError {
+            return Err(VolatileItemError {
                 interface: value.interface,
                 retention: value.retention,
             });
