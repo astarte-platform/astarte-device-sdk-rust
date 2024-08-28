@@ -30,8 +30,6 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
-use crate::transport::mqtt::topic::TopicError;
-use crate::transport::mqtt::PayloadError;
 use crate::{
     client::RecvError,
     interface::{
@@ -49,39 +47,14 @@ use crate::{
 pub mod grpc;
 pub mod mqtt;
 
-/// Possible errors returned while handling Mqtt connection messages
-#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-pub enum ConnectionRecvError {
-    /// Couldn't parse the topic
-    #[error("couldn't parse the topic")]
-    Topic(#[from] TopicError),
-    /// Errors that can occur handling the payload.
-    #[error("couldn't process payload")]
-    Payload(#[from] PayloadError),
-
-    /// Failed to convert a proto message.
-    #[cfg(feature = "message-hub")]
-    #[error(transparent)]
-    ProtoConversion(#[from] grpc::convert::MessageHubProtoError),
-    /// Message Hub server proto error
-    #[cfg(feature = "message-hub")]
-    #[error("Message Hub server proto error")]
-    Server(#[from] astarte_message_hub_proto::MessageHubError),
-}
-
-/// Connection event
-#[derive(Debug)]
-pub(crate) enum ConnectionEvent<P> {
-    Disconnected,
-    Event(ReceivedEvent<P>),
-    ReceiveError(RecvError),
-}
-
-impl<P> ConnectionEvent<P> {
-    pub(crate) fn error(err: RecvError) -> Self {
-        Self::ReceiveError(err)
-    }
+pub(crate) enum TransportError {
+    /// Error that will be sent to the client
+    #[error("error that will be sent to the client, {0:?}")]
+    Recv(#[from] RecvError),
+    /// Error from the underline transport
+    #[error("error from the underline transport")]
+    Transport(#[source] crate::Error),
 }
 
 /// Holds generic event data such as interface name and path
@@ -167,14 +140,14 @@ pub(crate) trait Receive {
     /// incoming messages.
     ///
     /// This function returns [`None`] to signal a disconnection from Astarte.
-    async fn next_event(&mut self) -> Result<ConnectionEvent<Self::Payload>, crate::Error>;
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error>;
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -182,7 +155,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError>;
 }
 
 /// Reconnect the device to Astarte.

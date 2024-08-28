@@ -27,7 +27,7 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-use crate::error::AggregateError;
+use crate::error::{AggregateError, DynError};
 use crate::interface::mapping::path::MappingError;
 use crate::{
     connection::ClientMessage,
@@ -50,9 +50,11 @@ use crate::{
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum RecvError {
-    /// Connection error, either gRPC or MQTT
+    /// A generic connection related error.
+    ///
+    /// Should be downcasted to access the underling specific connection error.
     #[error("connection error, {0:?}")]
-    Connection(#[source] crate::transport::ConnectionRecvError),
+    Connection(#[source] DynError),
 
     /// Couldn't parse the mapping path.
     #[error("invalid mapping path '{}'", .0.path())]

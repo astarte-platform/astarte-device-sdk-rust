@@ -18,7 +18,6 @@
 
 //! Error types for the Astarte SDK.
 
-use crate::client::RecvError;
 use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceTypeDef};
@@ -27,7 +26,6 @@ use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
-use crate::transport::ConnectionRecvError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
 use std::convert::Infallible;
@@ -193,33 +191,6 @@ impl Display for AggregationCtx {
         match self {
             AggregationCtx::Interface => write!(f, "interface"),
             AggregationCtx::Payload => write!(f, "payload"),
-        }
-    }
-}
-
-impl TryFrom<Error> for RecvError {
-    type Error = Error;
-
-    fn try_from(value: Error) -> Result<Self, Self::Error> {
-        match value {
-            Error::InvalidEndpoint(err) => Ok(RecvError::InvalidEndpoint(err)),
-            Error::InterfaceNotFound { name } => Ok(RecvError::InterfaceNotFound { name }),
-            Error::MappingNotFound { interface, mapping } => {
-                Ok(RecvError::MappingNotFound { interface, mapping })
-            }
-            Error::Aggregation(aggr_err) => Ok(RecvError::Aggregation(aggr_err)),
-            Error::Disconnected => Ok(RecvError::Disconnected),
-
-            Error::Mqtt(MqttError::Payload(err)) => {
-                Ok(RecvError::Connection(ConnectionRecvError::Payload(err)))
-            }
-
-            #[cfg(feature = "message-hub")]
-            Error::Grpc(crate::transport::grpc::GrpcError::MessageHubProtoConversion(err)) => Ok(
-                RecvError::Connection(ConnectionRecvError::ProtoConversion(err)),
-            ),
-
-            err => Err(err),
         }
     }
 }

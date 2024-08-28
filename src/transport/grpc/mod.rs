@@ -52,8 +52,7 @@ use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
 use super::{
-    Connection, ConnectionEvent, ConnectionRecvError, Disconnect, Publish, Receive, Reconnect,
-    Register,
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
 use crate::client::RecvError;
 use crate::error::AggregateError;
@@ -396,46 +395,41 @@ where
 {
     type Payload = GrpcPayload;
 
-    async fn next_event(&mut self) -> Result<ConnectionEvent<Self::Payload>, crate::Error> {
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError> {
         match self.next_message().await {
             Ok(Some(message_res)) => {
                 // log message hub proto errors
                 let Some(res) = message_res.event else {
                     error!("empty MessageHubEvent should never occur");
-                    return Ok(ConnectionEvent::error(RecvError::Connection(
-                        ConnectionRecvError::ProtoConversion(MessageHubProtoError::ExpectedField(
-                            "event",
-                        )),
-                    )));
+                    return Err(TransportError::Recv(RecvError::Connection(Box::new(
+                        MessageHubProtoError::ExpectedField("event"),
+                    ))));
                 };
 
                 let message = match res {
                     astarte_message_hub_proto::message_hub_event::Event::Message(msg) => msg,
                     astarte_message_hub_proto::message_hub_event::Event::Error(proto_err) => {
                         error!("message hub proto error: {proto_err}");
-                        return Ok(ConnectionEvent::error(RecvError::Connection(
-                            ConnectionRecvError::Server(proto_err),
-                        )));
+                        return Err(TransportError::Recv(RecvError::Connection(Box::new(
+                            proto_err,
+                        ))));
                     }
                 };
 
-                let con_event = message
-                    .try_into()
-                    .map_err(|err| RecvError::Connection(ConnectionRecvError::ProtoConversion(err)))
-                    .map(ConnectionEvent::Event)
-                    .unwrap_or_else(ConnectionEvent::ReceiveError);
+                let event = ReceivedEvent::<Self::Payload>::try_from(message)
+                    .map_err(|err| RecvError::Connection(Box::new(err)))?;
 
-                Ok(con_event)
+                Ok(Some(event))
             }
             Err(s) => {
                 error!(status = %s, "error returned by the server");
 
-                Ok(ConnectionEvent::Disconnected)
+                Ok(None)
             }
             Ok(None) => {
                 warn!("Stream closed");
 
-                Ok(ConnectionEvent::Disconnected)
+                Ok(None)
             }
         }
     }
@@ -444,12 +438,11 @@ where
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
         let data = match payload.data {
             ProtoPayload::AstarteData(data) => data,
             ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
                 debug!("unset received");
-
                 return Ok(None);
             }
         };
@@ -461,12 +454,17 @@ where
                 Aggregation::Individual,
                 Aggregation::Object,
             );
-            Error::Aggregation(aggr_err)
+            TransportError::Recv(RecvError::Aggregation(aggr_err))
         })?;
 
-        let data: AstarteType = individual
-            .try_into()
-            .map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = match AstarteType::try_from(individual) {
+            Ok(d) => d,
+            Err(proto_err) => {
+                return Err(TransportError::Recv(RecvError::Connection(Box::new(
+                    proto_err,
+                ))));
+            }
+        };
 
         trace!("received {}", data.display_type());
 
@@ -478,23 +476,25 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
-        let object = payload
-            .data
-            .take_data()
-            .and_then(|d| d.take_object())
-            .ok_or_else(|| {
-                let aggr_err = AggregateError::for_payload(
-                    object.interface.interface_name(),
-                    path.to_string(),
-                    Aggregation::Object,
-                    Aggregation::Individual,
-                );
-                Error::Aggregation(aggr_err)
-            })?;
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
+        let Some(object) = payload.data.take_data().and_then(|d| d.take_object()) else {
+            let aggr_err = AggregateError::for_payload(
+                object.interface.interface_name(),
+                path.to_string(),
+                Aggregation::Object,
+                Aggregation::Individual,
+            );
+            return Err(TransportError::Recv(RecvError::Aggregation(aggr_err)));
+        };
 
-        let data =
-            map_values_to_astarte_type(object).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = match map_values_to_astarte_type(object) {
+            Ok(d) => d,
+            Err(proto_err) => {
+                return Err(TransportError::Recv(RecvError::Connection(Box::new(
+                    proto_err,
+                ))));
+            }
+        };
 
         trace!("object received");
 
@@ -984,10 +984,7 @@ mod test {
                 .unwrap();
 
             // poll the three messages the first two received errors will simply reconnect without returning
-            assert!(matches!(
-                connection.next_event().await,
-                Ok(ConnectionEvent::Disconnected)
-            ));
+            assert!(matches!(connection.next_event().await, Ok(None)));
 
             // to reconnect but errors
             assert!(matches!(
@@ -996,10 +993,7 @@ mod test {
             ));
 
             // second error
-            assert!(matches!(
-                connection.next_event().await,
-                Ok(ConnectionEvent::Disconnected)
-            ));
+            assert!(matches!(connection.next_event().await, Ok(None)));
 
             assert!(matches!(
                 connection.reconnect(&Interfaces::new()).await,
@@ -1007,10 +1001,7 @@ mod test {
             ));
 
             // third error
-            assert!(matches!(
-                connection.next_event().await,
-                Ok(ConnectionEvent::Disconnected)
-            ));
+            assert!(matches!(connection.next_event().await, Ok(None)));
 
             // manually calling detach
             connection.disconnect().await.unwrap();
@@ -1297,7 +1288,7 @@ mod test {
         };
 
         expect_messages!(connection.next_event().await;
-            ConnectionEvent::Event(ReceivedEvent {
+            Some(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {
@@ -1355,7 +1346,7 @@ mod test {
         };
 
         assert!(
-            matches!(connection.next_event().await, Ok(ConnectionEvent::Event(ReceivedEvent {
+            matches!(connection.next_event().await, Ok(Some(ReceivedEvent {
                 ref interface,
                 ref path,
                 payload: GrpcPayload {

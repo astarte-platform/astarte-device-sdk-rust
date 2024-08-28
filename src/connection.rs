@@ -33,6 +33,7 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::AggregateError;
+use crate::transport::TransportError;
 use crate::{
     builder::DEFAULT_CHANNEL_SIZE,
     client::RecvError,
@@ -46,10 +47,7 @@ use crate::{
     retention::memory::{ItemValue, SharedVolatileStore},
     retention::{self, RetentionId, StoredRetention, StoredRetentionExt},
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
-    transport::{
-        Connection, ConnectionEvent, Disconnect, Publish, Receive, ReceivedEvent, Reconnect,
-        Register,
-    },
+    transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Value,
 };
@@ -192,43 +190,48 @@ where
 
         tasks.spawn(async move {
             loop {
-                match receiver.connection.next_event().await? {
-                    ConnectionEvent::Disconnected => {
-                        // We sent the disconnect, we can return from the task
-                        if receiver.status.is_closed() {
-                            debug!("wait to sync with sender");
-
-                            receiver.status.sync_exit().await;
-
-                            info!("connection closed");
-
-                            break;
-                        }
-
-                        debug!("reconnecting");
-
-                        receiver.status.set_connected(false);
-
-                        let interfaces = receiver.interfaces.read().await;
-
-                        receiver.connection.reconnect(&interfaces).await?;
-
-                        receiver.status.set_connected(true);
+                let opt = match receiver.connection.next_event().await {
+                    Ok(opt) => opt,
+                    Err(TransportError::Transport(err)) => {
+                        return Err(err);
+                    }
+                    // send the error to the client
+                    Err(TransportError::Recv(recv_err)) => {
+                        receiver
+                            .tx
+                            .send_async(Err(recv_err))
+                            .await
+                            .map_err(|_| Error::Disconnected)?;
 
                         continue;
                     }
-                    ConnectionEvent::Event(event) => {
-                        receiver.handle_connection_event(event).await?;
+                };
+
+                let Some(event_data) = opt else {
+                    // We sent the disconnect, we can return from the task
+                    if receiver.status.is_closed() {
+                        debug!("wait to sync with sender");
+
+                        receiver.status.sync_exit().await;
+
+                        info!("connection closed");
+
+                        break;
                     }
-                    // send the error to the client
-                    ConnectionEvent::ReceiveError(err) => {
-                        receiver
-                            .tx
-                            .send_async(Err(err))
-                            .await
-                            .map_err(|_| Error::Disconnected)?;
-                    }
-                }
+
+                    debug!("reconnecting");
+
+                    receiver.status.set_connected(false);
+
+                    let interfaces = receiver.interfaces.read().await;
+
+                    receiver.connection.reconnect(&interfaces).await?;
+                    receiver.status.set_connected(true);
+
+                    continue;
+                };
+
+                receiver.handle_connection_event(event_data).await?
             }
 
             Ok(())
@@ -810,20 +813,25 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Value, Error>
+    ) -> Result<Value, TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let path = MappingPath::try_from(path).map_err(Error::InvalidEndpoint)?;
+        let path = match MappingPath::try_from(path) {
+            Ok(p) => p,
+            Err(err) => {
+                return Err(TransportError::Recv(RecvError::InvalidEndpoint(err)));
+            }
+        };
 
         let interfaces = self.interfaces.read().await;
-        let interface = interfaces.get(interface).ok_or_else(|| {
+        let Some(interface) = interfaces.get(interface) else {
             warn!("publish on missing interface {interface} ({path})");
-            Error::InterfaceNotFound {
+            return Err(TransportError::Recv(RecvError::InterfaceNotFound {
                 name: interface.to_string(),
-            }
-        })?;
+            }));
+        };
 
         let (data, timestamp) = match interface.aggregation() {
             InterfaceAggregation::Individual => {
@@ -847,17 +855,17 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let mapping = interface
-            .as_mapping_ref(path)
-            .ok_or_else(|| Error::MappingNotFound {
+        let Some(mapping) = interface.as_mapping_ref(path) else {
+            return Err(TransportError::Recv(RecvError::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
-            })?;
+            }));
+        };
 
         let individual = self.connection.deserialize_individual(&mapping, payload)?;
 
@@ -866,7 +874,10 @@ impl<S, C> DeviceReceiver<S, C> {
                 if let Some(prop) = mapping.as_prop() {
                     let prop = StoredProp::from_mapping(&prop, &value);
 
-                    self.store.store_prop(prop).await?;
+                    self.store
+                        .store_prop(prop)
+                        .await
+                        .map_err(|err| TransportError::Transport(err.into()))?;
 
                     debug!(
                         "property stored {}{path}:{}",
@@ -881,7 +892,8 @@ impl<S, C> DeviceReceiver<S, C> {
                 // Unset can only be received for a property
                 self.store
                     .delete_prop(interface.interface_name(), path.as_str())
-                    .await?;
+                    .await
+                    .map_err(|err| TransportError::Transport(err.into()))?;
 
                 debug!(
                     "property unset {}{path}:{}",
@@ -900,20 +912,20 @@ impl<S, C> DeviceReceiver<S, C> {
         interface: &Interface,
         path: &MappingPath<'a>,
         payload: C::Payload,
-    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), Error>
+    ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let object = interface.as_object_ref().ok_or_else(|| {
+        let Some(object) = interface.as_object_ref() else {
             let aggr_err = AggregateError::for_interface(
                 interface.interface_name(),
                 path.to_string(),
                 InterfaceAggregation::Object,
                 InterfaceAggregation::Individual,
             );
-            Error::Aggregation(aggr_err)
-        })?;
+            return Err(TransportError::Recv(RecvError::Aggregation(aggr_err)));
+        };
 
         let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
 
@@ -925,21 +937,18 @@ impl<S, C> DeviceReceiver<S, C> {
         C: Receive + Sync,
         S: PropertyStore,
     {
-        let res = self
+        let data = match self
             .handle_event(&event.interface, &event.path, event.payload)
             .await
-            .map(|aggregation| DeviceEvent {
+        {
+            Ok(aggregation) => Ok(DeviceEvent {
                 interface: event.interface,
                 path: event.path,
                 data: aggregation,
-            });
-
-        let data = match res {
-            Ok(data) => Ok(data),
-            Err(err) => {
-                // this way, if there is an unrecoverable error the application will return Err
-                let recv_err = RecvError::try_from(err)?;
-                Err(recv_err)
+            }),
+            Err(TransportError::Recv(recv_err)) => Err(recv_err),
+            Err(TransportError::Transport(err)) => {
+                return Err(err);
             }
         };
 

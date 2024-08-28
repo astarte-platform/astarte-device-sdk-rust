@@ -35,22 +35,22 @@ pub mod registration;
 mod retention;
 pub mod topic;
 
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    future::IntoFuture,
+};
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    future::IntoFuture,
-};
 use tracing::{debug, error, info, trace};
 
 use super::{
-    Connection, ConnectionEvent, ConnectionRecvError, Disconnect, Publish, Receive, ReceivedEvent,
-    Reconnect, Register,
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
 
 use crate::{
@@ -69,9 +69,8 @@ use crate::{
     store::{
         error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
     },
-    types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Timestamp,
+    AstarteType, Error, Interface, Timestamp,
 };
 
 pub use self::config::Credential;
@@ -676,14 +675,14 @@ where
 {
     type Payload = Bytes;
 
-    async fn next_event(&mut self) -> Result<ConnectionEvent<Self::Payload>, crate::Error>
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>
     where
         S: PropertyStore,
     {
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
 
         // Wait for next data or until it's disconnected
-        while let Some(publish) = self.poll().await? {
+        while let Some(publish) = self.poll().await.map_err(TransportError::Transport)? {
             let purge_topic = PURGE_PROPERTIES_TOPIC
                 .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));
 
@@ -692,36 +691,40 @@ where
             if purge_topic == &publish.topic {
                 debug!("Purging properties");
 
-                self.store.purge_server_properties(&publish.payload).await?;
+                self.store
+                    .purge_server_properties(&publish.payload)
+                    .await
+                    .map_err(TransportError::Transport)?;
             } else {
                 let con_event =
                     match ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic) {
-                        Ok(ParsedTopic { interface, path }) => {
-                            ConnectionEvent::Event(ReceivedEvent {
-                                interface: interface.to_string(),
-                                path: path.to_string(),
-                                payload: publish.payload,
-                            })
+                        Ok(ParsedTopic { interface, path }) => Some(ReceivedEvent {
+                            interface: interface.to_string(),
+                            path: path.to_string(),
+                            payload: publish.payload,
+                        }),
+
+                        Err(err) => {
+                            return Err(TransportError::Recv(RecvError::Connection(Box::new(err))));
                         }
-                        Err(err) => ConnectionEvent::error(RecvError::Connection(
-                            ConnectionRecvError::Topic(err),
-                        )),
                     };
 
                 return Ok(con_event);
             }
         }
 
-        Ok(ConnectionEvent::Disconnected)
+        Ok(None)
     }
 
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
-        payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
+        match payload::deserialize_individual(mapping, &payload) {
+            Ok(payload) => Ok(payload),
+            Err(err) => Err(TransportError::Recv(RecvError::Connection(Box::new(err)))),
+        }
     }
 
     fn deserialize_object(
@@ -729,9 +732,11 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
-        payload::deserialize_object(object, path, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
+        match payload::deserialize_object(object, path, &payload) {
+            Ok(payload) => Ok(payload),
+            Err(err) => Err(TransportError::Recv(RecvError::Connection(Box::new(err)))),
+        }
     }
 }
 
