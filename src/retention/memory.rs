@@ -221,7 +221,7 @@ impl VolatileItem {
 /// Failed to store publish information for interface without volatile retention.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
-#[error("interface {interface} has't retention volatile, but has {retention:?} instead")]
+#[error("interface {interface} doesn't have retention volatile, but has {retention:?} instead")]
 pub(crate) struct VolatileItemError {
     interface: String,
     retention: Retention,
