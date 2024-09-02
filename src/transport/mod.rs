@@ -36,7 +36,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
     },
     interfaces::{self, Interfaces},
-    store::{wrapper::StoreWrapper, PropertyStore},
+    retention::{PublishInfo, RetentionId},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
@@ -70,6 +70,11 @@ impl Connection for () {
     type Sender = ();
 }
 
+/// Implement the publication for a connection.
+///
+/// A connection should manage only the cleanup of the stored publishes.
+///
+/// It's generic over the id provided by the store for the retention.
 #[async_trait]
 pub(crate) trait Publish {
     /// Sends validated individual values over this connection
@@ -78,8 +83,39 @@ pub(crate) trait Publish {
     /// Sends validated objects values over this connection
     async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error>;
 
-    /// Unset a property value over this connection
+    /// Sends validated individual values with stored retention over this connection.
+    ///
+    /// The id is to identify the packet to confirm it was received by the server.
+    async fn send_individual_stored(
+        &mut self,
+        id: RetentionId,
+        data: ValidatedIndividual,
+    ) -> Result<(), crate::Error>;
+
+    /// Sends validated objects values with stored retention over this connection
+    ///
+    /// The id is to identify the packet to confirm it was received by the server.
+    async fn send_object_stored(
+        &mut self,
+        id: RetentionId,
+        data: ValidatedObject,
+    ) -> Result<(), crate::Error>;
+
+    /// Resend previously stored publish.
+    async fn resend_stored(
+        &mut self,
+        id: RetentionId,
+        data: PublishInfo<'_>,
+    ) -> Result<(), crate::Error>;
+
+    /// Unset a property value over this connection.
     async fn unset(&mut self, data: ValidatedUnset) -> Result<(), crate::Error>;
+
+    /// Serializes an individual astarte value.
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
+
+    /// Serializes an aggregate object.
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error>;
 }
 
 #[async_trait]
@@ -93,12 +129,7 @@ pub(crate) trait Receive {
     /// incoming messages.
     ///
     /// This function returns [`None`] to signal a disconnection from Astarte.
-    async fn next_event<S>(
-        &mut self,
-        store: &StoreWrapper<S>,
-    ) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>
-    where
-        S: PropertyStore;
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
@@ -121,13 +152,7 @@ pub(crate) trait Receive {
 pub(crate) trait Reconnect {
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
     /// [`Receive::next_event`] returns [`None`].
-    async fn reconnect<S>(
-        &mut self,
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> Result<(), crate::Error>
-    where
-        S: PropertyStore;
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error>;
 }
 
 #[async_trait]

@@ -22,7 +22,7 @@ use async_trait::async_trait;
 
 use crate::types::AstarteType;
 
-use super::{error::StoreError, PropertyStore, StoredProp};
+use super::{error::StoreError, PropertyStore, StoreCapabilities, StoredProp};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
@@ -33,6 +33,17 @@ pub(crate) struct StoreWrapper<S> {
 impl<S> StoreWrapper<S> {
     pub(crate) fn new(store: S) -> Self {
         Self { store }
+    }
+}
+
+impl<S> StoreCapabilities for StoreWrapper<S>
+where
+    S: StoreCapabilities,
+{
+    type Retention = S::Retention;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        self.store.get_retention()
     }
 }
 

@@ -167,7 +167,8 @@ async fn main() -> eyre::Result<()> {
         .interface_directory(&test_cfg.interfaces_fld)?
         .connect(mqtt_config)
         .await?
-        .build();
+        .build()
+        .await;
 
     let rx_data_ind_datastream = Arc::new(Mutex::new(HashMap::new()));
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));

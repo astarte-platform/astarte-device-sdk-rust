@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE retention_publish\nSET\n    sent = FALSE;\n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "20c659bf1886c1ac058849c9d92cb26e8ab5f06911f0392dfeb46b4ecb1cd080"
+}

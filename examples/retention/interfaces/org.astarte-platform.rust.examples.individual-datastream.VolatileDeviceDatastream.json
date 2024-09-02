@@ -1,0 +1,22 @@
+{
+  "interface_name": "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "ownership": "device",
+  "mappings": [
+    {
+      "endpoint": "/endpoint1",
+      "type": "longinteger",
+      "reliability": "guaranteed",
+      "retention": "volatile"
+    },
+    {
+      "endpoint": "/endpoint2",
+      "type": "boolean",
+      "retention": "volatile",
+      "reliability": "unique",
+      "expiry": 30
+    }
+  ]
+}

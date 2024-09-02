@@ -39,6 +39,7 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
+use crate::retention::memory::SharedVolatileStore;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -51,6 +52,9 @@ use crate::transport::Connection;
 /// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
 /// events data to the external receiver and between each component.
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
+
+/// Default capacity for the number of packets with retention volatile to store in memory.
+pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Astarte builder error.
 ///
@@ -91,21 +95,23 @@ pub enum BuilderError {
 ///
 /// This trait is already implemented generically for the [`DeviceBuilder`]
 /// and implementing it should be avoided since it has no practical use.
+#[async_trait]
 pub trait DeviceSdkBuild<S, C>
 where
-    C: Connection,
+    C: Connection + Send,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
-    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
+    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
 }
 
+#[async_trait]
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
 where
     S: PropertyStore,
-    C: Connection,
+    C: Connection + Send,
 {
-    fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
+    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
         // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
@@ -118,10 +124,14 @@ where
             tx_client,
             self.store.clone(),
         );
+
+        self.volatile.set_capacity(self.volatile_retention).await;
+
         let connection = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
+            self.volatile,
             self.store,
             self.connection,
             self.sender,
@@ -139,10 +149,12 @@ where
     C: Connection,
 {
     pub(crate) channel_size: usize,
+    pub(crate) volatile_retention: usize,
     pub(crate) interfaces: Interfaces,
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
     pub(crate) store: StoreWrapper<S>,
+    pub(crate) volatile: SharedVolatileStore,
     pub(crate) writable_dir: Option<PathBuf>,
 }
 
@@ -164,10 +176,12 @@ impl DeviceBuilder<(), ()> {
     pub fn new() -> Self {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
+            volatile_retention: DEFAULT_VOLATILE_CAPACITY,
             interfaces: Interfaces::new(),
             connection: (),
             sender: (),
             store: StoreWrapper::new(()),
+            volatile: SharedVolatileStore::new(),
             writable_dir: None,
         }
     }
@@ -245,6 +259,14 @@ where
         self
     }
 
+    /// Sets the number of elements with retention volatile that will be kept in memory if
+    /// disconnected.
+    pub fn volatile_retention(mut self, items: usize) -> Self {
+        self.volatile_retention = items;
+
+        self
+    }
+
     /// Configure a writable directory for the device.
     pub fn writable_dir<P>(mut self, path: P) -> Result<Self, BuilderError>
     where
@@ -297,10 +319,12 @@ where
     {
         DeviceBuilder {
             channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
             connection: self.connection,
             sender: self.sender,
             store: StoreWrapper::new(store),
+            volatile: self.volatile,
             writable_dir: self.writable_dir,
         }
     }
@@ -312,18 +336,20 @@ where
     pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Conn>, crate::Error>
     where
         S: PropertyStore,
-        T: ConnectionConfig,
-        crate::Error: From<<T as ConnectionConfig>::Err>,
+        T: ConnectionConfig<S>,
+        crate::Error: From<<T as ConnectionConfig<S>>::Err>,
         C: Send + Sync,
     {
         let (sender, connection) = config.connect(&self).await?;
 
         Ok(DeviceBuilder {
             channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
             connection,
             sender,
             store: self.store,
+            volatile: self.volatile,
             writable_dir: self.writable_dir,
         })
     }
@@ -357,7 +383,7 @@ impl Default for DeviceBuilder<(), ()> {
 /// This trait is already implemented internally
 /// and implementing it should be avoided since it has no practical use.
 #[async_trait]
-pub trait ConnectionConfig {
+pub trait ConnectionConfig<S> {
     /// Type of the constructed Connection
     type Conn: Connection;
     /// Type of the error got while opening the connection
@@ -365,7 +391,7 @@ pub trait ConnectionConfig {
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
-    async fn connect<S, C>(
+    async fn connect<C>(
         self,
         builder: &DeviceBuilder<S, C>,
     ) -> Result<(<Self::Conn as Connection>::Sender, Self::Conn), Self::Err>
@@ -605,7 +631,8 @@ mod test {
         .await
         .unwrap()
         .unwrap()
-        .build();
+        .build()
+        .await;
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;

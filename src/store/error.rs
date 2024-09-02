@@ -18,8 +18,7 @@
 
 //! Error for the store.
 
-/// Dynamic error type of an [`super::PropertyStore`].
-type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+use crate::error::DynError;
 
 /// Error that wraps the type returned by an implementation of the [`super::PropertyStore`] trait.
 #[non_exhaustive]

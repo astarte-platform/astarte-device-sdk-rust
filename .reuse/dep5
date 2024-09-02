@@ -2,51 +2,23 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Astarte Device SDK Rust
 Source: https://github.com/astarte-platform/astarte-device-sdk-rust
 
-Files: .sqlx/*
+Files: .sqlx/*.json
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: queries/*
+Files: queries/*.sql
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: migrations/*
+Files: migrations/*.sql
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: examples/registration/interfaces/*
+Files: */interfaces/*.json
 Copyright: SECO Mind Srl
 License: CC0-1.0
 
-Files: examples/registration/configuration.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/individual_datastream/interfaces/*
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/individual_datastream/configuration.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/object_datastream/interfaces/*
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/object_datastream/configuration.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/individual_properties/interfaces/*
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: examples/individual_properties/configuration.json
-Copyright: SECO Mind Srl
-License: CC0-1.0
-
-Files: e2e-test/interfaces/*
+Files: */configuration.json
 Copyright: SECO Mind Srl
 License: CC0-1.0
 

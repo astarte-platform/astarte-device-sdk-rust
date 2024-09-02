@@ -49,7 +49,9 @@ use std::{
     time::Duration,
 };
 
-use rumqttc::{ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, Transport};
+use rumqttc::{
+    ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError, Transport,
+};
 use sync_wrapper::SyncWrapper;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
@@ -205,6 +207,8 @@ impl MqttConnection {
                 .await?;
 
             if let Some(publish) = opt_publish {
+                disable_clean_session(self.connection.eventloop_mut());
+
                 self.buff.push_back(publish);
             }
 
@@ -218,9 +222,19 @@ impl MqttConnection {
             }
         }
 
+        disable_clean_session(self.connection.eventloop_mut());
+
         Ok(())
     }
 }
+
+#[cfg(not(test))]
+fn disable_clean_session(eventloop: &mut EventLoop) {
+    eventloop.mqtt_options.set_clean_session(false);
+}
+
+#[cfg(test)]
+fn disable_clean_session(_eventloop: &mut EventLoop) {}
 
 /// Struct to hold the connection and client to be passed to the state.
 ///
@@ -670,17 +684,21 @@ impl Next {
         error!(error = %Report::new(&err),"error received from mqtt connection");
 
         match err {
-            ConnectionError::MqttState(_)
-            | ConnectionError::NetworkTimeout
-            | ConnectionError::FlushTimeout
+            ConnectionError::NetworkTimeout
             | ConnectionError::Io(_)
-            | ConnectionError::RequestsDone => {
-                trace!("no state change");
+            | ConnectionError::FlushTimeout => {
+                trace!("disconnected, wait for connack");
 
-                Next::Same
+                Next::state(Connecting)
             }
             ConnectionError::NotConnAck(_) => {
                 trace!("wait for connack");
+
+                Next::state(Connecting)
+            }
+            ConnectionError::MqttState(StateError::ConnectionAborted)
+            | ConnectionError::RequestsDone => {
+                info!("MQTT connection closed");
 
                 Next::state(Connecting)
             }
@@ -688,6 +706,11 @@ impl Next {
                 trace!("recreate the connection");
 
                 Next::state(Disconnected)
+            }
+            ConnectionError::MqttState(_) => {
+                trace!("no state change");
+
+                Next::Same
             }
         }
     }
