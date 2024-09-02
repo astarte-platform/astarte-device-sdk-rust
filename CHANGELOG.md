@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Use Empty type rather than Node to detach a Node [#340](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/340/).
+- Handle the new return type of the Attach rpc, `MessageHubEvent`, which can either be an error or an Astarte 
+  message [#362](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/362)
 
 ## [0.8.2] - 2024-05-29
 
