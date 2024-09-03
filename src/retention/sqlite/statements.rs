@@ -19,7 +19,7 @@
 use std::{borrow::Cow, collections::HashSet, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use tracing::warn;
+use tracing::{trace, warn};
 
 use crate::{
     retention::{Id, PublishInfo, StoredInterface},
@@ -37,24 +37,27 @@ impl WriteConnection {
         mapping: &RetentionMapping<'_>,
         publish: &RetentionPublish<'_>,
     ) -> Result<(), SqliteError> {
-        let store_mapping =
-            read_mapping(self, &mapping.interface, &mapping.path)?.is_some_and(|stored| {
-                if stored != *mapping {
-                    warn!("mappings differ, replacing");
+        let exists = read_mapping(self, &mapping.interface, &mapping.path)?.is_some_and(|stored| {
+            if stored != *mapping {
+                warn!("mappings differ, replacing");
 
-                    true
-                } else {
-                    false
-                }
-            });
+                false
+            } else {
+                trace!("mapping already exists");
+
+                true
+            }
+        });
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
 
         wrap_sync_call(|| {
-            if store_mapping {
+            if !exists {
                 Self::store_mapping(&transaction, mapping)?;
+                trace!("mapping stored");
             }
 
             Self::store_publish(&transaction, publish)?;
+            trace!("publish stored");
 
             transaction.commit()?;
 
@@ -346,7 +349,7 @@ fn expiry_from_sql(expiry: Option<i64>) -> Option<Duration> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use itertools::Itertools;
 
     use crate::{
@@ -401,10 +404,20 @@ mod tests {
         t.commit().unwrap();
     }
 
-    fn fetch_publish(store: &SqliteStore, id: &Id) -> Option<RetentionPublish<'static>> {
+    pub(crate) fn fetch_publish(store: &SqliteStore, id: &Id) -> Option<RetentionPublish<'static>> {
         store
             .with_reader(|reader| reader.publish(id))
             .expect("failed to fetch publish")
+    }
+
+    pub(crate) fn fetch_mapping(
+        store: &SqliteStore,
+        interface: &str,
+        path: &str,
+    ) -> Option<RetentionMapping<'static>> {
+        store
+            .with_reader(|reader| read_mapping(reader, interface, path))
+            .unwrap()
     }
 
     #[tokio::test]
@@ -423,10 +436,7 @@ mod tests {
 
         store_mapping(&store, &mapping).await;
 
-        let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
-            .unwrap()
-            .unwrap();
+        let res = fetch_mapping(&store, &mapping.interface, &mapping.path).unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -506,9 +516,12 @@ mod tests {
             path: path.into(),
             version_major: 1,
             reliability: Reliability::Guaranteed,
-            expiry: None,
+            expiry: Some(Duration::from_secs(2)),
         };
         store_mapping(&store, &mapping).await;
+
+        let mut expiry_time = TimestampSecs::now();
+        expiry_time.0 += 100;
 
         let publish = RetentionPublish {
             id: Id {
@@ -519,7 +532,7 @@ mod tests {
             path: path.into(),
             payload: [].as_slice().into(),
             sent: false,
-            expiry_time: None,
+            expiry_time: Some(expiry_time),
         };
 
         store_publish(&store, &publish).await;

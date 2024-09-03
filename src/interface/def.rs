@@ -579,6 +579,10 @@ mod doc {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use crate::test::{DEVICE_PROPERTIES, SERVER_PROPERTIES};
+
     use super::*;
 
     #[cfg(feature = "interface-strict")]
@@ -707,5 +711,16 @@ mod tests {
                 ttl: Duration::from_secs(0)
             }
         );
+    }
+
+    #[test]
+    fn should_check_ownership() {
+        let server = Interface::from_str(SERVER_PROPERTIES).unwrap();
+        assert!(!server.ownership().is_device());
+        assert!(server.ownership().is_server());
+
+        let device = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+        assert!(device.ownership().is_device());
+        assert!(!device.ownership().is_server());
     }
 }

@@ -287,3 +287,171 @@ impl StoredRetention for SqliteStore {
             .map_err(RetentionError::fetch_interfaces)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use statements::tests::{fetch_mapping, fetch_publish};
+
+    use crate::retention::Context;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn should_store_publish() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let publish_info = PublishInfo::from_ref(
+            interface,
+            path,
+            1,
+            Reliability::Unique,
+            crate::interface::Retention::Stored { expiry: None },
+            false,
+            &[],
+        );
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Unique,
+            expiry: None,
+        };
+
+        let id = Context::new().next();
+
+        let publish = RetentionPublish {
+            id,
+            interface: interface.into(),
+            path: path.into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        store.store_publish(&id, publish_info).await.unwrap();
+
+        let res = fetch_publish(&store, &id).unwrap();
+
+        assert_eq!(res, publish);
+
+        let res = fetch_mapping(&store, interface, path).unwrap();
+
+        assert_eq!(res, mapping)
+    }
+
+    #[tokio::test]
+    async fn should_mark_received() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let publish_info = PublishInfo::from_ref(
+            interface,
+            path,
+            1,
+            Reliability::Unique,
+            crate::interface::Retention::Stored { expiry: None },
+            false,
+            &[],
+        );
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: Reliability::Unique,
+            expiry: None,
+        };
+
+        let id = Context::new().next();
+
+        store.store_publish(&id, publish_info).await.unwrap();
+
+        store.mark_received(&id).await.unwrap();
+
+        let res = fetch_publish(&store, &id);
+
+        assert_eq!(res, None);
+
+        let res = fetch_mapping(&store, interface, path).unwrap();
+
+        assert_eq!(res, mapping)
+    }
+
+    #[tokio::test]
+    async fn should_fetch_all_interfaces() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let publish_info = PublishInfo::from_ref(
+            interface,
+            path,
+            1,
+            Reliability::Unique,
+            crate::interface::Retention::Stored { expiry: None },
+            false,
+            &[],
+        );
+
+        let id = Context::new().next();
+
+        store.store_publish(&id, publish_info).await.unwrap();
+
+        let res = store.fetch_all_interfaces().await.unwrap();
+
+        let exp = StoredInterface {
+            name: interface.into(),
+            version_major: 1,
+        };
+
+        assert_eq!(res.len(), 1);
+        assert!(res.contains(&exp));
+    }
+
+    #[tokio::test]
+    async fn should_mark_sent_and_reset() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let publish_info = PublishInfo::from_ref(
+            interface,
+            path,
+            1,
+            Reliability::Unique,
+            crate::interface::Retention::Stored { expiry: None },
+            false,
+            &[],
+        );
+
+        let id = Context::new().next();
+
+        store.store_publish(&id, publish_info).await.unwrap();
+
+        store.update_sent_flag(&id, true).await.unwrap();
+
+        let res = fetch_publish(&store, &id).unwrap();
+        assert!(res.sent);
+
+        store.reset_all_publishes().await.unwrap();
+
+        let res = fetch_publish(&store, &id).unwrap();
+        assert!(!res.sent);
+    }
+}
