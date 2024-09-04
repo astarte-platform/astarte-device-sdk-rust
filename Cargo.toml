@@ -107,7 +107,7 @@ interface-strict = []
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.8.3" }
 astarte-device-sdk-derive = { version = "=0.8.3", path = "./astarte-device-sdk-derive" }
-astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "908e34d232a23c81419c962f07705a358642a520" }
+astarte-message-hub-proto =  "0.7.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
 bson = "2.7.0"

@@ -481,7 +481,7 @@ where
 {
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
         // try reattaching
-        let data = NodeData::try_from_interfaces(self.uuid, interfaces)?;
+        let data = NodeData::try_from(interfaces)?;
 
         let mut exp_back = ExponentialIter::default();
 
@@ -493,7 +493,7 @@ where
 
                     let timeout = exp_back.next();
 
-                    debug!("waiting {timeout} seconds before retring");
+                    debug!("waiting {timeout} seconds before retrying");
 
                     tokio::time::sleep(Duration::from_secs(timeout)).await;
                 }
@@ -589,7 +589,7 @@ where
 
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from_interfaces(self.uuid, &builder.interfaces)?;
+        let node_data = NodeData::try_from(&builder.interfaces)?;
         let stream = Grpc::<StoreWrapper<S>>::attach(&mut client, node_data).await?;
 
         let sender = GrpcClient::new(
@@ -610,17 +610,21 @@ struct NodeData {
 }
 
 impl NodeData {
-    fn try_from_iter<'a, I>(uuid: Uuid, interfaces: I) -> Result<Self, GrpcError>
+    fn try_from_iter<'a, I>(interfaces: I) -> Result<Self, GrpcError>
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let node = Node::from_interfaces(&uuid, interfaces)?;
+        let node = Node::from_interfaces(interfaces)?;
 
         Ok(Self { node })
     }
+}
 
-    fn try_from_interfaces(uuid: Uuid, interfaces: &Interfaces) -> Result<Self, GrpcError> {
-        Self::try_from_iter(uuid, interfaces.iter())
+impl<'a> TryFrom<&'a Interfaces> for NodeData {
+    type Error = GrpcError;
+
+    fn try_from(value: &'a Interfaces) -> Result<Self, Self::Error> {
+        Self::try_from_iter(value.iter())
     }
 }
 
@@ -649,9 +653,11 @@ mod test {
 
     use super::*;
 
+    const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
+
     #[derive(Debug)]
     enum ServerReceivedRequest {
-        Attach(Node),
+        Attach((Uuid, Node)),
         Send(AstarteMessage),
         Detach(Empty),
         AddInterfaces(InterfacesJson),
@@ -659,6 +665,23 @@ mod test {
     }
 
     type ServerSenderValuesVec = Vec<Result<MessageHubEvent, tonic::Status>>;
+
+    fn get_node_id_from_metadata(request: &tonic::Request<Node>) -> Result<Uuid, tonic::Status> {
+        // check only node-id-bin since the Node does not insert node-id metadata in the request
+        let Some(metadata_val) = request.metadata().get_bin("node-id-bin") else {
+            return Err(Status::new(
+                tonic::Code::InvalidArgument,
+                "absent node id into metadata".to_string(),
+            ));
+        };
+
+        let node_id_bytes = metadata_val
+            .to_bytes()
+            .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))?;
+
+        Uuid::from_slice(&node_id_bytes)
+            .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))
+    }
 
     pub(crate) struct TestMessageHubServer {
         /// This stream can be used to send test events that will be handled by the astarte device sdk code
@@ -692,10 +715,13 @@ mod test {
             &self,
             request: tonic::Request<Node>,
         ) -> Result<tonic::Response<Self::AttachStream>, tonic::Status> {
-            let inner = request.into_inner();
-            println!("Client '{}' attached", inner.uuid.clone());
+            // retrieve the node id from the metadata request
+            let node_id = get_node_id_from_metadata(&request)?;
 
-            self.server_received.send(ServerReceivedRequest::Attach(inner)).await
+            let inner = request.into_inner();
+            println!("Client '{node_id}' attached");
+
+            self.server_received.send(ServerReceivedRequest::Attach((node_id, inner))).await
                 .expect("Could not send notification of a server received message, connect a channel to the Receiver");
 
             let mut receiver_lock = self.server_send.lock().await;
@@ -800,13 +826,11 @@ mod test {
         Ok((server, client))
     }
 
-    const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
-
     async fn mock_astarte_grpc_client(
         mut message_hub_client: MsgHubClient,
         interfaces: &Interfaces,
     ) -> Result<(GrpcClient<MemoryStore>, Grpc<MemoryStore>), Box<dyn std::error::Error>> {
-        let node_data = NodeData::try_from_interfaces(ID, interfaces)?;
+        let node_data = NodeData::try_from(interfaces)?;
         let stream =
             Grpc::<StoreWrapper<MemoryStore>>::attach(&mut message_hub_client, node_data).await?;
 
@@ -910,7 +934,7 @@ mod test {
         }
 
         expect_messages!(channels.server_request_receiver.try_recv();
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             ServerReceivedRequest::Detach(_),
         );
     }
@@ -986,11 +1010,11 @@ mod test {
 
         expect_messages!(channels.server_request_receiver.try_recv();
             // connection creation attach
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             // first error attach
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             // second error attach
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             ServerReceivedRequest::Detach(_),
         );
     }
@@ -1069,7 +1093,7 @@ mod test {
 
         expect_messages!(channels.server_request_receiver.try_recv();
             // connection creation attach
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             // add interface
             ServerReceivedRequest::AddInterfaces(i) if i.interfaces_json == vec![serde_json::to_string(&interface).unwrap()],
             // remove interface
@@ -1134,7 +1158,7 @@ mod test {
         }
 
         expect_messages!(channels.server_request_receiver.try_recv();
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             ServerReceivedRequest::Send(m)
             => data_event = DeviceEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.individual-properties.DeviceProperties"
@@ -1200,7 +1224,7 @@ mod test {
         }
 
         expect_messages!(channels.server_request_receiver.try_recv();
-            ServerReceivedRequest::Attach(a) if a.uuid == ID.to_string(),
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
             ServerReceivedRequest::Send(m)
             => data_event = DeviceEvent::try_from(m).expect("Malformed message");
                 if data_event.interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
