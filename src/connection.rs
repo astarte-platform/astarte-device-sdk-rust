@@ -818,12 +818,8 @@ impl<S, C> DeviceReceiver<S, C> {
         S: PropertyStore,
         C: Receive + Sync,
     {
-        let path = match MappingPath::try_from(path) {
-            Ok(p) => p,
-            Err(err) => {
-                return Err(TransportError::Recv(RecvError::InvalidEndpoint(err)));
-            }
-        };
+        let path = MappingPath::try_from(path)
+            .map_err(|err| TransportError::Recv(RecvError::InvalidEndpoint(err)))?;
 
         let interfaces = self.interfaces.read().await;
         let Some(interface) = interfaces.get(interface) else {
@@ -877,7 +873,7 @@ impl<S, C> DeviceReceiver<S, C> {
                     self.store
                         .store_prop(prop)
                         .await
-                        .map_err(|err| TransportError::Transport(err.into()))?;
+                        .map_err(|err| TransportError::Transport(Error::Store(err)))?;
 
                     debug!(
                         "property stored {}{path}:{}",
@@ -893,7 +889,7 @@ impl<S, C> DeviceReceiver<S, C> {
                 self.store
                     .delete_prop(interface.interface_name(), path.as_str())
                     .await
-                    .map_err(|err| TransportError::Transport(err.into()))?;
+                    .map_err(|err| TransportError::Transport(Error::Store(err)))?;
 
                 debug!(
                     "property unset {}{path}:{}",

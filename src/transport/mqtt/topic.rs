@@ -31,7 +31,7 @@ pub enum TopicError {
     /// Empty topic
     #[error("topic is empty")]
     Empty,
-    /// Unknown client id
+    /// The topic should start with `<realm>/<device_id>`.
     #[error(
         "the topic should start with <realm>/<device_id> equal to {client_id}, received: {topic}"
     )]
@@ -41,7 +41,7 @@ pub enum TopicError {
         /// Topic
         topic: String,
     },
-    /// Malformed topic
+    /// The topic should be in the form `<realm>/<device_id>/<interface>/<path>`.
     #[error(
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]

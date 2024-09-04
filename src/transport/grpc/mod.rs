@@ -41,8 +41,8 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient,
-    pbjson_types::Empty, tonic, AstarteMessage, InterfacesJson, InterfacesName, MessageHubEvent,
-    Node,
+    pbjson_types::Empty, tonic, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
+    MessageHubEvent, Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -88,13 +88,15 @@ pub enum GrpcError {
     #[error("Error while serializing the interfaces")]
     /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
-    // TODO: check if it has to be moved to GrpcRecvError
     /// Couldn't decode gRPC message
     #[error("couldn't decode grpc message")]
     Decode(#[from] DecodeError),
     /// Failed to convert a proto message.
-    #[error(transparent)]
+    #[error("couldn't convert proto message")]
     MessageHubProtoConversion(#[from] MessageHubProtoError),
+    /// Error returned by the message hub server
+    #[error("error returned by the message hub server")]
+    Server(#[from] MessageHubError),
 }
 
 type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
@@ -397,27 +399,8 @@ where
 
     async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError> {
         match self.next_message().await {
-            Ok(Some(message_res)) => {
-                // log message hub proto errors
-                let Some(res) = message_res.event else {
-                    error!("empty MessageHubEvent should never occur");
-                    return Err(TransportError::Recv(RecvError::Connection(Box::new(
-                        MessageHubProtoError::ExpectedField("event"),
-                    ))));
-                };
-
-                let message = match res {
-                    astarte_message_hub_proto::message_hub_event::Event::Message(msg) => msg,
-                    astarte_message_hub_proto::message_hub_event::Event::Error(proto_err) => {
-                        error!("message hub proto error: {proto_err}");
-                        return Err(TransportError::Recv(RecvError::Connection(Box::new(
-                            proto_err,
-                        ))));
-                    }
-                };
-
-                let event = ReceivedEvent::<Self::Payload>::try_from(message)
-                    .map_err(|err| RecvError::Connection(Box::new(err)))?;
+            Ok(Some(message)) => {
+                let event = message.try_into().map_err(RecvError::connection)?;
 
                 Ok(Some(event))
             }
@@ -457,14 +440,7 @@ where
             TransportError::Recv(RecvError::Aggregation(aggr_err))
         })?;
 
-        let data = match AstarteType::try_from(individual) {
-            Ok(d) => d,
-            Err(proto_err) => {
-                return Err(TransportError::Recv(RecvError::Connection(Box::new(
-                    proto_err,
-                ))));
-            }
-        };
+        let data = AstarteType::try_from(individual).map_err(RecvError::connection)?;
 
         trace!("received {}", data.display_type());
 
@@ -477,24 +453,20 @@ where
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
-        let Some(object) = payload.data.take_data().and_then(|d| d.take_object()) else {
-            let aggr_err = AggregateError::for_payload(
-                object.interface.interface_name(),
-                path.to_string(),
-                Aggregation::Object,
-                Aggregation::Individual,
-            );
-            return Err(TransportError::Recv(RecvError::Aggregation(aggr_err)));
-        };
+        let object = payload
+            .data
+            .take_data()
+            .and_then(|d| d.take_object())
+            .ok_or_else(|| {
+                RecvError::Aggregation(AggregateError::for_payload(
+                    object.interface.interface_name(),
+                    path.to_string(),
+                    Aggregation::Object,
+                    Aggregation::Individual,
+                ))
+            })?;
 
-        let data = match map_values_to_astarte_type(object) {
-            Ok(d) => d,
-            Err(proto_err) => {
-                return Err(TransportError::Recv(RecvError::Connection(Box::new(
-                    proto_err,
-                ))));
-            }
-        };
+        let data = map_values_to_astarte_type(object).map_err(RecvError::connection)?;
 
         trace!("object received");
 

@@ -24,7 +24,7 @@ use crate::{error::Error, types::AstarteType};
 
 /// Trait ensuring correct parsing of the data to be sent.
 ///
-/// A **trait** required by all data to be sent using
+/// It's required by all data to be sent using
 /// [send_object()][crate::Client::send_object] and
 /// [send_object_with_timestamp()][crate::Client::send_object_with_timestamp].
 ///

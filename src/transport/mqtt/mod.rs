@@ -53,6 +53,11 @@ use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
 
+pub use self::config::Credential;
+pub use self::config::MqttConfig;
+pub use self::pairing::PairingError;
+pub use self::payload::PayloadError;
+use crate::retention::RetentionError;
 use crate::{
     client::RecvError,
     error::Report,
@@ -72,11 +77,6 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteType, Error, Interface, Timestamp,
 };
-
-pub use self::config::Credential;
-pub use self::config::MqttConfig;
-pub use self::pairing::PairingError;
-pub use self::payload::PayloadError;
 
 use self::{
     client::AsyncClient,
@@ -589,7 +589,7 @@ impl<S> Mqtt<S> {
         volatile: &SharedVolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, NoticeError>,
-    ) -> Result<(), Error>
+    ) -> Result<(), RetentionError>
     where
         S: StoreCapabilities,
     {
@@ -618,7 +618,7 @@ impl<S> Mqtt<S> {
         Ok(())
     }
 
-    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, Error>
+    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, TransportError>
     where
         S: StoreCapabilities,
     {
@@ -631,7 +631,9 @@ impl<S> Mqtt<S> {
 
             match futures::future::select(self.retention.into_future(), &mut conn_future).await {
                 Either::Left((res, _)) => {
-                    Self::mark_packet_received(&self.volatile, &self.store, res).await?;
+                    Self::mark_packet_received(&self.volatile, &self.store, res)
+                        .await
+                        .map_err(|err| TransportError::Transport(Error::Retention(err)))?;
                 }
                 // the retention future can be dropped safely
                 Either::Right((publish, _)) => {
@@ -684,7 +686,7 @@ where
         static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
 
         // Wait for next data or until it's disconnected
-        while let Some(publish) = self.poll().await.map_err(TransportError::Transport)? {
+        while let Some(publish) = self.poll().await? {
             let purge_topic = PURGE_PROPERTIES_TOPIC
                 .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));
 
@@ -698,20 +700,14 @@ where
                     .await
                     .map_err(TransportError::Transport)?;
             } else {
-                let con_event =
-                    match ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic) {
-                        Ok(ParsedTopic { interface, path }) => Some(ReceivedEvent {
-                            interface: interface.to_string(),
-                            path: path.to_string(),
-                            payload: publish.payload,
-                        }),
+                let con_event = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
+                    .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
 
-                        Err(err) => {
-                            return Err(TransportError::Recv(RecvError::Connection(Box::new(err))));
-                        }
-                    };
-
-                return Ok(con_event);
+                return Ok(Some(ReceivedEvent {
+                    interface: con_event.interface.to_string(),
+                    path: con_event.path.to_string(),
+                    payload: publish.payload,
+                }));
             }
         }
 
@@ -723,10 +719,8 @@ where
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
-        match payload::deserialize_individual(mapping, &payload) {
-            Ok(payload) => Ok(payload),
-            Err(err) => Err(TransportError::Recv(RecvError::Connection(Box::new(err)))),
-        }
+        payload::deserialize_individual(mapping, &payload)
+            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
     }
 
     fn deserialize_object(
@@ -735,10 +729,8 @@ where
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
-        match payload::deserialize_object(object, path, &payload) {
-            Ok(payload) => Ok(payload),
-            Err(err) => Err(TransportError::Recv(RecvError::Connection(Box::new(err)))),
-        }
+        payload::deserialize_object(object, path, &payload)
+            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
     }
 }
 
