@@ -47,7 +47,7 @@ use astarte_message_hub_proto::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
@@ -158,6 +158,14 @@ impl<S> GrpcClient<S> {
         }
 
         Ok(())
+    }
+
+    async fn detach(&mut self) -> Result<(), GrpcError> {
+        self.client
+            .detach(tonic::Request::new(Empty {}))
+            .await
+            .map(|_| ())
+            .map_err(GrpcError::from)
     }
 }
 
@@ -325,6 +333,18 @@ where
     }
 }
 
+#[async_trait]
+impl<S> Disconnect for GrpcClient<S>
+where
+    S: Send,
+{
+    async fn disconnect(&mut self) -> Result<(), crate::Error> {
+        self.detach().await.map_err(Error::Grpc)?;
+
+        Ok(())
+    }
+}
+
 /// Struct representing a GRPC connection handler for an Astarte device.
 ///
 /// It manages the interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub),
@@ -367,17 +387,6 @@ impl<S> Grpc<S> {
             .attach(tonic::Request::new(data.node))
             .await
             .map(|r| r.into_inner())
-            .map_err(GrpcError::from)
-    }
-
-    async fn detach(mut client: MsgHubClient) -> Result<(), GrpcError> {
-        // During the detach phase only the uuid is needed we can pass an empty array
-        // as the interface_json since the interfaces are already known to the message hub
-        // this api will change in the future
-        client
-            .detach(tonic::Request::new(Empty {}))
-            .await
-            .map(|_| ())
             .map_err(GrpcError::from)
     }
 }
@@ -501,22 +510,6 @@ where
         };
 
         self.stream = SyncWrapper::new(stream);
-
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl<S> Disconnect for Grpc<S>
-where
-    S: Send,
-{
-    async fn disconnect(mut self) -> Result<(), crate::Error> {
-        debug!("detaching node {}", self.uuid);
-
-        Self::detach(self.client).await.map_err(Error::Grpc)?;
-
-        info!("node {} detached", self.uuid);
 
         Ok(())
     }
@@ -920,12 +913,12 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (_client, connection) = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (mut client, _connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
             // manually calling detach
-            connection.disconnect().await.unwrap();
+            client.disconnect().await.unwrap();
         };
 
         tokio::select! {
@@ -975,7 +968,7 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (_client, mut connection) = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (mut client, mut connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
@@ -1000,7 +993,7 @@ mod test {
             assert!(matches!(connection.next_event().await, Ok(None)));
 
             // manually calling detach
-            connection.disconnect().await.unwrap();
+            client.disconnect().await.unwrap();
         };
 
         tokio::select! {
@@ -1031,7 +1024,7 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (mut client, connection) = mock_astarte_grpc_client(client, &Interfaces::new())
+            let (mut client, _connection) = mock_astarte_grpc_client(client, &Interfaces::new())
                 .await
                 .unwrap();
 
@@ -1069,7 +1062,7 @@ mod test {
                 .unwrap();
 
             // manually calling detach
-            connection.disconnect().await.unwrap();
+            client.disconnect().await.unwrap();
         };
 
         tokio::select! {
@@ -1135,7 +1128,7 @@ mod test {
                 ]);
             let mapping_ref = interfaces.interface_mapping(INTERFACE_NAME, &path).unwrap();
 
-            let (mut client, connection) =
+            let (mut client, _connection) =
                 mock_astarte_grpc_client(client, &interfaces).await.unwrap();
 
             let validated_individual = mock_validate_individual(
@@ -1148,7 +1141,7 @@ mod test {
 
             client.send_individual(validated_individual).await.unwrap();
 
-            connection.disconnect().await.unwrap();
+            client.disconnect().await.unwrap();
         };
 
         // Poll client and server future

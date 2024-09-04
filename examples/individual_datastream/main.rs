@@ -26,7 +26,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
     transport::mqtt::MqttConfig,
 };
-use tokio::{select, task::JoinSet};
+use tokio::task::JoinSet;
 use tracing::error;
 
 type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -68,23 +68,15 @@ async fn main() -> Result<(), DynError> {
     let client_cl = client.clone();
     println!("Connection to Astarte established.");
 
-    let mut tasks = JoinSet::new();
+    let mut tasks = JoinSet::<Result<(), DynError>>::new();
 
     // Create a task to transmit
     tasks.spawn(async move {
         // Sleep 1 sec
         let mut interval = tokio::time::interval(Duration::from_secs(1));
-        let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
 
         loop {
-            select! {
-                _ = interval.tick() => {},
-                _ = &mut ctrl_c => {
-                    client_cl.disconnect().await;
-
-                    return Ok(());
-                },
-            };
+            interval.tick().await;
 
             // Send endpoint 1
             let elapsed: i64 = now.elapsed()?.as_secs().try_into()?;
@@ -112,9 +104,10 @@ async fn main() -> Result<(), DynError> {
     });
 
     // Spawn a task to receive
+    let client_cl = client.clone();
     tasks.spawn(async move {
         loop {
-            match client.recv().await {
+            match client_cl.recv().await {
                 Ok(data) => {
                     if let astarte_device_sdk::Value::Individual(var) = data.data {
                         let mut iter = data.path.splitn(3, '/').skip(1);
@@ -138,16 +131,16 @@ async fn main() -> Result<(), DynError> {
                             led_id, value
                         );
                             }
-                            _ => {}
+                            item => {
+                                error!("unrecognized {item:?}")
+                            }
                         }
                     }
                 }
-                Err(RecvError::Disconnected) => break,
+                Err(RecvError::Disconnected) => return Ok(()),
                 Err(err) => error!(%err),
             }
         }
-
-        Ok::<_, DynError>(())
     });
 
     tasks.spawn(async move {
@@ -156,9 +149,21 @@ async fn main() -> Result<(), DynError> {
         Ok(())
     });
 
+    tasks.spawn(async move { tokio::signal::ctrl_c().await.map_err(Into::into) });
+
     while let Some(res) = tasks.join_next().await {
-        res??;
+        match res {
+            Ok(res) => {
+                res?;
+
+                tasks.abort_all();
+            }
+            Err(err) if err.is_cancelled() => {}
+            Err(err) => return Err(err.into()),
+        }
     }
+
+    client.disconnect().await?;
 
     Ok(())
 }

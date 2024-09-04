@@ -208,7 +208,7 @@ pub(crate) trait Register {
 #[async_trait]
 pub trait Disconnect {
     /// Gracefully disconnect from the transport
-    async fn disconnect(self) -> Result<(), crate::Error>;
+    async fn disconnect(&mut self) -> Result<(), crate::Error>;
 }
 
 #[cfg(test)]

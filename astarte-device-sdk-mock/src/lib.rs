@@ -206,8 +206,8 @@ mock! {
     }
 
     #[async_trait]
-    impl<S: Send> ClientDisconnect for DeviceClient<S> {
-        async fn disconnect(self);
+    impl<S: Send + Sync> ClientDisconnect for DeviceClient<S> {
+        async fn disconnect(&self) -> Result<(), Error>;
     }
 
     impl<S> Clone for DeviceClient<S> {
