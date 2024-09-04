@@ -142,9 +142,10 @@ impl From<ClientId<&str>> for ClientId<String> {
     }
 }
 
-/// This struct represents an MQTT connection handler for an Astarte device. It manages the
-/// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
-/// following the Astarte protocol.
+/// Struct representing an MQTT connection handler for an Astarte device.
+///
+/// It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+/// message publishing following the Astarte protocol.
 #[derive(Clone, Debug)]
 pub struct MqttClient<S> {
     client_id: ClientId,
@@ -549,9 +550,10 @@ impl<S> Display for MqttClient<S> {
     }
 }
 
-/// This struct represents an MQTT connection handler for an Astarte device. It manages the
-/// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
-/// following the Astarte protocol.
+/// Struct representing an MQTT connection handler for an Astarte device.
+///
+/// It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+/// message publishing following the Astarte protocol.
 pub struct Mqtt<S> {
     client_id: ClientId,
     connection: MqttConnection,

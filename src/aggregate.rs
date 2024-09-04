@@ -22,10 +22,11 @@ use std::collections::HashMap;
 
 use crate::{error::Error, types::AstarteType};
 
+/// Trait ensuring correct parsing of the data to be sent.
+///
 /// A **trait** required by all data to be sent using
 /// [send_object()][crate::Client::send_object] and
 /// [send_object_with_timestamp()][crate::Client::send_object_with_timestamp].
-/// It ensures correct parsing of the data.
 ///
 /// The returned hash map should have as values the data to transmit for each
 /// object endpoint and as keys the endpoints themselves.

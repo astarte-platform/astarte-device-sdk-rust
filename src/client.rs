@@ -87,7 +87,9 @@ pub enum RecvError {
     Disconnected,
 }
 
-/// A trait representing the behavior of an Astarte device client. A device client is responsible
+/// Trait representing the behavior of an Astarte device client.
+///
+/// A device client is responsible
 /// for interacting with the Astarte platform by sending properties and datastreams, handling events, and managing
 /// device interfaces.
 #[async_trait]

@@ -323,10 +323,10 @@ where
     }
 }
 
-/// This struct represents a GRPC connection handler for an Astarte device. It manages the
-/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub),
-/// sending and receiving [`AstarteMessage`](astarte_message_hub_proto::AstarteMessage)
-/// following the Astarte message hub protocol.
+/// Struct representing a GRPC connection handler for an Astarte device.
+///
+/// It manages the interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub),
+/// sending and receiving [`AstarteMessage`] following the Astarte message hub protocol.
 pub struct Grpc<S> {
     uuid: Uuid,
     client: MsgHubClient,
