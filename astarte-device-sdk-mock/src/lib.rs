@@ -19,8 +19,8 @@
 use std::path::Path;
 
 use astarte_device_sdk::{
-    properties::PropAccess, store::StoredProp, AstarteAggregate, AstarteType, DeviceEvent, Error,
-    Interface,
+    client::ClientDisconnect, properties::PropAccess, store::StoredProp, AstarteAggregate,
+    AstarteType, DeviceEvent, Error, Interface,
 };
 use async_trait::async_trait;
 use mockall::mock;
@@ -203,6 +203,11 @@ mock! {
         async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
     }
 
+    #[async_trait]
+    impl<S: Send> ClientDisconnect for DeviceClient<S> {
+        async fn disconnect(self);
+    }
+
     impl<S> Clone for DeviceClient<S> {
         fn clone(&self) -> Self {}
     }
@@ -214,11 +219,6 @@ mock! {
     #[async_trait]
     impl<S: Send, C: Send> astarte_device_sdk::EventLoop for DeviceConnection<S,C> {
         async fn handle_events(self) -> Result<(), crate::Error>;
-    }
-
-    #[async_trait]
-    impl<S: Send, C: Send> astarte_device_sdk::connection::ClientDisconnect for DeviceConnection<S,C> {
-        async fn disconnect(self);
     }
 }
 

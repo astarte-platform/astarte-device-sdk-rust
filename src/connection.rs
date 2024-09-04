@@ -25,12 +25,12 @@ use std::{collections::HashMap, sync::atomic::AtomicBool};
 use async_trait::async_trait;
 use futures::future::Either;
 use itertools::Itertools;
-use tokio::sync::Notify;
+use tokio::sync::{Barrier, Notify};
 use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinSet,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::interface::Retention;
@@ -82,13 +82,6 @@ pub trait EventLoop {
     /// }
     /// ```
     async fn handle_events(self) -> Result<(), crate::Error>;
-}
-
-/// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
-#[async_trait]
-pub trait ClientDisconnect {
-    /// Cleanly disconnects the client consuming it.
-    async fn disconnect(self);
 }
 
 /// Astarte device implementation.
@@ -143,7 +136,7 @@ where
 impl<S, C> EventLoop for DeviceConnection<S, C>
 where
     C: Connection + Reconnect + Receive + Send + Sync + 'static,
-    C::Sender: Send + Register + Publish + 'static,
+    C::Sender: Send + Register + Publish + Disconnect + 'static,
     S: PropertyStore + StoreCapabilities,
 {
     async fn handle_events(mut self) -> Result<(), crate::Error> {
@@ -163,12 +156,21 @@ where
         tasks.spawn(async move {
             sender.init_stored_retention().await?;
 
-            // TODO: consider adding a cancellation token.
             loop {
                 let either = sender.poll_next().await.ok_or(Error::Disconnected)?;
 
                 match either {
                     Either::Left(msg) => {
+                        if msg.is_disconnect() {
+                            sender.status.set_closed(true);
+
+                            // Send the disconnect on the connection.
+                            sender.sender.disconnect().await?;
+
+                            sender.status.sync_exit().await;
+
+                            break;
+                        }
                         sender.handle_client_msg(msg).await?;
                     }
                     Either::Right(()) => {
@@ -178,6 +180,8 @@ where
                     }
                 }
             }
+
+            Ok(())
         });
 
         tasks.spawn(async move {
@@ -186,6 +190,17 @@ where
                 let event = receiver.connection.next_event().await?;
 
                 let Some(event) = event else {
+                    // We sent the disconnect, we can return from the task
+                    if receiver.status.is_closed() {
+                        debug!("wait to sync with sender");
+
+                        receiver.status.sync_exit().await;
+
+                        info!("connection closed");
+
+                        break;
+                    }
+
                     debug!("reconnecting");
 
                     receiver.status.set_connected(false);
@@ -201,38 +216,36 @@ where
 
                 receiver.handle_connection_event(event).await?;
             }
+
+            Ok(())
         });
 
         while let Some(res) = tasks.join_next().await {
             match res {
                 Ok(Ok(())) => {}
-                Ok(Err(err)) => {
-                    error!(error = %Report::new(err), "task errored")
-                }
                 Err(err) if err.is_cancelled() => {
                     debug!("task cancelled");
                 }
+                Ok(Err(err)) => {
+                    error!(error = %Report::new(err), "task errored");
+
+                    tasks.abort_all();
+
+                    return Err(Error::Disconnected);
+                }
                 Err(err) => {
                     error!(error = %Report::new(err), "failed to join task");
+
+                    tasks.abort_all();
+
+                    return Err(Error::Disconnected);
                 }
             }
         }
 
-        Err(Error::Disconnected)
-    }
-}
+        info!("connection closed successfully");
 
-#[async_trait]
-impl<S, C> ClientDisconnect for DeviceConnection<S, C>
-where
-    S: StoreCapabilities + Send,
-    C: Connection + Disconnect + Send,
-    C::Sender: Send,
-{
-    async fn disconnect(self) {
-        if let Err(e) = self.receiver.connection.disconnect().await {
-            error!(error = %Report::new(e), "Could not close the connection gracefully");
-        }
+        Ok(())
     }
 }
 
@@ -358,6 +371,10 @@ where
                     error!(error = %Report::new(err), "client disconnected while failing to remove interfaces");
                 }
 
+                Ok(())
+            }
+            ClientMessage::Disconnect => {
+                // Handled outside
                 Ok(())
             }
         }
@@ -931,12 +948,30 @@ pub(crate) enum ClientMessage {
         interfaces: Vec<String>,
         response: oneshot::Sender<Result<Vec<String>, Error>>,
     },
+    Disconnect,
 }
 
+impl ClientMessage {
+    /// Returns `true` if the client message is [`Disconnect`].
+    ///
+    /// [`Disconnect`]: ClientMessage::Disconnect
+    #[must_use]
+    pub(crate) fn is_disconnect(&self) -> bool {
+        matches!(self, Self::Disconnect)
+    }
+}
+
+/// Shared state of the connection
 #[derive(Debug)]
 struct ConnectionStatus {
+    /// Flag if we are connected
     connected: AtomicBool,
+    /// Flag if the connection was closed gracefully
+    closed: AtomicBool,
+    /// Channel to get an async event when the connection is re-established
     reconnected: Notify,
+    /// Channel to synchronize the disconnection of the sender and receiver
+    disconnected: Barrier,
 }
 
 impl ConnectionStatus {
@@ -944,7 +979,9 @@ impl ConnectionStatus {
         // Assumes we are connected
         Self {
             connected: AtomicBool::new(true),
+            closed: AtomicBool::new(false),
             reconnected: Notify::new(),
+            disconnected: Barrier::new(2),
         }
     }
 
@@ -960,8 +997,20 @@ impl ConnectionStatus {
         }
     }
 
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn set_closed(&self, closed: bool) {
+        self.closed.store(closed, Ordering::Release);
+    }
+
     async fn wait_reconnection(&self) {
         self.reconnected.notified().await;
+    }
+
+    async fn sync_exit(&self) {
+        self.disconnected.wait().await;
     }
 }
 
