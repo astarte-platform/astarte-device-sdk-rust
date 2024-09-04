@@ -26,12 +26,13 @@ use std::num::TryFromIntError;
 use std::str::FromStr;
 
 use astarte_message_hub_proto::astarte_data_type::Data as ProtoData;
+use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::types::InterfaceJson;
-use astarte_message_hub_proto::AstarteDataTypeObject;
 use astarte_message_hub_proto::{
     astarte_data_type_individual::IndividualData as ProtoIndividualData,
     astarte_message::Payload as ProtoPayload, pbjson_types,
 };
+use astarte_message_hub_proto::{AstarteDataTypeObject, MessageHubEvent};
 use chrono::TimeZone;
 use itertools::Itertools;
 
@@ -42,7 +43,7 @@ use crate::{
 };
 use crate::{DeviceEvent, Interface, Value};
 
-use super::GrpcPayload;
+use super::{GrpcError, GrpcPayload};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
@@ -198,6 +199,21 @@ impl From<AstarteType> for ProtoPayload {
         ProtoPayload::AstarteData(astarte_message_hub_proto::AstarteDataType {
             data: Some(ProtoData::AstarteIndividual(value.into())),
         })
+    }
+}
+
+impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
+    type Error = GrpcError;
+
+    fn try_from(value: MessageHubEvent) -> Result<Self, Self::Error> {
+        let event = value
+            .event
+            .ok_or(MessageHubProtoError::ExpectedField("event"))?;
+
+        match event {
+            Event::Message(msg) => msg.try_into().map_err(GrpcError::MessageHubProtoConversion),
+            Event::Error(err) => Err(GrpcError::Server(err)),
+        }
     }
 }
 

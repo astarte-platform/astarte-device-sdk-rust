@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 
 use crate::{
+    client::RecvError,
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -45,6 +46,16 @@ use crate::{
 #[cfg(feature = "message-hub")]
 pub mod grpc;
 pub mod mqtt;
+
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum TransportError {
+    /// Error that will be sent to the client
+    #[error("error that will be sent to the client, {0:?}")]
+    Recv(#[from] RecvError),
+    /// Error from the underline transport
+    #[error("error from the underline transport")]
+    Transport(#[source] crate::Error),
+}
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
@@ -129,14 +140,14 @@ pub(crate) trait Receive {
     /// incoming messages.
     ///
     /// This function returns [`None`] to signal a disconnection from Astarte.
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, crate::Error>;
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, crate::Error>;
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -144,7 +155,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), crate::Error>;
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError>;
 }
 
 /// Reconnect the device to Astarte.
@@ -202,7 +213,7 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
-
+    use crate::error::AggregateError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
@@ -219,12 +230,15 @@ mod test {
     where
         D: AstarteAggregate + Send,
     {
-        let object = interface
-            .as_object_ref()
-            .ok_or_else(|| crate::Error::Aggregation {
-                exp: crate::interface::Aggregation::Object,
-                got: interface.aggregation(),
-            })?;
+        let object = interface.as_object_ref().ok_or_else(|| {
+            let aggr_err = AggregateError::for_interface(
+                interface.interface_name(),
+                path.to_string(),
+                crate::interface::Aggregation::Object,
+                interface.aggregation(),
+            );
+            crate::Error::Aggregation(aggr_err)
+        })?;
 
         let aggregate = data.astarte_aggregate()?;
 

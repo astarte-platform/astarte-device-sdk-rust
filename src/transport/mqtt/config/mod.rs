@@ -288,7 +288,7 @@ impl MqttConfig {
                 debug!("pairing token provided, retrieving credentials secret");
 
                 let Some(dir) = &builder.writable_dir else {
-                    return Err(MqttError::NoStorePairintToken);
+                    return Err(MqttError::NoStorePairingToken);
                 };
 
                 let secret = self.read_secret_or_register(dir, pairing_token).await?;

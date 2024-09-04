@@ -33,7 +33,7 @@ pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
 mod retention;
-mod topic;
+pub mod topic;
 
 use std::{
     collections::HashMap,
@@ -49,7 +49,17 @@ use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, info, trace};
 
+use super::{
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+};
+
+pub use self::config::Credential;
+pub use self::config::MqttConfig;
+pub use self::pairing::PairingError;
+pub use self::payload::PayloadError;
+use crate::retention::RetentionError;
 use crate::{
+    client::RecvError,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -64,17 +74,9 @@ use crate::{
     store::{
         error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
     },
-    types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Timestamp,
+    AstarteType, Error, Interface, Timestamp,
 };
-
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register};
-
-pub use self::config::Credential;
-pub use self::config::MqttConfig;
-pub use self::pairing::PairingError;
-pub use self::payload::PayloadError;
 
 use self::{
     client::AsyncClient,
@@ -140,9 +142,10 @@ impl From<ClientId<&str>> for ClientId<String> {
     }
 }
 
-/// This struct represents an MQTT connection handler for an Astarte device. It manages the
-/// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
-/// following the Astarte protocol.
+/// Struct representing an MQTT connection handler for an Astarte device.
+///
+/// It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+/// message publishing following the Astarte protocol.
 #[derive(Clone, Debug)]
 pub struct MqttClient<S> {
     client_id: ClientId,
@@ -547,9 +550,10 @@ impl<S> Display for MqttClient<S> {
     }
 }
 
-/// This struct represents an MQTT connection handler for an Astarte device. It manages the
-/// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
-/// following the Astarte protocol.
+/// Struct representing an MQTT connection handler for an Astarte device.
+///
+/// It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+/// message publishing following the Astarte protocol.
 pub struct Mqtt<S> {
     client_id: ClientId,
     connection: MqttConnection,
@@ -585,7 +589,7 @@ impl<S> Mqtt<S> {
         volatile: &SharedVolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, NoticeError>,
-    ) -> Result<(), Error>
+    ) -> Result<(), RetentionError>
     where
         S: StoreCapabilities,
     {
@@ -614,7 +618,7 @@ impl<S> Mqtt<S> {
         Ok(())
     }
 
-    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, Error>
+    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, TransportError>
     where
         S: StoreCapabilities,
     {
@@ -627,7 +631,9 @@ impl<S> Mqtt<S> {
 
             match futures::future::select(self.retention.into_future(), &mut conn_future).await {
                 Either::Left((res, _)) => {
-                    Self::mark_packet_received(&self.volatile, &self.store, res).await?;
+                    Self::mark_packet_received(&self.volatile, &self.store, res)
+                        .await
+                        .map_err(|err| TransportError::Transport(Error::Retention(err)))?;
                 }
                 // the retention future can be dropped safely
                 Either::Right((publish, _)) => {
@@ -673,7 +679,7 @@ where
 {
     type Payload = Bytes;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, Error>
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>
     where
         S: PropertyStore,
     {
@@ -689,19 +695,22 @@ where
             if purge_topic == &publish.topic {
                 debug!("Purging properties");
 
-                self.store.purge_server_properties(&publish.payload).await?;
+                self.store
+                    .purge_server_properties(&publish.payload)
+                    .await
+                    .map_err(TransportError::Transport)?;
             } else {
-                let ParsedTopic { interface, path } =
-                    ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                        .map_err(MqttError::Topic)?;
+                let con_event = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
+                    .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
 
                 return Ok(Some(ReceivedEvent {
-                    interface: interface.to_string(),
-                    path: path.to_string(),
+                    interface: con_event.interface.to_string(),
+                    path: con_event.path.to_string(),
                     payload: publish.payload,
                 }));
             }
         }
+
         Ok(None)
     }
 
@@ -709,9 +718,9 @@ where
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, Error> {
+    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
         payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
     }
 
     fn deserialize_object(
@@ -719,9 +728,9 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), Error> {
+    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
         payload::deserialize_object(object, path, &payload)
-            .map_err(|err| MqttError::Payload(err).into())
+            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
     }
 }
 

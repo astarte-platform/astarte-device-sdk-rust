@@ -28,12 +28,20 @@ use super::ClientId;
 #[non_exhaustive]
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum TopicError {
+    /// Empty topic
     #[error("topic is empty")]
     Empty,
+    /// The topic should start with `<realm>/<device_id>`.
     #[error(
         "the topic should start with <realm>/<device_id> equal to {client_id}, received: {topic}"
     )]
-    UnknownClientId { client_id: String, topic: String },
+    UnknownClientId {
+        /// Client id
+        client_id: String,
+        /// Topic
+        topic: String,
+    },
+    /// The topic should be in the form `<realm>/<device_id>/<interface>/<path>`.
     #[error(
         "the topic should be in the form <realm>/<device_id>/<interface>/<path>, received: {0}"
     )]
@@ -41,6 +49,7 @@ pub enum TopicError {
 }
 
 impl TopicError {
+    /// Return the topic str
     pub fn topic(&self) -> &str {
         match self {
             TopicError::Empty => "",

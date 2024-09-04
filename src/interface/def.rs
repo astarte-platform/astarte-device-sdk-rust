@@ -87,8 +87,10 @@ pub(super) struct InterfaceDef<T> {
     pub(super) mappings: Vec<Mapping<T>>,
 }
 
-/// Represents, the JSON of a mapping. It includes all the fields available for a mapping, but it
-/// it is validated when built with the [`TryFrom`]. It uniforms the different types of mappings
+/// Struct representing the JSON of a mapping.
+///
+/// It includes all the fields available for a mapping, but it
+/// is validated when built with the [`TryFrom`]. It uniforms the different types of mappings
 /// like [`DatastreamIndividualMapping`](super::mapping::DatastreamIndividualMapping), [`DatastreamObject`] mappings and
 /// [`PropertiesMapping`](super::mapping::PropertiesMapping) in a single struct.
 ///
