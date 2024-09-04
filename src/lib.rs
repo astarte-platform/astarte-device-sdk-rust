@@ -19,6 +19,7 @@
  */
 #![doc = include_str!("../README.md")]
 #![warn(clippy::dbg_macro, missing_docs, rustdoc::missing_crate_level_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod aggregate;
 pub mod builder;
@@ -54,18 +55,8 @@ pub use rumqttc;
 /// Timestamp returned in the astarte payload
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
 
-// Re-export #[derive(AstarteAggregate)].
-//
-// The reason re-exporting is not enabled by default is that disabling it would
-// be annoying for crates that provide handwritten impls or data formats. They
-// would need to disable default features and then explicitly re-enable std.
 #[cfg(feature = "derive")]
-#[allow(unused_imports)]
-#[macro_use]
-extern crate astarte_device_sdk_derive;
-
-/// Derive macros enable with the `feature = ["derive"]`.
-#[cfg(feature = "derive")]
+#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
 pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
