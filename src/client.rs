@@ -31,7 +31,6 @@ use crate::error::{AggregateError, DynError};
 use crate::interface::mapping::path::MappingError;
 use crate::{
     connection::ClientMessage,
-    error::Report,
     event::DeviceEvent,
     interface::{
         mapping::path::MappingPath,
@@ -240,7 +239,7 @@ pub trait Client {
 #[async_trait]
 pub trait ClientDisconnect {
     /// Cleanly disconnects the client consuming it.
-    async fn disconnect(self);
+    async fn disconnect(&self) -> Result<(), Error>;
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -658,9 +657,7 @@ impl<S> ClientDisconnect for DeviceClient<S>
 where
     S: Send + Sync,
 {
-    async fn disconnect(self) {
-        if let Err(e) = self.send_msg(ClientMessage::Disconnect).await {
-            error!(error = %Report::new(e), "Could not close the connection gracefully");
-        }
+    async fn disconnect(&self) -> Result<(), Error> {
+        self.send_msg(ClientMessage::Disconnect).await
     }
 }

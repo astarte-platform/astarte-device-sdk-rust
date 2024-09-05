@@ -531,7 +531,7 @@ impl<S> Disconnect for MqttClient<S>
 where
     S: Send,
 {
-    async fn disconnect(self) -> Result<(), crate::Error> {
+    async fn disconnect(&mut self) -> Result<(), crate::Error> {
         self.client
             .disconnect()
             .await
