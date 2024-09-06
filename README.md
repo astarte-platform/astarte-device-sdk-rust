@@ -48,7 +48,7 @@ async fn run_astarte_device() -> Result<(), Box<dyn StdError>> {
     // Initializing an instance of a device can be performed as shown in the following three steps.
 
     // 1. (optional) Initialize a database to store the properties
-    let db = SqliteStore::from_uri("sqlite::memory:").await?;
+    let db = SqliteStore::connect_db("/var/lib/astarte/store.db").await?;
 
     // 2. Initialize device options and mqtt config (the ".database(db)" is not needed if 1 was skipped)
     let mut mqtt_config = MqttConfig::with_credential_secret(realm, device_id, credentials_secret, pairing_url);

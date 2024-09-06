@@ -67,8 +67,7 @@ async fn main() -> Result<(), DynError> {
 
     // Open the database, create it if it does not exists
     let db =
-        SqliteStore::from_uri("sqlite://examples/individual_properties/astarte-example-db.sqlite")
-            .await?;
+        SqliteStore::connect_db("examples/individual_properties/astarte-example-db.sqlite").await?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,

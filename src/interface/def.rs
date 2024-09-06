@@ -375,6 +375,14 @@ pub enum Ownership {
 }
 
 impl Ownership {
+    /// Returns `true` if the ownership is [`Device`].
+    ///
+    /// [`Device`]: Ownership::Device
+    #[must_use]
+    pub fn is_device(&self) -> bool {
+        matches!(self, Self::Device)
+    }
+
     /// Returns `true` if the ownership is [`Server`].
     ///
     /// [`Server`]: Ownership::Server
@@ -573,6 +581,10 @@ mod doc {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use crate::test::{DEVICE_PROPERTIES, SERVER_PROPERTIES};
+
     use super::*;
 
     #[cfg(feature = "interface-strict")]
@@ -701,5 +713,16 @@ mod tests {
                 ttl: Duration::from_secs(0)
             }
         );
+    }
+
+    #[test]
+    fn should_check_ownership() {
+        let server = Interface::from_str(SERVER_PROPERTIES).unwrap();
+        assert!(!server.ownership().is_device());
+        assert!(server.ownership().is_server());
+
+        let device = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+        assert!(device.ownership().is_device());
+        assert!(!device.ownership().is_server());
     }
 }

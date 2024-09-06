@@ -50,7 +50,8 @@ use std::{
 };
 
 use rumqttc::{
-    ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError, Transport,
+    mqttbytes, ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError,
+    Transport,
 };
 use sync_wrapper::SyncWrapper;
 use tokio::task::JoinHandle;
@@ -686,7 +687,8 @@ impl Next {
         match err {
             ConnectionError::NetworkTimeout
             | ConnectionError::Io(_)
-            | ConnectionError::FlushTimeout => {
+            | ConnectionError::FlushTimeout
+            | ConnectionError::MqttState(StateError::Deserialization(mqttbytes::Error::Io(_))) => {
                 trace!("disconnected, wait for connack");
 
                 Next::state(Connecting)
