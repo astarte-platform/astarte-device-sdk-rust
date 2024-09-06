@@ -35,8 +35,8 @@ pub struct DeviceEvent {
 }
 
 /// Conversion error from an [`DeviceEvent].
-#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum FromEventError {
     /// couldn't parse request from interface
     #[error("couldn't parse request from interface {0}")]
@@ -56,6 +56,14 @@ pub enum FromEventError {
         interface: &'static str,
         /// Base path of the interface
         base_path: &'static str,
+    },
+    /// object data passed to individual
+    #[error("object data passed to individual {interface}{endpoint}")]
+    Object {
+        /// Interface that generated the error
+        interface: &'static str,
+        /// endpoint
+        endpoint: String,
     },
     /// object missing field
     #[error("object {interface} missing field {base_path}/{path}")]
@@ -149,7 +157,7 @@ pub trait FromEvent: Sized {
 mod tests {
     #[cfg(feature = "derive")]
     #[test]
-    fn should_derive_form_event() {
+    fn should_derive_form_event_obj() {
         use std::collections::HashMap;
 
         use crate::{DeviceEvent, FromEvent, Value};
@@ -182,5 +190,47 @@ mod tests {
         };
 
         assert_eq!(sensor, expected);
+    }
+
+    #[cfg(feature = "derive")]
+    #[test]
+    fn should_derive_form_event_individual() {
+        use crate::{AstarteType, DeviceEvent, FromEvent, Value};
+
+        // Alias the crate to the resulting macro
+        use crate::{self as astarte_device_sdk};
+
+        #[derive(Debug, FromEvent, PartialEq)]
+        #[from_event(interface = "com.example.Sensor", aggregation = "individual")]
+        enum Sensor {
+            #[mapping(endpoint = "/%{param}/luminosity")]
+            Luminosity(i32),
+            #[mapping(endpoint = "/sensor/temperature")]
+            Temperature(f64),
+        }
+
+        let event = DeviceEvent {
+            interface: "com.example.Sensor".to_string(),
+            path: "/sensor/luminosity".to_string(),
+            data: Value::Individual(42i32.into()),
+        };
+
+        let luminosity = Sensor::from_event(event).expect("couldn't parse the event");
+
+        let expected = Sensor::Luminosity(42);
+
+        assert_eq!(luminosity, expected);
+
+        let event = DeviceEvent {
+            interface: "com.example.Sensor".to_string(),
+            path: "/sensor/temperature".to_string(),
+            data: Value::Individual(AstarteType::Double(3.)),
+        };
+
+        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
+
+        let expected = Sensor::Temperature(3.);
+
+        assert_eq!(temperature, expected);
     }
 }

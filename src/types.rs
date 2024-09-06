@@ -31,7 +31,7 @@ use crate::{interface::MappingType, Timestamp};
 pub enum TypeError {
     /// Invalid floating point value
     #[error("forbidden floating point number, Nan, Infinite or subnormal numbers are invalid")]
-    FloatError,
+    Float,
     /// Conversion error
     #[error("conversion error")]
     Conversion,
@@ -197,7 +197,7 @@ impl TryFrom<f32> for AstarteType {
 
     fn try_from(d: f32) -> Result<Self, Self::Error> {
         if d.is_nan() || d.is_infinite() || d.is_subnormal() {
-            return Err(Self::Error::FloatError);
+            return Err(Self::Error::Float);
         }
         Ok(AstarteType::Double(d.into()))
     }
@@ -207,7 +207,7 @@ impl TryFrom<f64> for AstarteType {
     type Error = TypeError;
     fn try_from(d: f64) -> Result<Self, Self::Error> {
         if d.is_nan() || d.is_infinite() || d.is_subnormal() {
-            return Err(Self::Error::FloatError);
+            return Err(Self::Error::Float);
         }
         Ok(AstarteType::Double(d))
     }
@@ -229,7 +229,7 @@ impl TryFrom<Vec<f64>> for AstarteType {
         if d.iter()
             .any(|&x| x.is_nan() || x.is_infinite() || x.is_subnormal())
         {
-            return Err(Self::Error::FloatError);
+            return Err(Self::Error::Float);
         }
         Ok(AstarteType::DoubleArray(d))
     }
@@ -273,7 +273,6 @@ impl TryFrom<AstarteType> for f64 {
     fn try_from(var: AstarteType) -> Result<Self, Self::Error> {
         match var {
             AstarteType::Double(val) => Ok(val),
-            AstarteType::Integer(val) => Ok(val.into()),
             _ => Err(TypeError::Conversion),
         }
     }
@@ -712,15 +711,9 @@ mod test {
 
     #[test]
     fn test_conversion_from_astarte_integer_to_f64() {
-        let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Value::Individual(astarte_type_double);
+        let value = AstarteType::Integer(5);
 
-        if let Value::Individual(var) = astarte_ind {
-            let value: f64 = var.try_into().unwrap();
-            assert_eq!(5.0, value);
-        } else {
-            panic!();
-        }
+        f64::try_from(value).unwrap_err();
     }
 
     #[test]
