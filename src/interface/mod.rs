@@ -180,7 +180,7 @@ impl Interface {
     pub(crate) fn as_mapping_ref<'a>(
         &'a self,
         path: &'a MappingPath,
-    ) -> Option<MappingRef<&Interface>> {
+    ) -> Option<MappingRef<'a, &'a Interface>> {
         MappingRef::new(self, path)
     }
 

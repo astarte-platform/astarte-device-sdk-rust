@@ -116,9 +116,11 @@ impl Interceptor for NodeIdInterceptor {
     }
 }
 
-/// This struct represents a GRPC connection handler for an Astarte device. It manages the
-/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and receiving [`AstarteMessage`]
-/// following the Astarte message hub protocol.
+/// Handles a gRPC connection between the device and Astarte.
+///
+/// It manages the interaction with the
+/// [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and
+/// receiving [`AstarteMessage`] following the Astarte message hub protocol.
 pub struct Grpc {
     uuid: Uuid,
     client: MessageHubClientWithInterceptor,

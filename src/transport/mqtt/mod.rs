@@ -97,9 +97,10 @@ impl<'a> Display for ClientId<'a> {
     }
 }
 
-/// This struct represents an MQTT connection handler for an Astarte device. It manages the
-/// interaction with the MQTT broker, handling connections, subscriptions, and message publishing
-/// following the Astarte protocol.
+/// Handles the MQTT connection between a device and Astarte.
+///
+///  It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+///  message publishing following the Astarte protocol.
 pub struct Mqtt {
     realm: String,
     device_id: String,
@@ -133,8 +134,8 @@ impl Mqtt {
         }
     }
 
-    /// Waits for mqtt connack to correctly initialize connection to astarte
-    /// by sending session data.
+    /// Waits for MQTT CONNACK to correctly initialize connection to astarte by sending session
+    /// data.
     ///
     /// The session parameter holds data that will be sent during the
     /// connection to the astarte server.

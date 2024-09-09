@@ -114,7 +114,7 @@ impl Interfaces {
         &'a self,
         interface_name: &str,
         interface_path: &'a MappingPath,
-    ) -> Result<MappingRef<&Interface>, Error> {
+    ) -> Result<MappingRef<'a, &'a Interface>, Error> {
         self.interfaces
             .get(interface_name)
             .ok_or_else(|| Error::InterfaceNotFound {
@@ -137,7 +137,7 @@ impl Interfaces {
         &'a self,
         interface_name: &str,
         interface_path: &'a MappingPath,
-    ) -> Result<MappingRef<PropertyRef>, Error> {
+    ) -> Result<MappingRef<'a, PropertyRef<'a>>, Error> {
         self.interfaces
             .get(interface_name)
             .ok_or_else(|| Error::InterfaceNotFound {
