@@ -94,7 +94,6 @@ mod test {
     };
     use crate::{types::AstarteType, Value};
     use astarte_device_sdk::AstarteAggregate;
-    use astarte_device_sdk_derive::astarte_aggregate;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::AstarteAggregate;
 

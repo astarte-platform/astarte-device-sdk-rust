@@ -42,8 +42,9 @@ use crate::{
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PayloadError {
     /// Couldn't serialize the payload to bson.
+    // NOTE: box the bson error since it's big in size
     #[error("couldn't serialize the payload")]
-    Serialize(#[from] bson::ser::Error),
+    Serialize(#[from] Box<bson::ser::Error>),
     /// Couldn't deserialize the payload to bson.
     #[error("couldn't deserialize the payload")]
     Deserialize(#[from] bson::de::Error),
@@ -95,7 +96,7 @@ impl<T> Payload<T> {
     where
         T: serde::Serialize,
     {
-        let res = bson::to_vec(self)?;
+        let res = bson::to_vec(self).map_err(Box::new)?;
 
         Ok(res)
     }
