@@ -86,8 +86,10 @@ pub struct Interface {
     version_minor: i32,
     ownership: Ownership,
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     description: Option<String>,
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     doc: Option<String>,
     pub(crate) inner: InterfaceType,
 }
@@ -139,12 +141,14 @@ impl Interface {
     }
 
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the interface description
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the interface documentation.
     pub fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
@@ -176,7 +180,7 @@ impl Interface {
     pub(crate) fn as_mapping_ref<'a>(
         &'a self,
         path: &'a MappingPath,
-    ) -> Option<MappingRef<&Interface>> {
+    ) -> Option<MappingRef<'a, &'a Interface>> {
         MappingRef::new(self, path)
     }
 

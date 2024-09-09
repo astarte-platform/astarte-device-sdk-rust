@@ -43,6 +43,7 @@ use crate::{
 };
 
 #[cfg(feature = "message-hub")]
+#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
 pub mod grpc;
 pub mod mqtt;
 

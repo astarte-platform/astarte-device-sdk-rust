@@ -87,17 +87,20 @@ pub(super) struct InterfaceDef<T> {
     pub(super) mappings: Vec<Mapping<T>>,
 }
 
-/// Represents, the JSON of a mapping. It includes all the fields available for a mapping, but it
-/// it is validated when built with the [`TryFrom`]. It uniforms the different types of mappings
-/// like [`DatastreamIndividualMapping`](super::mapping::DatastreamIndividualMapping), [`DatastreamObject`] mappings and
-/// [`PropertiesMapping`](super::mapping::PropertiesMapping) in a single struct.
+/// Mapping of an Interface.
+///
+/// It includes all the fields available for a mapping, but it it is validated when built with the
+/// [`TryFrom`]. It uniforms the different types of mappings like
+/// [`DatastreamIndividualMapping`](super::mapping::DatastreamIndividualMapping),
+/// [`DatastreamObject`] mappings and [`PropertiesMapping`](super::mapping::PropertiesMapping) in a
+/// single struct.
 ///
 /// Since it's a 1:1 representation of the JSON it is used for serialization and deserialization,
 /// and then is converted to the internal representation of the mapping with the [`TryFrom`] and
 /// [`From`] traits of the [`Interface`]'s' mappings.
 //
-/// You can find the specification here
-/// [Mapping Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
+/// You can find the specification here [Mapping Schema -
+/// Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "interface-strict", serde(deny_unknown_fields))]
 pub struct Mapping<T> {
@@ -266,12 +269,14 @@ impl<T> Mapping<T> {
     }
 
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the mapping's description.
     pub fn description(&self) -> Option<&T> {
         self.description.as_ref()
     }
 
     #[cfg(feature = "interface-doc")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the mapping's documentation.
     pub fn doc(&self) -> Option<&T> {
         self.doc.as_ref()

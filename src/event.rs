@@ -147,12 +147,12 @@ pub trait FromEvent: Sized {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "derive")]
     #[test]
+    #[cfg(feature = "derive")]
     fn should_derive_form_event() {
         use std::collections::HashMap;
 
-        use crate::{DeviceEvent, FromEvent, Value};
+        use crate::{from_event, DeviceEvent, FromEvent, Value};
 
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk};

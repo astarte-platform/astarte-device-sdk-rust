@@ -34,8 +34,8 @@ use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
-    astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, tonic,
-    AstarteMessage, Node,
+    astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient, AstarteMessage,
+    Node,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -62,6 +62,10 @@ use crate::{
 use super::{Disconnect, Publish, Receive, ReceivedEvent, Register};
 
 use self::convert::MessageHubProtoError;
+
+#[cfg(feature = "message-hub")]
+#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+pub use astarte_message_hub_proto::tonic;
 
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
@@ -112,9 +116,11 @@ impl Interceptor for NodeIdInterceptor {
     }
 }
 
-/// This struct represents a GRPC connection handler for an Astarte device. It manages the
-/// interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and receiving [`AstarteMessage`]
-/// following the Astarte message hub protocol.
+/// Handles a gRPC connection between the device and Astarte.
+///
+/// It manages the interaction with the
+/// [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and
+/// receiving [`AstarteMessage`] following the Astarte message hub protocol.
 pub struct Grpc {
     uuid: Uuid,
     client: MessageHubClientWithInterceptor,
