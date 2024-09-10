@@ -5,4 +5,6 @@ SELECT
     type,
     interface_major,
     ownership
-FROM propcache;
+FROM propcache
+WHERE
+    value IS NOT NULL;

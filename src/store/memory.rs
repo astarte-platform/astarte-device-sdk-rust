@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{PropertyStore, StoreCapabilities, StoredProp};
+use super::{MaybeStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{interface::Ownership, retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
@@ -76,7 +76,7 @@ impl PropertyStore for MemoryStore {
     ) -> Result<(), Self::Err> {
         let key = Key::new(interface, path);
         let value = Value {
-            value: value.clone(),
+            value: Some(value.clone()),
             interface_major,
             ownership,
         };
@@ -114,9 +114,21 @@ impl PropertyStore for MemoryStore {
 
                 Ok(None)
             }
-            Some(value) => Ok(Some(value.value)),
+            Some(value) => Ok(value.value),
             None => Ok(None),
         }
+    }
+
+    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+        let key = Key::new(interface, path);
+
+        let mut writer = self.store.write().await;
+
+        if let Some(value) = writer.get_mut(&key) {
+            value.value = None;
+        }
+
+        Ok(())
     }
 
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
@@ -140,7 +152,7 @@ impl PropertyStore for MemoryStore {
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
         let store = self.store.read().await;
 
-        let props = store.iter().map(StoredProp::from).collect();
+        let props = store.iter().filter_map(|(k, v)| v.as_prop(k)).collect();
 
         Ok(props)
     }
@@ -152,7 +164,7 @@ impl PropertyStore for MemoryStore {
             .iter()
             .filter_map(|(k, v)| match v.ownership {
                 Ownership::Device => None,
-                Ownership::Server => Some(StoredProp::from((k, v))),
+                Ownership::Server => v.as_prop(k),
             })
             .collect();
 
@@ -165,7 +177,7 @@ impl PropertyStore for MemoryStore {
         let props = store
             .iter()
             .filter_map(|(k, v)| match v.ownership {
-                Ownership::Device => Some(StoredProp::from((k, v))),
+                Ownership::Device => v.as_prop(k),
                 Ownership::Server => None,
             })
             .collect();
@@ -179,8 +191,13 @@ impl PropertyStore for MemoryStore {
             .read()
             .await
             .iter()
-            .filter(|(k, _)| (k.interface == interface))
-            .map(StoredProp::from)
+            .filter_map(|(k, v)| {
+                if k.interface == interface {
+                    v.as_prop(k)
+                } else {
+                    None
+                }
+            })
             .collect())
     }
 
@@ -191,6 +208,20 @@ impl PropertyStore for MemoryStore {
             .retain(|k, _v| k.interface != interface);
 
         Ok(())
+    }
+
+    async fn device_props_with_unset(&self) -> Result<Vec<MaybeStoredProp>, Self::Err> {
+        let store = self.store.read().await;
+
+        let props = store
+            .iter()
+            .filter_map(|(k, v)| match v.ownership {
+                Ownership::Device => Some(MaybeStoredProp::from((k, v))),
+                Ownership::Server => None,
+            })
+            .collect();
+
+        Ok(props)
     }
 }
 
@@ -221,14 +252,26 @@ impl Display for Key {
 /// Value for the memory store
 #[derive(Debug, Clone)]
 struct Value {
-    value: AstarteType,
+    value: Option<AstarteType>,
     interface_major: i32,
     ownership: Ownership,
 }
 
-impl From<(&Key, &Value)> for StoredProp {
+impl Value {
+    fn as_prop(&self, key: &Key) -> Option<StoredProp> {
+        self.value.as_ref().map(|value| StoredProp {
+            interface: key.interface.clone(),
+            path: key.path.clone(),
+            value: value.clone(),
+            interface_major: self.interface_major,
+            ownership: self.ownership,
+        })
+    }
+}
+
+impl From<(&Key, &Value)> for MaybeStoredProp {
     fn from((key, value): (&Key, &Value)) -> Self {
-        StoredProp {
+        Self {
             interface: key.interface.clone(),
             path: key.path.clone(),
             value: value.value.clone(),

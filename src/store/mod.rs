@@ -80,6 +80,8 @@ where
         path: &str,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err>;
+    /// Unset a property from the database.
+    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
     /// Delete a property from the database.
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
     /// Removes all saved properties from the database.
@@ -97,6 +99,8 @@ where
     async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err>;
     /// Deletes all the properties of the interface from the database.
     async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
+    /// Retrieves all the device properties, including the one that were unset but not deleted.
+    async fn device_props_with_unset(&self) -> Result<Vec<MaybeStoredProp>, Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the [`PropertyStore`]
@@ -120,6 +124,12 @@ pub struct StoredProp<S = String, V = AstarteType> {
     /// it's [`Ownership::Server`] it was received from Astarte.
     pub ownership: Ownership,
 }
+
+/// A property that may be unset.
+///
+/// This is returned by getting all the properties (`load_all_props`) that have not been deleted
+/// yet, since they where not sent to Astarte.
+pub type MaybeStoredProp = StoredProp<String, Option<AstarteType>>;
 
 impl StoredProp {
     /// Coverts the stored property into a reference to its values.
@@ -156,12 +166,12 @@ impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
     }
 }
 
-impl<T, U, V, W> PartialEq<StoredProp<T, V>> for StoredProp<U, W>
+impl<S2, S1, T2, T1> PartialEq<StoredProp<S2, T2>> for StoredProp<S1, T1>
 where
-    U: PartialEq<T>,
-    W: PartialEq<V>,
+    S1: PartialEq<S2>,
+    T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &StoredProp<T, V>) -> bool {
+    fn eq(&self, other: &StoredProp<S2, T2>) -> bool {
         self.interface == other.interface
             && self.path == other.path
             && self.value == other.value
@@ -213,7 +223,34 @@ mod tests {
         // after mismatch the path should be deleted
         assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
 
-        // delete/unset
+        // unset
+        store.store_prop(prop).await.unwrap();
+        assert_eq!(
+            store
+                .load_prop("com.test", "/test", 1)
+                .await
+                .unwrap()
+                .unwrap(),
+            ty
+        );
+        store.unset_prop("com.test", "/test").await.unwrap();
+        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        // with unset
+        assert!(store.device_props().await.unwrap().is_empty());
+        assert!(store.load_all_props().await.unwrap().is_empty());
+        assert!(store.server_props().await.unwrap().is_empty());
+        assert_eq!(
+            &[StoredProp {
+                interface: "com.test",
+                path: "/test",
+                value: None,
+                interface_major: 1,
+                ownership: Ownership::Device,
+            }],
+            store.device_props_with_unset().await.unwrap().as_slice()
+        );
+
+        // delete
         store.store_prop(prop).await.unwrap();
         assert_eq!(
             store
