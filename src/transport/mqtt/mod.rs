@@ -57,7 +57,6 @@ pub use self::config::Credential;
 pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
-use crate::retention::RetentionError;
 use crate::{
     client::RecvError,
     error::Report,
@@ -71,12 +70,11 @@ use crate::{
     retention::{
         memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
-    store::{
-        error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp,
-    },
+    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteType, Error, Interface, Timestamp,
 };
+use crate::{retention::RetentionError, store::OptStoredProp};
 
 use self::{
     client::AsyncClient,
@@ -759,7 +757,7 @@ where
 pub(crate) struct SessionData {
     interfaces: String,
     server_interfaces: Vec<String>,
-    device_properties: Vec<StoredProp>,
+    device_properties: Vec<OptStoredProp>,
 }
 
 impl SessionData {
@@ -778,7 +776,7 @@ impl SessionData {
     where
         S: PropertyStore<Err = StoreError>,
     {
-        let device_properties = store.device_props().await?;
+        let device_properties = store.device_props_with_unset().await?;
         let server_interfaces = Self::filter_server_interfaces(interfaces);
 
         Ok(Self {

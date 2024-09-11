@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{MaybeStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{interface::Ownership, retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
@@ -210,13 +210,13 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<MaybeStoredProp>, Self::Err> {
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
         let store = self.store.read().await;
 
         let props = store
             .iter()
             .filter_map(|(k, v)| match v.ownership {
-                Ownership::Device => Some(MaybeStoredProp::from((k, v))),
+                Ownership::Device => Some(OptStoredProp::from((k, v))),
                 Ownership::Server => None,
             })
             .collect();
@@ -269,7 +269,7 @@ impl Value {
     }
 }
 
-impl From<(&Key, &Value)> for MaybeStoredProp {
+impl From<(&Key, &Value)> for OptStoredProp {
     fn from((key, value): (&Key, &Value)) -> Self {
         Self {
             interface: key.interface.clone(),

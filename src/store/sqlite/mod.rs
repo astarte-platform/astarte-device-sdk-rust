@@ -29,7 +29,7 @@ use rusqlite::{
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
 
-use super::{MaybeStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
@@ -219,7 +219,7 @@ impl StoredRecord {
     }
 }
 
-impl TryFrom<StoredRecord> for MaybeStoredProp {
+impl TryFrom<StoredRecord> for OptStoredProp {
     type Error = SqliteError;
 
     fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
@@ -536,7 +536,7 @@ impl PropertyStore for SqliteStore {
         Ok(())
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<MaybeStoredProp>, Self::Err> {
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.with_reader(|reader| reader.props_with_unset(Ownership::Device))
     }
 }

@@ -25,7 +25,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
 
 use crate::{
     interface::Ownership,
-    store::{MaybeStoredProp, StoredProp},
+    store::{OptStoredProp, StoredProp},
     AstarteType,
 };
 
@@ -308,7 +308,7 @@ impl ReadConnection {
     pub(super) fn props_with_unset(
         &self,
         ownership: Ownership,
-    ) -> Result<Vec<MaybeStoredProp>, SqliteError> {
+    ) -> Result<Vec<OptStoredProp>, SqliteError> {
         let ownership_par = RecordOwnership::from(ownership);
 
         wrap_sync_call(|| {
@@ -332,14 +332,14 @@ impl ReadConnection {
                 .map_err(SqliteError::Query)?
                 .map(|e| {
                     e.map_err(SqliteError::Query).and_then(|record| {
-                        let prop = MaybeStoredProp::try_from(record)?;
+                        let prop = OptStoredProp::try_from(record)?;
 
                         debug_assert_eq!(prop.ownership, ownership);
 
                         Ok(prop)
                     })
                 })
-                .collect::<Result<Vec<MaybeStoredProp>, SqliteError>>()?;
+                .collect::<Result<Vec<OptStoredProp>, SqliteError>>()?;
 
             Ok(v)
         })

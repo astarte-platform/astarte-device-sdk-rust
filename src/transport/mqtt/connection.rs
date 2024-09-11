@@ -61,7 +61,7 @@ use crate::{
     error::Report,
     interfaces::Interfaces,
     retry::ExponentialIter,
-    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoredProp},
+    store::{error::StoreError, wrapper::StoreWrapper, OptStoredProp, PropertyStore},
     transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
 };
 
@@ -92,6 +92,9 @@ enum InitError {
     /// Couldn't serialize the device property payload.
     #[error("coudln't serialize the device property payload")]
     Payload(#[from] PayloadError),
+    /// Couldn't delete the unset property
+    #[error("coudln't delete the unset property")]
+    Unset(#[source] StoreError),
 }
 
 impl InitError {
@@ -297,9 +300,9 @@ impl State {
             State::Handshake(handshake) => {
                 let session_data = SessionData::try_from_props(interfaces, store).await?;
 
-                handshake.start(conn, client_id, session_data)
+                handshake.start(conn, client_id, store, session_data)
             }
-            State::WaitAcks(init) => init.wait_connection(conn).await,
+            State::WaitAcks(init) => init.wait_connection(conn).await?,
             State::Connected(connected) => connected.poll(conn).await,
         };
 
@@ -446,16 +449,21 @@ pub(crate) struct Handshake {
 }
 
 impl Handshake {
-    fn start(
+    fn start<S>(
         self,
         conn: &mut Connection,
         client_id: ClientId<&str>,
+        store: &StoreWrapper<S>,
         session_data: SessionData,
-    ) -> Next {
+    ) -> Next
+    where
+        S: PropertyStore,
+    {
         let client = conn.client.clone();
 
         let client_id_cl: ClientId = client_id.into();
 
+        let store = store.clone();
         let handle: JoinHandle<Result<(), InitError>> = tokio::spawn(async move {
             let client_id = client_id_cl.as_ref();
             Self::subscribe_server_interfaces(&client, client_id, &session_data.server_interfaces)
@@ -471,8 +479,13 @@ impl Handshake {
             debug!("session present {}", self.session_present);
             if !self.session_present {
                 Self::send_empty_cache(&client, client_id).await?;
-                Self::send_device_properties(&client, client_id, &session_data.device_properties)
-                    .await?;
+                Self::send_device_properties(
+                    &client,
+                    client_id,
+                    &store,
+                    &session_data.device_properties,
+                )
+                .await?;
             }
 
             Ok(())
@@ -542,11 +555,15 @@ impl Handshake {
     }
 
     /// Sends the passed device owned properties
-    async fn send_device_properties(
+    async fn send_device_properties<S>(
         client: &AsyncClient,
         client_id: ClientId<&str>,
-        device_properties: &[StoredProp],
-    ) -> Result<(), InitError> {
+        store: &StoreWrapper<S>,
+        device_properties: &[OptStoredProp],
+    ) -> Result<(), InitError>
+    where
+        S: PropertyStore,
+    {
         for prop in device_properties {
             let topic = format!("{}/{}{}", client_id, prop.interface, prop.path);
 
@@ -555,13 +572,29 @@ impl Handshake {
                 prop.interface, prop.path
             );
 
-            let payload = Payload::new(&prop.value).to_vec()?;
+            let payload = match &prop.value {
+                Some(value) => Payload::new(value).to_vec()?,
+                // Unset the property
+                None => Vec::new(),
+            };
 
             // Don't wait for the ack since it's not fundamental for the connection
             client
                 .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
                 .await
-                .map_err(InitError::client("device property"))?;
+                .map_err(InitError::client("device property"))?
+                .wait_async()
+                .await
+                .map_err(InitError::notice("device properties"))?;
+
+            if prop.value.is_none() {
+                trace!("clearing unset property {}/{}", prop.interface, prop.path);
+
+                store
+                    .delete_prop(&prop.interface, &prop.path)
+                    .await
+                    .map_err(InitError::Unset)?;
+            }
         }
 
         Ok(())
@@ -586,7 +619,7 @@ impl WaitAcks {
     /// We check that the task is finished, or we pull the connection. This ensures that all the
     /// packets in are sent correctly and the handle can advance to completion. Eventual published
     /// packets are returned.
-    async fn wait_connection(&mut self, conn: &mut Connection) -> Next {
+    async fn wait_connection(&mut self, conn: &mut Connection) -> Result<Next, StoreError> {
         // HACK: This is to make the function pass with mockall, since the poll function would never
         //       yield while using the mocks. With the real implementation the `Eventloop::poll`
         //       would have to wait for the connection and the sent packets.
@@ -601,23 +634,30 @@ impl WaitAcks {
 
         trace!("polling next event");
 
-        match conn.eventloop_mut().poll().await {
+        let next = match conn.eventloop_mut().poll().await {
             Ok(event) => Next::handle_event(event),
             Err(err) => Next::handle_error(err),
-        }
+        };
+
+        Ok(next)
     }
 
-    async fn handle_join(&mut self) -> Next {
+    async fn handle_join(&mut self) -> Result<Next, StoreError> {
         // Don't move the handle to await the task
         match (&mut self.handle).await {
             Ok(Ok(())) => {
                 info!("device connected");
-                Next::state(Connected)
+                Ok(Next::state(Connected))
+            }
+            Ok(Err(InitError::Unset(err))) => {
+                error!(error = %Report::new(&err), "init task failed");
+
+                Err(err)
             }
             Ok(Err(err)) => {
                 error!(error = %Report::new(err), "init task failed");
 
-                Next::state(Disconnected)
+                Ok(Next::state(Disconnected))
             }
             Err(err) => {
                 error!(error = %Report::new(&err), "failed to join init task");
@@ -626,7 +666,7 @@ impl WaitAcks {
                 // expectation failing.
                 debug_assert!(!err.is_panic(), "task panicked while waiting for acks");
 
-                Next::state(Disconnected)
+                Ok(Next::state(Disconnected))
             }
         }
     }
@@ -774,7 +814,7 @@ mod tests {
     use mockall::predicate;
 
     use crate::{
-        store::memory::MemoryStore,
+        store::{memory::MemoryStore, StoredProp},
         test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
         transport::mqtt::test::notify_success,
         AstarteType, Interface,

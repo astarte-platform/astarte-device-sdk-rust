@@ -100,7 +100,7 @@ where
     /// Deletes all the properties of the interface from the database.
     async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
     /// Retrieves all the device properties, including the one that were unset but not deleted.
-    async fn device_props_with_unset(&self) -> Result<Vec<MaybeStoredProp>, Self::Err>;
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err>;
 }
 
 /// Data structure used to return stored properties by a database implementing the [`PropertyStore`]
@@ -129,7 +129,7 @@ pub struct StoredProp<S = String, V = AstarteType> {
 ///
 /// This is returned by getting all the properties (`load_all_props`) that have not been deleted
 /// yet, since they where not sent to Astarte.
-pub type MaybeStoredProp = StoredProp<String, Option<AstarteType>>;
+pub type OptStoredProp = StoredProp<String, Option<AstarteType>>;
 
 impl StoredProp {
     /// Coverts the stored property into a reference to its values.
