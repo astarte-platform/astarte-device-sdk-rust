@@ -30,7 +30,7 @@ use syn::{
 };
 
 use crate::{
-    case::RenameRule, parse_attribute_list, parse_name_value_attrs, parse_str_lit,
+    case::RenameRule, parse_attribute_list, parse_bool_lit, parse_name_value_attrs, parse_str_lit,
     parse_struct_fields,
 };
 
@@ -226,8 +226,49 @@ impl FromEventDerive {
         let variants = variants.iter().enumerate().map(|(i, v)| {
             let variant = &v.name;
 
-            quote! {
-                #i => individual.try_into().map(#name::#variant).map_err(FromEventError::from),
+            if v.attrs.allow_unset {
+                quote! {
+                    #i => {
+                        let individual = match event.data {
+                            Value::Individual(individual) => individual,
+                            Value::Unset => {
+                                return Ok(#name::#variant(None));
+                            },
+                            Value::Object(_) => {
+                                return Err(FromEventError::Object {
+                                    interface: INTERFACE,
+                                    endpoint: event.path,
+                                });
+                            }
+                        };
+
+                        individual.try_into()
+                            .map(|value| #name::#variant(Some(value)))
+                            .map_err(FromEventError::from)
+                    }
+                }
+            } else {
+                quote! {
+                    #i => {
+                        let individual = match event.data {
+                            Value::Individual(individual) => individual,
+                            Value::Unset => {
+                                return Err(FromEventError::Unset {
+                                    interface: INTERFACE,
+                                    endpoint: event.path,
+                                });
+                            },
+                            Value::Object(_) => {
+                                return Err(FromEventError::Object {
+                                    interface: INTERFACE,
+                                    endpoint: event.path,
+                                });
+                            }
+                        };
+
+                        individual.try_into().map(#name::#variant).map_err(FromEventError::from)
+                    }
+                }
             }
         });
 
@@ -247,20 +288,13 @@ impl FromEventDerive {
                         return Err(FromEventError::Interface(event.interface));
                     }
 
-                    let Value::Individual(individual) = event.data else {
-                        return Err(FromEventError::Object {
-                            interface: INTERFACE,
-                            endpoint: event.path,
-                        });
-                    };
-
                     let endpoints = [ #(#endpoints),* ];
 
                     let position = endpoints.iter()
                         .position(|e| e.eq_mapping(&event.path))
                         .ok_or_else(|| FromEventError::Path {
                             interface: INTERFACE,
-                            base_path: event.path,
+                            base_path: event.path.clone(),
                         })?;
 
                     match position {
@@ -395,12 +429,18 @@ impl TryFrom<&Variant> for IndividualMapping {
 /// enum Individual {
 ///     #[mapping(endpoint = "/sensor")]
 ///     Sensor(i32),
+///     #[mapping(endpoint = "/temp", allow_unset = true)]
+///     Temperature(Option<f64>),
 /// }
 /// ```
 #[derive(Debug)]
 struct MappingAttr {
     /// Endpoint for the enum variant
     endpoint: String,
+    /// Allow [`Option`]al values for properties.
+    ///
+    /// Defaults to false as in the interfaces definition.
+    allow_unset: bool,
 }
 
 impl Parse for MappingAttr {
@@ -415,7 +455,16 @@ impl Parse for MappingAttr {
             ))
             .and_then(|expr| parse_str_lit(&expr))?;
 
-        Ok(Self { endpoint })
+        let allow_unset = attrs
+            .get("allow_unset")
+            .map(parse_bool_lit)
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Self {
+            endpoint,
+            allow_unset,
+        })
     }
 }
 

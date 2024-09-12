@@ -65,6 +65,14 @@ pub enum FromEventError {
         /// endpoint
         endpoint: String,
     },
+    /// unset passed to endpoint without allow unset
+    #[error("unset passed to {interface}{endpoint} without allow unset")]
+    Unset {
+        /// Interface that generated the error
+        interface: &'static str,
+        /// endpoint
+        endpoint: String,
+    },
     /// object missing field
     #[error("object {interface} missing field {base_path}/{path}")]
     MissingField {
@@ -207,6 +215,8 @@ mod tests {
             Luminosity(i32),
             #[mapping(endpoint = "/sensor/temperature")]
             Temperature(f64),
+            #[mapping(endpoint = "/sensor/unsettable", allow_unset = true)]
+            Unsettable(Option<bool>),
         }
 
         let event = DeviceEvent {
@@ -230,6 +240,30 @@ mod tests {
         let temperature = Sensor::from_event(event).expect("couldn't parse the event");
 
         let expected = Sensor::Temperature(3.);
+
+        assert_eq!(temperature, expected);
+
+        let event = DeviceEvent {
+            interface: "com.example.Sensor".to_string(),
+            path: "/sensor/unsettable".to_string(),
+            data: Value::Individual(AstarteType::Boolean(true)),
+        };
+
+        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
+
+        let expected = Sensor::Unsettable(Some(true));
+
+        assert_eq!(temperature, expected);
+
+        let event = DeviceEvent {
+            interface: "com.example.Sensor".to_string(),
+            path: "/sensor/unsettable".to_string(),
+            data: Value::Unset,
+        };
+
+        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
+
+        let expected = Sensor::Unsettable(None);
 
         assert_eq!(temperature, expected);
     }
