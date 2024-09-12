@@ -41,8 +41,8 @@ pub enum FromEventError {
     /// couldn't parse request from interface
     #[error("couldn't parse request from interface {0}")]
     Interface(String),
-    /// object has wrong base path
-    #[error("object {interface} has wrong base path {base_path}")]
+    /// couldn't parse the event path
+    #[error("the interface {interface} has wrong path {base_path}")]
     Path {
         /// Interface that generated the error
         interface: &'static str,
