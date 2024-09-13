@@ -92,11 +92,10 @@ impl RecvError {
     }
 }
 
-/// Trait representing the behavior of an Astarte device client.
+/// A trait representing the behavior of an Astarte device client.
 ///
-/// A device client is responsible
-/// for interacting with the Astarte platform by sending properties and datastreams, handling events, and managing
-/// device interfaces.
+/// A device client is responsible for interacting with the Astarte platform by sending properties
+/// and datastreams, handling events, and managing device interfaces.
 #[async_trait]
 pub trait Client {
     /// Send an object datastream on an interface, with an explicit timestamp.

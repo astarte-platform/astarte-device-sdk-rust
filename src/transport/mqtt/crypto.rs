@@ -42,11 +42,16 @@ use x509_cert::{
     name::Name,
 };
 
+#[cfg(feature = "openssl")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
+pub use openssl;
+
 /// Errors that can occur while generating the Certificate and CSR.
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
     #[cfg(feature = "openssl")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
     /// Openssl CSR generation failed.
     #[error("Openssl error")]
     Openssl(#[from] openssl::error::ErrorStack),
@@ -111,6 +116,7 @@ impl Bundle {
     }
 
     #[cfg(feature = "openssl")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
     pub(crate) fn openssl_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         let group = EcGroup::from_curve_name(Nid::SECP384R1)?;
         let ec_key = EcKey::generate(&group)?;

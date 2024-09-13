@@ -5,25 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.3] - 2024-08-22
-
-### Changed
-
-- Derive `Clone` for the MQTT `Credential` enum
-  [#369](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/369)
-
 ## [Unreleased]
+
 ### Added
+
 - Update the Dynamic Introspection to support adding or removing interfaces from a MessageHub Node
   [#330](https://github.com/astarte-platform/astarte-device-sdk-rust/issues/330)
 - Implement the retention stored for the `SqliteStore` and the volatile with an in memory structure.
   [#363](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/363)
 
 ### Changed
-- Use Empty type rather than Node to detach a Node [#340](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/340/).
-- Handle the new return type of the Attach rpc, `MessageHubEvent`, which can either be an error or an Astarte 
-  message [#362](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/362)
-- Retrieve the Node ID information from the grpc metadata also for the Attach rpc [#372](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/372).
+
+- Use Empty type rather than Node to detach a Node
+  [#340](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/340/).
+- Handle the new return type of the Attach rpc, `MessageHubEvent`, which can either be an error or
+  an Astarte message [#362](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/362)
+- Retrieve the Node ID information from the grpc metadata also for the Attach rpc
+  [#372](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/372).
+
+## [0.8.4] - 2024-09-11
+
+### Changed
+
+- Improve the rendering of the documentation on docs.rs, showing all the features and which one
+  needs to be activated for a specific item.
+
+## [0.8.3] - 2024-08-22
+
+### Changed
+
+- Derive `Clone` for the MQTT `Credential` enum
+  [#369](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/369)
 
 ## [0.8.2] - 2024-05-29
 

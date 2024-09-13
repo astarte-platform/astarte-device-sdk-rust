@@ -41,7 +41,7 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient,
-    pbjson_types::Empty, tonic, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
+    pbjson_types::Empty, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
     MessageHubEvent, Node,
 };
 use async_trait::async_trait;
@@ -74,6 +74,10 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
+
+#[cfg(feature = "message-hub")]
+#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+pub use astarte_message_hub_proto::tonic;
 
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
@@ -345,10 +349,11 @@ where
     }
 }
 
-/// Struct representing a GRPC connection handler for an Astarte device.
+/// Handles a gRPC connection between the device and Astarte.
 ///
-/// It manages the interaction with the [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub),
-/// sending and receiving [`AstarteMessage`] following the Astarte message hub protocol.
+/// It manages the interaction with the
+/// [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and
+/// receiving [`AstarteMessage`] following the Astarte message hub protocol.
 pub struct Grpc<S> {
     uuid: Uuid,
     client: MsgHubClient,

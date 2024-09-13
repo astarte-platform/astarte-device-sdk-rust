@@ -291,7 +291,7 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Foo", path = "obj")]
+/// #[from_event(interface = "com.example.Foo", path = "/obj")]
 /// struct Foo {
 ///     bar: String
 /// }

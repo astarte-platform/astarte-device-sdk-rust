@@ -550,10 +550,10 @@ impl<S> Display for MqttClient<S> {
     }
 }
 
-/// Struct representing an MQTT connection handler for an Astarte device.
+/// Handles the MQTT connection between a device and Astarte.
 ///
-/// It manages the interaction with the MQTT broker, handling connections, subscriptions, and
-/// message publishing following the Astarte protocol.
+///  It manages the interaction with the MQTT broker, handling connections, subscriptions, and
+///  message publishing following the Astarte protocol.
 pub struct Mqtt<S> {
     client_id: ClientId,
     connection: MqttConnection,

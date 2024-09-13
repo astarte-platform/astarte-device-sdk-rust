@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Implement the FromEvent derive macro for individual interfaces, via the `aggregation` attribute to
   the macro [#375](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/375)
 
+## [0.8.4] - 2024-09-11
+
 ## [0.8.3] - 2024-08-22
 
 ## [0.8.2] - 2024-05-29
