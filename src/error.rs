@@ -105,6 +105,7 @@ pub enum Error {
     Retention(#[from] RetentionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }

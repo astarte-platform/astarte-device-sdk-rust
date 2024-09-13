@@ -22,18 +22,17 @@ use std::collections::HashMap;
 
 use crate::{error::Error, types::AstarteType};
 
-/// Trait ensuring correct parsing of the data to be sent.
+/// Trait returning an object aggregate to be sent.
 ///
-/// It's required by all data to be sent using
-/// [send_object()][crate::Client::send_object] and
+/// It's required by all data to be sent using [send_object()][crate::Client::send_object] and
 /// [send_object_with_timestamp()][crate::Client::send_object_with_timestamp].
 ///
-/// The returned hash map should have as values the data to transmit for each
-/// object endpoint and as keys the endpoints themselves.
+/// The returned hash map should have as values the data to transmit for each object endpoint and as
+/// keys the endpoints themselves.
 ///
-/// The Astarte Device SDK provides a procedural macro that can be used to automatically
-/// generate `AstarteAggregate` implementations for Structs.
-/// To use the procedural macro enable the feature `derive`.
+/// The Astarte Device SDK provides a procedural macro that can be used to automatically generate
+/// `AstarteAggregate` implementations for Structs. To use the procedural macro enable the feature
+/// `derive`.
 pub trait AstarteAggregate {
     /// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
     /// ```
