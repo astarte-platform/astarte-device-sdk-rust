@@ -7,5 +7,4 @@ SELECT
     ownership
 FROM propcache
 WHERE
-    ownership = ?
-    AND value IS NOT NULL;
+    ownership = ?;

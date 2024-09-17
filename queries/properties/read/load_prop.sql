@@ -5,4 +5,5 @@ SELECT
 FROM propcache
 WHERE
     interface = ?
-    AND path = ?;
+    AND path = ?
+    AND value IS NOT NULL;

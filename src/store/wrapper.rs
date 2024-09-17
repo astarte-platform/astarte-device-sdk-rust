@@ -22,7 +22,7 @@ use async_trait::async_trait;
 
 use crate::types::AstarteType;
 
-use super::{error::StoreError, PropertyStore, StoreCapabilities, StoredProp};
+use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
@@ -70,6 +70,13 @@ where
             .map_err(StoreError::load)
     }
 
+    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+        self.store
+            .unset_prop(interface, path)
+            .await
+            .map_err(StoreError::unset)
+    }
+
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
         self.store
             .delete_prop(interface, path)
@@ -114,6 +121,13 @@ where
             .delete_interface(interface)
             .await
             .map_err(StoreError::delete_interface)
+    }
+
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+        self.store
+            .device_props_with_unset()
+            .await
+            .map_err(StoreError::device_props)
     }
 }
 

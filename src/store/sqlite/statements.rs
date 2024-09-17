@@ -23,7 +23,11 @@ use std::{
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
 
-use crate::{interface::Ownership, store::StoredProp, AstarteType};
+use crate::{
+    interface::Ownership,
+    store::{OptStoredProp, StoredProp},
+    AstarteType,
+};
 
 use super::{
     into_stored_type, wrap_sync_call, PropRecord, RecordOwnership, SqliteError, StoredRecord,
@@ -91,7 +95,7 @@ impl WriteConnection {
     ) -> Result<(), SqliteError> {
         let mapping_type = into_stored_type(prop.value)?;
 
-        let ownership = RecordOwnership::from(prop.ownership) as u8;
+        let ownership = RecordOwnership::from(prop.ownership);
 
         wrap_sync_call(|| {
             let mut statement = self
@@ -108,6 +112,22 @@ impl WriteConnection {
                     ownership,
                 ))
                 .map_err(SqliteError::Query)?;
+
+            Ok(())
+        })
+    }
+
+    pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), SqliteError> {
+        wrap_sync_call(|| {
+            let mut statement = self
+                .prepare_cached(include_query!("queries/properties/write/unset_prop.sql"))
+                .map_err(SqliteError::Prepare)?;
+
+            let updated = statement
+                .execute((interface, path))
+                .map_err(SqliteError::Query)?;
+
+            debug_assert!((0..=1).contains(&updated));
 
             Ok(())
         })
@@ -227,7 +247,11 @@ impl ReadConnection {
                     })
                 })
                 .map_err(SqliteError::Query)?
-                .map(|e| e.map_err(SqliteError::Query).and_then(StoredProp::try_from))
+                .filter_map(|e| {
+                    e.map_err(SqliteError::Query)
+                        .and_then(StoredRecord::try_into_prop)
+                        .transpose()
+                })
                 .collect::<Result<Vec<StoredProp>, SqliteError>>()?;
 
             Ok(v)
@@ -238,7 +262,7 @@ impl ReadConnection {
         &self,
         ownership: Ownership,
     ) -> Result<Vec<StoredProp>, SqliteError> {
-        let ownership_par = RecordOwnership::from(ownership) as u8;
+        let ownership_par = RecordOwnership::from(ownership);
 
         wrap_sync_call(|| {
             let mut statement = self
@@ -259,16 +283,63 @@ impl ReadConnection {
                     })
                 })
                 .map_err(SqliteError::Query)?
+                .filter_map(|res| {
+                    let record = match res {
+                        Ok(record) => record,
+                        Err(err) => return Some(Err(SqliteError::Query(err))),
+                    };
+
+                    match record.try_into_prop() {
+                        Ok(Some(prop)) => {
+                            debug_assert_eq!(prop.ownership, ownership);
+
+                            Some(Ok(prop))
+                        }
+                        Ok(None) => None,
+                        Err(err) => Some(Err(err)),
+                    }
+                })
+                .collect::<Result<Vec<StoredProp>, SqliteError>>()?;
+
+            Ok(v)
+        })
+    }
+
+    pub(super) fn props_with_unset(
+        &self,
+        ownership: Ownership,
+    ) -> Result<Vec<OptStoredProp>, SqliteError> {
+        let ownership_par = RecordOwnership::from(ownership);
+
+        wrap_sync_call(|| {
+            let mut statement = self
+                .prepare_cached(include_query!(
+                    "queries/properties/read/props_with_unset.sql"
+                ))
+                .map_err(SqliteError::Prepare)?;
+
+            let v = statement
+                .query_map([ownership_par], |row| {
+                    Ok(StoredRecord {
+                        interface: row.get(0)?,
+                        path: row.get(1)?,
+                        value: row.get(2)?,
+                        stored_type: row.get(3)?,
+                        interface_major: row.get(4)?,
+                        ownership: row.get(5)?,
+                    })
+                })
+                .map_err(SqliteError::Query)?
                 .map(|e| {
                     e.map_err(SqliteError::Query).and_then(|record| {
-                        let prop = StoredProp::try_from(record)?;
+                        let prop = OptStoredProp::try_from(record)?;
 
                         debug_assert_eq!(prop.ownership, ownership);
 
                         Ok(prop)
                     })
                 })
-                .collect::<Result<Vec<StoredProp>, SqliteError>>()?;
+                .collect::<Result<Vec<OptStoredProp>, SqliteError>>()?;
 
             Ok(v)
         })
@@ -294,7 +365,11 @@ impl ReadConnection {
                     })
                 })
                 .map_err(SqliteError::Query)?
-                .map(|e| e.map_err(SqliteError::Query).and_then(StoredProp::try_from))
+                .filter_map(|e| {
+                    e.map_err(SqliteError::Query)
+                        .and_then(StoredRecord::try_into_prop)
+                        .transpose()
+                })
                 .collect::<Result<Vec<StoredProp>, SqliteError>>()?;
 
             Ok(v)

@@ -7,4 +7,5 @@ SELECT
     ownership
 FROM propcache
 WHERE
-    interface = ?;
+    interface = ?
+    AND value IS NOT NULL;

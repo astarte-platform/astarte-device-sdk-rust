@@ -33,6 +33,9 @@ pub enum StoreError {
     /// Could not delete a property.
     #[error("could not delete property")]
     Delete(#[source] DynError),
+    /// Could not unset a property.
+    #[error("could not delete property")]
+    Unset(#[source] DynError),
     /// Could not clear the database.
     #[error("could not clear database")]
     Clear(#[source] DynError),
@@ -60,6 +63,10 @@ impl StoreError {
 
     pub(crate) fn load(err: impl Into<DynError>) -> Self {
         Self::Load(err.into())
+    }
+
+    pub(crate) fn unset(err: impl Into<DynError>) -> Self {
+        Self::Unset(err.into())
     }
 
     pub(crate) fn delete(err: impl Into<DynError>) -> Self {

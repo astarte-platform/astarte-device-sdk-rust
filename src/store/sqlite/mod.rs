@@ -22,11 +22,14 @@ use std::{cell::Cell, fmt::Debug, path::Path, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures::lock::Mutex;
-use rusqlite::OptionalExtension;
+use rusqlite::{
+    types::{FromSql, FromSqlError},
+    OptionalExtension, ToSql,
+};
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
 
-use super::{PropertyStore, StoreCapabilities, StoredProp};
+use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
@@ -90,18 +93,6 @@ enum RecordOwnership {
     Server = 1,
 }
 
-impl TryFrom<u8> for RecordOwnership {
-    type Error = OwnershipError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(RecordOwnership::Device),
-            1 => Ok(RecordOwnership::Server),
-            _ => Err(OwnershipError { value }),
-        }
-    }
-}
-
 impl From<RecordOwnership> for Ownership {
     fn from(value: RecordOwnership) -> Self {
         match value {
@@ -116,6 +107,24 @@ impl From<Ownership> for RecordOwnership {
         match value {
             Ownership::Device => RecordOwnership::Device,
             Ownership::Server => RecordOwnership::Server,
+        }
+    }
+}
+
+impl ToSql for RecordOwnership {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok((*self as u8).into())
+    }
+}
+
+impl FromSql for RecordOwnership {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let value = u8::column_result(value)?;
+
+        match value {
+            0 => Ok(RecordOwnership::Device),
+            1 => Ok(RecordOwnership::Server),
+            _ => Err(FromSqlError::Other(OwnershipError { value }.into())),
         }
     }
 }
@@ -144,9 +153,17 @@ pub enum ValueError {
 /// Result of the load_prop query
 #[derive(Clone)]
 struct PropRecord {
-    value: Vec<u8>,
+    value: Option<Vec<u8>>,
     stored_type: u8,
     interface_major: i32,
+}
+
+impl PropRecord {
+    fn try_into_value(self) -> Result<Option<AstarteType>, ValueError> {
+        self.value
+            .map(|value| deserialize_prop(self.stored_type, &value))
+            .transpose()
+    }
 }
 
 impl Debug for PropRecord {
@@ -154,23 +171,22 @@ impl Debug for PropRecord {
         use itertools::Itertools;
 
         // Print the value as an hex string instead of an array of numbers
-        let hex_value = self
-            .value
-            .iter()
-            .format_with("", |element, f| f(&format_args!("{element:x}")));
 
-        f.debug_struct("PropRecord")
-            .field("interface_major", &self.interface_major)
-            .field("value", &format_args!("{}", hex_value))
-            .finish()
-    }
-}
+        let mut d = f.debug_struct("PropRecord");
 
-impl TryFrom<PropRecord> for AstarteType {
-    type Error = ValueError;
+        d.field("interface_major", &self.interface_major);
 
-    fn try_from(record: PropRecord) -> Result<Self, Self::Error> {
-        deserialize_prop(record.stored_type, &record.value)
+        match &self.value {
+            Some(value) => {
+                let hex_value = value
+                    .iter()
+                    .format_with("", |element, f| f(&format_args!("Some({element:x})")));
+
+                d.field("value", &format_args!("{hex_value}"))
+            }
+            None => d.field("value", &self.value),
+        }
+        .finish()
     }
 }
 
@@ -179,10 +195,47 @@ impl TryFrom<PropRecord> for AstarteType {
 struct StoredRecord {
     interface: String,
     path: String,
-    value: Vec<u8>,
+    value: Option<Vec<u8>>,
     stored_type: u8,
     interface_major: i32,
-    ownership: u8,
+    ownership: RecordOwnership,
+}
+
+impl StoredRecord {
+    pub(crate) fn try_into_prop(self) -> Result<Option<StoredProp>, SqliteError> {
+        let Some(value) = self.value else {
+            return Ok(None);
+        };
+
+        let value = deserialize_prop(self.stored_type, &value)?;
+
+        Ok(Some(StoredProp {
+            interface: self.interface,
+            path: self.path,
+            value,
+            interface_major: self.interface_major,
+            ownership: self.ownership.into(),
+        }))
+    }
+}
+
+impl TryFrom<StoredRecord> for OptStoredProp {
+    type Error = SqliteError;
+
+    fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
+        let value = record
+            .value
+            .map(|value| deserialize_prop(record.stored_type, &value))
+            .transpose()?;
+
+        Ok(Self {
+            interface: record.interface,
+            path: record.path,
+            value,
+            interface_major: record.interface_major,
+            ownership: record.ownership.into(),
+        })
+    }
 }
 
 fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
@@ -228,22 +281,6 @@ fn from_stored_type(value: u8) -> Result<MappingType, ValueError> {
     };
 
     Ok(mapping_type)
-}
-
-impl TryFrom<StoredRecord> for StoredProp {
-    type Error = SqliteError;
-
-    fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
-        let value = deserialize_prop(record.stored_type, &record.value)?;
-
-        Ok(StoredProp {
-            interface: record.interface,
-            path: record.path,
-            value,
-            interface_major: record.interface_major,
-            ownership: RecordOwnership::try_from(record.ownership)?.into(),
-        })
-    }
 }
 
 thread_local! {
@@ -369,7 +406,10 @@ impl SqliteStore {
     }
 
     async fn migrate(&self) -> Result<(), SqliteError> {
-        const MIGRATIONS: &[&str] = &[include_query!("migrations/0001_init.sql")];
+        const MIGRATIONS: &[&str] = &[
+            include_query!("migrations/0001_init.sql"),
+            include_query!("migrations/0002_unset_property.sql"),
+        ];
 
         let writer = self.writer.lock().await;
 
@@ -450,12 +490,16 @@ impl PropertyStore for SqliteStore {
                     return Ok(None);
                 }
 
-                let ast_ty = record.try_into()?;
-
-                Ok(Some(ast_ty))
+                record.try_into_value().map_err(SqliteError::Value)
             }
             None => Ok(None),
         }
+    }
+
+    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+        self.writer.lock().await.unset_prop(interface, path)?;
+
+        Ok(())
     }
 
     async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
@@ -490,6 +534,10 @@ impl PropertyStore for SqliteStore {
         self.writer.lock().await.delete_interface_props(interface)?;
 
         Ok(())
+    }
+
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+        self.with_reader(|reader| reader.props_with_unset(Ownership::Device))
     }
 }
 

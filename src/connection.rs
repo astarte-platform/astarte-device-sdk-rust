@@ -304,12 +304,11 @@ where
     {
         match msg {
             ClientMessage::Individual(data) => self.send_individual(data).await,
+            ClientMessage::Object(data) => self.send_object(data).await,
             ClientMessage::Property {
                 data,
                 version_major,
             } => {
-                self.sender.send_individual(data.clone()).await?;
-
                 let prop = StoredProp {
                     interface: data.interface.as_str(),
                     path: data.path.as_str(),
@@ -320,23 +319,32 @@ where
 
                 self.store.store_prop(prop).await?;
 
-                debug!(
-                    "property stored {}{}:{version_major}",
-                    data.interface, data.path,
-                );
+                if self.status.is_connected() {
+                    self.sender.send_individual(data.clone()).await?;
+
+                    debug!(
+                        "property stored {}{}:{version_major}",
+                        data.interface, data.path,
+                    );
+                }
 
                 Ok(())
             }
-            ClientMessage::Object(data) => self.send_object(data).await,
             ClientMessage::Unset(data) => {
-                self.sender.unset(data.clone()).await?;
+                self.store.unset_prop(&data.interface, &data.path).await?;
 
-                debug!(
-                    "deleting property {}{} from store",
-                    data.interface, data.path
-                );
+                if self.status.is_connected() {
+                    self.sender.unset(data.clone()).await?;
 
-                self.store.delete_prop(&data.interface, &data.path).await?;
+                    debug!(
+                        "deleting property {}{} from store",
+                        data.interface, data.path
+                    );
+
+                    // TODO: this should be done when the package has been acknowledged, but it's hard
+                    //       for the MQTT implementation at the moment so we delete it here to cleanup
+                    self.store.delete_prop(&data.interface, &data.path).await?;
+                }
 
                 Ok(())
             }
