@@ -169,7 +169,7 @@ impl AggregateDerive {
             impl #impl_generics astarte_device_sdk::AstarteAggregate for #name #ty_generics #where_clause {
                 fn astarte_aggregate(
                     self,
-                ) -> Result<
+                ) -> ::std::result::Result<
                     std::collections::HashMap<String, astarte_device_sdk::types::AstarteType>,
                     astarte_device_sdk::error::Error,
                 > {

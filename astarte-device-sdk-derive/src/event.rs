@@ -172,7 +172,7 @@ impl FromEventDerive {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
                 type Err = astarte_device_sdk::event::FromEventError;
 
-                fn from_event(event: astarte_device_sdk::DeviceEvent) -> Result<Self, Self::Err> {
+                fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
@@ -276,7 +276,7 @@ impl FromEventDerive {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
                 type Err = astarte_device_sdk::event::FromEventError;
 
-                fn from_event(event: astarte_device_sdk::DeviceEvent) -> Result<Self, Self::Err> {
+                fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
                     use astarte_device_sdk::AstarteType;
                     use astarte_device_sdk::event::FromEventError;
