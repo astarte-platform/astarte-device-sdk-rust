@@ -111,7 +111,7 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.0" }
 astarte-device-sdk-derive = { version = "=0.9.0", path = "./astarte-device-sdk-derive" }
-astarte-message-hub-proto =  "0.7.0"
+astarte-message-hub-proto = "0.7.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
 bson = "2.7.0"
@@ -135,7 +135,7 @@ proc-macro2 = "1.0.63"
 quote = "1.0.28"
 rand_core = "0.6.4"
 reqwest = "0.12.0"
-rumqttc = { git = "https://github.com/joshuachp/rumqtt", rev = "9109f874ec10e1660448616e7054a887672dfd07" }
+rumqttc = { package = "rumqttc-dev-patched", version = "0.24.0-devpatch" }
 rusqlite = "0.29.0"
 rustls = "0.22.2"
 rustls-native-certs = "0.7.0"
