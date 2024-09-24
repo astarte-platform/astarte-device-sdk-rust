@@ -116,6 +116,20 @@ fn parse_str_lit(expr: &Expr) -> syn::Result<String> {
     }
 }
 
+/// Parses a [`syn::Lit::Bool`] into a [`bool`].
+fn parse_bool_lit(expr: &Expr) -> syn::Result<bool> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(lit),
+            ..
+        }) => Ok(lit.value()),
+        _ => Err(syn::Error::new(
+            expr.span(),
+            "expression must be a bool literal",
+        )),
+    }
+}
+
 /// Handle for the `#[derive(AstarteAggregate)]` derive macro.
 ///
 /// ### Example
@@ -155,7 +169,7 @@ impl AggregateDerive {
             impl #impl_generics astarte_device_sdk::AstarteAggregate for #name #ty_generics #where_clause {
                 fn astarte_aggregate(
                     self,
-                ) -> Result<
+                ) -> ::std::result::Result<
                     std::collections::HashMap<String, astarte_device_sdk::types::AstarteType>,
                     astarte_device_sdk::error::Error,
                 > {
@@ -305,8 +319,8 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 /// enum Sensor {
 ///     #[mapping(endpoint = "/sensor/luminosity")]
 ///     Luminosity(i32),
-///     #[mapping(endpoint = "/sensor/temerature")]
-///     Temperature(f32),
+///     #[mapping(endpoint = "/sensor/temerature", allow_unset = true)]
+///     Temperature(Option<f64>),
 /// }
 /// ```
 #[proc_macro_derive(FromEvent, attributes(from_event, mapping))]
