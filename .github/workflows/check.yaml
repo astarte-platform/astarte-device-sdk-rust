@@ -119,8 +119,10 @@ jobs:
           toolchain: ${{ matrix.msrv }}
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
+      - name: Install cargo hack
+        uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo check --all-features --workspace
+        run: cargo +1.72.0 hack --no-dev-deps check --workspace --exclude astarte-device-sdk-mock --exclude e2e-test
   # Run semver-check on release branch push or PR
   semver:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
