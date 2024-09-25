@@ -20,8 +20,6 @@
 
 //! Crypto module to generate the CSR to authenticate the device to the Astarte.
 
-use std::str::FromStr;
-
 #[cfg(feature = "openssl")]
 use openssl::{
     ec::{EcGroup, EcKey},
@@ -30,17 +28,8 @@ use openssl::{
     pkey::PKey,
     x509::{X509NameBuilder, X509ReqBuilder},
 };
-use p384::{
-    ecdsa::{DerSignature, SigningKey},
-    pkcs8::{EncodePrivateKey, LineEnding},
-    SecretKey,
-};
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P384_SHA384};
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use x509_cert::{
-    builder::{Builder, RequestBuilder},
-    der::EncodePem,
-    name::Name,
-};
 
 #[cfg(feature = "openssl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
@@ -55,15 +44,9 @@ pub enum CryptoError {
     /// Openssl CSR generation failed.
     #[error("Openssl error")]
     Openssl(#[from] openssl::error::ErrorStack),
-    /// Invalid common name in the certificate.
-    #[error("Invalid COMMONNAME")]
-    InvalidCn(#[from] x509_cert::der::Error),
     /// Failed to generate the CSR.
     #[error("Failed to create Certificate and CSR")]
-    Certificate(#[from] x509_cert::builder::Error),
-    /// Couldn't encode the private key to PKCS8 PEM format.
-    #[error("Failed to encode key to PKCS8 pem")]
-    Pem(#[from] p384::pkcs8::Error),
+    Certificate(#[from] rcgen::Error),
     /// Invalid UTF-8 character in the PEM file.
     #[error("Invalid UTF-8 encoded PEM")]
     Utf8(#[from] std::string::FromUtf8Error),
@@ -91,26 +74,19 @@ impl Bundle {
 
     pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // The realm/device_id for the certificate
-        let subject = Name::from_str(&format!("CN={}/{}", realm, device_id))?;
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
 
         // Generate a random private key
-        let private_key = SecretKey::random(&mut rand_core::OsRng);
+        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P384_SHA384)?;
 
-        // This need to define the signer key type
-        let signer = SigningKey::from(&private_key);
+        let mut csr_param = CertificateParams::new([])?;
+        csr_param.distinguished_name = dn;
 
-        let csr = RequestBuilder::new(subject, &signer)?
-            .build::<DerSignature>()?
-            // Platform dependant line ending
-            .to_pem(LineEnding::default())?;
-
-        // The private_key is held into a Zeroing wrapper as a security measure so that the key is
-        // note kept in memory. We nee to extract the key from the wrapper to use it normally.
-        let mut z_private_key = private_key.to_pkcs8_der()?.to_bytes();
-        // Replace the private_key with an empty string to take it out without cloning it.
-        let v: Vec<u8> = std::mem::take(&mut z_private_key);
-
-        let private_key = PrivatePkcs8KeyDer::from(v);
+        // Singed CSR
+        let csr = csr_param.serialize_request(&key_pair)?.pem()?;
+        // Subject key_pair
+        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
 
         Ok(Bundle { private_key, csr })
     }
@@ -144,16 +120,6 @@ impl Bundle {
 
 #[cfg(test)]
 mod tests {
-    use ecdsa::SigningKey;
-    use p384::{
-        ecdsa::{signature::Verifier, Signature, VerifyingKey},
-        pkcs8::DecodePrivateKey,
-    };
-    use x509_cert::{
-        der::{DecodePem, Encode},
-        request::CertReq,
-    };
-
     use super::*;
 
     #[test]
@@ -178,22 +144,9 @@ mod tests {
         assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
-        let csr = CertReq::from_pem(csr.as_bytes()).unwrap();
-        assert_eq!(csr.info.subject.to_string(), "CN=realm/device_id");
-
-        let private_key = SecretKey::from_pkcs8_der(private_key.secret_pkcs8_der()).unwrap();
-        let signer = SigningKey::from(&private_key);
-        let verifier = VerifyingKey::from(signer);
-
-        let sign_bytes = csr
-            .signature
-            .as_bytes()
-            .expect("Failed to get signature bytes");
-        let signature: Signature = Signature::from_der(sign_bytes).expect("Failed to decode DER");
-
-        let info = csr.info.to_der().expect("Failed to encode CSR info");
-
-        assert!(verifier.verify(&info, &signature).is_ok());
+        rustls_pemfile::csr(&mut csr.clone().as_bytes())
+            .unwrap()
+            .unwrap();
     }
 
     #[cfg(feature = "openssl")]
