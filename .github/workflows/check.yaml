@@ -59,16 +59,18 @@ jobs:
   doc:
     runs-on: ubuntu-latest
     name: nightly / doc
+    env:
+      RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.5
-      - name: cargo doc
-        run: cargo doc --no-deps --all-features --workspace
-        env:
-          RUSTDOCFLAGS: --cfg docsrs -D warnings
+      - name: Install cargo-docs-rs
+        uses: dtolnay/install@cargo-docs-rs
+      - run: cargo docs-rs
+
   hack:
     runs-on: ubuntu-latest
     name: ubuntu / stable / features
