@@ -60,6 +60,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
+    properties::{encode_set_properties, PropertiesError},
     retry::ExponentialIter,
     store::{error::StoreError, wrapper::StoreWrapper, OptStoredProp, PropertyStore},
     transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
@@ -95,6 +96,9 @@ enum InitError {
     /// Couldn't delete the unset property
     #[error("coudln't delete the unset property")]
     Unset(#[source] StoreError),
+    /// Couldn't send purge device properties
+    #[error("couldn't send purge properties")]
+    PurgeProperties(#[source] PropertiesError),
 }
 
 impl InitError {
@@ -479,6 +483,10 @@ impl Handshake {
             debug!("session present {}", self.session_present);
             if !self.session_present {
                 Self::send_empty_cache(&client, client_id).await?;
+
+                Self::purge_device_properties(&client, client_id, &session_data.device_properties)
+                    .await?;
+
                 Self::send_device_properties(
                     &client,
                     client_id,
@@ -552,6 +560,33 @@ impl Handshake {
             .wait_async()
             .await
             .map_err(InitError::notice("empty cache"))
+    }
+
+    /// Sends the passed device owned properties
+    async fn purge_device_properties(
+        client: &AsyncClient,
+        client_id: ClientId<&str>,
+        device_properties: &[OptStoredProp],
+    ) -> Result<(), InitError> {
+        let iter = device_properties
+            .iter()
+            .filter(|val| val.value.is_some())
+            .map(|val| format!("{}{}", val.interface, val.path));
+
+        let payload = encode_set_properties(iter).map_err(InitError::PurgeProperties)?;
+
+        client
+            .publish(
+                format!("{client_id}/control/producer/properties"),
+                QoS::ExactlyOnce,
+                false,
+                payload,
+            )
+            .await
+            .map_err(InitError::client("purge device properties"))?
+            .wait_async()
+            .await
+            .map_err(InitError::notice("purge device properties"))
     }
 
     /// Sends the passed device owned properties
@@ -893,6 +928,18 @@ mod tests {
                         predicate::always(),
                         predicate::eq("1"),
                     )
+                    .returning(|_, _, _, _| notify_success());
+
+
+                // purge device properties
+                client
+                    .expect_publish::<String, Vec<u8>>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .withf(|topic, qos, _, _| {
+                        topic == "realm/device_id/control/producer/properties"
+                            && *qos == QoS::ExactlyOnce
+                    })
                     .returning(|_, _, _, _| notify_success());
 
                 // device property publish

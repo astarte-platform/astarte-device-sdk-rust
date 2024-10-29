@@ -435,11 +435,14 @@ mod test {
     use rumqttc::{ConnAck, ConnectReturnCode, Event, Packet, QoS};
     use tempfile::TempDir;
 
-    use crate::transport::mqtt::{
-        client::{AsyncClient, EventLoop, NEW_LOCK},
-        pairing::tests::{mock_create_certificate, mock_get_broker_url},
-        test::notify_success,
-        MqttConfig,
+    use crate::{
+        properties::extract_set_properties,
+        transport::mqtt::{
+            client::{AsyncClient, EventLoop, NEW_LOCK},
+            pairing::tests::{mock_create_certificate, mock_get_broker_url},
+            test::notify_success,
+            MqttConfig,
+        },
     };
 
     use super::*;
@@ -587,6 +590,17 @@ mod test {
                                     topic == "realm/device_id/control/emptyCache"
                                         && *qos == QoS::ExactlyOnce
                                         && *payload == "1"
+                                })
+                                .returning(|_, _, _, _| notify_success());
+
+                            client
+                                .expect_publish::<String, Vec<u8>>()
+                                .once()
+                                .in_sequence(&mut seq)
+                                .withf(|topic, qos, _, payload| {
+                                    topic == "realm/device_id/control/producer/properties"
+                                        && *qos == QoS::ExactlyOnce
+                                        && extract_set_properties(payload).unwrap().is_empty()
                                 })
                                 .returning(|_, _, _, _| notify_success());
 
