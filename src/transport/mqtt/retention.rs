@@ -110,7 +110,7 @@ impl Iterator for MqttRetention {
 
 pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 
-impl<'a> std::future::Future for MqttRetentionFuture<'a> {
+impl std::future::Future for MqttRetentionFuture<'_> {
     type Output = Result<RetentionId, NoticeError>;
 
     fn poll(
