@@ -27,7 +27,6 @@ keywords = ["sdk", "iot", "astarte", "mock"]
 license.workspace = true
 readme = "README.md"
 repository.workspace = true
-rust-version.workspace = true
 description = "Mock implementation of the traits in the astarte-device-sdk"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

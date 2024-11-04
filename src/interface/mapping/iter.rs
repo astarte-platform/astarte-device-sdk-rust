@@ -201,7 +201,7 @@ impl<'a> Iterator for ObjectMappingIter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for ObjectMappingIter<'a> {
+impl DoubleEndedIterator for ObjectMappingIter<'_> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.mappings
             .next_back()
@@ -209,7 +209,7 @@ impl<'a> DoubleEndedIterator for ObjectMappingIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for ObjectMappingIter<'a> {
+impl ExactSizeIterator for ObjectMappingIter<'_> {
     fn len(&self) -> usize {
         self.mappings.len()
     }

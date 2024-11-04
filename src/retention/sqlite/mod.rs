@@ -57,7 +57,7 @@ pub(crate) struct RetentionMapping<'a> {
     pub(crate) expiry: Option<Duration>,
 }
 
-impl<'a> RetentionMapping<'a> {
+impl RetentionMapping<'_> {
     pub(crate) fn expiry_to_sql(&self) -> Option<i64> {
         self.expiry.and_then(|exp| {
             // If the conversion fails, since the u64 was to big for the i64, we will keep the
