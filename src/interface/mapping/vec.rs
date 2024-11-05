@@ -158,19 +158,19 @@ impl<'a, T> Iterator for ItemIter<'a, T> {
     }
 }
 
-impl<'a, T> DoubleEndedIterator for ItemIter<'a, T> {
+impl<T> DoubleEndedIterator for ItemIter<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.items.next_back().map(|i| &i.0)
     }
 }
 
-impl<'a, T> ExactSizeIterator for ItemIter<'a, T> {
+impl<T> ExactSizeIterator for ItemIter<'_, T> {
     fn len(&self) -> usize {
         self.items.len()
     }
 }
 
-impl<'a, T> FusedIterator for ItemIter<'a, T> {}
+impl<T> FusedIterator for ItemIter<'_, T> {}
 
 #[cfg(test)]
 mod tests {

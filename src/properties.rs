@@ -18,10 +18,12 @@
 
 //! Handles the properties for the device.
 
+use std::io::Write;
+
 use async_trait::async_trait;
-use flate2::bufread::ZlibDecoder;
+use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use futures::{future, StreamExt, TryStreamExt};
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     client::DeviceClient,
@@ -38,12 +40,18 @@ pub enum PropertiesError {
     /// The payload is too short, it should be at least 4 bytes long.
     #[error("the payload should at least 4 bytes long, got {0}")]
     PayloadTooShort(usize),
+    /// The payload is too log, it should be at most a u32.
+    #[error("the payload should be at most a u32")]
+    PayloadTooLong,
     /// Couldn't convert the size from u32 to usize.
     #[error("error converting the size from u32 to usize")]
     Conversion(#[from] std::num::TryFromIntError),
     /// Error decoding the zlib compressed payload.
     #[error("error decoding the zlib compressed payload")]
-    Decode(#[from] std::io::Error),
+    Decode(#[source] std::io::Error),
+    /// Error encoding the zlib compressed payload.
+    #[error("error encoding the zlib compressed payload")]
+    Encode(#[source] std::io::Error),
 }
 
 /// Trait to access the stored properties.
@@ -167,7 +175,7 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 
     let mut d = ZlibDecoder::new(data);
     let mut s = String::new();
-    let bytes_read = d.read_to_string(&mut s)?;
+    let bytes_read = d.read_to_string(&mut s).map_err(PropertiesError::Decode)?;
 
     debug_assert_eq!(
         bytes_read, size,
@@ -183,7 +191,68 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
         );
     }
 
-    Ok(s.split(';').map(|x| x.to_string()).collect())
+    if s.is_empty() {
+        Ok(Vec::new())
+    } else {
+        Ok(s.split(';').map(|x| x.to_string()).collect())
+    }
+}
+
+/// Extracts the properties from a set payload.
+///
+/// See https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#purge-properties
+pub(crate) fn encode_set_properties(
+    interface_paths: impl IntoIterator<Item = String>,
+) -> Result<Vec<u8>, PropertiesError> {
+    let mut iter = interface_paths.into_iter();
+
+    let mut uncompressed_size: u32 = 0;
+
+    // pre-insert the 4 bytes for the size
+    let buf: Vec<u8> = vec![0, 0, 0, 0];
+
+    let mut encoder = ZlibEncoder::new(buf, Compression::default());
+
+    let Some(first) = iter.next() else {
+        debug!("no properties to retain, sending empty purge");
+
+        return encoder.finish().map_err(PropertiesError::Encode);
+    };
+
+    uncompressed_size = encode_prop(&mut encoder, uncompressed_size, &first)?;
+
+    for prop in iter {
+        // encode the separator
+        uncompressed_size = encode_prop(&mut encoder, uncompressed_size, ";")?;
+        // encode the prop
+        uncompressed_size = encode_prop(&mut encoder, uncompressed_size, &prop)?;
+    }
+
+    let mut res = encoder.finish().map_err(PropertiesError::Encode)?;
+
+    let bytes = uncompressed_size.to_be_bytes();
+
+    // we allocated the first 4 bytes
+    res[..bytes.len()].copy_from_slice(&bytes);
+
+    Ok(res)
+}
+
+fn encode_prop(
+    encoder: &mut ZlibEncoder<Vec<u8>>,
+    uncompressed_size: u32,
+    value: &str,
+) -> Result<u32, PropertiesError> {
+    let bytes = value.as_bytes();
+
+    let uncompressed_size = u32::try_from(bytes.len())
+        .ok()
+        .and_then(|val| uncompressed_size.checked_add(val))
+        .ok_or(PropertiesError::PayloadTooLong)?;
+
+    encoder.write_all(bytes).map_err(PropertiesError::Encode)?;
+
+    Ok(uncompressed_size)
 }
 
 #[cfg(test)]
@@ -361,5 +430,31 @@ pub(crate) mod tests {
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         test_prop_access_for_store(store).await;
+    }
+
+    #[test]
+    fn should_encode_props() {
+        let example = [
+            "com.example.MyInterface/some/path".to_string(),
+            "org.example.DraftInterface/otherPath".to_string(),
+        ];
+
+        let encoded = encode_set_properties(example.clone()).unwrap();
+
+        let expected_snapshot: [u8; 71] = [
+            0, 0, 0, 70, 120, 156, 69, 202, 33, 14, 192, 32, 12, 5, 208, 27, 193, 1, 102, 103, 38,
+            150, 236, 10, 13, 249, 12, 65, 41, 41, 21, 112, 123, 80, 224, 95, 16, 118, 232, 196,
+            53, 195, 189, 227, 41, 6, 141, 20, 224, 155, 48, 124, 37, 75, 151, 232, 191, 197, 173,
+            20, 237, 32, 177, 4, 253, 22, 154, 178, 12, 26, 201,
+        ];
+
+        assert_eq!(
+            encoded,
+            expected_snapshot,
+            "the two are different, decoded is {:?}",
+            extract_set_properties(&encoded)
+        );
+
+        assert_eq!(extract_set_properties(&encoded).unwrap(), example);
     }
 }
