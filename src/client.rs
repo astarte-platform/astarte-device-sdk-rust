@@ -18,9 +18,8 @@
 
 //! Client to send data to astarte, add interfaces or access properties.
 
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{future::Future, path::Path, str::FromStr, sync::Arc};
 
-use async_trait::async_trait;
 use tokio::{
     fs,
     sync::{mpsc, oneshot, RwLock},
@@ -96,7 +95,6 @@ impl RecvError {
 ///
 /// A device client is responsible for interacting with the Astarte platform by sending properties
 /// and datastreams, handling events, and managing device interfaces.
-#[async_trait]
 pub trait Client {
     /// Send an object datastream on an interface, with an explicit timestamp.
     ///
@@ -132,13 +130,13 @@ pub trait Client {
     ///         .unwrap();
     /// }
     /// ```
-    async fn send_object_with_timestamp<D>(
+    fn send_object_with_timestamp<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
         data: D,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + Send
     where
         D: AstarteAggregate + Send;
 
@@ -147,12 +145,12 @@ pub trait Client {
     /// The usage is the same of
     /// [`send_object_with_timestamp`](crate::Client::send_object_with_timestamp),
     /// without the timestamp.
-    async fn send_object<D>(
+    fn send_object<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + Send
     where
         D: AstarteAggregate + Send;
 
@@ -179,13 +177,13 @@ pub trait Client {
     ///         .unwrap();
     /// }
     /// ```
-    async fn send_with_timestamp<D>(
+    fn send_with_timestamp<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
         data: D,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + Send
     where
         D: TryInto<AstarteType> + Send;
 
@@ -193,12 +191,12 @@ pub trait Client {
     ///
     /// The usage is the same of
     /// [`send_with_timestamp`](Client::send_with_timestamp), without the timestamp.
-    async fn send<D>(
+    fn send<D>(
         &self,
         interface_name: &str,
         interface_path: &str,
         data: D,
-    ) -> Result<(), Error>
+    ) -> impl Future<Output = Result<(), Error>> + Send
     where
         D: TryInto<AstarteType> + Send;
 
@@ -223,7 +221,11 @@ pub trait Client {
     ///         .unwrap();
     /// }
     /// ```
-    async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
+    fn unset(
+        &self,
+        interface_name: &str,
+        interface_path: &str,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Receives an event from Astarte.
     ///
@@ -231,14 +233,13 @@ pub trait Client {
     ///
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
-    async fn recv(&self) -> Result<DeviceEvent, RecvError>;
+    fn recv(&self) -> impl Future<Output = Result<DeviceEvent, RecvError>> + Send;
 }
 
 /// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
-#[async_trait]
 pub trait ClientDisconnect {
     /// Cleanly disconnects the client consuming it.
-    async fn disconnect(&self) -> Result<(), Error>;
+    fn disconnect(&self) -> impl Future<Output = Result<(), Error>> + Send;
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -376,10 +377,10 @@ impl<S> DeviceClient<S> {
         self.send_msg(msg).await
     }
 
-    async fn send_object_impl<'a, D>(
+    async fn send_object_impl<D>(
         &self,
         interface_name: &str,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error>
@@ -412,11 +413,7 @@ impl<S> DeviceClient<S> {
         self.send_msg(ClientMessage::Object(validated)).await
     }
 
-    async fn unset_prop<'a>(
-        &self,
-        interface_name: &str,
-        path: &MappingPath<'a>,
-    ) -> Result<(), Error>
+    async fn unset_prop(&self, interface_name: &str, path: &MappingPath<'_>) -> Result<(), Error>
     where
         S: PropertyStore,
     {
@@ -447,7 +444,6 @@ impl<S> DeviceClient<S> {
     }
 }
 
-#[async_trait]
 impl<S> Client for DeviceClient<S>
 where
     S: PropertyStore,
@@ -530,7 +526,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> DeviceIntrospection for DeviceClient<S>
 where
     S: Send + Sync,
@@ -545,7 +540,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> DynamicIntrospection for DeviceClient<S>
 where
     S: Send + Sync,
@@ -651,7 +645,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> ClientDisconnect for DeviceClient<S>
 where
     S: Send + Sync,

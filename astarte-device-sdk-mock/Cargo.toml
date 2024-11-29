@@ -33,6 +33,5 @@ description = "Mock implementation of the traits in the astarte-device-sdk"
 
 [dependencies]
 astarte-device-sdk = { workspace = true }
-async-trait = { workspace = true }
 chrono = { workspace = true }
 mockall = { workspace = true }

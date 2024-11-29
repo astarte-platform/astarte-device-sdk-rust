@@ -18,11 +18,11 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
+use std::future::Future;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::{collections::HashMap, sync::atomic::AtomicBool};
 
-use async_trait::async_trait;
 use futures::future::Either;
 use itertools::Itertools;
 use tokio::sync::{Barrier, Notify};
@@ -53,7 +53,6 @@ use crate::{
 };
 
 /// Handles the messages from the device and astarte.
-#[async_trait]
 pub trait EventLoop {
     /// Poll updates from the connection implementation, can be placed in a loop to receive data.
     ///
@@ -85,7 +84,7 @@ pub trait EventLoop {
     ///     connection.handle_events().await;
     /// }
     /// ```
-    async fn handle_events(self) -> Result<(), crate::Error>;
+    fn handle_events(self) -> impl Future<Output = Result<(), crate::Error>> + Send;
 }
 
 /// Astarte device implementation.
@@ -136,14 +135,13 @@ where
     }
 }
 
-#[async_trait]
 impl<S, C> EventLoop for DeviceConnection<S, C>
 where
     C: Connection + Reconnect + Receive + Send + Sync + 'static,
     C::Sender: Send + Register + Publish + Disconnect + 'static,
     S: PropertyStore + StoreCapabilities,
 {
-    async fn handle_events(mut self) -> Result<(), crate::Error> {
+    async fn handle_events(self) -> Result<(), crate::Error> {
         let Self {
             mut sender,
             mut receiver,
@@ -627,11 +625,13 @@ where
         self.sender.extend_interfaces(&interfaces, &to_add).await?;
 
         if let Some(retention) = self.store.get_retention() {
+            // TODO here stuff goes wrong if possible try to avoid using the boxed future
             let res = retention
                 .delete_interface_many(
-                    to_add
+                    &to_add
                         .values()
-                        .filter_map(|v| v.is_major_change().then_some(v.interface_name())),
+                        .filter_map(|v| v.is_major_change().then_some(v.interface_name()))
+                        .collect_vec(),
                 )
                 .await;
             if let Err(err) = res {
@@ -709,7 +709,9 @@ where
             .await?;
 
         if let Some(retention) = self.store.get_retention() {
-            let res = retention.delete_interface_many(to_remove.keys()).await;
+            let res = retention
+                .delete_interface_many(&to_remove.keys().collect_vec())
+                .await;
             if let Err(err) = res {
                 error!(error = %Report::new(err),"failed to remove interfaces from retention");
             }
@@ -854,10 +856,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
-    async fn handle_payload_individual<'a>(
+    async fn handle_payload_individual(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
@@ -911,10 +913,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
-    async fn handle_payload_object<'a>(
+    async fn handle_payload_object(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where

@@ -20,7 +20,6 @@
 
 use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duration};
 
-use async_trait::async_trait;
 use rusqlite::{
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
     ToSql,
@@ -174,7 +173,6 @@ impl FromSql for TimestampSecs {
     }
 }
 
-#[async_trait]
 impl StoredRetention for SqliteStore {
     async fn store_publish(&self, id: &Id, info: PublishInfo<'_>) -> Result<(), RetentionError> {
         let mapping = RetentionMapping::from(&info);
@@ -230,11 +228,9 @@ impl StoredRetention for SqliteStore {
         Ok(())
     }
 
-    async fn delete_interface_many<I, S>(&self, interfaces: I) -> Result<(), RetentionError>
+    async fn delete_interface_many<I>(&self, interfaces: &[I]) -> Result<(), RetentionError>
     where
-        I: IntoIterator<Item = S> + Send,
-        <I as IntoIterator>::IntoIter: Send,
-        S: AsRef<str> + Send + Sync,
+        I: AsRef<str> + Send + Sync,
     {
         self.writer
             .lock()

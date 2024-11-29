@@ -44,7 +44,6 @@ use astarte_message_hub_proto::{
     pbjson_types::Empty, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
     MessageHubEvent, Node,
 };
-use async_trait::async_trait;
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, trace, warn};
@@ -60,7 +59,7 @@ use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::{
-    builder::{ConnectionConfig, DeviceBuilder},
+    builder::{ConnectionConfig, DeviceBuilder, DeviceTransport},
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef},
@@ -173,7 +172,6 @@ impl<S> GrpcClient<S> {
     }
 }
 
-#[async_trait]
 impl<S> Publish for GrpcClient<S>
 where
     S: StoreCapabilities + Send + Sync,
@@ -264,7 +262,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Register for GrpcClient<S>
 where
     S: Send,
@@ -337,7 +334,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Disconnect for GrpcClient<S>
 where
     S: Send,
@@ -404,7 +400,6 @@ impl<S> std::fmt::Debug for Grpc<S> {
     }
 }
 
-#[async_trait]
 impl<T> Receive for Grpc<T>
 where
     T: Send,
@@ -488,7 +483,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Reconnect for Grpc<S>
 where
     S: StoreCapabilities + Send + Sync,
@@ -566,7 +560,6 @@ impl GrpcConfig {
     }
 }
 
-#[async_trait]
 impl<S> ConnectionConfig<S> for GrpcConfig
 where
     S: StoreCapabilities + PropertyStore + Send + Sync,
@@ -577,7 +570,7 @@ where
     async fn connect<C>(
         self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<(GrpcClient<S>, Grpc<S>), Self::Err>
+    ) -> Result<DeviceTransport<Grpc<S>>, Self::Err>
     where
         C: Connection + Send + Sync,
     {
@@ -597,7 +590,10 @@ where
         );
         let receiver = Grpc::new(self.uuid, client, stream);
 
-        Ok((sender, receiver))
+        Ok(DeviceTransport {
+            sender,
+            connection: receiver,
+        })
     }
 }
 

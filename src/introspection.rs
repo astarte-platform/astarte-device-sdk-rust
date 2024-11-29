@@ -18,9 +18,11 @@
 
 //! Handle the introspection for the device
 
-use std::path::{Path, PathBuf};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+};
 
-use async_trait::async_trait;
 use tracing::{debug, error};
 
 use crate::{interface::error::InterfaceError, Error, Interface};
@@ -79,39 +81,48 @@ impl AddInterfaceError {
 }
 
 /// Trait that permits a client to query the interfaces in the device introspection.
-#[async_trait]
 pub trait DeviceIntrospection {
     /// Returns a reference to the [`Interface`] with the given name.
-    async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
+    fn get_interface<F, O>(&self, interface_name: &str, f: F) -> impl Future<Output = O> + Send
     where
         F: FnMut(Option<&Interface>) -> O + Send;
 }
 
 /// Trait that permits a client to add and remove interfaces dynamically after being connected.
-#[async_trait]
 pub trait DynamicIntrospection {
     /// Add a new [`Interface`] to the device introspection.
     ///
     /// Returns a bool to check weather the if the interface was added or was already present.
-    async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
+    fn add_interface(
+        &self,
+        interface: Interface,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
     /// Add one or more [`Interface`] to the device introspection.
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been added.
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
+    fn extend_interfaces<I>(
+        &self,
+        interfaces: I,
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
     where
         I: IntoIterator<Item = Interface> + Send;
 
     /// Add one or more [`Interface`] to the device introspection, specialized for a [`Vec`].
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been added.
-    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>)
-        -> Result<Vec<String>, Error>;
+    fn extend_interfaces_vec(
+        &self,
+        interfaces: Vec<Interface>,
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send;
 
     /// Add a new interface from the provided file.
     ///
     /// Returns a bool to check weather the if the interface was added or was already present.
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
+    fn add_interface_from_file<P>(
+        &self,
+        file_path: P,
+    ) -> impl Future<Output = Result<bool, Error>> + Send
     where
         P: AsRef<Path> + Send + Sync;
 
@@ -119,17 +130,26 @@ pub trait DynamicIntrospection {
     /// interface.
     ///
     /// Returns a bool to check weather the if the interface was added or was already present.
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
+    fn add_interface_from_str(
+        &self,
+        json_str: &str,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
     /// Remove the interface with the name specified as argument.
     ///
     /// Returns a bool to check weather the if the interface was removed or was missing.
-    async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+    fn remove_interface(
+        &self,
+        interface_name: &str,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
     /// Remove interfaces with names specified as argument.
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been removed.
-    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+    fn remove_interfaces<I>(
+        &self,
+        interfaces_name: I,
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send;
@@ -137,10 +157,10 @@ pub trait DynamicIntrospection {
     /// Remove one or more [`Interface`] from the device introspection, specialized for a [`Vec`].
     ///
     /// Returns a [`Vec`] with the name of the interfaces that have been added.
-    async fn remove_interfaces_vec(
+    fn remove_interfaces_vec(
         &self,
         interfaces_name: Vec<String>,
-    ) -> Result<Vec<String>, Error>;
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send;
 }
 
 #[cfg(test)]

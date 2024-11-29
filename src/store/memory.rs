@@ -20,7 +20,6 @@
 
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 
-use async_trait::async_trait;
 use tokio::sync::RwLock;
 use tracing::error;
 
@@ -60,7 +59,6 @@ impl StoreCapabilities for MemoryStore {
     }
 }
 
-#[async_trait]
 impl PropertyStore for MemoryStore {
     type Err = MemoryError;
 

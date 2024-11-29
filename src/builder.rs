@@ -23,13 +23,13 @@
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -95,17 +95,15 @@ pub enum BuilderError {
 ///
 /// This trait is already implemented generically for the [`DeviceBuilder`]
 /// and implementing it should be avoided since it has no practical use.
-#[async_trait]
 pub trait DeviceSdkBuild<S, C>
 where
     C: Connection + Send,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
-    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
+    fn build(self) -> impl Future<Output = (DeviceClient<S>, DeviceConnection<S, C>)> + Send;
 }
 
-#[async_trait]
 impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
 where
     S: PropertyStore,
@@ -340,7 +338,7 @@ where
         crate::Error: From<<T as ConnectionConfig<S>>::Err>,
         C: Send + Sync,
     {
-        let (sender, connection) = config.connect(&self).await?;
+        let DeviceTransport { connection, sender } = config.connect(&self).await?;
 
         Ok(DeviceBuilder {
             channel_size: self.channel_size,
@@ -376,13 +374,18 @@ impl Default for DeviceBuilder<(), ()> {
     }
 }
 
+/// Structure that stores a successfully established connection
+pub struct DeviceTransport<C: Connection> {
+    pub(crate) connection: C,
+    pub(crate) sender: C::Sender,
+}
+
 /// Generic connection configuration that enables the builder
 /// to work with different types of transport.
 /// You can pass types implementing this trait to the [`DeviceBuilder::connect`] method.
 ///
 /// This trait is already implemented internally
 /// and implementing it should be avoided since it has no practical use.
-#[async_trait]
 pub trait ConnectionConfig<S> {
     /// Type of the constructed Connection
     type Conn: Connection;
@@ -391,10 +394,10 @@ pub trait ConnectionConfig<S> {
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
-    async fn connect<C>(
+    fn connect<C>(
         self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<(<Self::Conn as Connection>::Sender, Self::Conn), Self::Err>
+    ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, Self::Err>> + Send
     where
         S: PropertyStore,
         C: Connection + Send + Sync;

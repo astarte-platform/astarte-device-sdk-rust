@@ -18,9 +18,7 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{error::Error as StdError, fmt::Debug};
-
-use async_trait::async_trait;
+use std::{error::Error as StdError, fmt::Debug, future::Future};
 
 pub use self::sqlite::SqliteStore;
 use crate::{
@@ -58,7 +56,6 @@ pub trait StoreCapabilities {
 ///
 /// This SDK provides an implementation of a sqlite database for which this trait has already
 /// been implemented, see [`crate::store::sqlite::SqliteStore`].
-#[async_trait]
 pub trait PropertyStore: Clone + Debug + Send + Sync + 'static
 where
     // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
@@ -69,38 +66,57 @@ where
     type Err;
 
     /// Stores a property within the database.
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err>;
+    fn store_prop(
+        &self,
+        prop: StoredProp<&str, &AstarteType>,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Load a property from the database.
     ///
     /// The property store should delete the property from the database if the major version of the
     /// interface does not match the one provided.
-    async fn load_prop(
+    fn load_prop(
         &self,
         interface: &str,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err>;
+    ) -> impl Future<Output = Result<Option<AstarteType>, Self::Err>> + Send;
     /// Unset a property from the database.
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
+    fn unset_prop(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Delete a property from the database.
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err>;
+    fn delete_prop(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Removes all saved properties from the database.
-    async fn clear(&self) -> Result<(), Self::Err>;
+    fn clear(&self) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    fn load_all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err>;
+    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Retrieves all the property values of a specific interface in the database.
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err>;
+    fn interface_props(
+        &self,
+        interface: &str,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Deletes all the properties of the interface from the database.
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err>;
+    fn delete_interface(
+        &self,
+        interface: &str,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all the device properties, including the one that were unset but not deleted.
-    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err>;
+    fn device_props_with_unset(
+        &self,
+    ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
 }
 
 /// Data structure used to return stored properties by a database implementing the [`PropertyStore`]

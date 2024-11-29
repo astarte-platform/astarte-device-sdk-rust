@@ -26,9 +26,7 @@
 //! The module includes traits for publishing and receiving Astarte data over a connection,
 //! as well as registering and managing interfaces on a device.
 
-use std::collections::HashMap;
-
-use async_trait::async_trait;
+use std::{collections::HashMap, future::Future};
 
 use crate::{
     client::RecvError,
@@ -87,41 +85,49 @@ impl Connection for () {
 /// A connection should manage only the cleanup of the stored publishes.
 ///
 /// It's generic over the id provided by the store for the retention.
-#[async_trait]
 pub(crate) trait Publish {
     /// Sends validated individual values over this connection
-    async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error>;
+    fn send_individual(
+        &mut self,
+        data: ValidatedIndividual,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Sends validated objects values over this connection
-    async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error>;
+    fn send_object(
+        &mut self,
+        data: ValidatedObject,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Sends validated individual values with stored retention over this connection.
     ///
     /// The id is to identify the packet to confirm it was received by the server.
-    async fn send_individual_stored(
+    fn send_individual_stored(
         &mut self,
         id: RetentionId,
         data: ValidatedIndividual,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Sends validated objects values with stored retention over this connection
     ///
     /// The id is to identify the packet to confirm it was received by the server.
-    async fn send_object_stored(
+    fn send_object_stored(
         &mut self,
         id: RetentionId,
         data: ValidatedObject,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Resend previously stored publish.
-    async fn resend_stored(
+    fn resend_stored(
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Unset a property value over this connection.
-    async fn unset(&mut self, data: ValidatedUnset) -> Result<(), crate::Error>;
+    fn unset(
+        &mut self,
+        data: ValidatedUnset,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Serializes an individual astarte value.
     fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
@@ -130,7 +136,6 @@ pub(crate) trait Publish {
     fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error>;
 }
 
-#[async_trait]
 pub(crate) trait Receive {
     type Payload: Send + Sync + 'static;
 
@@ -141,7 +146,9 @@ pub(crate) trait Receive {
     /// incoming messages.
     ///
     /// This function returns [`None`] to signal a disconnection from Astarte.
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>;
+    fn next_event(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, TransportError>> + Send;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
@@ -160,56 +167,56 @@ pub(crate) trait Receive {
 }
 
 /// Reconnect the device to Astarte.
-#[async_trait]
 pub(crate) trait Reconnect {
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
     /// [`Receive::next_event`] returns [`None`].
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error>;
+    fn reconnect(
+        &mut self,
+        interfaces: &Interfaces,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 }
 
-#[async_trait]
 pub(crate) trait Register {
     /// Called when an interface gets added to the device interface list.
     /// This method should convey to the server that a new interface got added.
-    async fn add_interface(
+    fn add_interface(
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::Validated,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Called when multiple interfaces are added.
     ///
     /// This method should convey to the server that one or more interfaces have been added.
     ///
     /// The added interfaces are still not present in the [`Interfaces`]
-    async fn extend_interfaces(
+    fn extend_interfaces(
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::ValidatedCollection,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
-    async fn remove_interface(
+    fn remove_interface(
         &mut self,
         interfaces: &Interfaces,
         removed_interface: &Interface,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Called when multiple interfaces get removed from the device interface list.
     /// It relays to the server the removal of the interface.
-    async fn remove_interfaces(
+    fn remove_interfaces(
         &mut self,
         interfaces: &Interfaces,
         removed_interfaces: &HashMap<&str, &Interface>,
-    ) -> Result<(), crate::Error>;
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 }
 
 /// Gracefully close the connection.
-#[async_trait]
 pub trait Disconnect {
     /// Gracefully disconnect from the transport
-    async fn disconnect(&mut self) -> Result<(), crate::Error>;
+    fn disconnect(&mut self) -> impl Future<Output = Result<(), crate::Error>> + Send;
 }
 
 #[cfg(test)]

@@ -38,10 +38,9 @@ pub mod topic;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    future::IntoFuture,
+    future::{Future, IntoFuture},
 };
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
@@ -246,7 +245,6 @@ impl<S> MqttClient<S> {
     }
 }
 
-#[async_trait]
 impl<S> Publish for MqttClient<S>
 where
     S: StoreCapabilities + Send + Sync,
@@ -406,7 +404,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Register for MqttClient<S>
 where
     S: Send + Sync,
@@ -524,7 +521,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Disconnect for MqttClient<S>
 where
     S: Send,
@@ -643,7 +639,6 @@ impl<S> Mqtt<S> {
 }
 
 /// Trait to implement functionality on the store.
-#[async_trait]
 trait MqttStoreExt: PropertyStore
 where
     Error: From<Self::Err>,
@@ -670,7 +665,6 @@ where
 
 impl<S> MqttStoreExt for StoreWrapper<S> where S: PropertyStore {}
 
-#[async_trait]
 impl<S> Receive for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
@@ -732,7 +726,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
@@ -787,26 +780,24 @@ impl SessionData {
     }
 }
 
-#[async_trait]
 trait AsyncClientExt {
     /// Sends the introspection [`String`].
-    async fn send_introspection(
+    fn send_introspection(
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> Result<NoticeFuture, ClientError>;
+    ) -> impl Future<Output = Result<NoticeFuture, ClientError>> + Send;
 
     /// Subscribe to many interfaces
-    async fn subscribe_interfaces<S>(
+    fn subscribe_interfaces<S>(
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<Option<NoticeFuture>, ClientError>
+    ) -> impl Future<Output = Result<Option<NoticeFuture>, ClientError>> + Send
     where
         S: Display + Debug + Send + Sync;
 }
 
-#[async_trait]
 impl AsyncClientExt for AsyncClient {
     async fn send_introspection(
         &self,

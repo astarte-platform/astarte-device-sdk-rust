@@ -164,10 +164,10 @@ impl WriteConnection {
         })
     }
 
-    pub(super) fn delete_interface_many<I, S>(&mut self, interfaces: I) -> Result<(), SqliteError>
+    pub(super) fn delete_interface_many<I>(&mut self, interfaces: I) -> Result<(), SqliteError>
     where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
+        I: IntoIterator,
+        I::Item: AsRef<str>,
     {
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
 
