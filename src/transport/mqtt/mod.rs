@@ -44,7 +44,6 @@ use std::{
 use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
-use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, info, trace};
 
@@ -675,31 +674,29 @@ where
     where
         S: PropertyStore,
     {
-        static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
-
         // Wait for next data or until it's disconnected
         while let Some(publish) = self.poll().await? {
-            let purge_topic = PURGE_PROPERTIES_TOPIC
-                .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));
-
             debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
-            if purge_topic == &publish.topic {
-                debug!("Purging properties");
+            let publish_topic = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
+                .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
 
-                self.store
-                    .purge_server_properties(&publish.payload)
-                    .await
-                    .map_err(TransportError::Transport)?;
-            } else {
-                let con_event = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                    .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
+            match publish_topic {
+                ParsedTopic::PurgeProperties => {
+                    debug!("Purging properties");
 
-                return Ok(Some(ReceivedEvent {
-                    interface: con_event.interface.to_string(),
-                    path: con_event.path.to_string(),
-                    payload: publish.payload,
-                }));
+                    self.store
+                        .purge_server_properties(&publish.payload)
+                        .await
+                        .map_err(TransportError::Transport)?;
+                }
+                ParsedTopic::InterfacePath { interface, path } => {
+                    return Ok(Some(ReceivedEvent {
+                        interface: interface.to_string(),
+                        path: path.to_string(),
+                        payload: publish.payload,
+                    }));
+                }
             }
         }
 

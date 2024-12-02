@@ -135,7 +135,6 @@ dependencies = [
 name = "astarte-device-sdk"
 version = "0.9.2"
 dependencies = [
- "ahash",
  "astarte-device-sdk-derive",
  "astarte-message-hub-proto",
  "async-trait",
@@ -151,7 +150,6 @@ dependencies = [
  "itertools 0.11.0",
  "mockall",
  "mockito",
- "once_cell",
  "openssl",
  "rand_core",
  "rcgen",
@@ -166,7 +164,6 @@ dependencies = [
  "sync_wrapper 1.0.2",
  "tempfile",
  "thiserror 1.0.69",
- "time",
  "tokio",
  "tokio-stream",
  "tracing",
