@@ -23,10 +23,11 @@
 use std::{io, path::PathBuf};
 
 use reqwest::{StatusCode, Url};
+use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use url::ParseError;
 
-use super::{config::transport::TransportProvider, crypto::CryptoError};
+use super::crypto::CryptoError;
 
 /// Error returned during pairing.
 #[non_exhaustive]
@@ -55,9 +56,6 @@ pub enum PairingError {
     /// Couldn't configure the TLS store
     #[error("failed to configure TLS")]
     Tls(#[from] rustls::Error),
-    /// Couldn't load native certs
-    #[error("couldn't load native certificates")]
-    Native(#[source] io::Error),
     /// Invalid configuration.
     #[error("configuration error, {0}")]
     Config(String),
@@ -90,28 +88,32 @@ pub enum PairingError {
     },
     /// Couldn't read native certificates
     #[error("couldn't read native certificates")]
-    ReadNativeCerts(#[from] tokio::task::JoinError),
+    ReadNativeCerts(#[source] tokio::task::JoinError),
 }
 
 /// Struct with the information for the pairing
 pub(crate) struct ApiClient<'a> {
     pub(crate) realm: &'a str,
     pub(crate) device_id: &'a str,
-    pairing_url: &'a Url,
-    credentials_secret: &'a str,
+    pairing_url: Url,
+    credentials_secret: String,
+    tls: ClientConfig,
 }
 
 impl<'a> ApiClient<'a> {
-    pub(crate) fn from_transport(
-        provider: &'a TransportProvider,
+    pub(crate) fn new(
         realm: &'a str,
         device_id: &'a str,
+        pairing_url: Url,
+        credentials_secret: String,
+        tls: ClientConfig,
     ) -> Self {
         Self {
             realm,
             device_id,
-            pairing_url: provider.pairing_url(),
-            credentials_secret: provider.credential_secret(),
+            pairing_url,
+            credentials_secret,
+            tls,
         }
     }
 
@@ -144,10 +146,13 @@ impl<'a> ApiClient<'a> {
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(self.tls.clone())
+            .build()?;
+
         let response = client
             .post(url)
-            .bearer_auth(self.credentials_secret)
+            .bearer_auth(&self.credentials_secret)
             .json(&payload)
             .send()
             .await?;
@@ -172,10 +177,13 @@ impl<'a> ApiClient<'a> {
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(self.tls.clone())
+            .build()?;
+
         let response = client
             .get(url)
-            .bearer_auth(self.credentials_secret)
+            .bearer_auth(&self.credentials_secret)
             .send()
             .await?;
 
@@ -241,6 +249,7 @@ struct AstarteMqttV1Info {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::sync::Arc;
 
     use mockito::Server;
 
@@ -277,11 +286,16 @@ pub(crate) mod tests {
             .create_async()
             .await;
 
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(Arc::new(rustls::RootCertStore::empty()))
+            .with_no_client_auth();
+
         let client = ApiClient {
             realm: "realm",
             device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
+            pairing_url: Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret".to_string(),
+            tls,
         };
 
         let res = client.create_certificate("csr").await.unwrap();
@@ -307,11 +321,16 @@ pub(crate) mod tests {
             .create_async()
             .await;
 
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(Arc::new(rustls::RootCertStore::empty()))
+            .with_no_client_auth();
+
         let client = ApiClient {
             realm: "realm",
             device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
+            pairing_url: Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret".to_string(),
+            tls,
         };
 
         let res = client
@@ -330,11 +349,16 @@ pub(crate) mod tests {
 
         let mock = mock_get_broker_url(&mut server).create_async().await;
 
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(Arc::new(rustls::RootCertStore::empty()))
+            .with_no_client_auth();
+
         let client = ApiClient {
             realm: "realm",
             device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
+            pairing_url: Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret".to_string(),
+            tls,
         };
 
         let res = client.get_broker_url().await.unwrap();
@@ -357,11 +381,16 @@ pub(crate) mod tests {
             .create_async()
             .await;
 
+        let tls = rustls::ClientConfig::builder()
+            .with_root_certificates(Arc::new(rustls::RootCertStore::empty()))
+            .with_no_client_auth();
+
         let client = ApiClient {
             realm: "realm",
             device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
+            pairing_url: Url::parse(&server.url()).unwrap(),
+            credentials_secret: "secret".to_string(),
+            tls,
         };
 
         let res = client.get_broker_url().await.expect_err("should error");

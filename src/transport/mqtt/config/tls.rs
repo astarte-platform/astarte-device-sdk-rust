@@ -29,11 +29,12 @@ use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
     RootCertStore,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::transport::mqtt::PairingError;
 
 use super::{CertificateFile, PrivateKeyFile};
+
 
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(
@@ -107,9 +108,11 @@ impl ClientAuth {
         Ok(Some(ClientAuth { private_key, certs }))
     }
 
-    pub(crate) async fn tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
-        let roots = read_root_cert_store().await?;
-
+    #[instrument(skip_all)]
+    pub(crate) async fn tls_config(
+        self,
+        roots: Arc<RootCertStore>,
+    ) -> Result<rustls::ClientConfig, PairingError> {
         rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_client_auth_cert(self.certs, self.private_key.into())
@@ -127,7 +130,23 @@ impl ClientAuth {
     }
 }
 
-async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+#[cfg(feature = "webpki")]
+#[instrument]
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+    debug!("reading root cert store from webpki");
+
+    let root_cert_store = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    Ok(root_cert_store)
+}
+
+#[cfg(not(feature = "webpki"))]
+#[instrument]
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+    debug!("reading root cert store from native certs");
+
     tokio::task::spawn_blocking(|| {
         let mut root_cert_store = RootCertStore::empty();
 
@@ -141,13 +160,14 @@ async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
 
         trace!("loaded {added} certs and {ignored} ignored");
 
-        Ok(root_cert_store)
+        root_cert_store
     })
-    .await?
+    .await
+    .map_err(PairingError::ReadNativeCerts)
 }
 
 #[derive(Debug)]
-struct NoVerifier;
+pub(crate) struct NoVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     fn verify_server_cert(
@@ -238,7 +258,8 @@ pub(crate) mod tests {
 
         assert_eq!(client.private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
 
-        client.tls_config().await.unwrap();
+        let root_cert_store = Arc::new(rustls::RootCertStore::empty());
+        client.tls_config(root_cert_store).await.unwrap();
 
         // Reuse the file setup
         let client = ClientAuth::try_read(cert, key).await.unwrap();
