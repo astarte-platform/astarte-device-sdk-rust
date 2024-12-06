@@ -54,6 +54,7 @@ base64 = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
+color-eyre = "0.6.3"
 flate2 = { workspace = true }
 flume = { workspace = true, features = ["async"] }
 futures = { workspace = true }
@@ -74,8 +75,10 @@ sync_wrapper = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["parking_lot", "macros", "fs"] }
 tracing = { workspace = true }
+tracing-subscriber = "0.3.19"
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
+webpki-roots = { workspace = true, optional = true }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
@@ -96,6 +99,7 @@ message-hub = ["dep:astarte-message-hub-proto"]
 openssl = ["dep:openssl"]
 sqlite-trace = ["rusqlite/trace"]
 tokio-multi-thread = ["tokio/rt-multi-thread"]
+webpki = ["webpki-roots"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -143,3 +147,4 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
 url = "2.2.2"
 uuid = "1.1.2"
+webpki-roots = "0.26.7"
