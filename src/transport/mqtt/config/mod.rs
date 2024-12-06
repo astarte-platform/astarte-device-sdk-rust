@@ -25,7 +25,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use rumqttc::{MqttOptions, NetworkOptions, Transport};
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -33,7 +32,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::{
-    builder::{ConnectionConfig, DeviceBuilder, DEFAULT_CHANNEL_SIZE},
+    builder::{ConnectionConfig, DeviceBuilder, DeviceTransport, DEFAULT_CHANNEL_SIZE},
     store::{PropertyStore, StoreCapabilities},
     transport::{
         mqtt::{
@@ -381,7 +380,6 @@ impl MqttConfig {
     }
 }
 
-#[async_trait]
 impl<S> ConnectionConfig<S> for MqttConfig
 where
     S: StoreCapabilities + PropertyStore + Send + Sync,
@@ -392,7 +390,7 @@ where
     async fn connect<C>(
         mut self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<(MqttClient<S>, Mqtt<S>), Self::Err>
+    ) -> Result<DeviceTransport<Mqtt<S>>, Self::Err>
     where
         C: Connection + Send + Sync,
     {
@@ -463,7 +461,10 @@ where
             builder.volatile.clone(),
         );
 
-        Ok((client, connection))
+        Ok(DeviceTransport {
+            sender: client,
+            connection,
+        })
     }
 }
 

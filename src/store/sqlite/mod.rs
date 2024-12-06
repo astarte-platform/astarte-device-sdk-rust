@@ -20,7 +20,6 @@
 
 use std::{cell::Cell, fmt::Debug, path::Path, sync::Arc, time::Duration};
 
-use async_trait::async_trait;
 use futures::lock::Mutex;
 use rusqlite::{
     types::{FromSql, FromSqlError},
@@ -447,7 +446,6 @@ impl StoreCapabilities for SqliteStore {
     }
 }
 
-#[async_trait]
 impl PropertyStore for SqliteStore {
     type Err = SqliteError;
 

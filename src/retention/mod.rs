@@ -22,7 +22,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fmt::Display,
-    hash::Hash,
+    future::Future,
     num::TryFromIntError,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -31,7 +31,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
 use tracing::{error, warn};
 
@@ -246,29 +245,40 @@ impl<'a> PublishInfo<'a> {
 ///
 /// A store wants to implement this retention to implement the interfaces with retention stored for
 /// a connection.
-#[async_trait]
 pub trait StoredRetention: Clone + Send + Sync {
     /// Store a publish returning the id to access the publish in the future.
-    async fn store_publish(&self, id: &Id, publish: PublishInfo<'_>) -> Result<(), RetentionError>;
+    fn store_publish(
+        &self,
+        id: &Id,
+        publish: PublishInfo<'_>,
+    ) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// It will mark the stored publish as sent or unset given the flag.
-    async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError>;
+    fn update_sent_flag(
+        &self,
+        id: &Id,
+        sent: bool,
+    ) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// It will mark the stored publish as received.
-    async fn mark_received(&self, id: &Id) -> Result<(), RetentionError>;
+    fn mark_received(&self, id: &Id) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// Deletes a publish from the store.
-    async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError>;
+    fn delete_publish(&self, id: &Id) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// Deletes all the stored publishes for the interface.
-    async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError>;
+    fn delete_interface(
+        &self,
+        interface: &str,
+    ) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// Deletes all the stored publishes for all the interfaces.
-    async fn delete_interface_many<I, S>(&self, interfaces: I) -> Result<(), RetentionError>
+    fn delete_interface_many<I>(
+        &self,
+        interfaces: &[I],
+    ) -> impl Future<Output = Result<(), RetentionError>> + Send
     where
-        I: IntoIterator<Item = S> + Send,
-        <I as IntoIterator>::IntoIter: Send,
-        S: AsRef<str> + Send + Sync;
+        I: AsRef<str> + Send + Sync;
 
     /// Resend all the publishes that were not sent.
     ///
@@ -277,17 +287,19 @@ pub trait StoredRetention: Clone + Send + Sync {
     ///
     /// This function is designed to be called multiple times, so the vector is passed from the
     /// caller to be re-used and not reallocated.
-    async fn unsent_publishes(
+    fn unsent_publishes(
         &self,
         limit: usize,
         buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError>;
+    ) -> impl Future<Output = Result<usize, RetentionError>> + Send;
 
     /// Marks all publishes as unset and cleans up expired publishes.
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError>;
+    fn reset_all_publishes(&self) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
     /// Marks all publishes as unset and cleans up expired publishes.
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError>;
+    fn fetch_all_interfaces(
+        &self,
+    ) -> impl Future<Output = Result<HashSet<StoredInterface>, RetentionError>> + Send;
 }
 
 /// Interface and major version of a [`PublishInfo`] stored in the retention.
@@ -306,7 +318,6 @@ impl Display for StoredInterface {
 }
 
 /// Utility trait that can be used to simplify the boilerplate for the connections.
-#[async_trait]
 pub(crate) trait StoredRetentionExt: StoredRetention {
     async fn store_publish_individual(
         &self,
@@ -374,7 +385,6 @@ impl<T: StoredRetention> StoredRetentionExt for T {}
 #[derive(Clone, Copy)]
 pub enum Missing {}
 
-#[async_trait]
 impl StoredRetention for Missing {
     async fn store_publish(
         &self,
@@ -400,11 +410,9 @@ impl StoredRetention for Missing {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_interface_many<I, S>(&self, _interfaces: I) -> Result<(), RetentionError>
+    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
     where
-        I: IntoIterator<Item = S> + Send,
-        <I as IntoIterator>::IntoIter: Send,
-        S: AsRef<str> + Send + Sync,
+        I: AsRef<str> + Send + Sync,
     {
         unreachable!("the type is Un-constructable");
     }

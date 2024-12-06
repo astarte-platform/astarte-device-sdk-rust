@@ -18,9 +18,8 @@
 
 //! Handles the properties for the device.
 
-use std::io::Write;
+use std::{future::Future, io::Write};
 
-use async_trait::async_trait;
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use futures::{future, StreamExt, TryStreamExt};
 use tracing::{debug, error, warn};
@@ -55,7 +54,6 @@ pub enum PropertiesError {
 }
 
 /// Trait to access the stored properties.
-#[async_trait]
 pub trait PropAccess {
     /// Get the value of a property given the interface and path.
     ///
@@ -82,18 +80,24 @@ pub trait PropAccess {
     ///         .unwrap();
     /// }
     /// ```
-    async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+    fn property(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<Option<AstarteType>, Error>> + Send;
     /// Get all the properties of the given interface.
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
+    fn interface_props(
+        &self,
+        interface: &str,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored properties, device or server owners.
-    async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored device properties.
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored server properties.
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
 }
 
-#[async_trait]
 impl<S> PropAccess for DeviceClient<S>
 where
     S: PropertyStore,

@@ -18,8 +18,6 @@
 
 //! Provides functionality to wrap a generic Store to convert the error in Error.
 
-use async_trait::async_trait;
-
 use crate::types::AstarteType;
 
 use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
@@ -47,7 +45,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> PropertyStore for StoreWrapper<S>
 where
     S: PropertyStore,

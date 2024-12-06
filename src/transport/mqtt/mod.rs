@@ -38,14 +38,12 @@ pub mod topic;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
-    future::IntoFuture,
+    future::{Future, IntoFuture},
 };
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
-use once_cell::sync::OnceCell;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, info, trace};
 
@@ -246,7 +244,6 @@ impl<S> MqttClient<S> {
     }
 }
 
-#[async_trait]
 impl<S> Publish for MqttClient<S>
 where
     S: StoreCapabilities + Send + Sync,
@@ -406,7 +403,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Register for MqttClient<S>
 where
     S: Send + Sync,
@@ -524,7 +520,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Disconnect for MqttClient<S>
 where
     S: Send,
@@ -643,7 +638,6 @@ impl<S> Mqtt<S> {
 }
 
 /// Trait to implement functionality on the store.
-#[async_trait]
 trait MqttStoreExt: PropertyStore
 where
     Error: From<Self::Err>,
@@ -670,7 +664,6 @@ where
 
 impl<S> MqttStoreExt for StoreWrapper<S> where S: PropertyStore {}
 
-#[async_trait]
 impl<S> Receive for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
@@ -681,31 +674,29 @@ where
     where
         S: PropertyStore,
     {
-        static PURGE_PROPERTIES_TOPIC: OnceCell<String> = OnceCell::new();
-
         // Wait for next data or until it's disconnected
         while let Some(publish) = self.poll().await? {
-            let purge_topic = PURGE_PROPERTIES_TOPIC
-                .get_or_init(|| format!("{}/control/consumer/properties", self.client_id));
-
             debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
-            if purge_topic == &publish.topic {
-                debug!("Purging properties");
+            let publish_topic = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
+                .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
 
-                self.store
-                    .purge_server_properties(&publish.payload)
-                    .await
-                    .map_err(TransportError::Transport)?;
-            } else {
-                let con_event = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                    .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
+            match publish_topic {
+                ParsedTopic::PurgeProperties => {
+                    debug!("Purging properties");
 
-                return Ok(Some(ReceivedEvent {
-                    interface: con_event.interface.to_string(),
-                    path: con_event.path.to_string(),
-                    payload: publish.payload,
-                }));
+                    self.store
+                        .purge_server_properties(&publish.payload)
+                        .await
+                        .map_err(TransportError::Transport)?;
+                }
+                ParsedTopic::InterfacePath { interface, path } => {
+                    return Ok(Some(ReceivedEvent {
+                        interface: interface.to_string(),
+                        path: path.to_string(),
+                        payload: publish.payload,
+                    }));
+                }
             }
         }
 
@@ -732,7 +723,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
@@ -787,26 +777,24 @@ impl SessionData {
     }
 }
 
-#[async_trait]
 trait AsyncClientExt {
     /// Sends the introspection [`String`].
-    async fn send_introspection(
+    fn send_introspection(
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> Result<NoticeFuture, ClientError>;
+    ) -> impl Future<Output = Result<NoticeFuture, ClientError>> + Send;
 
     /// Subscribe to many interfaces
-    async fn subscribe_interfaces<S>(
+    fn subscribe_interfaces<S>(
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<Option<NoticeFuture>, ClientError>
+    ) -> impl Future<Output = Result<Option<NoticeFuture>, ClientError>> + Send
     where
         S: Display + Debug + Send + Sync;
 }
 
-#[async_trait]
 impl AsyncClientExt for AsyncClient {
     async fn send_introspection(
         &self,
