@@ -364,7 +364,23 @@ impl Disconnected {
     /// session. If it fails, it returns an error so that the whole connection process can
     /// be retried.
     async fn reconnect(&mut self, conn: &mut Connection, client_id: ClientId<&str>) -> Next {
-        let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id);
+        // retrieve the client config options
+        let tls_cfg = match conn.provider.api_tls_config().await {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                error!(error = %Report::new(err),"couldn't pair device");
+
+                return Next::Same;
+            }
+        };
+
+        let api = ApiClient::new(
+            client_id.realm,
+            client_id.device_id,
+            conn.provider.pairing_url().clone(),
+            conn.provider.credential_secret().to_string(),
+            tls_cfg,
+        );
 
         let transport = match conn.provider.recreate_transport(&api).await {
             Ok(transport) => transport,
