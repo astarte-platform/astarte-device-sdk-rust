@@ -23,7 +23,7 @@ use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoreInterfaceData, StoredProp};
 use crate::{interface::Ownership, retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
@@ -86,13 +86,16 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn load_prop(
+    async fn load_prop<S>(
         &self,
-        interface: &str,
+        interface: &StoreInterfaceData<S>,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err> {
-        let key = Key::new(interface, path);
+    ) -> Result<Option<AstarteType>, Self::Err>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
+        let key = Key::new(interface.name.as_ref(), path);
 
         // We need to drop the lock before calling delete_prop
         let opt_val = {
@@ -105,7 +108,10 @@ impl PropertyStore for MemoryStore {
             Some(value) if value.interface_major != interface_major => {
                 error!(
                     "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                    interface, path, value.interface_major, interface_major
+                    interface.name.as_ref(),
+                    path,
+                    value.interface_major,
+                    interface_major
                 );
 
                 self.delete_prop(interface, path).await?;
@@ -117,8 +123,15 @@ impl PropertyStore for MemoryStore {
         }
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        let key = Key::new(interface, path);
+    async fn unset_prop<S>(
+        &self,
+        interface: &StoreInterfaceData<S>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
+        let key = Key::new(interface.name.as_ref(), path);
 
         let mut writer = self.store.write().await;
 
@@ -129,8 +142,15 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        let key = Key::new(interface, path);
+    async fn delete_prop<S>(
+        &self,
+        interface: &StoreInterfaceData<S>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
+        let key = Key::new(interface.name.as_ref(), path);
 
         let mut store = self.store.write().await;
 
@@ -183,14 +203,20 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props<S>(
+        &self,
+        interface: &StoreInterfaceData<S>,
+    ) -> Result<Vec<StoredProp>, Self::Err>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
         Ok(self
             .store
             .read()
             .await
             .iter()
             .filter_map(|(k, v)| {
-                if k.interface == interface {
+                if k.interface == interface.name.as_ref() {
                     v.as_prop(k)
                 } else {
                     None
@@ -199,11 +225,14 @@ impl PropertyStore for MemoryStore {
             .collect())
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+    async fn delete_interface<S>(&self, interface: &StoreInterfaceData<S>) -> Result<(), Self::Err>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
         self.store
             .write()
             .await
-            .retain(|k, _v| k.interface != interface);
+            .retain(|k, _v| k.interface != interface.name.as_ref());
 
         Ok(())
     }
