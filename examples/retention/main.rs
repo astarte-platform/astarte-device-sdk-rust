@@ -72,10 +72,9 @@ async fn main() -> Result<(), DynError> {
         .await?
         .interface_str(INTERFACE_STORED)?
         .interface_str(INTERFACE_VOLATILE)?
-        .connect(mqtt_config)
-        .await?
+        .connection(mqtt_config)
         .build()
-        .await;
+        .await?;
 
     let mut tasks = tokio::task::JoinSet::new();
 

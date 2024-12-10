@@ -118,7 +118,7 @@ pub trait Client {
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
-    ///         .connect(mqtt_config).await.unwrap().build().await;
+    ///         .connection(mqtt_config).build().await.unwrap();
     ///
     ///     let data = TestObject {
     ///         endpoint1: 1.34,
@@ -168,7 +168,7 @@ pub trait Client {
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
-    ///         .connect(mqtt_config).await.unwrap().build().await;
+    ///         .connection(mqtt_config).build().await.unwrap();
     ///
     ///     let value: i32 = 42;
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
@@ -213,7 +213,7 @@ pub trait Client {
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(MemoryStore::new())
-    ///         .connect(mqtt_config).await.unwrap().build().await;
+    ///         .connection(mqtt_config).build().await.unwrap();
     ///
     ///     device
     ///         .unset("my.interface.name", "/endpoint/path",)
@@ -313,12 +313,13 @@ impl<S> DeviceClient<S> {
     where
         S: PropertyStore,
     {
-        let interface = mapping.interface().interface_name();
+        let interface = mapping.interface();
         let path = path.as_str();
+        let interface_data = interface.into();
 
         let value = self
             .store
-            .load_prop(interface, path, mapping.interface().version_major())
+            .load_prop(&interface_data, path, mapping.interface().version_major())
             .await?;
 
         let value = match value {
@@ -328,7 +329,7 @@ impl<S> DeviceClient<S> {
                     "stored property type mismatch, expected {}",
                     mapping.mapping_type(),
                 );
-                self.store.delete_prop(interface, path).await?;
+                self.store.delete_prop(&interface_data, path).await?;
 
                 None
             }

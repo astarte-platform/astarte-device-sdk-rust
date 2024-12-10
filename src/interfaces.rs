@@ -35,6 +35,8 @@ use crate::{
     Error, Interface,
 };
 
+/// Interfaces struct
+/// Public in a private module that is never exported
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
     interfaces: HashMap<String, Interface>,
