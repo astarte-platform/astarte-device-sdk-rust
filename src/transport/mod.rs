@@ -67,17 +67,12 @@ pub(crate) struct ReceivedEvent<P> {
 }
 
 /// Trait to link a Sender to a Connection.
-pub trait Connection {
+pub trait Connection: Send + Sync {
     /// Sender for the connection.
     ///
     /// This reduces the number of generics for connection, since a single client type is associated
     /// with a connection.
-    type Sender: Send + Sync;
-}
-
-/// Blank implementation for the builder
-impl Connection for () {
-    type Sender = ();
+    type Sender: Send + Sync + Clone;
 }
 
 /// Implement the publication for a connection.

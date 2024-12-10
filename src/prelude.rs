@@ -31,18 +31,11 @@ pub mod device {
     pub use crate::FromEvent;
 }
 
-/// Exports common trait used by the [`Builder`](crate::builder::DeviceSdkBuild)
-pub mod builder {
-    pub use crate::builder::ConnectionConfig;
-    pub use crate::builder::DeviceSdkBuild;
-}
-
 /// Exports common trait used when accessing stored properties.
 pub mod properties {
     pub use crate::properties::PropAccess;
     pub use crate::store::PropertyStore;
 }
 
-pub use builder::*;
 pub use device::*;
 pub use properties::*;
