@@ -49,6 +49,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    WrapStore,
 };
 
 pub use self::config::Credential;
@@ -379,7 +380,7 @@ where
     async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {
         // We send an empty vector as payload to unset the property, https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#payload-format
         self.send(
-            &validated.interface,
+            &validated.interface.name,
             &validated.path,
             Reliability::Unique.into(),
             Vec::new(),
@@ -649,12 +650,12 @@ where
 
         let stored_props = self.server_props().await?;
 
-        for stored_prop in stored_props {
+        for ref stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            self.delete_prop(&stored_prop.interface, &stored_prop.path)
+            self.delete_prop(&stored_prop.into(), &stored_prop.path)
                 .await?;
         }
 
@@ -741,6 +742,17 @@ where
     S: Send + Sync,
 {
     type Sender = MqttClient<S>;
+}
+
+impl<S> WrapStore<S> for Mqtt<S>
+where
+    S: PropertyStore,
+{
+    type Store = S;
+
+    fn wrap_store(store: S, _client: &Self::Sender) -> Self::Store {
+        store
+    }
 }
 
 /// Wrapper structs that holds data used when connecting/reconnecting
