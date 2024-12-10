@@ -28,7 +28,9 @@ use rusqlite::{
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
 
-use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{
+    OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
+};
 use crate::{
     interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
@@ -466,24 +468,29 @@ impl PropertyStore for SqliteStore {
 
     async fn load_prop(
         &self,
-        interface: &str,
-        path: &str,
+        property: &PropertyMapping<'_>,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
-        let opt_record = self.with_reader(|reader| reader.load_prop(interface, path))?;
+        let opt_record =
+            self.with_reader(|reader| reader.load_prop(property.name(), property.path()))?;
 
         match opt_record {
             Some(record) => {
-                trace!("Loaded property {} {} in db {:?}", interface, path, record);
+                trace!(
+                    "Loaded property {} {} in db {:?}",
+                    property.name,
+                    property.path,
+                    record
+                );
 
                 // if version mismatch, delete
                 if record.interface_major != interface_major {
                     error!(
                         "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                        interface, path, record.interface_major, interface_major
+                        property.name, property.path, record.interface_major, interface_major
                     );
 
-                    self.delete_prop(interface, path).await?;
+                    self.delete_prop(property).await?;
 
                     return Ok(None);
                 }
@@ -494,14 +501,20 @@ impl PropertyStore for SqliteStore {
         }
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        self.writer.lock().await.unset_prop(interface, path)?;
+    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+        self.writer
+            .lock()
+            .await
+            .unset_prop(property.name(), property.path())?;
 
         Ok(())
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        self.writer.lock().await.delete_prop(interface, path)?;
+    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+        self.writer
+            .lock()
+            .await
+            .delete_prop(property.name(), property.path())?;
 
         Ok(())
     }
@@ -524,12 +537,18 @@ impl PropertyStore for SqliteStore {
         self.with_reader(|reader| reader.props_with_ownership(Ownership::Server))
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.interface_props(interface))
+    async fn interface_props(
+        &self,
+        interface: &PropertyInterface<'_>,
+    ) -> Result<Vec<StoredProp>, Self::Err> {
+        self.with_reader(|reader| reader.interface_props(interface.name()))
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
-        self.writer.lock().await.delete_interface_props(interface)?;
+    async fn delete_interface(&self, interface: &PropertyInterface<'_>) -> Result<(), Self::Err> {
+        self.writer
+            .lock()
+            .await
+            .delete_interface_props(interface.name())?;
 
         Ok(())
     }
@@ -607,11 +626,12 @@ mod tests {
                 interface_major: 1,
                 ownership: Ownership::Device,
             };
+            let prop_interface_data = (&prop).into();
 
             store.store_prop(prop).await.unwrap();
             assert_eq!(
                 store
-                    .load_prop("com.test", "/test", 1)
+                    .load_prop(&prop_interface_data, 1)
                     .await
                     .unwrap()
                     .unwrap(),

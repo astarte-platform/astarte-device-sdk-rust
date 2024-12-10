@@ -649,13 +649,12 @@ where
 
         let stored_props = self.server_props().await?;
 
-        for stored_prop in stored_props {
+        for ref stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            self.delete_prop(&stored_prop.interface, &stored_prop.path)
-                .await?;
+            self.delete_prop(&stored_prop.into()).await?;
         }
 
         Ok(())
@@ -739,7 +738,7 @@ where
 
 impl<S> Connection for Mqtt<S>
 where
-    S: Send + Sync,
+    S: PropertyStore,
 {
     type Sender = MqttClient<S>;
 }
@@ -879,7 +878,9 @@ pub(crate) mod test {
     };
 
     use crate::{
-        builder::{ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
+        builder::{
+            ConnectionBuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY,
+        },
         store::memory::MemoryStore,
     };
 
@@ -1287,10 +1288,17 @@ pub(crate) mod test {
             server.url(),
         );
 
-        tokio::time::timeout(Duration::from_secs(3), config.connect(&builder))
-            .await
-            .expect("timeout expired")
-            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            config.connect(ConnectionBuildConfig {
+                store: builder.store,
+                interfaces: &builder.interfaces,
+                config: builder.config,
+            }),
+        )
+        .await
+        .expect("timeout expired")
+        .unwrap();
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
