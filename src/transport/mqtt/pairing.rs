@@ -99,20 +99,38 @@ pub(crate) struct ApiClient<'a> {
     pub(crate) device_id: &'a str,
     pairing_url: &'a Url,
     credentials_secret: &'a str,
+    client: reqwest::Client,
 }
 
 impl<'a> ApiClient<'a> {
-    pub(crate) fn from_transport(
+    pub(crate) fn try_from_transport(
         provider: &'a TransportProvider,
         realm: &'a str,
         device_id: &'a str,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, PairingError> {
+        // disable pre-loading all the default root certificates
+        let client_builder = reqwest::Client::builder(); //.tls_built_in_root_certs(false);
+
+        #[cfg(feature = "webpki")]
+        // import webpki root certificates and prevent from importing native root certs
+        let client_builder = client_builder
+            .tls_built_in_webpki_certs(true)
+            .tls_built_in_native_certs(false);
+
+        #[cfg(not(feature = "webpki"))]
+        // import native root certs
+        // webpki root certs will not be imported since the webpki feature is disabled
+        let client_builder = client_builder.tls_built_in_root_certs(true);
+
+        let client = client_builder.build()?;
+
+        Ok(Self {
             realm,
             device_id,
             pairing_url: provider.pairing_url(),
             credentials_secret: provider.credential_secret(),
-        }
+            client,
+        })
     }
 
     fn url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
@@ -144,8 +162,8 @@ impl<'a> ApiClient<'a> {
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let client = reqwest::Client::new();
-        let response = client
+        let response = self
+            .client
             .post(url)
             .bearer_auth(self.credentials_secret)
             .json(&payload)
@@ -172,8 +190,8 @@ impl<'a> ApiClient<'a> {
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
-        let client = reqwest::Client::new();
-        let response = client
+        let response = self
+            .client
             .get(url)
             .bearer_auth(self.credentials_secret)
             .send()
@@ -282,6 +300,7 @@ pub(crate) mod tests {
             device_id: "device_id",
             pairing_url: &Url::parse(&server.url()).unwrap(),
             credentials_secret: "secret",
+            client: reqwest::Client::new(),
         };
 
         let res = client.create_certificate("csr").await.unwrap();
@@ -312,6 +331,7 @@ pub(crate) mod tests {
             device_id: "device_id",
             pairing_url: &Url::parse(&server.url()).unwrap(),
             credentials_secret: "secret",
+            client: reqwest::Client::new(),
         };
 
         let res = client
@@ -335,6 +355,7 @@ pub(crate) mod tests {
             device_id: "device_id",
             pairing_url: &Url::parse(&server.url()).unwrap(),
             credentials_secret: "secret",
+            client: reqwest::Client::new(),
         };
 
         let res = client.get_broker_url().await.unwrap();
@@ -362,6 +383,7 @@ pub(crate) mod tests {
             device_id: "device_id",
             pairing_url: &Url::parse(&server.url()).unwrap(),
             credentials_secret: "secret",
+            client: reqwest::Client::new(),
         };
 
         let res = client.get_broker_url().await.expect_err("should error");

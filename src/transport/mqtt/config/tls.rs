@@ -120,11 +120,12 @@ impl ClientAuth {
     pub(crate) async fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
         warn!("INSECURE: ignore TLS certificates");
 
-        rustls::ClientConfig::builder()
+        let client_cfg = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
-            .with_client_auth_cert(self.certs, self.private_key.into())
-            .map_err(PairingError::Tls)
+            .with_no_client_auth();
+
+        Ok(client_cfg)
     }
 }
 

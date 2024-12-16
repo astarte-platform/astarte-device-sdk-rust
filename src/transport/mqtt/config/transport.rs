@@ -213,7 +213,7 @@ mod tests {
             true,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -233,7 +233,7 @@ mod tests {
             true,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -259,7 +259,7 @@ mod tests {
             false,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -279,7 +279,7 @@ mod tests {
             false,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -305,7 +305,7 @@ mod tests {
             false,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -325,7 +325,7 @@ mod tests {
             false,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -350,7 +350,7 @@ mod tests {
             false,
         );
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::try_from_transport(&provider, "realm", "device_id").unwrap();
 
         let _ = provider.transport(&api).await.unwrap();
 
