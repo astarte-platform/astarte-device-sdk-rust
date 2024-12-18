@@ -36,6 +36,7 @@ use crate::{
     },
     interfaces::{self, Interfaces},
     retention::{PublishInfo, RetentionId},
+    store::PropertyStore,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Interface, Timestamp,
@@ -67,17 +68,28 @@ pub(crate) struct ReceivedEvent<P> {
 }
 
 /// Trait to link a Sender to a Connection.
+#[diagnostic::on_unimplemented(
+    message = "The trait `crate::builder::DeviceSdkBuild` is not implemented for `{Self}`",
+    label = "Does not implement `crate::builder::DeviceSdkBuild`",
+    note = "Before calling `crate::builder::DeviceSdkBuild::build` you should call `DeviceBuilder::connect`"
+)]
 pub trait Connection {
     /// Sender for the connection.
     ///
     /// This reduces the number of generics for connection, since a single client type is associated
     /// with a connection.
     type Sender: Send + Sync;
+    // /// Type of the store wrapper
+    //type Store: PropertyStore;
 }
 
-/// Blank implementation for the builder
-impl Connection for () {
-    type Sender = ();
+/// Trait implemented by a connection to wrap the store in a custom object
+pub trait WrapStore<S>: Connection {
+    /// Store type after the wrapping operation
+    type Store: PropertyStore;
+
+    /// Wrap a store in a custom object for each connection
+    fn wrap_store(store: S, client: &Self::Sender) -> Self::Store;
 }
 
 /// Implement the publication for a connection.
