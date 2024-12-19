@@ -53,7 +53,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features --workspace -- -D warnings
   doc:
@@ -66,7 +66,7 @@ jobs:
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
       - run: cargo docs-rs
@@ -79,7 +79,7 @@ jobs:
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo hack
@@ -98,7 +98,7 @@ jobs:
       - name: Install cargo minimal-versions
         uses: taiki-e/install-action@cargo-minimal-versions
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: rustup default stable
         run: rustup default stable
       - name: Check minimal versions
@@ -118,7 +118,7 @@ jobs:
         with:
           toolchain: ${{ matrix.msrv }}
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Install cargo hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
@@ -131,7 +131,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
