@@ -409,7 +409,8 @@ where
             insecure_ssl,
         );
 
-        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id);
+        let client = ApiClient::try_from_transport(&provider, &self.realm, &self.device_id)
+            .map_err(MqttError::Pairing)?;
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
 

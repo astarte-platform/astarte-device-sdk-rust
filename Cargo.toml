@@ -62,7 +62,7 @@ itertools = { workspace = true }
 openssl = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 rcgen = { workspace = true }
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls-native-roots"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rusqlite = { workspace = true }
 rustls = { workspace = true }
@@ -76,6 +76,7 @@ tokio = { workspace = true, features = ["parking_lot", "macros", "fs"] }
 tracing = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
+webpki-roots = { workspace = true, optional = true }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
@@ -96,6 +97,7 @@ message-hub = ["dep:astarte-message-hub-proto"]
 openssl = ["dep:openssl"]
 sqlite-trace = ["rusqlite/trace"]
 tokio-multi-thread = ["tokio/rt-multi-thread"]
+webpki = ["webpki-roots", "reqwest/rustls-tls-webpki-roots"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -143,3 +145,4 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
 url = "2.2.2"
 uuid = "1.1.2"
+webpki-roots = "0.26.7"
