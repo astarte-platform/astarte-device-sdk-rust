@@ -36,6 +36,8 @@ use astarte_message_hub_proto::{AstarteDataTypeObject, MessageHubEvent};
 use chrono::TimeZone;
 use itertools::Itertools;
 
+use crate::interface::Ownership;
+use crate::store::StoredProp;
 use crate::validate::ValidatedUnset;
 use crate::{
     transport::ReceivedEvent, types::AstarteType, validate::ValidatedIndividual,
@@ -47,7 +49,7 @@ use super::{GrpcError, GrpcPayload};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum MessageHubProtoError {
     /// Wrapper for integer conversion errors
     #[error(transparent)]
@@ -60,6 +62,68 @@ pub enum MessageHubProtoError {
     /// Date conversion error
     #[error("Error while converting a proto date: {0}")]
     DateConversion(String),
+}
+
+/// Map a received message hub property to an optional astarte type
+pub fn map_property_to_astarte_type(
+    value: astarte_message_hub_proto::Property,
+) -> Result<Option<AstarteType>, MessageHubProtoError> {
+    let astarte_message_hub_proto::Property { value, .. } = value;
+
+    let value = value.ok_or(MessageHubProtoError::ExpectedField("value"))?;
+    let individual = match value {
+        astarte_message_hub_proto::property::Value::AstarteProperty(p) => p
+            .individual_data
+            .ok_or(MessageHubProtoError::ExpectedField("individual_data"))?,
+        astarte_message_hub_proto::property::Value::AstarteUnset(_) => return Ok(None),
+    };
+
+    Ok(Some(individual.try_into()?))
+}
+
+/// Map a list of properties that need to be set, unset value will result in an error of the conversion
+pub fn map_set_stored_properties(
+    mut message_hub_properties: astarte_message_hub_proto::StoredProperties,
+) -> Result<Vec<StoredProp>, MessageHubProtoError> {
+    message_hub_properties
+        .interface_properties
+        .iter_mut()
+        .flat_map(|(name, prop_data)| {
+            prop_data.properties.iter().map(|p| {
+                let path = p.path.clone();
+                let value: AstarteType = p.clone().try_into()?;
+
+                let res = StoredProp {
+                    interface: name.clone(),
+                    path,
+                    value,
+                    interface_major: prop_data.version_major,
+                    ownership: prop_data.ownership().into(),
+                };
+
+                Ok(res)
+            })
+        })
+        .try_collect()
+}
+
+impl From<astarte_message_hub_proto::Ownership> for Ownership {
+    fn from(value: astarte_message_hub_proto::Ownership) -> Self {
+        match value {
+            astarte_message_hub_proto::Ownership::Device => Ownership::Device,
+            astarte_message_hub_proto::Ownership::Server => Ownership::Server,
+        }
+    }
+}
+
+/// Construct an sdk astarte type from a property that is required to be set
+impl TryFrom<astarte_message_hub_proto::Property> for AstarteType {
+    type Error = MessageHubProtoError;
+
+    fn try_from(property: astarte_message_hub_proto::Property) -> Result<Self, Self::Error> {
+        map_property_to_astarte_type(property)
+            .and_then(|e| e.ok_or(MessageHubProtoError::ExpectedField("value")))
+    }
 }
 
 impl TryFrom<ProtoIndividualData> for AstarteType {
@@ -278,7 +342,7 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
 impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedUnset) -> Self {
         Self {
-            interface_name: value.interface,
+            interface_name: value.interface.name,
             path: value.path,
             timestamp: None,
             payload: Some(ProtoPayload::AstarteUnset(

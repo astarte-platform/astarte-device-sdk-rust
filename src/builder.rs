@@ -45,6 +45,7 @@ use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
 use crate::transport::Connection;
+use crate::transport::WrapStore;
 
 /// Default capacity of the channels
 ///
@@ -97,31 +98,32 @@ pub enum BuilderError {
 /// and implementing it should be avoided since it has no practical use.
 pub trait DeviceSdkBuild<S, C>
 where
-    C: Connection + Send,
+    C: Connection + WrapStore<S>,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
-    /// [`DeviceConnection`] with the specified settings.
-    fn build(self) -> impl Future<Output = (DeviceClient<S>, DeviceConnection<S, C>)> + Send;
+    /// [`DeviceConnection`] with the specified settings. This can only work after
+    /// constructing a connected builder by using the `connect` [`DeviceBuilder`] method.
+    fn build(
+        self,
+    ) -> impl Future<Output = (DeviceClient<C::Store>, DeviceConnection<C::Store, C>)> + Send;
 }
 
-impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
+impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, DeviceTransport<C>>
 where
     S: PropertyStore,
-    C: Connection + Send,
+    C: Connection + WrapStore<S> + Send,
 {
-    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
+    async fn build(self) -> (DeviceClient<C::Store>, DeviceConnection<C::Store, C>) {
         // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
 
         let interfaces = Arc::new(RwLock::new(self.interfaces));
+        let DeviceTransport { connection, sender } = self.transport;
+        let store = StoreWrapper::new(C::wrap_store(self.store, &sender));
 
-        let client = DeviceClient::new(
-            Arc::clone(&interfaces),
-            rx_client,
-            tx_client,
-            self.store.clone(),
-        );
+        let client =
+            DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
 
         self.volatile.set_capacity(self.volatile_retention).await;
 
@@ -130,9 +132,9 @@ where
             tx_connection,
             rx_connection,
             self.volatile,
-            self.store,
-            self.connection,
-            self.sender,
+            store,
+            connection,
+            sender,
         );
 
         (client, connection)
@@ -142,16 +144,12 @@ where
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
 /// [`DeviceConnection`].
 #[derive(Clone)]
-pub struct DeviceBuilder<S, C>
-where
-    C: Connection,
-{
+pub struct DeviceBuilder<S, C> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
     pub(crate) interfaces: Interfaces,
-    pub(crate) connection: C,
-    pub(crate) sender: C::Sender,
-    pub(crate) store: StoreWrapper<S>,
+    pub(crate) store: S,
+    pub(crate) transport: C,
     pub(crate) volatile: SharedVolatileStore,
     pub(crate) writable_dir: Option<PathBuf>,
 }
@@ -176,19 +174,15 @@ impl DeviceBuilder<(), ()> {
             channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
             interfaces: Interfaces::new(),
-            connection: (),
-            sender: (),
-            store: StoreWrapper::new(()),
+            transport: (),
+            store: (),
             volatile: SharedVolatileStore::new(),
             writable_dir: None,
         }
     }
 }
 
-impl<S, C> DeviceBuilder<S, C>
-where
-    C: Connection,
-{
+impl<S, C> DeviceBuilder<S, C> {
     /// Add a single interface from the provided `.json` file.
     ///
     /// If an interface with the same name is present, the code will validate
@@ -319,9 +313,8 @@ where
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
-            connection: self.connection,
-            sender: self.sender,
-            store: StoreWrapper::new(store),
+            transport: self.transport,
+            store,
             volatile: self.volatile,
             writable_dir: self.writable_dir,
         }
@@ -331,21 +324,25 @@ where
     ///
     /// If the connection gets established correctly, the caller can than construct
     /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceSdkBuild::build`] method.
-    pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Conn>, crate::Error>
+    pub async fn connect<T>(
+        self,
+        config: T,
+    ) -> Result<DeviceBuilder<S, DeviceTransport<T::Conn>>, crate::Error>
     where
         S: PropertyStore,
         T: ConnectionConfig<S>,
         crate::Error: From<<T as ConnectionConfig<S>>::Err>,
         C: Send + Sync,
     {
-        let DeviceTransport { connection, sender } = config.connect(&self).await?;
+        let transport = config.connect(&self).await?;
 
         Ok(DeviceBuilder {
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             interfaces: self.interfaces,
-            connection,
-            sender,
+            transport,
+            //connection,
+            //sender,
             store: self.store,
             volatile: self.volatile,
             writable_dir: self.writable_dir,
@@ -353,10 +350,7 @@ where
     }
 }
 
-impl<S, C> Debug for DeviceBuilder<S, C>
-where
-    C: Connection,
-{
+impl<S, C> Debug for DeviceBuilder<S, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AstarteOptions")
             .field("channel_size", &self.channel_size)
@@ -378,6 +372,7 @@ impl Default for DeviceBuilder<(), ()> {
 pub struct DeviceTransport<C: Connection> {
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
+    //pub(crate) store_wrapper: C::Store,
 }
 
 /// Generic connection configuration that enables the builder
@@ -399,8 +394,8 @@ pub trait ConnectionConfig<S> {
         builder: &DeviceBuilder<S, C>,
     ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, Self::Err>> + Send
     where
-        S: PropertyStore,
-        C: Connection + Send + Sync;
+        C: Send + Sync,
+        S: PropertyStore;
 }
 
 /// Walks a directory returning an array of json files

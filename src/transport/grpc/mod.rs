@@ -28,8 +28,10 @@ pub mod convert;
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_message_hub_proto::prost::{DecodeError, Message};
@@ -44,20 +46,25 @@ use astarte_message_hub_proto::{
     pbjson_types::Empty, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
     MessageHubEvent, Node,
 };
+use astarte_message_hub_proto::{PropertyIdentifier, StoredPropertiesFilter};
 use bytes::Bytes;
+use itertools::Itertools;
 use sync_wrapper::SyncWrapper;
+use tokio::sync::Mutex;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    WrapStore,
 };
 use crate::client::RecvError;
 use crate::error::AggregateError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
+use crate::store::{OptStoredProp, StoreInterfaceData, StoredProp};
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DeviceTransport},
     interface::{
@@ -516,9 +523,20 @@ where
 
 impl<S> Connection for Grpc<S>
 where
-    S: Send + Sync,
+    S: PropertyStore,
 {
     type Sender = GrpcClient<S>;
+}
+
+impl<S> WrapStore<S> for Grpc<S>
+where
+    S: PropertyStore,
+{
+    type Store = GrpcStore<S>;
+
+    fn wrap_store(store: S, sender: &Self::Sender) -> Self::Store {
+        GrpcStore::new(store, sender.client.clone())
+    }
 }
 
 /// Internal struct holding the received grpc message
@@ -572,7 +590,7 @@ where
         builder: &DeviceBuilder<S, C>,
     ) -> Result<DeviceTransport<Grpc<S>>, Self::Err>
     where
-        C: Connection + Send + Sync,
+        C: Send + Sync,
     {
         let channel = self.endpoint.connect().await.map_err(GrpcError::from)?;
 
@@ -585,7 +603,7 @@ where
 
         let sender = GrpcClient::new(
             client.clone(),
-            builder.store.clone(),
+            StoreWrapper::new(builder.store.clone()),
             builder.volatile.clone(),
         );
         let receiver = Grpc::new(self.uuid, client, stream);
@@ -622,13 +640,257 @@ impl<'a> TryFrom<&'a Interfaces> for NodeData {
     }
 }
 
+/// Store wrapper designed specifically for the grpc connection
+/// Used mainly to request device owned properties to the message hub instead of looking them up in the local storage
+// TODO avoid also storing device owned properties if possible
+#[derive(Debug, Clone)]
+pub struct GrpcStore<S> {
+    pub(crate) store: S,
+    pub(crate) client: Arc<Mutex<MsgHubClient>>,
+}
+
+impl<S> GrpcStore<S> {
+    pub(crate) fn new(store: S, client: MsgHubClient) -> Self {
+        Self {
+            store,
+            client: Arc::new(Mutex::new(client)),
+        }
+    }
+}
+
+/// Error returned while operating on the store of a grpc connection
+/// This store needs to request properties from the message hub server
+/// and has additional errors consequently
+#[non_exhaustive]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum GrpcStoreError<E> {
+    /// Underlying store error
+    #[error("Underlying store error: {0}")]
+    StoreError(E),
+    /// Error while retrieving data from the message hub server
+    #[error("Error while retrieving data from the message hub server: {0}")]
+    StatusError(tonic::Status),
+    /// Error while converting a proto received value to an internal type
+    #[error("Error while converting a proto received value to an internal type: {0}")]
+    ConversionError(MessageHubProtoError),
+}
+
+impl<E> GrpcStoreError<E> {
+    fn from_err(err: E) -> Self {
+        Self::StoreError(err)
+    }
+
+    fn from_status(status: tonic::Status) -> Self {
+        Self::StatusError(status)
+    }
+
+    fn from_conversion(conversion: MessageHubProtoError) -> Self {
+        Self::ConversionError(conversion)
+    }
+}
+
+impl<S> StoreCapabilities for GrpcStore<S>
+where
+    S: StoreCapabilities,
+{
+    type Retention = S::Retention;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        self.store.get_retention()
+    }
+}
+
+/// We implement the PropertyStore to override the behavior when retrieving or storing
+/// device owned properies. We only want to store and load from the store server owned properties.
+/// Device owned properties wont be stored and will be requested to the message hub server.
+impl<S> PropertyStore for GrpcStore<S>
+where
+    S: PropertyStore,
+    S::Err: Display,
+{
+    type Err = GrpcStoreError<S::Err>;
+
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+        if prop.ownership.is_server() {
+            self.store
+                .store_prop(prop)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn load_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            self.store
+                .load_prop(interface, path, interface_major)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            let property = self
+                .client
+                .lock()
+                .await
+                .get_property(PropertyIdentifier {
+                    interface_name: interface.name.as_ref().to_owned(),
+                    path: path.to_owned(),
+                })
+                .await
+                .map_err(GrpcStoreError::from_status)
+                .map(tonic::Response::into_inner)?;
+
+            convert::map_property_to_astarte_type(property).map_err(GrpcStoreError::from_conversion)
+        }
+    }
+
+    async fn unset_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            self.store
+                .unset_prop(interface, path)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            // we won't store a device unset since we always request the properties to the server
+            Ok(())
+        }
+    }
+
+    async fn delete_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            self.store
+                .delete_prop(interface, path)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            // we won't delete a device property since we always request the properties to the server
+            Ok(())
+        }
+    }
+
+    async fn clear(&self) -> Result<(), Self::Err> {
+        self.store.clear().await.map_err(GrpcStoreError::from_err)
+    }
+
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let load_server = async {
+            self.store
+                .server_props()
+                .await
+                .map_err(GrpcStoreError::from_err)
+        };
+        let load_device = async {
+            self.client
+                .lock()
+                .await
+                .get_all_properties(StoredPropertiesFilter {
+                    ownership: Some(astarte_message_hub_proto::Ownership::Device.into()),
+                })
+                .await
+                .map(tonic::Response::into_inner)
+                .map_err(GrpcStoreError::from_status)
+                .and_then(|p| {
+                    convert::map_set_stored_properties(p).map_err(GrpcStoreError::from_conversion)
+                })
+        };
+
+        let (server_result, device_result) = futures::future::join(load_server, load_device).await;
+
+        Ok(server_result?
+            .into_iter()
+            .chain(device_result?.into_iter())
+            .collect_vec())
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .server_props()
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        todo!("get device properties from message hub")
+    }
+
+    async fn interface_props<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+    ) -> Result<Vec<StoredProp>, Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        // if to get properties only when connecting
+        if interface.ownership.is_server() {
+            self.store
+                .interface_props(interface)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            self.client
+                .lock()
+                .await
+                .get_properties(InterfacesName {
+                    names: vec![interface.name.as_ref().to_owned()],
+                })
+                .await
+                .map(tonic::Response::into_inner)
+                .map_err(GrpcStoreError::from_status)
+                .and_then(|p| {
+                    convert::map_set_stored_properties(p).map_err(GrpcStoreError::from_conversion)
+                })
+        }
+    }
+
+    async fn delete_interface<I>(&self, interface: &StoreInterfaceData<I>) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            self.store
+                .delete_interface(interface)
+                .await
+                .map_err(GrpcStoreError::from_err)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+        // unused for grpc connection
+        Ok(vec![])
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{future::Future, net::SocketAddr, str::FromStr};
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        AstarteMessage, AstarteUnset,
+        AstarteMessage, AstarteUnset, Property, StoredProperties,
     };
     use async_trait::async_trait;
     use tokio::{
@@ -763,6 +1025,27 @@ mod test {
             self.server_received.send(ServerReceivedRequest::RemoveInterfaces(request.into_inner())).await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
 
             Ok(tonic::Response::new(Empty::default()))
+        }
+
+        async fn get_properties(
+            &self,
+            _request: Request<InterfacesName>,
+        ) -> Result<tonic::Response<StoredProperties>, Status> {
+            todo!()
+        }
+
+        async fn get_all_properties(
+            &self,
+            _request: Request<StoredPropertiesFilter>,
+        ) -> Result<tonic::Response<StoredProperties>, Status> {
+            todo!()
+        }
+
+        async fn get_property(
+            &self,
+            _request: Request<PropertyIdentifier>,
+        ) -> Result<tonic::Response<Property>, Status> {
+            todo!()
         }
     }
 
