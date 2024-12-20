@@ -43,19 +43,19 @@ jobs:
       pr: ${{ github.event.pull_request.number }}
   reuse:
     uses: ./.github/workflows/reuse-lint.yaml
-  warm-caches:
-    uses: ./.github/workflows/warm-caches.yaml
+  warmup-caches:
+    uses: ./.github/workflows/warmup-caches.yaml
     needs: [reuse, dco]
   check:
     uses: ./.github/workflows/check.yaml
-    needs: [warm-caches]
+    needs: [warmup-caches]
   test:
     uses: ./.github/workflows/test.yaml
     secrets: inherit
-    needs: [warm-caches]
+    needs: [warmup-caches]
   e2e-test:
     uses: ./.github/workflows/e2e-test.yaml
-    needs: [warm-caches]
+    needs: [warmup-caches]
   multi-platform:
-    uses: ./.github/workflows/warm-caches.yaml
+    uses: ./.github/workflows/multi-platform.yaml
     needs: [reuse, dco]

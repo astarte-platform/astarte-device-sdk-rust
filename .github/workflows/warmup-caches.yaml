@@ -16,7 +16,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: warm-caches
+name: warmup-caches
 on:
   workflow_call:
   workflow_dispatch:
