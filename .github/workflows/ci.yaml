@@ -57,5 +57,5 @@ jobs:
     uses: ./.github/workflows/e2e-test.yaml
     needs: [warmup-caches]
   multi-platform:
-    uses: ./.github/workflows/warm-caches.yaml
+    uses: ./.github/workflows/multi-platform.yaml
     needs: [reuse, dco]
