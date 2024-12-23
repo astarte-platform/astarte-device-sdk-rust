@@ -74,8 +74,15 @@ sync_wrapper = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["parking_lot", "macros", "fs"] }
 tracing = { workspace = true }
+tss-esapi = {workspace = true, optional = true}
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
+
+picky-asn1-x509 = { workspace = true }
+sha2 = { workspace = true }
+picky-asn1-der = { workspace = true }
+picky-asn1 = { workspace = true }
+lazy_static = {workspace = true}
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
@@ -88,7 +95,7 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true, features = ["net"] }
 
 [features]
-default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
+default = ["interface-strict", "sqlite-trace", "tokio-multi-thread", "keystore-none"]
 derive = ["dep:astarte-device-sdk-derive"]
 interface-doc = []
 interface-strict = []
@@ -96,6 +103,8 @@ message-hub = ["dep:astarte-message-hub-proto"]
 openssl = ["dep:openssl"]
 sqlite-trace = ["rusqlite/trace"]
 tokio-multi-thread = ["tokio/rt-multi-thread"]
+keystore-none = []
+keystore-tss  = ["dep:tss-esapi"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -141,5 +150,11 @@ tokio = "1.36.0"
 tokio-stream = "0.1.0"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
+tss-esapi = { version = "7.6.0"}
 url = "2.2.2"
 uuid = "1.1.2"
+sha2 = "0.10.8"
+picky-asn1 = "0.10.0"
+picky-asn1-der = "0.5.1"
+picky-asn1-x509 = "0.12.0"
+lazy_static = "1.5.0"

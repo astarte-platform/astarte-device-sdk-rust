@@ -19,17 +19,12 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rumqttc::Transport;
-use rustls::pki_types::PrivatePkcs8KeyDer;
-use tokio::fs;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 use url::Url;
 
-use crate::{
-    error::Report,
-    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
-};
-
-use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use super::tls::ClientAuth;
+use crate::transport::mqtt::config::tls::ClientAuthBuilder;
+use crate::transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError};
 
 /// Structure to create an authenticated [`Transport`]
 #[derive(Debug)]
@@ -69,23 +64,6 @@ impl TransportProvider {
         Ok((bundle, certificate))
     }
 
-    /// Store the credentials to files.
-    async fn store_credentials(
-        &self,
-        private_key_file: &PrivateKeyFile,
-        private_key: &PrivatePkcs8KeyDer<'_>,
-        certificate_file: &CertificateFile,
-        certificate: &str,
-    ) {
-        // Don't fail here since the SDK can always regenerate the certificate,
-        if let Err(err) = fs::write(&certificate_file, &certificate).await {
-            error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
-        }
-        if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
-            error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
-        }
-    }
-
     /// Read credentials from the filesystem.
     async fn read_credentials(&self) -> Option<ClientAuth> {
         let Some(store_dir) = &self.store_dir else {
@@ -96,10 +74,7 @@ impl TransportProvider {
 
         debug!("reading existing credentials from {}", store_dir.display());
 
-        let certificate_file = CertificateFile::new(store_dir);
-        let private_key_file = PrivateKeyFile::new(store_dir);
-
-        ClientAuth::try_read(certificate_file, private_key_file).await
+        ClientAuth::try_read(store_dir.clone()).await
     }
 
     /// Config the TLS for the transport.
@@ -121,22 +96,14 @@ impl TransportProvider {
 
         let (bundle, certificate) = self.create_certificate(client).await?;
 
-        // If no store dir is set we just create a new certificate
-        if let Some(store_dir) = &self.store_dir {
-            let certificate_file = CertificateFile::new(store_dir);
-            let private_key_file = PrivateKeyFile::new(store_dir);
+        let client_auth = ClientAuthBuilder::with_certs(certificate.clone())
+            .map_err(PairingError::InvalidCredentials)?
+            .with_key(bundle.private_key)
+            .map_err(PairingError::InvalidCredentials)?;
 
-            self.store_credentials(
-                &private_key_file,
-                &bundle.private_key,
-                &certificate_file,
-                &certificate,
-            )
-            .await
-        }
+        client_auth.store(&self.store_dir, &certificate).await;
 
-        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-            .map_err(PairingError::InvalidCredentials)
+        Ok(client_auth)
     }
 
     /// Retrieves an already stored certificate or creates a new one
@@ -187,10 +154,10 @@ impl TransportProvider {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::mqtt::config::{CertificateFile, PrivateKeyFile};
+    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
     use mockito::Server;
     use tempfile::TempDir;
-
-    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
 
     use super::*;
 

@@ -35,6 +35,9 @@ pub mod registration;
 mod retention;
 pub mod topic;
 
+#[cfg(feature = "keystore-tss")]
+pub(crate) mod tpm;
+
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},

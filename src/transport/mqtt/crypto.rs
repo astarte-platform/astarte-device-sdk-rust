@@ -31,6 +31,9 @@ use openssl::{
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P384_SHA384};
 use rustls::pki_types::PrivatePkcs8KeyDer;
 
+#[cfg(feature = "keystore-tss")]
+use crate::transport::mqtt::tpm;
+
 #[cfg(feature = "openssl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
 pub use openssl;
@@ -50,12 +53,15 @@ pub enum CryptoError {
     /// Invalid UTF-8 character in the PEM file.
     #[error("Invalid UTF-8 encoded PEM")]
     Utf8(#[from] std::string::FromUtf8Error),
+    /// TPM.
+    #[error("TPM")]
+    TPM,
 }
 
 /// Generate a Certificate and CSR bundle in PEM format.
 #[derive(Debug)]
 pub(crate) struct Bundle {
-    pub private_key: PrivatePkcs8KeyDer<'static>,
+    pub private_key: Option<PrivatePkcs8KeyDer<'static>>,
     /// PEM encoded CSR
     pub csr: String,
 }
@@ -67,6 +73,11 @@ impl Bundle {
         if cfg!(feature = "openssl") {
             #[cfg(feature = "openssl")]
             return Self::openssl_key(realm, device_id);
+        }
+
+        if cfg!(feature = "keystore-tss") {
+            #[cfg(feature = "keystore-tss")]
+            return Self::tpm_key(realm, device_id);
         }
 
         Self::generate_key(realm, device_id)
@@ -86,9 +97,12 @@ impl Bundle {
         // Singed CSR
         let csr = csr_param.serialize_request(&key_pair)?.pem()?;
         // Subject key_pair
-        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
 
-        Ok(Bundle { private_key, csr })
+        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
+        Ok(Bundle {
+            private_key: Some(private_key),
+            csr,
+        })
     }
 
     #[cfg(feature = "openssl")]
@@ -112,8 +126,28 @@ impl Bundle {
         let csr_bytes = req_builder.build().to_pem()?;
 
         Ok(Bundle {
-            private_key: PrivatePkcs8KeyDer::from(pkey_bytes),
+            private_key: Some(PrivatePkcs8KeyDer::from(pkey_bytes)),
             csr: String::from_utf8(csr_bytes)?,
+        })
+    }
+
+    #[cfg(feature = "keystore-tss")]
+    pub(crate) fn tpm_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
+
+        // Generate a random private key
+        let key_pair = KeyPair::from_remote(Box::new(tpm::RemoteTpmKey))?;
+
+        let mut csr_param = CertificateParams::new([])?;
+        csr_param.distinguished_name = dn;
+
+        // Singed CSR
+        let csr = csr_param.serialize_request(&key_pair)?.pem()?;
+
+        Ok(Bundle {
+            private_key: None,
+            csr,
         })
     }
 }
@@ -134,14 +168,14 @@ mod tests {
 
         let bundle = bundle.unwrap();
 
-        assert!(!bundle.private_key.secret_pkcs8_der().is_empty());
+        assert!(!bundle.private_key.unwrap().secret_pkcs8_der().is_empty());
         assert!(!bundle.csr.is_empty());
     }
 
     #[test]
     fn test_bundle() {
         let Bundle { private_key, csr } = Bundle::generate_key("realm", "device_id").unwrap();
-        assert!(!private_key.secret_pkcs8_der().is_empty());
+        assert!(!private_key.unwrap().secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
         rustls_pemfile::csr(&mut csr.clone().as_bytes())
@@ -154,6 +188,7 @@ mod tests {
     fn test_bundle_sanity_test() {
         // This will check both implementation are compatible
         let Bundle { private_key, csr } = Bundle::generate_key("realm", "device_id").unwrap();
+        let private_key = private_key.unwrap();
         assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
@@ -175,6 +210,7 @@ mod tests {
     #[test]
     fn test_bundle_openssl() {
         let Bundle { private_key, csr } = Bundle::openssl_key("realm", "device_id").unwrap();
+        let private_key = private_key.unwrap();
         assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 
