@@ -461,9 +461,10 @@ impl From<Value> for ProtoPayload {
 
 #[cfg(test)]
 mod test {
+    use core::panic;
+
     use astarte_message_hub_proto::{
-        astarte_data_type_individual::IndividualData, astarte_message::Payload as ProtoPayload,
-        AstarteMessage,
+        astarte_data_type_individual::IndividualData, AstarteMessage, InterfaceProperties,
     };
     use chrono::{DateTime, Utc};
 
@@ -1333,5 +1334,114 @@ mod test {
             .unwrap();
 
         assert_eq!(IndividualData::AstarteDouble(expected_data), double_data);
+    }
+
+    fn make_messagehub_property(
+        path: &str,
+        value: Option<AstarteType>,
+    ) -> astarte_message_hub_proto::Property {
+        astarte_message_hub_proto::Property {
+            path: path.to_owned(),
+            value: Some(value.map_or(
+                astarte_message_hub_proto::property::Value::AstarteUnset(
+                    astarte_message_hub_proto::AstarteUnset {},
+                ),
+                |v| astarte_message_hub_proto::property::Value::AstarteProperty(v.into()),
+            )),
+        }
+    }
+
+    #[test]
+    fn map_property_to_astarte_type() {
+        let value: AstarteType = AstarteType::String("test".to_owned());
+
+        let prop = make_messagehub_property("/path11", Some(value.clone()));
+
+        let astarte_type = AstarteType::try_from(prop).unwrap();
+
+        assert_eq!(value, astarte_type);
+    }
+
+    #[test]
+    fn map_property_to_astarte_type_error() {
+        let prop = make_messagehub_property("/path11", None);
+
+        let astarte_type_err = AstarteType::try_from(prop);
+
+        assert!(matches!(
+            astarte_type_err,
+            Err(MessageHubProtoError::ExpectedField(..))
+        ));
+    }
+
+    #[test]
+    fn from_message_hub_stored_properties_to_internal_ok() {
+        const INTERFACE_1: &str = "com.test.interface1";
+        const INTERFACE_2: &str = "com.test.interface2";
+
+        let interface_properties_map = vec![
+            (
+                INTERFACE_1.to_owned(),
+                InterfaceProperties {
+                    ownership: astarte_message_hub_proto::Ownership::Device.into(),
+                    version_major: 0,
+                    properties: vec![
+                        make_messagehub_property(
+                            "/path11",
+                            Some(AstarteType::String("test".to_owned())),
+                        ),
+                        make_messagehub_property("/path12", Some(AstarteType::Integer(0))),
+                    ],
+                },
+            ),
+            (
+                INTERFACE_2.to_owned(),
+                InterfaceProperties {
+                    ownership: astarte_message_hub_proto::Ownership::Server.into(),
+                    version_major: 0,
+                    properties: vec![
+                        make_messagehub_property(
+                            "/path21",
+                            Some(AstarteType::BinaryBlob(vec![0, 54, 0, 23])),
+                        ),
+                        make_messagehub_property(
+                            "/path22",
+                            Some(AstarteType::Double(std::f64::consts::PI)),
+                        ),
+                    ],
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let message_hub_stored_properties: astarte_message_hub_proto::StoredProperties =
+            astarte_message_hub_proto::StoredProperties {
+                interface_properties: interface_properties_map,
+            };
+
+        let inner_vec = map_set_stored_properties(message_hub_stored_properties).unwrap();
+
+        assert_eq!(inner_vec.len(), 4);
+
+        assert_eq!(
+            inner_vec
+                .iter()
+                .filter(
+                    |p| p.interface == INTERFACE_1 && (p.path == "/path11" || p.path == "/path12")
+                )
+                .count(),
+            2
+        );
+
+        assert_eq!(
+            inner_vec
+                .iter()
+                .filter(
+                    |p| p.interface == INTERFACE_2 && (p.path == "/path21" || p.path == "/path22")
+                )
+                .count(),
+            2
+        );
     }
 }
