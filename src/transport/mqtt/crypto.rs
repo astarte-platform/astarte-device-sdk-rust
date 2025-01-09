@@ -34,6 +34,8 @@ use rustls::pki_types::PrivatePkcs8KeyDer;
 #[cfg(feature = "keystore-tss")]
 use crate::transport::mqtt::tpm;
 
+use crate::transport::mqtt::crypto::KeyProvider::{Private, Tpm};
+use crate::transport::mqtt::tpm::TpmKey;
 #[cfg(feature = "openssl")]
 #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
 pub use openssl;
@@ -58,10 +60,17 @@ pub enum CryptoError {
     TPM,
 }
 
+#[derive(Debug)]
+pub enum KeyProvider {
+    Private(PrivatePkcs8KeyDer<'static>),
+    #[cfg(feature = "keystore-tss")]
+    Tpm(TpmKey),
+}
+
 /// Generate a Certificate and CSR bundle in PEM format.
 #[derive(Debug)]
 pub(crate) struct Bundle {
-    pub private_key: Option<PrivatePkcs8KeyDer<'static>>,
+    pub key_provider: KeyProvider,
     /// PEM encoded CSR
     pub csr: String,
 }
@@ -100,7 +109,7 @@ impl Bundle {
 
         let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
         Ok(Bundle {
-            private_key: Some(private_key),
+            key_provider: Private(private_key),
             csr,
         })
     }
@@ -126,7 +135,7 @@ impl Bundle {
         let csr_bytes = req_builder.build().to_pem()?;
 
         Ok(Bundle {
-            private_key: Some(PrivatePkcs8KeyDer::from(pkey_bytes)),
+            key_provider: Private(PrivatePkcs8KeyDer::from(pkey_bytes)),
             csr: String::from_utf8(csr_bytes)?,
         })
     }
@@ -136,8 +145,10 @@ impl Bundle {
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
 
-        // Generate a random private key
-        let key_pair = KeyPair::from_remote(Box::new(tpm::RemoteTpmKey))?;
+        let tpm_key = TpmKey::new();
+        let key_pair = KeyPair::from_remote(Box::new(tpm::RemoteTpmKey {
+            tpm_key: tpm_key.clone(),
+        }))?;
 
         let mut csr_param = CertificateParams::new([])?;
         csr_param.distinguished_name = dn;
@@ -146,7 +157,7 @@ impl Bundle {
         let csr = csr_param.serialize_request(&key_pair)?.pem()?;
 
         Ok(Bundle {
-            private_key: None,
+            key_provider: Tpm(tpm_key),
             csr,
         })
     }

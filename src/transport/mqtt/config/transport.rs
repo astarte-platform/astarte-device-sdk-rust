@@ -23,7 +23,6 @@ use tracing::{debug, info};
 use url::Url;
 
 use super::tls::ClientAuth;
-use crate::transport::mqtt::config::tls::ClientAuthBuilder;
 use crate::transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError};
 
 /// Structure to create an authenticated [`Transport`]
@@ -96,9 +95,8 @@ impl TransportProvider {
 
         let (bundle, certificate) = self.create_certificate(client).await?;
 
-        let client_auth = ClientAuthBuilder::with_certs(certificate.clone())
-            .map_err(PairingError::InvalidCredentials)?
-            .with_key(bundle.private_key)
+        let client_auth = ClientAuth::new(certificate.clone(), bundle.key_provider)
+            .await
             .map_err(PairingError::InvalidCredentials)?;
 
         client_auth.store(&self.store_dir, &certificate).await;

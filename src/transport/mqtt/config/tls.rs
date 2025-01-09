@@ -27,13 +27,16 @@ use std::{
 };
 
 use crate::error::Report;
+use crate::transport::mqtt::crypto::{Bundle, KeyProvider};
 #[cfg(feature = "keystore-tss")]
 use crate::transport::mqtt::tpm::CertResolver;
+use crate::transport::mqtt::tpm::TpmKey;
 use crate::transport::mqtt::PairingError;
 use itertools::Itertools;
+use rustls::client::WantsClientCert;
 use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    RootCertStore,
+    ClientConfig, RootCertStore,
 };
 use tokio::fs;
 use tracing::{debug, error, warn};
@@ -47,34 +50,21 @@ pub(crate) fn is_env_ignore_ssl() -> bool {
 
 pub(crate) struct ClientAuth {
     certs: Vec<CertificateDer<'static>>,
-    private_key: Option<PrivatePkcs8KeyDer<'static>>,
-}
-
-pub(crate) struct ClientAuthBuilder {
-    client_auth: ClientAuth,
-}
-
-impl ClientAuthBuilder {
-    pub fn with_certs(certs: String) -> Result<Self, io::Error> {
-        let certs = rustls_pemfile::certs(&mut certs.as_bytes()).try_collect()?;
-        Ok(Self {
-            client_auth: ClientAuth {
-                certs,
-                private_key: None,
-            },
-        })
-    }
-
-    pub fn with_key(
-        mut self,
-        private_key: Option<PrivatePkcs8KeyDer<'static>>,
-    ) -> Result<ClientAuth, io::Error> {
-        self.client_auth.private_key = private_key;
-        Ok(self.client_auth)
-    }
+    key_provider: KeyProvider,
 }
 
 impl ClientAuth {
+    pub(crate) async fn new(
+        certificates: String,
+        key_provider: KeyProvider,
+    ) -> Result<Self, io::Error> {
+        let certs = rustls_pemfile::certs(&mut certificates.as_bytes()).try_collect()?;
+        Ok(Self {
+            certs,
+            key_provider,
+        })
+    }
+
     /// Blocking function to read the certificate and the key
     pub(crate) async fn try_read(store_dir: PathBuf) -> Option<Self> {
         let res = tokio::task::spawn_blocking(move || {
@@ -91,7 +81,7 @@ impl ClientAuth {
                 return Err(io::Error::new(io::ErrorKind::Other, "no certificate found"));
             }
 
-            let private_key = if cfg!(feature = "keystore-none") {
+            let crypto_key = if cfg!(feature = "keystore-none") {
                 let key = PrivateKeyFile::new(store_dir);
                 let k_r = std::fs::read(key)?;
                 if k_r.is_empty() {
@@ -100,12 +90,15 @@ impl ClientAuth {
                     return Err(io::Error::new(io::ErrorKind::Other, "no private key found"));
                 }
 
-                Some(PrivatePkcs8KeyDer::from(k_r))
+                KeyProvider::Private(PrivatePkcs8KeyDer::from(k_r))
             } else {
-                None
+                KeyProvider::Tpm(TpmKey::new())
             };
 
-            Ok(ClientAuth { certs, private_key })
+            Ok(ClientAuth {
+                certs,
+                key_provider: crypto_key,
+            })
         })
         .await
         .ok()?;
@@ -137,7 +130,7 @@ impl ClientAuth {
                 error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
             }
 
-            if let Some(private_key) = &self.private_key {
+            if let KeyProvider::Private(private_key) = &self.key_provider {
                 if let Err(err) = fs::write(&private_key_file, private_key.secret_pkcs8_der()).await
                 {
                     error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
@@ -151,36 +144,34 @@ impl ClientAuth {
 
         let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
 
-        if cfg!(feature = "keystore-tss") {
-            #[cfg(feature = "keystore-tss")]
-            return Ok(
-                builder.with_client_cert_resolver(Arc::new(CertResolver { certs: self.certs }))
-            );
-        }
-
-        let private_key = self
-            .private_key
-            .ok_or_else(|| "key not found".to_string())
-            .map_err(PairingError::Config)?;
-
-        builder
-            .with_client_auth_cert(self.certs, private_key.into())
-            .map_err(PairingError::Tls)
+        self.config_build(builder)
     }
 
     pub(crate) async fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
         warn!("INSECURE: ignore TLS certificates");
-
-        let private_key = self
-            .private_key
-            .ok_or_else(|| "key not found".to_string())
-            .map_err(PairingError::Config)?;
-
-        rustls::ClientConfig::builder()
+        let builder = rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
-            .with_client_auth_cert(self.certs, private_key.into())
-            .map_err(PairingError::Tls)
+            .with_custom_certificate_verifier(Arc::new(NoVerifier {}));
+
+        self.config_build(builder)
+    }
+
+    fn config_build(
+        self,
+        builder: rustls::ConfigBuilder<ClientConfig, WantsClientCert>,
+    ) -> Result<ClientConfig, PairingError> {
+        match self.key_provider {
+            KeyProvider::Private(private_key) => builder
+                .with_client_auth_cert(self.certs, private_key.into())
+                .map_err(PairingError::Tls),
+            #[cfg(feature = "keystore-tss")]
+            KeyProvider::Tpm(tpmKey) => {
+                Ok(builder.with_client_cert_resolver(Arc::new(CertResolver {
+                    certs: self.certs,
+                    tpm_key: tpmKey,
+                })))
+            }
+        }
     }
 }
 

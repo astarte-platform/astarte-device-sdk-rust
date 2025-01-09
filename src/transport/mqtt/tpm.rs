@@ -22,7 +22,7 @@ use rcgen::RemoteKeyPair;
 use rustls::pki_types::CertificateDer;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, RwLock};
-#[cfg(feature = "keystore-tss")]
+
 use tss_esapi::{
     attributes::ObjectAttributesBuilder,
     handles::KeyHandle,
@@ -57,12 +57,8 @@ pub(crate) struct TpmKey {
     pub_key: Vec<u8>,
 }
 
-lazy_static::lazy_static! {
-    static ref TPM_Access: TpmKey = TpmKey::new();
-}
-
 impl TpmKey {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let mut tpm_context = Context::new(
             TctiNameConf::from_environment_variable()
                 .expect("Failed to get TCTI / TPM2TOOLS_TCTI from environment. Try `export TCTI=device:/dev/tpmrm0`"),
@@ -129,15 +125,17 @@ impl TpmKey {
     }
 }
 
-pub(crate) struct RemoteTpmKey;
+pub(crate) struct RemoteTpmKey {
+    pub tpm_key: TpmKey,
+}
 
 impl RemoteKeyPair for RemoteTpmKey {
     fn public_key(&self) -> &[u8] {
-        &TPM_Access.pub_key
+        &self.tpm_key.pub_key
     }
 
     fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, rcgen::Error> {
-        TPM_Access
+        self.tpm_key
             .sign(msg)
             .map_err(|err| rcgen::Error::RemoteKeyError)
     }
@@ -147,10 +145,13 @@ impl RemoteKeyPair for RemoteTpmKey {
     }
 }
 
-struct TpmSigner;
+struct TpmSigner {
+    tpm_key: TpmKey,
+}
 
 pub struct CertResolver {
     pub certs: Vec<CertificateDer<'static>>,
+    pub tpm_key: TpmKey,
 }
 
 impl Debug for CertResolver {
@@ -160,15 +161,12 @@ impl Debug for CertResolver {
 }
 
 impl ResolvesClientCert for CertResolver {
-    fn resolve(
-        &self,
-        _: &[&[u8]],
-        sigschemes: &[rustls::SignatureScheme],
-    ) -> Option<Arc<CertifiedKey>> {
-        let signing_key = TpmSigner;
+    fn resolve(&self, _: &[&[u8]], _: &[rustls::SignatureScheme]) -> Option<Arc<CertifiedKey>> {
         Some(Arc::new(CertifiedKey {
             cert: self.certs.clone(),
-            key: Arc::new(signing_key),
+            key: Arc::new(TpmSigner {
+                tpm_key: self.tpm_key.clone(),
+            }),
             ocsp: None,
         }))
     }
@@ -192,7 +190,7 @@ struct EccSignatureAsn1 {
 
 impl Signer for TpmSigner {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
-        TPM_Access
+        self.tpm_key
             .sign(message)
             .map_err(|_| rustls::Error::General("signing failed".into()))
     }
@@ -204,7 +202,9 @@ impl Signer for TpmSigner {
 
 impl SigningKey for TpmSigner {
     fn choose_scheme(&self, offered: &[rustls::SignatureScheme]) -> Option<Box<dyn Signer>> {
-        Some(Box::new(TpmSigner))
+        Some(Box::new(TpmSigner {
+            tpm_key: self.tpm_key.clone(),
+        }))
     }
 
     fn algorithm(&self) -> SignatureAlgorithm {
