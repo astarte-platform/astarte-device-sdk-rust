@@ -854,10 +854,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
-    async fn handle_payload_individual<'a>(
+    async fn handle_payload_individual(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
@@ -911,10 +911,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
-    async fn handle_payload_object<'a>(
+    async fn handle_payload_object(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
