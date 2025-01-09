@@ -70,8 +70,8 @@ pub enum InterfaceError {
     Version(VersionChangeError),
     /// Interface with too many mappings
     #[error(
-        "too many mappings {0}, interfaces can have a max of {} mappings",
-        MAX_INTERFACE_MAPPINGS
+        "too many mappings {0}, interfaces can have a max of {max} mappings",
+        max = MAX_INTERFACE_MAPPINGS
     )]
     TooManyMappings(usize),
 }
