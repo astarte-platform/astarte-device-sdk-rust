@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -376,10 +376,10 @@ impl<S> DeviceClient<S> {
         self.send_msg(msg).await
     }
 
-    async fn send_object_impl<'a, D>(
+    async fn send_object_impl<D>(
         &self,
         interface_name: &str,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error>
@@ -412,11 +412,7 @@ impl<S> DeviceClient<S> {
         self.send_msg(ClientMessage::Object(validated)).await
     }
 
-    async fn unset_prop<'a>(
-        &self,
-        interface_name: &str,
-        path: &MappingPath<'a>,
-    ) -> Result<(), Error>
+    async fn unset_prop(&self, interface_name: &str, path: &MappingPath<'_>) -> Result<(), Error>
     where
         S: PropertyStore,
     {

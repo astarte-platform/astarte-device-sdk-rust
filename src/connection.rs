@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -854,10 +854,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
-    async fn handle_payload_individual<'a>(
+    async fn handle_payload_individual(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where
@@ -911,10 +911,10 @@ impl<S, C> DeviceReceiver<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
-    async fn handle_payload_object<'a>(
+    async fn handle_payload_object(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Value, Option<chrono::DateTime<chrono::Utc>>), TransportError>
     where

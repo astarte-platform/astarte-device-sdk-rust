@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 SECO Mind Srl
+# Copyright 2022 - 2025 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,6 +37,8 @@ jobs:
         with:
           astarte_version: "1.1.1"
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
@@ -57,7 +59,8 @@ jobs:
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Run test
+        # use the full command to use the sccache
         run: |
-          cargo e2e-test
+          cargo run -p e2e-test

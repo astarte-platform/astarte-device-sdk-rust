@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022-2024 SECO Mind Srl
+# Copyright 2022 - 2025 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,13 +47,15 @@ jobs:
         toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install ${{ matrix.toolchain }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo clippy
         run: cargo clippy --all-targets --all-features --workspace -- -D warnings
   doc:
@@ -63,10 +65,12 @@ jobs:
       RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
       - run: cargo docs-rs
@@ -76,10 +80,12 @@ jobs:
     name: ubuntu / stable / features
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo hack
@@ -89,6 +95,8 @@ jobs:
     name: ubuntu / stable / minimal-versions
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install nightly for -Zminimal-versions
@@ -98,7 +106,7 @@ jobs:
       - name: Install cargo minimal-versions
         uses: taiki-e/install-action@cargo-minimal-versions
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: rustup default stable
         run: rustup default stable
       - name: Check minimal versions
@@ -113,12 +121,14 @@ jobs:
     name: ubuntu / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install ${{ matrix.msrv }}
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.msrv }}
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Install cargo hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
@@ -131,7 +141,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
