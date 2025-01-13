@@ -18,22 +18,11 @@
 
 //! MQTT TLS configuration
 
-use std::{
-    fs::File,
-    io::{self, BufReader},
-    sync::Arc,
-};
-
-use itertools::Itertools;
-use rustls::{
-    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    RootCertStore,
-};
-use tracing::{debug, error, warn};
+use std::sync::Arc;
 
 use crate::transport::mqtt::PairingError;
-
-use super::{CertificateFile, PrivateKeyFile};
+use rustls::client::WantsClientCert;
+use rustls::{ClientConfig, ConfigBuilder, RootCertStore};
 
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(
@@ -42,92 +31,7 @@ pub(crate) fn is_env_ignore_ssl() -> bool {
     )
 }
 
-pub(crate) struct ClientAuth {
-    certs: Vec<CertificateDer<'static>>,
-    private_key: PrivatePkcs8KeyDer<'static>,
-}
-
-impl ClientAuth {
-    pub(crate) async fn try_read(
-        certificates: CertificateFile,
-        key: PrivateKeyFile,
-    ) -> Option<Self> {
-        let res = tokio::task::spawn_blocking(|| Self::read_cert_and_key(certificates, key))
-            .await
-            .ok()?;
-
-        match res {
-            Ok(auth) => auth,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                debug!("credential files are missing");
-
-                None
-            }
-            Err(err) => {
-                error!("couldn't read certificates {err}");
-
-                None
-            }
-        }
-    }
-
-    pub(crate) fn try_from_pem_cert(
-        certs: String,
-        private_key: PrivatePkcs8KeyDer<'static>,
-    ) -> Result<Self, io::Error> {
-        let certs = rustls_pemfile::certs(&mut certs.as_bytes()).try_collect()?;
-
-        Ok(Self { certs, private_key })
-    }
-
-    /// Blocking function to read the certificate and the key
-    fn read_cert_and_key(
-        certificates: CertificateFile,
-        key: PrivateKeyFile,
-    ) -> Result<Option<Self>, io::Error> {
-        let c_f = File::open(certificates)?;
-
-        let mut c_r = BufReader::new(c_f);
-        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut c_r).try_collect()?;
-
-        if certs.is_empty() {
-            debug!("no certificate found");
-
-            return Ok(None);
-        }
-
-        let k_r = std::fs::read(key)?;
-        if k_r.is_empty() {
-            debug!("no private key found");
-
-            return Ok(None);
-        }
-        let private_key = PrivatePkcs8KeyDer::from(k_r);
-
-        Ok(Some(ClientAuth { private_key, certs }))
-    }
-
-    pub(crate) async fn tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
-        let roots = read_root_cert_store().await?;
-
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_client_auth_cert(self.certs, self.private_key.into())
-            .map_err(PairingError::Tls)
-    }
-
-    pub(crate) async fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
-        warn!("INSECURE: ignore TLS certificates");
-
-        rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
-            .with_client_auth_cert(self.certs, self.private_key.into())
-            .map_err(PairingError::Tls)
-    }
-}
-
-async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+pub async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
     tokio::task::spawn_blocking(|| {
         let mut root_cert_store = RootCertStore::empty();
 
@@ -144,7 +48,15 @@ async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
 }
 
 #[derive(Debug)]
-struct NoVerifier;
+pub struct NoVerifier;
+
+impl NoVerifier {
+    pub(crate) fn init_insecure_tls_config() -> ConfigBuilder<ClientConfig, WantsClientCert> {
+        ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(Self {}))
+    }
+}
 
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     fn verify_server_cert(
@@ -197,9 +109,11 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use tempfile::TempDir;
-
     use super::*;
+    use crate::transport::mqtt::config::{CertificateFile, PrivateKeyFile};
+    use crate::transport::mqtt::crypto::default::DefaultCryptoProvider;
+    use crate::transport::mqtt::crypto::CryptoProvider;
+    use tempfile::TempDir;
 
     pub(crate) const TEST_CERTIFICATE: &str = include_str!("../../../../tests/certificate.pem");
     pub(crate) const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../../tests/priv-key.der");
@@ -214,13 +128,16 @@ pub(crate) mod tests {
         let key = PrivateKeyFile::new(dir.path());
         tokio::fs::write(&key, TEST_PRIVATE_KEY).await.unwrap();
 
-        let client = ClientAuth::try_read(cert.clone(), key.clone())
+        let crypto_provider = DefaultCryptoProvider::new().unwrap();
+
+        let (certs, private_key) = crypto_provider
+            .read_credentials(dir.path().to_path_buf())
             .await
             .unwrap();
 
-        assert_eq!(client.certs.len(), 1);
+        assert_eq!(certs.len(), 1);
 
-        let cert_der = client.certs.first().unwrap();
+        let cert_der = certs.first().unwrap();
 
         let rustls_pemfile::Item::X509Certificate(exp) =
             rustls_pemfile::read_one_from_slice(TEST_CERTIFICATE.as_bytes())
@@ -233,13 +150,22 @@ pub(crate) mod tests {
 
         assert_eq!(*cert_der, exp);
 
-        assert_eq!(client.private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
+        assert_eq!(private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
 
-        client.tls_config().await.unwrap();
+        crypto_provider
+            .tls_config(read_root_cert_store().await.unwrap(), certs, private_key)
+            .await
+            .unwrap();
 
         // Reuse the file setup
-        let client = ClientAuth::try_read(cert, key).await.unwrap();
+        let (certs, private_key) = crypto_provider
+            .read_credentials(dir.path().to_path_buf())
+            .await
+            .unwrap();
 
-        client.insecure_tls_config().await.unwrap();
+        crypto_provider
+            .insecure_tls_config(NoVerifier::init_insecure_tls_config(), certs, private_key)
+            .await
+            .unwrap();
     }
 }

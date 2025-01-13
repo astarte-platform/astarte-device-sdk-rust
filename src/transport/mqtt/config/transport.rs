@@ -18,18 +18,18 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use itertools::Itertools;
 use rumqttc::Transport;
-use rustls::pki_types::PrivatePkcs8KeyDer;
-use tokio::fs;
-use tracing::{debug, error, info};
+use rustls::pki_types::CertificateDer;
+use tracing::{debug, info};
 use url::Url;
 
-use crate::{
-    error::Report,
-    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
-};
-
-use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use super::tls::{read_root_cert_store, NoVerifier};
+use crate::transport::mqtt::crypto::default::DefaultCryptoProvider;
+#[cfg(feature = "keystore-tss")]
+use crate::transport::mqtt::crypto::tpm::TpmCryptoProvider;
+use crate::transport::mqtt::crypto::CryptoProvider;
+use crate::transport::mqtt::{pairing::ApiClient, PairingError};
 
 /// Structure to create an authenticated [`Transport`]
 #[derive(Debug)]
@@ -56,38 +56,25 @@ impl TransportProvider {
     }
 
     /// Create the certificate using the Astarte API
-    async fn create_certificate(
+    async fn create_certificate<T>(
         &self,
         client: &ApiClient<'_>,
-    ) -> Result<(Bundle, String), PairingError> {
-        let bundle = Bundle::new(client.realm, client.device_id)?;
+        provider: &impl CryptoProvider<Bundle = T>,
+    ) -> Result<(String, T), PairingError> {
+        let (csr, item) = provider.create_csr(client.realm, client.device_id)?;
 
-        let certificate = client.create_certificate(&bundle.csr).await?;
+        let certificate = client.create_certificate(&csr).await?;
 
         debug!("credentials created");
 
-        Ok((bundle, certificate))
-    }
-
-    /// Store the credentials to files.
-    async fn store_credentials(
-        &self,
-        private_key_file: &PrivateKeyFile,
-        private_key: &PrivatePkcs8KeyDer<'_>,
-        certificate_file: &CertificateFile,
-        certificate: &str,
-    ) {
-        // Don't fail here since the SDK can always regenerate the certificate,
-        if let Err(err) = fs::write(&certificate_file, &certificate).await {
-            error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
-        }
-        if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
-            error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
-        }
+        Ok((certificate, item))
     }
 
     /// Read credentials from the filesystem.
-    async fn read_credentials(&self) -> Option<ClientAuth> {
+    async fn read_credentials<T>(
+        &self,
+        provider: &impl CryptoProvider<Bundle = T>,
+    ) -> Option<(Vec<CertificateDer<'static>>, T)> {
         let Some(store_dir) = &self.store_dir else {
             debug!("no store directory");
 
@@ -96,18 +83,23 @@ impl TransportProvider {
 
         debug!("reading existing credentials from {}", store_dir.display());
 
-        let certificate_file = CertificateFile::new(store_dir);
-        let private_key_file = PrivateKeyFile::new(store_dir);
-
-        ClientAuth::try_read(certificate_file, private_key_file).await
+        provider.read_credentials(store_dir.clone()).await
     }
 
     /// Config the TLS for the transport.
-    async fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
+    async fn config_transport<T>(
+        &self,
+        certs: Vec<CertificateDer<'static>>,
+        provider: &impl CryptoProvider<Bundle = T>,
+        pr: T,
+    ) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
-            client_auth.insecure_tls_config().await?
+            provider
+                .insecure_tls_config(NoVerifier::init_insecure_tls_config(), certs, pr)
+                .await?
         } else {
-            client_auth.tls_config().await?
+            let roots = read_root_cert_store().await?;
+            provider.tls_config(roots, certs, pr).await?
         };
 
         Ok(Transport::tls_with_config(
@@ -116,44 +108,41 @@ impl TransportProvider {
     }
 
     /// Creates a new credential and if a store directory is set, it stores it
-    async fn create_credentials(&self, client: &ApiClient<'_>) -> Result<ClientAuth, PairingError> {
+    async fn create_credentials<T>(
+        &self,
+        client: &ApiClient<'_>,
+        provider: &impl CryptoProvider<Bundle = T>,
+    ) -> Result<(Vec<CertificateDer<'static>>, T), PairingError> {
         debug!("creating new transport credentials");
 
-        let (bundle, certificate) = self.create_certificate(client).await?;
+        let (certificate, bundle) = self.create_certificate(client, provider).await?;
 
-        // If no store dir is set we just create a new certificate
-        if let Some(store_dir) = &self.store_dir {
-            let certificate_file = CertificateFile::new(store_dir);
-            let private_key_file = PrivateKeyFile::new(store_dir);
+        provider
+            .store_credential(&self.store_dir, &certificate, &bundle)
+            .await;
 
-            self.store_credentials(
-                &private_key_file,
-                &bundle.private_key,
-                &certificate_file,
-                &certificate,
-            )
-            .await
-        }
+        let certs = rustls_pemfile::certs(&mut certificate.as_bytes())
+            .try_collect()
+            .map_err(PairingError::InvalidCredentials)?;
 
-        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-            .map_err(PairingError::InvalidCredentials)
+        Ok((certs, bundle))
     }
 
     /// Retrieves an already stored certificate or creates a new one
-    async fn retrieve_credentials(
+    async fn retrieve_credentials<T>(
         &self,
         client: &ApiClient<'_>,
-    ) -> Result<ClientAuth, PairingError> {
+        provider: &impl CryptoProvider<Bundle = T>,
+    ) -> Result<(Vec<CertificateDer<'static>>, T), PairingError> {
         debug!("retrieving credentials");
-
         // Return with the existing certificate
-        if let Some(auth) = self.read_credentials().await {
+        if let Some(auth) = self.read_credentials(provider).await {
             info!("existing certificate found");
 
             return Ok(auth);
         }
 
-        self.create_credentials(client).await
+        self.create_credentials(client, provider).await
     }
 
     /// Create a new transport with the given credentials
@@ -161,9 +150,22 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
-        let client_auth = self.retrieve_credentials(client).await?;
+        if !cfg!(feature = "keystore-none") && cfg!(feature = "keystore-tss") {
+            #[cfg(feature = "keystore-tss")]
+            {
+                let crypto_provider = TpmCryptoProvider;
+                let (client_auth, item) =
+                    self.retrieve_credentials(client, &crypto_provider).await?;
+                return self
+                    .config_transport(client_auth, &crypto_provider, item)
+                    .await;
+            }
+        }
 
-        self.config_transport(client_auth).await
+        let crypto_provider = DefaultCryptoProvider::new()?;
+        let (client_auth, item) = self.retrieve_credentials(client, &crypto_provider).await?;
+        self.config_transport(client_auth, &crypto_provider, item)
+            .await
     }
 
     /// Create a new transport, including the creation of new credentials.
@@ -171,9 +173,21 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
-        let client_auth = self.create_credentials(client).await?;
+        if !cfg!(feature = "keystore-none") && cfg!(feature = "keystore-tss") {
+            #[cfg(feature = "keystore-tss")]
+            {
+                let crypto_provider = TpmCryptoProvider;
+                let (client_auth, item) = self.create_credentials(client, &crypto_provider).await?;
+                return self
+                    .config_transport(client_auth, &crypto_provider, item)
+                    .await;
+            }
+        }
 
-        self.config_transport(client_auth).await
+        let crypto_provider = DefaultCryptoProvider::new()?;
+        let (client_auth, item) = self.create_credentials(client, &crypto_provider).await?;
+        self.config_transport(client_auth, &crypto_provider, item)
+            .await
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
@@ -187,10 +201,10 @@ impl TransportProvider {
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::mqtt::config::{CertificateFile, PrivateKeyFile};
+    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
     use mockito::Server;
     use tempfile::TempDir;
-
-    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
 
     use super::*;
 
