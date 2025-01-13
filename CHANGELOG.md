@@ -5,12 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.3] - Unreleased
+## [0.9.3] - 2025-01-24
 
 ### Fixed
 
-- Update `rumqttc` to fix a bug in the MQTT unsubscribe
-  [#403](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/403)
+- Update `rumqttc` to fix a bug in the MQTT unsubscribe [#403]
+
+### Changed
+
+- Bump `rustls` and related dependencies to version `0.23` [#403]
+
+[#403]: https://github.com/astarte-platform/astarte-device-sdk-rust/pull/403
 
 ## [0.9.2] - 2024-11-04
 
