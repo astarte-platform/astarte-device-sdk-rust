@@ -27,16 +27,13 @@
 pub(crate) mod client;
 mod config;
 mod connection;
-pub mod crypto;
+pub(crate) mod crypto;
 pub mod error;
 pub(crate) mod pairing;
 pub(crate) mod payload;
 pub mod registration;
 mod retention;
 pub mod topic;
-
-#[cfg(feature = "keystore-tss")]
-pub(crate) mod tpm;
 
 use std::{
     collections::HashMap,

@@ -18,11 +18,26 @@
 
 //! TPM
 
-use rcgen::RemoteKeyPair;
-use rustls::pki_types::CertificateDer;
 use std::fmt::{Debug, Formatter};
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
+use picky_asn1::wrapper::IntegerAsn1;
+use rcgen::RemoteKeyPair;
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair};
+use rustls::client::{ResolvesClientCert, WantsClientCert};
+use rustls::pki_types::CertificateDer;
+use rustls::sign::{CertifiedKey, Signer, SigningKey};
+use rustls::{ClientConfig, RootCertStore, SignatureAlgorithm};
+use serde::{Deserialize, Serialize};
+use sha2::Digest as Sha2Digest;
+use tss_esapi::abstraction::public::DecodedKey;
+use tss_esapi::constants::tss::{TPM2_RH_NULL, TPM2_ST_HASHCHECK};
+use tss_esapi::interface_types::resource_handles::Hierarchy;
+use tss_esapi::structures::{HashcheckTicket, Public, Signature};
+use tss_esapi::tss2_esys::TPMT_TK_HASHCHECK;
+use tss_esapi::WrapperErrorKind;
 use tss_esapi::{
     attributes::ObjectAttributesBuilder,
     handles::KeyHandle,
@@ -37,27 +52,87 @@ use tss_esapi::{
     Context, TctiNameConf,
 };
 
-use picky_asn1::wrapper::IntegerAsn1;
-use rustls::client::ResolvesClientCert;
-use rustls::sign::{CertifiedKey, Signer, SigningKey};
-use rustls::SignatureAlgorithm;
-use serde::{Deserialize, Serialize};
-use sha2::Digest as Sha2Digest;
-use tss_esapi::abstraction::public::DecodedKey;
-use tss_esapi::constants::tss::{TPM2_RH_NULL, TPM2_ST_HASHCHECK};
-use tss_esapi::interface_types::resource_handles::Hierarchy;
-use tss_esapi::structures::{HashcheckTicket, Public, Signature};
-use tss_esapi::tss2_esys::TPMT_TK_HASHCHECK;
-use tss_esapi::WrapperErrorKind;
+use crate::transport::mqtt::crypto::{CryptoError, CryptoProvider};
+use crate::transport::mqtt::PairingError;
+
+pub struct TpmCryptoProvider;
+
+impl CryptoProvider for TpmCryptoProvider {
+    type Bundle = TpmHandle;
+
+    fn create_csr(
+        &self,
+        realm: &str,
+        device_id: &str,
+    ) -> Result<(String, Self::Bundle), CryptoError> {
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
+
+        let tpm_key = TpmHandle::new();
+        let key_pair = KeyPair::from_remote(Box::new(RemoteTpmKey {
+            tpm_key: tpm_key.clone(),
+        }))?;
+
+        let mut csr_param = CertificateParams::new([])?;
+        csr_param.distinguished_name = dn;
+
+        // Signed CSR
+        let csr = csr_param.serialize_request(&key_pair)?.pem()?;
+        Ok((csr, tpm_key))
+    }
+
+    async fn read_bundle(
+        &self,
+        store_dir: PathBuf,
+    ) -> Result<(Vec<CertificateDer<'static>>, Self::Bundle), io::Error> {
+        let res: Result<Vec<CertificateDer<'_>>, io::Error> =
+            tokio::task::spawn_blocking(move || {
+                let certificate = Self::read_certificate(&store_dir)?;
+                Ok(certificate)
+            })
+            .await?;
+
+        let tpm_handle = TpmHandle::new();
+        Ok((res?, tpm_handle))
+    }
+
+    async fn store_bundle(&self, _: &Path, _: &Self::Bundle) {}
+
+    async fn insecure_tls_config(
+        &self,
+        builder: rustls::ConfigBuilder<ClientConfig, WantsClientCert>,
+        certificates: Vec<CertificateDer<'static>>,
+        item: Self::Bundle,
+    ) -> Result<rustls::ClientConfig, PairingError> {
+        Ok(builder.with_client_cert_resolver(Arc::new(CertResolver {
+            certs: certificates,
+            tpm_key: item,
+        })))
+    }
+
+    async fn tls_config(
+        &self,
+        roots: RootCertStore,
+        certificates: Vec<CertificateDer<'static>>,
+        item: Self::Bundle,
+    ) -> Result<ClientConfig, PairingError> {
+        Ok(ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_client_cert_resolver(Arc::new(CertResolver {
+                certs: certificates,
+                tpm_key: item,
+            })))
+    }
+}
 
 #[derive(Debug, Clone)]
-pub(crate) struct TpmKey {
+pub(crate) struct TpmHandle {
     context: Arc<RwLock<Context>>,
     key_handle: KeyHandle,
     pub_key: Vec<u8>,
 }
 
-impl TpmKey {
+impl TpmHandle {
     pub fn new() -> Self {
         let mut tpm_context = Context::new(
             TctiNameConf::from_environment_variable()
@@ -126,7 +201,7 @@ impl TpmKey {
 }
 
 pub(crate) struct RemoteTpmKey {
-    pub tpm_key: TpmKey,
+    pub tpm_key: TpmHandle,
 }
 
 impl RemoteKeyPair for RemoteTpmKey {
@@ -146,12 +221,12 @@ impl RemoteKeyPair for RemoteTpmKey {
 }
 
 struct TpmSigner {
-    tpm_key: TpmKey,
+    tpm_key: TpmHandle,
 }
 
 pub struct CertResolver {
     pub certs: Vec<CertificateDer<'static>>,
-    pub tpm_key: TpmKey,
+    pub tpm_key: TpmHandle,
 }
 
 impl Debug for CertResolver {
