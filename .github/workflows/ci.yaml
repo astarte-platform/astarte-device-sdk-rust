@@ -55,7 +55,8 @@ jobs:
     needs: [warmup-caches]
   e2e-test:
     uses: ./.github/workflows/e2e-test.yaml
-    needs: [warmup-caches]
+    # doesn't need to wait for the cache since creating the astarte cluster takes longer
+    needs: [reuse, dco]
   multi-platform:
     uses: ./.github/workflows/multi-platform.yaml
     needs: [reuse, dco]

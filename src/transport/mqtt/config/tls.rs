@@ -29,7 +29,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
     RootCertStore,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::transport::mqtt::PairingError;
 
@@ -131,12 +131,15 @@ async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
     tokio::task::spawn_blocking(|| {
         let mut root_cert_store = RootCertStore::empty();
 
-        let native_certs =
-            rustls_native_certs::load_native_certs().map_err(PairingError::Native)?;
+        let res = rustls_native_certs::load_native_certs();
 
-        for cert in native_certs {
-            root_cert_store.add(cert).map_err(PairingError::Tls)?;
+        for err in res.errors {
+            error!(error = %crate::error::Report::new(err), "couldn't load root certificate");
         }
+
+        let (added, ignored) = root_cert_store.add_parsable_certificates(res.certs);
+
+        trace!("loaded {added} certs and {ignored} ignored");
 
         Ok(root_cert_store)
     })
