@@ -86,6 +86,8 @@ reqwest = { workspace = true, features = ["macos-system-configuration"] }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
+astarte-message-hub-proto = { workspace = true }
+astarte-message-hub-proto-mock = { workspace = true }
 async-trait = { workspace = true }
 color-eyre = { workspace = true }
 env_logger = { workspace = true }
