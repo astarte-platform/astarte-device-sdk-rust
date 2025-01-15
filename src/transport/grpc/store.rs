@@ -190,133 +190,159 @@ impl PropertyStore for GrpcStore {
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
     use std::str::FromStr;
 
-    use astarte_message_hub_proto::pbjson_types::Empty;
-    use astarte_message_hub_proto::InterfacesName;
+    use astarte_message_hub_proto::tonic;
     use astarte_message_hub_proto::PropertyIdentifier;
     use astarte_message_hub_proto::StoredPropertiesFilter;
+    use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
 
+    use super::super::test::InterfaceRequestUtils;
     use super::GrpcStore;
+    use super::MsgHubClient;
     use super::PropertyStore;
     use crate::interface::Ownership;
     use crate::store::PropertyMapping;
     use crate::store::StoredProp;
-    use crate::transport::grpc::test::build_test_message_hub_server;
-    use crate::transport::grpc::test::expect_messages;
-    use crate::transport::grpc::test::ServerReceivedRequest;
-    use crate::transport::grpc::test::ID;
-    use crate::transport::Disconnect;
-    use crate::transport::{
-        grpc::test::{mock_astarte_grpc_client, mock_grpc_actors},
-        Interfaces,
-    };
+    use crate::transport::grpc::convert::test::new_property;
+    use crate::AstarteType;
     use crate::Interface;
 
     #[tokio::test]
     async fn test_grpc_store_grpc_client_calls() {
-        let (server_impl, mut channels) = build_test_message_hub_server();
-        let (server_future, client_future) = mock_grpc_actors(server_impl)
-            .await
-            .expect("Could not construct test client and server");
-
-        channels.server_response_sender.send(vec![]).await.unwrap();
-
-        let client_operations = async move {
-            let client = client_future.await;
-            let grpc_store = GrpcStore::new(client.clone());
-            // When the grpc connection gets created the attach methods is called
-            let (mut client, _connection) =
-                mock_astarte_grpc_client(client.clone(), &Interfaces::new(), grpc_store.clone())
-                    .await
-                    .unwrap();
-
-            let _device_properties = grpc_store.device_props().await.unwrap();
-            let _server_properties = grpc_store.server_props().await.unwrap();
-
-            let device_interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
-            let _device_interface_properties = grpc_store
-                .interface_props(&(&device_interface).into())
-                .await
-                .unwrap();
-
-            let server_interface = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
-            let _server_interface_properties = grpc_store
-                .interface_props(&(&server_interface).into())
-                .await
-                .unwrap();
-
-            let device_path = "/path1";
-            let device_prop_info =
-                PropertyMapping::new_unchecked((&device_interface).into(), device_path);
-            let _device_prop = grpc_store.load_prop(&device_prop_info, 1).await;
-            // no request should be made
-            let server_path = "/path1";
-            let server_prop_info =
-                PropertyMapping::new_unchecked((&server_interface).into(), server_path);
-            let _server_prop = grpc_store.load_prop(&server_prop_info, 1).await;
-
-            // manually calling detach
-            client.disconnect().await.unwrap();
-        };
-
-        tokio::select! {
-            _ = server_future => panic!("The server closed before the client could complete sending the data"),
-            _ = client_operations => println!("Client sent its data"),
-        }
-
         let device_interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
         let server_interface = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
-        expect_messages!(channels.server_request_receiver.try_recv();
-            // connection creation attach
-            ServerReceivedRequest::Attach((id, _)) if id == ID,
-            // load device properties should call the message hub
-            ServerReceivedRequest::GetAllProperties(StoredPropertiesFilter {
-                ownership: Some(ownership),
-            }) if ownership == astarte_message_hub_proto::Ownership::Device as i32,
-            // load server properties should call the message hub
-            ServerReceivedRequest::GetAllProperties(StoredPropertiesFilter {
-                ownership: Some(ownership),
-            }) if ownership == astarte_message_hub_proto::Ownership::Server as i32,
-            // if a property interface is device owned the message hub should be called
-            ServerReceivedRequest::GetProperties(InterfacesName {
-                names,
-            }) if names.len() == 1 && names.first().unwrap() == device_interface.interface_name(),
-            // if a property interface is server owned the message hub should also be called
-            ServerReceivedRequest::GetProperties(InterfacesName {
-                names,
-            }) if names.len() == 1 && names.first().unwrap() == server_interface.interface_name(),
-            // loading a device property from the message hub
-            ServerReceivedRequest::GetProperty(PropertyIdentifier {
-                interface_name,
-                path,
-            }) if interface_name == device_interface.interface_name() && path == "/path1",
-            // loading a server property from the message hub
-            ServerReceivedRequest::GetProperty(PropertyIdentifier {
-                interface_name,
-                path,
-            }) if interface_name == server_interface.interface_name() && path == "/path1",
-            // detach
-            ServerReceivedRequest::Detach(Empty {}),
-        );
+        const PATH: &str = "/path1";
+        let mut seq = Sequence::new();
+        let mut mock_store_client = MsgHubClient::new();
+        // device
+        mock_store_client
+            .expect_get_property::<astarte_message_hub_proto::PropertyIdentifier>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(predicate::function(|i: &PropertyIdentifier| {
+                i.interface_name
+                    == Interface::from_str(crate::test::DEVICE_PROPERTIES)
+                        .unwrap()
+                        .interface_name()
+                    && i.path == PATH
+            }))
+            .returning(|_i| Ok(tonic::Response::new(new_property(PATH.to_string(), None))));
+        // server
+        mock_store_client
+            .expect_get_property::<astarte_message_hub_proto::PropertyIdentifier>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(predicate::function(|r: &PropertyIdentifier| {
+                r.interface_name
+                    == Interface::from_str(crate::test::SERVER_PROPERTIES)
+                        .unwrap()
+                        .interface_name()
+                    && r.path == PATH
+            }))
+            .returning(|_i| Ok(tonic::Response::new(new_property(PATH.to_string(), None))));
+        // device
+        mock_store_client
+            .expect_get_all_properties::<astarte_message_hub_proto::StoredPropertiesFilter>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(predicate::function(|r: &StoredPropertiesFilter| {
+                r.ownership == Some(astarte_message_hub_proto::Ownership::Device as i32)
+            }))
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::StoredProperties {
+                        interface_properties: HashMap::new(),
+                    },
+                ))
+            });
+        // server
+        mock_store_client
+            .expect_get_all_properties::<astarte_message_hub_proto::StoredPropertiesFilter>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .with(predicate::function(|r: &StoredPropertiesFilter| {
+                r.ownership == Some(astarte_message_hub_proto::Ownership::Server as i32)
+            }))
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::StoredProperties {
+                        interface_properties: HashMap::new(),
+                    },
+                ))
+            });
+        // device
+        mock_store_client
+            .expect_get_properties::<astarte_message_hub_proto::InterfacesName>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(move |r| {
+                r.match_interfaces(&[Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap()])
+                    .unwrap()
+            })
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::StoredProperties {
+                        interface_properties: HashMap::new(),
+                    },
+                ))
+            });
+        // server
+        mock_store_client
+            .expect_get_properties::<astarte_message_hub_proto::InterfacesName>()
+            .times(1)
+            .in_sequence(&mut seq)
+            .withf(move |r| {
+                r.match_interfaces(&[Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()])
+                    .unwrap()
+            })
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::StoredProperties {
+                        interface_properties: HashMap::new(),
+                    },
+                ))
+            });
+
+        let grpc_store = GrpcStore::new(mock_store_client);
+
+        let device_prop_info = PropertyMapping::new_unchecked((&device_interface).into(), PATH);
+        // the server should be called
+        let _device_prop = grpc_store.load_prop(&device_prop_info, 1).await;
+
+        let server_prop_info = PropertyMapping::new_unchecked((&server_interface).into(), PATH);
+        // the server should be called
+        let _server_prop = grpc_store.load_prop(&server_prop_info, 1).await;
+
+        // the server should be called
+        let _device_properties = grpc_store.device_props().await.unwrap();
+        // the server should be called
+        let _server_properties = grpc_store.server_props().await.unwrap();
+
+        let device_interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        // the server should be called
+        let _device_interface_properties = grpc_store
+            .interface_props(&(&device_interface).into())
+            .await
+            .unwrap();
+
+        let server_interface = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
+        // the server should be called
+        let _server_interface_properties = grpc_store
+            .interface_props(&(&server_interface).into())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn test_grpc_store_device_prop_not_stored() {
-        let (server_impl, mut _channels) = build_test_message_hub_server();
-        let (_server_future, client_future) = mock_grpc_actors(server_impl)
-            .await
-            .expect("Could not construct test client and server");
-
-        let client = client_future.await;
-        let grpc_store = GrpcStore::new(client);
-
-        let inner_value = crate::AstarteType::Integer(1);
-        let path = "/path1";
+        let inner_value = AstarteType::Integer(1);
+        const PATH: &str = "/path1";
         let server_interface = "com.server.interface";
         let server_prop = StoredProp {
             interface: server_interface,
-            path,
+            path: PATH,
             value: &inner_value,
             interface_major: 1,
             ownership: Ownership::Server,
@@ -325,20 +351,39 @@ mod test {
         let device_interface = "com.device.interface";
         let device_prop = StoredProp {
             interface: device_interface,
-            path,
+            path: PATH,
             value: &inner_value,
             interface_major: 1,
             ownership: Ownership::Device,
         };
         let device_interface_data = &(&device_prop).into();
 
+        let mock_store_client = MsgHubClient::new();
+        let grpc_store = GrpcStore::new(mock_store_client);
+
+        // we do not store anything locally so no action should be performed
+
         // no actions or calls to the server should be performed
         grpc_store.store_prop(server_prop).await.unwrap();
         // no actions or calls to the server should be performed
         grpc_store.store_prop(device_prop).await.unwrap();
         // no actions or calls to the server should be performed
+        grpc_store.unset_prop(server_interface_data).await.unwrap();
+        // no actions or calls to the server should be performed
+        grpc_store.unset_prop(device_interface_data).await.unwrap();
+        // no actions or calls to the server should be performed
         grpc_store.delete_prop(server_interface_data).await.unwrap();
         // no actions or calls to the server should be performed
         grpc_store.delete_prop(device_interface_data).await.unwrap();
+        // no actions or calls to the server should be performed
+        grpc_store
+            .delete_interface(server_interface_data)
+            .await
+            .unwrap();
+        // no actions or calls to the server should be performed
+        grpc_store
+            .delete_interface(device_interface_data)
+            .await
+            .unwrap();
     }
 }

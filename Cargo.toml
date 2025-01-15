@@ -66,6 +66,7 @@ astarte-message-hub-proto = { workspace = true, optional = true }
 base64 = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
 bytes = { workspace = true }
+cfg-if = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 flate2 = { workspace = true }
 flume = { workspace = true, features = ["async"] }
@@ -98,6 +99,8 @@ reqwest = { workspace = true, features = ["macos-system-configuration"] }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
+astarte-message-hub-proto = { workspace = true }
+astarte-message-hub-proto-mock = { workspace = true }
 async-trait = { workspace = true }
 color-eyre = { workspace = true }
 env_logger = { workspace = true }
@@ -131,11 +134,13 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.6" }
 astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
-astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "27f386114528ceeeb81440879f259146fbed6052" }
+astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "20ba40215172613bfab149676adf0dbd9f3ccc92" }
+astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "20ba40215172613bfab149676adf0dbd9f3ccc92" }
 async-trait = "0.1.67"
 base64 = "0.22.0"
 bson = "2.7.0"
 bytes = "1.5.0"
+cfg-if = "1.0.0"
 chrono = "0.4.20"
 color-eyre = "0.6.3"
 env_logger = "0.11.0"

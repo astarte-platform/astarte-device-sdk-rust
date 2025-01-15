@@ -415,6 +415,9 @@ impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
     }
 }
 
+// TODO this is incomplete, no way of creating a PropertyIndividual with a set value
+// refactor value to include a property type or find a way of stashing that information
+// somewhere
 impl From<Value> for ProtoPayload {
     fn from(value: Value) -> Self {
         match value {
@@ -460,6 +463,16 @@ pub(crate) mod test {
             path,
             timestamp: timestamp.map(pbjson_types::Timestamp::from),
             payload: Some(payload),
+        }
+    }
+
+    pub(crate) fn new_property(
+        path: String,
+        data: Option<AstarteType>,
+    ) -> astarte_message_hub_proto::Property {
+        astarte_message_hub_proto::Property {
+            path,
+            data: data.map(|s| s.into()),
         }
     }
 
