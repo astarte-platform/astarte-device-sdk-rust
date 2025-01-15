@@ -412,7 +412,7 @@ impl TryFrom<&Variant> for IndividualMapping {
             .attrs
             .iter()
             .filter_map(|attr| parse_attribute_list::<MappingAttr>(attr, "mapping"))
-            .last()
+            .next_back()
             .ok_or(syn::Error::new(
                 value.span(),
                 r#"missing `#[mapping(endpoint = "...")] attribute for variant "#,
