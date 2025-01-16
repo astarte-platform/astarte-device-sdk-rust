@@ -25,6 +25,7 @@ pub mod aggregate;
 pub mod builder;
 pub mod client;
 pub mod connection;
+pub mod _docs;
 pub mod error;
 pub mod event;
 pub mod interface;

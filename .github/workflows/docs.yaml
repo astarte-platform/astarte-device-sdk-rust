@@ -62,7 +62,9 @@ jobs:
       OUR_FILE: 'docs/get-started.md'
       THEIR_FILE: './sdk-doc/source/get_started/rust.md'
     steps:
+      # clone the astarte-device-sdk repo
       - uses: actions/checkout@v4
+      # clone the sdk-doc repo
       - uses: actions/checkout@v4
         with:
           repository: astarte-platform/sdk-doc
