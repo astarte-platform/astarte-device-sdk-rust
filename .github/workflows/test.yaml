@@ -22,6 +22,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
@@ -30,15 +33,17 @@ env:
   RUST_LOG: trace
 jobs:
   required:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / ${{ matrix.toolchain }}
     strategy:
       matrix:
         toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get -y install libsqlite3-dev libssl-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install ${{ matrix.toolchain }}
         uses: dtolnay/rust-toolchain@master
         with:
@@ -54,16 +59,18 @@ jobs:
       - name: Run cargo test --doc
         run: cargo test --locked --all-features --doc --workspace
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / stable / coverage
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get -y install libsqlite3-dev libssl-dev
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: llvm-tools-preview
+          components: llvm-tools
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo install cargo-tarpaulin
@@ -72,11 +79,11 @@ jobs:
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
       - name: Run cargo-tarpaulin with xml output
-        run: cargo tarpaulin --engine llvm --locked --all-features --ignore-tests --lib --out xml -- --test-threads 1
+        run: cargo +stable tarpaulin --engine llvm --locked --all-features --ignore-tests --lib --out xml -- --test-threads 1
       # Upload the coverage if we are not a PR from a fork, see ".github/workflows/coverage.yaml"
       - name: Upload to codecov.io
         if: ${{ github.event_name == 'push' }}
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
