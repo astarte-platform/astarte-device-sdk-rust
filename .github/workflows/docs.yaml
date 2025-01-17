@@ -74,8 +74,12 @@ jobs:
       - name: Compare and copy get started
         id: cmp-and-copy-get-started
         run: |
+          # remove hidden portion of documentation
+          file="$(mktemp)"
+          ./scripts/convert-get-started.sh "$OUR_FILE" > $file
+
           # use diff to print to stderr the changes between the files
-          status="$(diff "$OUR_FILE" "$THEIR_FILE" 1>&2; echo "$?")"
+          status="$(diff "$file" "$THEIR_FILE" 1>&2; echo "$?")"
           if [[ $status == '0' ]]; then
             echo "Get started are identical, no need for update"
             exit 0
@@ -85,7 +89,7 @@ jobs:
           fi
 
           echo "Updating get started"
-          cp -v "$OUR_FILE" "$THEIR_FILE"
+          cp -v "$file" "$THEIR_FILE"
 
           cd sdk-doc
           git config --local user.email "astarte-machine@ispirata.com"

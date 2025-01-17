@@ -16,6 +16,4 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! ## Get started
-
 #![doc = include_str!("../../docs/get-started.md")]

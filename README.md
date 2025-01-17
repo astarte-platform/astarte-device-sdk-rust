@@ -25,7 +25,8 @@ pairing primitives to an Astarte Cluster.
 See the [Astarte documentation](https://docs.astarte-platform.org/latest/001-intro_user.html)
 for more information regarding Astarte and the available SDKs.
 
-See the [Get started](docs/get-started.md) guide for a better understanding of the Rust SDK functionalities.
+See the [Get started](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_get_started/index.html) guide
+for a better understanding of the Rust SDK functionalities.
 
 ## Building the library
 

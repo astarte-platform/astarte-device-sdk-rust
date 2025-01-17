@@ -16,5 +16,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! # Documentation
+//! # SDK documentation files
 pub mod _get_started;
