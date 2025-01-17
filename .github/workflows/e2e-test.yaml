@@ -30,6 +30,8 @@ env:
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
   RUST_LOG: debug
+  ASTARTE_PROTOCOL: https
+  ASTARTE_BASE_DOMAIN: autotest.astarte-platform.org
   E2E_REALM: "test"
   E2E_API_URL: https://api.autotest.astarte-platform.org/appengine
   E2E_PAIRING_URL: https://api.autotest.astarte-platform.org/pairing
@@ -45,6 +47,9 @@ jobs:
         run: |
           sudo apt update
           sudo apt-get -y install libsqlite3-dev libssl-dev
+      - name: Wait for Astarte to be healthy
+        timeout-minutes: 10
+        run: ./scripts/wait-for-astarte.sh
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
