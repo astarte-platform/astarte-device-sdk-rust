@@ -55,3 +55,9 @@ path = ["CHANGELOG.md", "**/CHANGELOG.md"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2023-2024 SECO Mind Srl"
 SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = ["assets/logos/*"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 SECO Mind Srl"
+SPDX-License-Identifier = "Apache-2.0"
