@@ -18,17 +18,147 @@ This get started will focus on creating a device and connecting it to an Astarte
 don't have access to an Astarte instance you can easily set up one following our
 [Astarte quick instance guide](https://docs.astarte-platform.org/device-sdks/common/astarte_quick_instance.html).
 
-From here on we will assume you have access to an Astarte instance, remote or on a host machine
+From here on we will assume you have access to an Astarte instance, remote or on a local machine
 connected to the same LAN where your device will be connected. Furthermore, we will assume you have
 access to the Astarte dashboard for a realm. The next steps will install the required interfaces and
 register a new device on Astarte using the dashboard. The same operations could be performed using
 `astartectl` and the access token generated in the Astarte quick instance guide.
 
-### Installing the required interfaces
+### Registering the device
 
-The interfaces that our device will use must first be installed within the Astarte instance. In this
-guide we will show how to stream individual and aggregated data as well as how to set and unset
-properties. As a consequence we will need three separated interfaces, one for each data type.
+Devices should be pre-registered to Astarte before their first connection. With the Astarte device
+SDK for Rust this can be achieved in two ways:
+
+- By registering the device on Astarte manually, obtaining a credentials secret and transferring it
+  on the device.
+- By using the included registration utilities provided by the SDK. Those utilities can make use of
+  a registration JWT issued by Astarte and register the device automatically before the first
+  connection.
+
+To keep this guide as simple as possible we will use the first method, as a device can be registered
+using the Astarte dashboard with a couple of clicks.
+
+To install a new device start by opening the dashboard and navigate to the devices tab. Click on
+register a new device, there you can input your own device ID or generate a random one. For example
+you could use the device ID `2TBn-jNESuuHamE2Zo1anA`. Click on register device, this will register
+the device and give you a credentials secret. The credentials secret will be used by the device to
+authenticate itself with Astarte. Copy it somewhere safe as it will be used in the next steps.
+
+## Creating a Rust project
+
+First, make sure you have Rust MSRV of the Astarte or later installed, since it is the MSRV of the
+Astarte device Rust SDK. Then, create a new project:
+
+```bash
+cargo new astarte-rust-project
+```
+
+Then, we need to add the following dependencies in the Cargo.toml file:
+
+- `astarte-device-sdk`, to properly use the Astarte SDK
+- `tokio`, a runtime for writing asynchronous applications
+- `serde` and `serde_json`, for serializing and deserializing Rust data structures. They are useful
+  since we want to retrieve some device configuration stored in a json file
+
+We also suggest you to add the following dependencies
+
+- `tracing` and `tracing_subscriber` for printing and showing the logs of the SDK
+- `eyre` to convert and report the error into a single trait object
+
+You can run the following cargo add command:
+
+```sh
+cargo add astarte-device-sdk --features=derive
+cargo add tokio --features=full
+cargo add serde serde-json --features=serde/derive
+cargo add tracing tracing-subscriber
+cargo add eyre
+```
+
+To easily load the Astarte configuration information, such as the realm name, the astarte instance
+endpoint, the device id and the pairing url, you could set some environment variables or store them
+in a `config.json` file, like the following:
+
+```json
+{
+  "realm": "Realm name",
+  "device_id": "Device ID",
+  "credentials_secret": "Credentials secret",
+  "pairing_url": "Pairing URL"
+}
+```
+
+We previously added three interfaces to our Astarte instance. We also need to save the three
+interfaces in JSON files, for instance in a `interfaces` folder in your working directory. These
+will be retrieved, parsed and then used during the device connection
+
+## Instantiating and connecting a device
+
+Finally, we can start with the source code of our device application. We will first create a new
+device using the device ID and credentials secret we obtained in the previous steps.
+
+```no_run
+use std::time::{Duration, SystemTime};
+
+use astarte_device_sdk::{
+    builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
+    transport::mqtt::MqttConfig,
+};
+use serde::Deserialize;
+use tokio::task::JoinSet;
+use tracing::{error, info};
+
+type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// structure used to deserialize the content of the config.json file containing the
+/// astarte device connection information
+#[derive(Deserialize)]
+struct Config {
+    realm: String,
+    device_id: String,
+    credentials_secret: String,
+    pairing_url: String,
+}
+
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    tracing_subscriber::fmt::init();
+    let now = SystemTime::now();
+
+    // Load the device configuration
+    let file = std::fs::read_to_string("configuration.json")?;
+    let cfg: Config = serde_json::from_str(&file)?;
+
+    let mut mqtt_config = MqttConfig::with_credential_secret(
+        &cfg.realm,
+        &cfg.device_id,
+        &cfg.credentials_secret,v
+        &cfg.pairing_url,
+    );
+    mqtt_config.ignore_ssl_errors();
+
+    let (client, connection) = DeviceBuilder::new()
+        .store(MemoryStore::new())
+        .connect(mqtt_config)
+        .await?
+        .build()
+        .await;
+
+    info!("Connection to Astarte established.");
+
+    Ok(())
+}
+```
+
+You can run the application with `cargo run` and see in the Astarte Dashboard that the device
+appears as connected.
+
+## Installing the required interfaces
+
+Up to now we have connected a device to Astarte, but we haven't installed any interface the device
+must use to send and/or receive data to/from Astarte. Since we want to show how to stream individual
+and aggregated data as well as how to set and unset properties, we first need to install the
+required interfaces. In this guide, we need three separated interfaces one for each data type.
 
 The following is the definition of the individually aggregated interface:
 
@@ -96,144 +226,35 @@ And finally the definition of the property interface:
 }
 ```
 
-To install the three interfaces in the Astarte instance, open the Astarte dashboard, navigate to the
-interfaces tab and click on install new interface. You can copy and paste the JSON files for each
-interface in the right box overwriting the default template.
+These must also be saved as `JSON` files (in the format `<INTERFACE_NAME>.json`) in a directory
+which will then be used when building th SDK. Thus:
 
-### Registering the device
+1. Create an `interface` directory
+   ```sh
+   mkdir interfaces
+   ```
 
-Devices should be pre-registered to Astarte before their first connection. With the Astarte device
-SDK for Rust this can be achieved in two ways:
+2. Save the previously shown interfaces in JSON files or download them using the `curl` command as
+   follows:
+   ```bash
+   curl --output-dir interfaces --fail --remote-name-all \
+       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Individual.json' \
+       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Aggregated.json' \
+       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Property.json'
+   ```
 
-- By registering the device on Astarte manually, obtaining a credentials secret and transferring it
-  on the device.
-- By using the included registration utilities provided by the SDK. Those utilities can make use of
-  a registration JWT issued by Astarte and register the device automatically before the first
-  connection.
+To install them in the Astarte instance, you could use one of the following methodologies:
 
-To keep this guide as simple as possible we will use the first method, as a device can be registered
-using the Astarte dashboard with a couple of clicks.
+- Open the Astarte dashboard, navigate to the interfaces tab and click on install new interface.
+  Then copy and paste the JSON files for each interface in the right box overwriting the default
+  template.
+- Use the `astartectl` tool as follows:
+  ```bash
+  astartectl realm-management interfaces sync -u <ASTARTE_URL> -r <REALM_NAME> \
+    -k <REALM_PRIV_KEY> <INTRERFACE_DIR/*json>
+  ```
 
-To install a new device start by opening the dashboard and navigate to the devices tab. Click on
-register a new device, there you can input your own device ID or generate a random one. For example
-you could use the device ID `2TBn-jNESuuHamE2Zo1anA`. Click on register device, this will register
-the device and give you a credentials secret. The credentials secret will be used by the device to
-authenticate itself with Astarte. Copy it somewhere safe as it will be used in the next steps.
-
-## Creating a Rust project
-
-First, make sure you have Rust v1.78.0 or later installed, since it is the MSRV of the Astarte
-device Rust SDK. Then, create a new project:
-
-```bash
-cargo new astarte-rust-project
-```
-
-Then, we need to add the following dependencies in the Cargo.toml file:
-
-- `astarte-device-sdk`, to properly use the Astarte SDK
-- `tokio`, a runtime for writing asynchronous applications
-- `serde` and `serde_json`, for serializing and deserializing Rust data structures. They are useful
-  since we want to retrieve some device configuration stored in a json file.
-
-We also suggest you to add the following dependencies
-
-- `tracing` and `env_logger`, for a better logging experience
-
-Thus, the content of the Cargo.toml file will:
-
-```toml
-[package]
-name = "astarte-rust-project"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-astarte-device-sdk = { version = "0.9.2", features = ["derive"] }
-tokio = { version = "1.42.0", features = ["signal"] }
-serde = { version = "1.0.217", features = ["derive"] }
-tracing = "0.1.41"
-env_logger = "0.11.5"
-serde_json = "1.0.135"
-```
-
-To easily load the Astarte configuration information, such as the realm name, the astarte instance
-endpoint, the device id and the pairing url, you could set some environment variables or store them
-in a `config.json` file, like the following:
-
-```json
-{
-  "realm": "Realm name",
-  "device_id": "Device ID",
-  "credentials_secret": "Credentials secret",
-  "pairing_url": "Pairing URL"
-}
-```
-
-We previously added three interfaces to our Astarte instance. We also need to save the three
-interfaces in JSON files, for instance in a `interfaces` folder in your working directory. These
-will be retrieved, parsed and then used during the device connection
-
-## Instantiating and connecting a device
-
-Finally, we can start with the source code of our device application. We will first create a new
-device using the device ID and credentials secret we obtained in the previous steps.
-
-```no_run
-use std::time::{Duration, SystemTime};
-
-use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
-};
-use serde::Deserialize;
-use tokio::task::JoinSet;
-use tracing::{error, info};
-
-type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-/// structure used to deserialize the content of the config.json file containing the
-/// astarte device connection information
-#[derive(Deserialize)]
-struct Config {
-    realm: String,
-    device_id: String,
-    credentials_secret: String,
-    pairing_url: String,
-}
-
-#[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
-    let now = SystemTime::now();
-
-    // Load the device configuration
-    let file = std::fs::read_to_string("configuration.json")?;
-    let cfg: Config = serde_json::from_str(&file)?;
-
-    let mut mqtt_config = MqttConfig::with_credential_secret(
-        &cfg.realm,
-        &cfg.device_id,
-        &cfg.credentials_secret,
-        &cfg.pairing_url,
-    );
-    mqtt_config.ignore_ssl_errors();
-
-    let (client, connection) = DeviceBuilder::new()
-        .store(MemoryStore::new())
-        .interface_directory("interfaces")?
-        .connect(mqtt_config)
-        .await?
-        .build()
-        .await;
-
-    info!("Connection to Astarte established.");
-
-    Ok(())
-}
-```
-
-## Polling device events
+## Receiving device events
 
 After device initialization and connection, the device will need to be polled regularly to ensure
 the processing of MQTT messages.
@@ -265,7 +286,7 @@ and transmission.
 # }
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-#   env_logger::init();
+#   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
 #   let file = std::fs::read_to_string("configuration.json")?;
@@ -354,7 +375,7 @@ interface.
 # }
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-#   env_logger::init();
+#   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
 #   let file = std::fs::read_to_string("configuration.json")?;
@@ -464,7 +485,7 @@ struct DataObject {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-#   env_logger::init();
+#   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
 #   let file = std::fs::read_to_string("configuration.json")?;
@@ -572,7 +593,7 @@ interface.
 # }
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
-#   env_logger::init();
+#   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
 #   let file = std::fs::read_to_string("configuration.json")?;

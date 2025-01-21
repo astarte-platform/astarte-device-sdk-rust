@@ -1,0 +1,15 @@
+{
+  "interface_name": "org.astarte-platform.rust.get-started.Individual",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "ownership": "device",
+  "description": "Individual interface for the get-started of the Astarte device SDK for the Rust programming language.",
+  "mappings": [
+    {
+      "endpoint": "/double_endpoint",
+      "type": "double",
+      "explicit_timestamp": false
+    }
+  ]
+}
