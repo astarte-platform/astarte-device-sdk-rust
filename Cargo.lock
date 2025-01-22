@@ -143,6 +143,7 @@ dependencies = [
  "bson",
  "bytes",
  "chrono",
+ "color-eyre",
  "env_logger",
  "flate2",
  "flume",
@@ -170,6 +171,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

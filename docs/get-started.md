@@ -46,8 +46,11 @@ authenticate itself with Astarte. Copy it somewhere safe as it will be used in t
 
 ## Creating a Rust project
 
-First, make sure you have Rust MSRV of the Astarte or later installed, since it is the MSRV of the
-Astarte device Rust SDK. Then, create a new project:
+First, make sure you have the proper Rust toolchain installed on your machine. We recommend using
+[rustup](https://rustup.rs/), otherwise make sure you are using one supported by the
+[MSRV](https://doc.rust-lang.org/cargo/reference/rust-version.html) of the Astarte device Rust SDK
+
+Then, create a new project:
 
 ```bash
 cargo new astarte-rust-project
@@ -72,7 +75,7 @@ cargo add astarte-device-sdk --features=derive
 cargo add tokio --features=full
 cargo add serde serde-json --features=serde/derive
 cargo add tracing tracing-subscriber
-cargo add eyre
+cargo add color-eyre
 ```
 
 To easily load the Astarte configuration information, such as the realm name, the astarte instance
@@ -98,17 +101,14 @@ Finally, we can start with the source code of our device application. We will fi
 device using the device ID and credentials secret we obtained in the previous steps.
 
 ```no_run
-use std::time::{Duration, SystemTime};
-
 use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
+    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore,
     transport::mqtt::MqttConfig,
 };
+use color_eyre::eyre;
 use serde::Deserialize;
-use tokio::task::JoinSet;
-use tracing::{error, info};
-
-type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+use tracing::info;
+use tracing_subscriber;
 
 /// structure used to deserialize the content of the config.json file containing the
 /// astarte device connection information
@@ -122,22 +122,22 @@ struct Config {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
     tracing_subscriber::fmt::init();
-    let now = SystemTime::now();
 
     // Load the device configuration
-    let file = std::fs::read_to_string("configuration.json")?;
+    let file = tokio::fs::read_to_string("config.json").await?;
     let cfg: Config = serde_json::from_str(&file)?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
         &cfg.device_id,
-        &cfg.credentials_secret,v
+        &cfg.credentials_secret,
         &cfg.pairing_url,
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, connection) = DeviceBuilder::new()
+    let (client, _connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .connect(mqtt_config)
         .await?
@@ -145,6 +145,11 @@ async fn main() -> eyre::Result<()> {
         .await;
 
     info!("Connection to Astarte established.");
+
+    // since we are not performing any operation yet, we disconnect the client
+    client.disconnect().await?;
+
+    info!("Device disconnected from Astarte");
 
     Ok(())
 }
@@ -263,6 +268,8 @@ To this extent, we can spawn a tokio task (the equivalent of an OS thread but ma
 runtime) to poll connection messages. Ideally, two separate tasks should be used for both polling
 and transmission.
 
+NOTE: remember to tell the `DeviceBuilder` the directory from where to take the Astarte interfaces
+
 ```no_run
 // ... imports, structs definition ...
 
@@ -271,10 +278,11 @@ and transmission.
 #     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
 #     transport::mqtt::MqttConfig,
 # };
+# use color_eyre::eyre;
 # use serde::Deserialize;
-# use tokio::task::JoinSet;
+use tokio::task::JoinSet;
 # use tracing::{error, info};
-# type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+# use tracing_subscriber;
 # /// structure used to deserialize the content of the config.json file containing the
 # /// astarte device connection information
 # #[derive(Deserialize)]
@@ -284,12 +292,14 @@ and transmission.
 #     credentials_secret: String,
 #     pairing_url: String,
 # }
+
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
+async fn main() -> eyre::Result<()> {
+#   color_eyre::install()?;
 #   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
-#   let file = std::fs::read_to_string("configuration.json")?;
+#   let file = tokio::fs::read_to_string("config.json").await?;
 #   let cfg: Config = serde_json::from_str(&file)?;
 #   let mut mqtt_config = MqttConfig::with_credential_secret(
 #       &cfg.realm,
@@ -298,18 +308,20 @@ async fn main() -> Result<(), DynError> {
 #       &cfg.pairing_url,
 #   );
 #   mqtt_config.ignore_ssl_errors();
-#   let (client, connection) = DeviceBuilder::new()
-#       .store(MemoryStore::new())
-#       .interface_directory("interfaces")?
-#       .connect(mqtt_config)
-#       .await?
-#       .build()
-#       .await;
-#   info!("Connection to Astarte established.");
-    // ... configure networking, instantiate and connect the device ...
+    // ... configure networking, instantiate the mqtt connection information ...
+
+    let (client, connection) = DeviceBuilder::new()
+        .store(MemoryStore::new())
+        .interface_directory("interfaces")?
+        .connect(mqtt_config)
+        .await?
+        .build()
+        .await;
+
+    info!("Connection to Astarte established.");
 
     // define a set of tasks to be spawned
-    let mut tasks = JoinSet::<Result<(), DynError>>::new();
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
     // task to poll updates from the connection
     tasks.spawn(async move {
@@ -334,6 +346,8 @@ async fn main() -> Result<(), DynError> {
     // disconnect the device once finished processing all the tasks
     client.disconnect().await?;
 
+    info!("Device disconnected from Astarte");
+
     Ok(())
 }
 ```
@@ -355,15 +369,16 @@ interface.
 ```no_run
 // ... imports, structs definition ...
 
-# use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime};
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
 #     transport::mqtt::MqttConfig,
 # };
+# use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
-# type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+# use tracing_subscriber;
 # /// structure used to deserialize the content of the config.json file containing the
 # /// astarte device connection information
 # #[derive(Deserialize)]
@@ -373,12 +388,15 @@ interface.
 #     credentials_secret: String,
 #     pairing_url: String,
 # }
+
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
+async fn main() -> eyre::Result<()> {
+#   color_eyre::install()?;
 #   tracing_subscriber::fmt::init();
-#   let now = SystemTime::now();
+    let now = SystemTime::now();
+
 #   // Load the device configuration
-#   let file = std::fs::read_to_string("configuration.json")?;
+#   let file = tokio::fs::read_to_string("config.json").await?;
 #   let cfg: Config = serde_json::from_str(&file)?;
 #   let mut mqtt_config = MqttConfig::with_credential_secret(
 #       &cfg.realm,
@@ -396,7 +414,7 @@ async fn main() -> Result<(), DynError> {
 #       .await;
 #   info!("Connection to Astarte established.");
 #   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<Result<(), DynError>>::new();
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 #   // task to poll updates from the connection
 #   tasks.spawn(async move {
 #       connection.handle_events().await?;
@@ -464,10 +482,14 @@ interface.
 #     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
 #     transport::mqtt::MqttConfig,
 # };
+# #[cfg(not(feature = "derive"))]
+# use astarte_device_sdk_derive::AstarteAggregate;
+use astarte_device_sdk::AstarteAggregate;
+# use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
-# type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+# use tracing_subscriber;
 # /// structure used to deserialize the content of the config.json file containing the
 # /// astarte device connection information
 # #[derive(Deserialize)]
@@ -477,18 +499,20 @@ interface.
 #     credentials_secret: String,
 #     pairing_url: String,
 # }
-#[derive(Debug, astarte_device_sdk_derive::AstarteAggregate)]
+
+#[derive(Debug, AstarteAggregate)]
 struct DataObject {
     double_endpoint: f64,
     string_endpoint: String,
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
+async fn main() -> eyre::Result<()> {
+#   color_eyre::install()?;
 #   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
-#   let file = std::fs::read_to_string("configuration.json")?;
+#   let file = tokio::fs::read_to_string("config.json").await?;
 #   let cfg: Config = serde_json::from_str(&file)?;
 #   let mut mqtt_config = MqttConfig::with_credential_secret(
 #       &cfg.realm,
@@ -506,7 +530,7 @@ async fn main() -> Result<(), DynError> {
 #       .await;
 #   info!("Connection to Astarte established.");
 #   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<Result<(), DynError>>::new();
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 #   // task to poll updates from the connection
 #   tasks.spawn(async move {
 #       connection.handle_events().await?;
@@ -578,10 +602,11 @@ interface.
 #     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
 #     transport::mqtt::MqttConfig,
 # };
+# use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
-# type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+# use tracing_subscriber;
 # /// structure used to deserialize the content of the config.json file containing the
 # /// astarte device connection information
 # #[derive(Deserialize)]
@@ -592,11 +617,12 @@ interface.
 #     pairing_url: String,
 # }
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
+async fn main() -> eyre::Result<()> {
+#   color_eyre::install()?;
 #   tracing_subscriber::fmt::init();
 #   let now = SystemTime::now();
 #   // Load the device configuration
-#   let file = std::fs::read_to_string("configuration.json")?;
+#   let file = tokio::fs::read_to_string("config.json").await?;
 #   let cfg: Config = serde_json::from_str(&file)?;
 #   let mut mqtt_config = MqttConfig::with_credential_secret(
 #       &cfg.realm,
@@ -614,7 +640,7 @@ async fn main() -> Result<(), DynError> {
 #       .await;
 #   info!("Connection to Astarte established.");
 #   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<Result<(), DynError>>::new();
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 #   // task to poll updates from the connection
 #   tasks.spawn(async move {
 #       connection.handle_events().await?;
