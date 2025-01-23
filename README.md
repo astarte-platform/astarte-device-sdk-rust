@@ -17,24 +17,25 @@ SPDX-License-Identifier: Apache-2.0
 [Code coverage]: https://codecov.io/gh/astarte-platform/astarte-device-sdk-rust/branch/master/graph/badge.svg
 [codecov]: https://codecov.io/gh/astarte-platform/astarte-device-sdk-rust
 
-*Warning: this SDK is experimental, correctness and API stability are currently not guaranteed*
-
 The Astarte Device SDK for Rust is a ready to use library that provides communication and
 pairing primitives to an Astarte Cluster.
 
-See the [Astarte documentation](https://docs.astarte-platform.org/latest/001-intro_user.html)
-for more information regarding Astarte and the available SDKs.
+Quick links:
 
-See the [Get started](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_get_started/index.html) guide
-for a better understanding of the Rust SDK functionalities.
+- [API documentation](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/).
+- [Astarte documentation](https://docs.astarte-platform.org/latest/001-intro_user.html) for more information regarding Astarte.
+- [Get started](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_get_started/index.html) for a guide on how to use the SDK functionalities.
+- [OS requirements](https://github.com/astarte-platform/astarte-device-sdk-rust/tree/master/docs/os-requirements.md) for system libraries.
 
-## Building the library
+## Use the library
 
-You can build the library using:
+You can add the library tro your project with:
+
 ```sh
-cargo build
+cargo new astarte-project && cd astarte-project
+cargo add astarte-device-sdk --features='derive'
 ```
 
 ## Examples
 
-Check out how to start with the SDK using one of the [included examples](./examples/README.md).
+Check out how to start with the SDK using one of the [included examples](https://github.com/astarte-platform/astarte-device-sdk-rust/tree/master/examples/README.md).
