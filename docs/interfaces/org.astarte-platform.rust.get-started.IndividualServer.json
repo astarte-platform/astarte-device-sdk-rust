@@ -1,0 +1,15 @@
+{
+  "interface_name": "org.astarte-platform.rust.get-started.IndividualServer",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "ownership": "server",
+  "description": "Individual server-owned interface for the get-started of the Astarte device SDK for the Rust programming language.",
+  "mappings": [
+    {
+      "endpoint": "/%{id}/data",
+      "type": "double",
+      "explicit_timestamp": true
+    }
+  ]
+}
