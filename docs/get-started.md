@@ -12,6 +12,8 @@ a local Astarte instance and transmitting some data.
 
 ## Before you begin
 
+There are a few setup steps and requirements that are needed before start working on the example.
+
 ### Local Astarte instance
 
 This get started will focus on creating a device and connecting it to an Astarte instance. If you
@@ -78,6 +80,24 @@ cargo add tracing tracing-subscriber
 cargo add color-eyre
 ```
 
+### System dependencies
+
+The device SDK uses an [SQLite](https://www.sqlite.org/) as an in-process database to store Astarte
+properties on disk. In order to compile the application, you need to provide a compatible `sqlite3`
+library.
+
+To use your system SQLite library, you need to have a C toolchain, `libsqlite3` and `pkg-config`
+installed. This way you can link it with your Rust executable. For example, on a Debian/Ubuntu
+system you install them through `apt`:
+
+```sh
+apt install build-essential pkg-config libsqlite3-dev
+```
+
+You can find more information on the [rusqlite GitHub page](https://github.com/rusqlite/rusqlite).
+
+## Configuration
+
 To easily load the Astarte configuration information, such as the realm name, the astarte instance
 endpoint, the device id and the pairing url, you could set some environment variables or store them
 in a `config.json` file, like the following:
@@ -97,18 +117,22 @@ will be retrieved, parsed and then used during the device connection
 
 ## Instantiating and connecting a device
 
-Finally, we can start with the source code of our device application. We will first create a new
-device using the device ID and credentials secret we obtained in the previous steps.
+Now we can start writing the source code of our device application. We will first create a new
+device using the device ID and credentials secret we obtained in the previous steps. Then, the
+device will need to be polled regularly to ensure the processing of MQTT messages. To this extent,
+we can spawn a tokio task (the equivalent of an OS thread but managed by the Tokio runtime) to poll
+connection messages. Ideally, two separate tasks should be used for both polling and transmission.
 
 ```no_run
 use astarte_device_sdk::{
-    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
+    builder::DeviceBuilder, prelude::*, store::SqliteStore, DeviceClient,
+    transport::mqtt::{Mqtt, MqttConfig}, DeviceConnection,
 };
 use color_eyre::eyre;
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, error};
 use tracing_subscriber;
+use tokio::task::JoinSet;
 
 /// structure used to deserialize the content of the config.json file containing the
 /// astarte device connection information
@@ -120,11 +144,8 @@ struct Config {
     pairing_url: String,
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
-    color_eyre::install()?;
-    tracing_subscriber::fmt::init();
-
+/// Load connection configuration and connect a device to Astarte.
+async fn init() -> eyre::Result<(DeviceClient<SqliteStore>, DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
     // Load the device configuration
     let file = tokio::fs::read_to_string("config.json").await?;
     let cfg: Config = serde_json::from_str(&file)?;
@@ -137,16 +158,62 @@ async fn main() -> eyre::Result<()> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, _connection) = DeviceBuilder::new()
-        .store(MemoryStore::new())
+    // connect to a db in the current working directory
+    // if it doesn't exist, the method will create it
+    let store = SqliteStore::connect_db("./store.db").await?;
+
+    let (client, connection) = DeviceBuilder::new()
+        .store(store)
+        // NOTE: here we are not defining any Astarte interface, thus the device will not be able to
+        // send or receive data to/from Astarte
         .connect(mqtt_config)
         .await?
         .build()
         .await;
 
+    Ok((client, connection))
+}
+
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::fmt::init();
+
+    let (client, connection) = init().await?;
+
     info!("Connection to Astarte established.");
 
-    // since we are not performing any operation yet, we disconnect the client
+    // define a set of tasks to be spawned
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
+
+    // task to poll updates from the connection
+    tasks.spawn(async move {
+        connection.handle_events().await?;
+
+        Ok(())
+    });
+
+    // ...
+    // here we will insert other pieces of code to handle receiving and sending data to Astarte
+    // ...
+
+    // handle tasks termination
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                error!(error = %err, "Task returned an error");
+                return Err(err);
+            }
+            Err(err) if err.is_cancelled() => {}
+            Err(err) => {
+                error!(error = %err, "Task panicked");
+                return Err(err.into());
+            }
+        }
+    }
+
+    // disconnect the device once finished processing all the tasks
     client.disconnect().await?;
 
     info!("Device disconnected from Astarte");
@@ -156,30 +223,53 @@ async fn main() -> eyre::Result<()> {
 ```
 
 You can run the application with `cargo run` and see in the Astarte Dashboard that the device
-appears as connected.
+appears as connected. You could also set the `RUST_LOG` env variable to the desired log level in
+order to show some logs during the program execution.
 
 ## Installing the required interfaces
 
 Up to now we have connected a device to Astarte, but we haven't installed any interface the device
 must use to send and/or receive data to/from Astarte. Since we want to show how to stream individual
 and aggregated data as well as how to set and unset properties, we first need to install the
-required interfaces. In this guide, we need three separated interfaces one for each data type.
+required interfaces.
 
-The following is the definition of the individually aggregated interface:
+The following is the definition of the individually aggregated device-owned interface, used by the
+device to send data to Astarte:
 
 ```json
 {
-  "interface_name": "org.astarte-platform.rust.get-started.Individual",
+  "interface_name": "org.astarte-platform.rust.get-started.IndividualDevice",
   "version_major": 0,
   "version_minor": 1,
   "type": "datastream",
   "ownership": "device",
-  "description": "Individual interface for the get-started of the Astarte device SDK for the Rust programming language.",
+  "description": "Individual device-owned interface for the get-started of the Astarte device SDK for the Rust programming language.",
   "mappings": [
     {
       "endpoint": "/double_endpoint",
       "type": "double",
       "explicit_timestamp": false
+    }
+  ]
+}
+```
+
+The following is the definition of the individually aggregated server-owned interface, used by the
+device to receive data from Astarte:
+
+```json
+{
+  "interface_name": "org.astarte-platform.rust.get-started.IndividualServer",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "ownership": "server",
+  "description": "Individual server-owned interface for the get-started of the Astarte device SDK for the Rust programming language.",
+  "mappings": [
+    {
+      "endpoint": "/%{id}/data",
+      "type": "double",
+      "explicit_timestamp": true
     }
   ]
 }
@@ -243,7 +333,8 @@ which will then be used when building th SDK. Thus:
    follows:
    ```bash
    curl --output-dir interfaces --fail --remote-name-all \
-       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Individual.json' \
+       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.IndividualDevice.json' \
+       'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.IndividualServer.json' \
        'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Aggregated.json' \
        'https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/docs/interfaces/org.astarte-platform.rust.get-started.Property.json'
    ```
@@ -261,95 +352,120 @@ To install them in the Astarte instance, you could use one of the following meth
 
 ## Receiving device events
 
-After device initialization and connection, the device will need to be polled regularly to ensure
-the processing of MQTT messages.
-
-To this extent, we can spawn a tokio task (the equivalent of an OS thread but managed by the Tokio
-runtime) to poll connection messages. Ideally, two separate tasks should be used for both polling
-and transmission.
+We can now spawn a task to receive data from Astarte.
 
 NOTE: remember to tell the `DeviceBuilder` the directory from where to take the Astarte interfaces
 
 ```no_run
 // ... imports, structs definition ...
 
-# use std::time::{Duration, SystemTime};
 # use astarte_device_sdk::{
-#     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-#     transport::mqtt::MqttConfig,
+#     builder::DeviceBuilder,
+#     client::RecvError,
+#     prelude::*,
+#     store::SqliteStore,
+#     transport::mqtt::{Mqtt, MqttConfig},
+#     DeviceClient, DeviceConnection,
 # };
 # use color_eyre::eyre;
 # use serde::Deserialize;
-use tokio::task::JoinSet;
+# use tokio::task::JoinSet;
 # use tracing::{error, info};
-# use tracing_subscriber;
-# /// structure used to deserialize the content of the config.json file containing the
-# /// astarte device connection information
-# #[derive(Deserialize)]
-# struct Config {
-#     realm: String,
-#     device_id: String,
-#     credentials_secret: String,
-#     pairing_url: String,
+# /// Load connection configuration and connect a device to Astarte.
+# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+#     todo!()
 # }
+
+#[tracing::instrument(skip_all)]
+async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+    loop {
+        match client.recv().await {
+            Ok(data) => {
+                if let astarte_device_sdk::Value::Individual(var) = data.data {
+                    // we want to analyze a mapping similar to "/id/data" so we split by '/' and use the
+                    // parts of interest
+                    let mut iter = data.path.splitn(3, '/').skip(1);
+
+                    let id = iter
+                        .next()
+                        .to_owned()
+                        .map(|s| s.to_string())
+                        .ok_or(eyre::eyre!("Incorrect error received"))?;
+
+                    match iter.next() {
+                        Some("data") => {
+                            let value: f64 = var.try_into()?;
+                            info!(
+                                "Received new data datastream for LED {}. LED data is now {}",
+                                id, value
+                            );
+                        }
+                        item => {
+                            error!("unrecognized {item:?}")
+                        }
+                    }
+                }
+            }
+            Err(RecvError::Disconnected) => return Ok(()),
+            Err(err) => error!(%err),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-#   color_eyre::install()?;
-#   tracing_subscriber::fmt::init();
-#   let now = SystemTime::now();
-#   // Load the device configuration
-#   let file = tokio::fs::read_to_string("config.json").await?;
-#   let cfg: Config = serde_json::from_str(&file)?;
-#   let mut mqtt_config = MqttConfig::with_credential_secret(
-#       &cfg.realm,
-#       &cfg.device_id,
-#       &cfg.credentials_secret,
-#       &cfg.pairing_url,
-#   );
-#   mqtt_config.ignore_ssl_errors();
     // ... configure networking, instantiate the mqtt connection information ...
+#   let (client, connection) = init().await?;
+#   // define a set of tasks to be spawned
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
+    // Modify the init() function by adding the astarte interfaces directory
+    /*
     let (client, connection) = DeviceBuilder::new()
-        .store(MemoryStore::new())
+        .store(store)
         .interface_directory("interfaces")?
         .connect(mqtt_config)
         .await?
         .build()
         .await;
+    */
 
-    info!("Connection to Astarte established.");
+    // Spawn a task to receive data from Astarte
+    let client_cl = client.clone();
+    tasks.spawn(receive_data(client_cl));
 
-    // define a set of tasks to be spawned
-    let mut tasks = JoinSet::<eyre::Result<()>>::new();
-
-    // task to poll updates from the connection
-    tasks.spawn(async move {
-        connection.handle_events().await?;
-
-        Ok(())
-    });
-
-    // properly handle tasks termination
-    while let Some(res) = tasks.join_next().await {
-        match res {
-            Ok(res) => {
-                res?;
-
-                tasks.abort_all();
-            }
-            Err(err) if err.is_cancelled() => {}
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    // disconnect the device once finished processing all the tasks
-    client.disconnect().await?;
-
-    info!("Device disconnected from Astarte");
-
-    Ok(())
+    // ... handle tasks termination and client disconnection ...
+#   Ok(())
 }
+```
+
+You can simulate sending data from Astarte on a server-owned interface by using the
+`publish-datastream` option of the `astartectl` tool:
+
+```sh
+astartectl appengine
+    --appengine-url '<ASTARTE_APPENGINE_URL>' \
+    --realm-management-url '<ASTARTE_REALM_MANAGEMENT_URL>' \
+    --realm-key '<REALM>_private.pem' \
+    --realm-name '<REALM>' \
+    devices publish-datastream '<DEVICE_ID>' '<SARVER_OWNED_INTERFACE_NAME>' '<ENDPOINT>' '<VALUE>'
+```
+
+Where `<ASTARTE_APPENGINE_URL>` and `<ASTARTE_REALM_MANAGEMENT_URL>` are the appengine and
+realm-management respective endpoints, `<REALM>` is your realm name, `<DEVICE_ID>` is the device ID
+to send the data to, `<ENDPOINT>` is the endpoint to send data to, which in this example should be
+composed by a LED id and the `data` endpoint, and `<VALUE>` is the value to send.
+
+For instance, if you are using a local Astarte instance, created a realm named `test` and registered
+the device `2TBn-jNESuuHamE2Zo1anA`, you could send data as follows:
+
+```sh
+astartectl appengine \
+    --appengine-url 'http://api.astarte.localhost/appengine' \
+    --realm-management-url 'http://api.astarte.localhost/realmmanagement' \
+    --realm-key 'test_private.pem' \
+    --realm-name 'test' \
+    devices publish-datastream '2TBn-jNESuuHamE2Zo1anA' 'org.astarte-platform.rust.get-started.IndividualServer' '/id_123/data' '12.34'
 ```
 
 ## Streaming data
@@ -368,98 +484,53 @@ interface.
 
 ```no_run
 // ... imports, structs definition ...
-
-use std::time::{Duration, SystemTime};
 # use astarte_device_sdk::{
-#     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-#     transport::mqtt::MqttConfig,
+#     client::RecvError, prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
+#     DeviceConnection,
 # };
 # use color_eyre::eyre;
-# use serde::Deserialize;
 # use tokio::task::JoinSet;
-# use tracing::{error, info};
-# use tracing_subscriber;
-# /// structure used to deserialize the content of the config.json file containing the
-# /// astarte device connection information
-# #[derive(Deserialize)]
-# struct Config {
-#     realm: String,
-#     device_id: String,
-#     credentials_secret: String,
-#     pairing_url: String,
+# use tracing::info;
+# /// Load connection configuration and connect a device to Astarte.
+# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+#     todo!()
 # }
+
+#[tracing::instrument(skip_all)]
+async fn send_individual(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+    // send data every 1 sec
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    let mut data = 1.0;
+
+    loop {
+        client
+            .send(
+                "org.astarte-platform.rust.get-started.IndividualDevice",
+                "/double_endpoint",
+                data,
+            )
+            .await?;
+
+        info!("Data sent on endpoint /double_endpoint, content: {data}");
+
+        data += 3.14;
+        interval.tick().await;
+    }
+}
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-#   color_eyre::install()?;
-#   tracing_subscriber::fmt::init();
-    let now = SystemTime::now();
-
-#   // Load the device configuration
-#   let file = tokio::fs::read_to_string("config.json").await?;
-#   let cfg: Config = serde_json::from_str(&file)?;
-#   let mut mqtt_config = MqttConfig::with_credential_secret(
-#       &cfg.realm,
-#       &cfg.device_id,
-#       &cfg.credentials_secret,
-#       &cfg.pairing_url,
-#   );
-#   mqtt_config.ignore_ssl_errors();
-#   let (client, connection) = DeviceBuilder::new()
-#       .store(MemoryStore::new())
-#       .interface_directory("interfaces")?
-#       .connect(mqtt_config)
-#       .await?
-#       .build()
-#       .await;
-#   info!("Connection to Astarte established.");
-#   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
-#   // task to poll updates from the connection
-#   tasks.spawn(async move {
-#       connection.handle_events().await?;
-#       Ok(())
-#   });
     // ... configure networking, instantiate and connect the device ...
     // ... spawn task to handle polling from the connection ...
+#   let (client, _connection) = init().await?;
+#   // define a set of tasks to be spawned
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
+    // Create a task to send individual datastream to Astarte
     let client_cl = client.clone();
-
-    // Create a task to send data to Astarte
-    tasks.spawn(async move {
-        // send data every 1 sec
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-        loop {
-            interval.tick().await;
-
-            let data = now.elapsed()?.as_secs_f64();
-            client_cl
-                .send(
-                    "org.astarte-platform.rust.get-started.Individual",
-                    "/double_endpoint",
-                    data,
-                )
-                .await?;
-
-            info!("Data sent on endpoint /double_endpoint, content: {data}");
-        }
-    });
+    tasks.spawn(send_individual(client_cl));
 
     // ... handle tasks termination and client disconnection ...
-#   // properly handle tasks termination
-#   while let Some(res) = tasks.join_next().await {
-#       match res {
-#           Ok(res) => {
-#               res?;
-#               tasks.abort_all();
-#           }
-#           Err(err) if err.is_cancelled() => {}
-#           Err(err) => return Err(err.into()),
-#       }
-#   }
-#   // disconnect the device once finished processing all the tasks
-#   client.disconnect().await?;
 #   Ok(())
 }
 ```
@@ -477,27 +548,18 @@ interface.
 ```no_run
 // ... imports, structs definition ...
 
-# use std::time::{Duration, SystemTime};
 # use astarte_device_sdk::{
-#     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-#     transport::mqtt::MqttConfig,
+#     client::RecvError, prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
+#     DeviceConnection,
 # };
+# use color_eyre::eyre;
+# use tokio::task::JoinSet;
+# use tracing::info;
 # #[cfg(not(feature = "derive"))]
 # use astarte_device_sdk_derive::AstarteAggregate;
-use astarte_device_sdk::AstarteAggregate;
-# use color_eyre::eyre;
-# use serde::Deserialize;
-# use tokio::task::JoinSet;
-# use tracing::{error, info};
-# use tracing_subscriber;
-# /// structure used to deserialize the content of the config.json file containing the
-# /// astarte device connection information
-# #[derive(Deserialize)]
-# struct Config {
-#     realm: String,
-#     device_id: String,
-#     credentials_secret: String,
-#     pairing_url: String,
+# /// Load connection configuration and connect a device to Astarte.
+# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+#     todo!()
 # }
 
 #[derive(Debug, AstarteAggregate)]
@@ -506,79 +568,47 @@ struct DataObject {
     string_endpoint: String,
 }
 
+#[tracing::instrument(skip_all)]
+async fn send_aggregate(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+    // send data every 1 sec
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+
+    let mut value = 1.0;
+
+    loop {
+
+        let data = DataObject {
+            double_endpoint: value,
+            string_endpoint: "Hello world.".to_string(),
+        };
+
+        info!("Sending {data:?}");
+        client
+            .send_object(
+                "org.astarte-platform.rust.get-started.Aggregated",
+                "/group_data",
+                data,
+            )
+            .await?;
+
+        value += 3.14;
+        interval.tick().await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-#   color_eyre::install()?;
-#   tracing_subscriber::fmt::init();
-#   let now = SystemTime::now();
-#   // Load the device configuration
-#   let file = tokio::fs::read_to_string("config.json").await?;
-#   let cfg: Config = serde_json::from_str(&file)?;
-#   let mut mqtt_config = MqttConfig::with_credential_secret(
-#       &cfg.realm,
-#       &cfg.device_id,
-#       &cfg.credentials_secret,
-#       &cfg.pairing_url,
-#   );
-#   mqtt_config.ignore_ssl_errors();
-#   let (client, connection) = DeviceBuilder::new()
-#       .store(MemoryStore::new())
-#       .interface_directory("interfaces")?
-#       .connect(mqtt_config)
-#       .await?
-#       .build()
-#       .await;
-#   info!("Connection to Astarte established.");
-#   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
-#   // task to poll updates from the connection
-#   tasks.spawn(async move {
-#       connection.handle_events().await?;
-#       Ok(())
-#   });
     // ... configure networking, instantiate and connect the device ...
     // ... spawn task to handle polling from the connection ...
+#   let (client, _connection) = init().await?;
+#   // define a set of tasks to be spawned
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
+    // Create a task to send aggregate datastream to Astarte
     let client_cl = client.clone();
-
-    // Create a task to send data to Astarte
-    tasks.spawn(async move {
-        // send data every 1 sec
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-        loop {
-            interval.tick().await;
-
-            let data = DataObject {
-                double_endpoint: 1.34,
-                string_endpoint: "Hello world.".to_string(),
-            };
-
-            info!("Sending {data:?}");
-            client_cl
-                .send_object(
-                    "org.astarte-platform.rust.get-started.Aggregated",
-                    "/group_data",
-                    data,
-                )
-                .await?;
-        }
-    });
+    tasks.spawn(send_aggregate(client_cl));
 
     // ... handle tasks termination and client disconnection ...
-#   // properly handle tasks termination
-#   while let Some(res) = tasks.join_next().await {
-#       match res {
-#           Ok(res) => {
-#               res?;
-#               tasks.abort_all();
-#           }
-#           Err(err) if err.is_cancelled() => {}
-#           Err(err) => return Err(err.into()),
-#       }
-#   }
-#   // disconnect the device once finished processing all the tasks
-#   client.disconnect().await?;
 #   Ok(())
 }
 ```
@@ -596,102 +626,61 @@ interface.
 
 ```no_run
 // ... imports, structs definition ...
-
-# use std::time::{Duration, SystemTime};
 # use astarte_device_sdk::{
-#     builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-#     transport::mqtt::MqttConfig,
+#     builder::DeviceBuilder, client::{DeviceClient, RecvError}, prelude::*, store::SqliteStore,
+#     transport::mqtt::{Mqtt, MqttConfig}, DeviceConnection,
 # };
 # use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
 # use tracing_subscriber;
-# /// structure used to deserialize the content of the config.json file containing the
-# /// astarte device connection information
-# #[derive(Deserialize)]
-# struct Config {
-#     realm: String,
-#     device_id: String,
-#     credentials_secret: String,
-#     pairing_url: String,
+# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+#     todo!()
 # }
+
+#[tracing::instrument(skip_all)]
+async fn send_property(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+
+    let mut data = 1.0;
+
+    loop {
+        client
+            .send(
+                "org.astarte-platform.rust.get-started.Property",
+                "/double_endpoint",
+                data,
+            )
+            .await?;
+
+        info!("Data sent on endpoint /double_endpoint, content: {data}");
+
+        // wait 1 sec before unsetting the property
+        interval.tick().await;
+
+        client.unset("org.astarte-platform.rust.get-started.Property", "/double_endpoint").await?;
+
+        info!("Unset property on /double_endpoint endpoint");
+
+        data += 3.14;
+        interval.tick().await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-#   color_eyre::install()?;
-#   tracing_subscriber::fmt::init();
-#   let now = SystemTime::now();
-#   // Load the device configuration
-#   let file = tokio::fs::read_to_string("config.json").await?;
-#   let cfg: Config = serde_json::from_str(&file)?;
-#   let mut mqtt_config = MqttConfig::with_credential_secret(
-#       &cfg.realm,
-#       &cfg.device_id,
-#       &cfg.credentials_secret,
-#       &cfg.pairing_url,
-#   );
-#   mqtt_config.ignore_ssl_errors();
-#   let (client, connection) = DeviceBuilder::new()
-#       .store(MemoryStore::new())
-#       .interface_directory("interfaces")?
-#       .connect(mqtt_config)
-#       .await?
-#       .build()
-#       .await;
-#   info!("Connection to Astarte established.");
-#   // define a set of tasks to be spawned
-#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
-#   // task to poll updates from the connection
-#   tasks.spawn(async move {
-#       connection.handle_events().await?;
-#       Ok(())
-#   });
     // ... configure networking, instantiate and connect the device ...
     // ... spawn task to handle polling from the connection ...
+#   let (client, _connection) = init().await?;
+#   // define a set of tasks to be spawned
+#   let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
+    // Create a task to set and unset an Astarte property
     let client_cl = client.clone();
-
-    // Create a task to send data to Astarte
-    tasks.spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-        loop {
-            interval.tick().await;
-
-            let data = now.elapsed()?.as_secs_f64();
-            client_cl
-                .send(
-                    "org.astarte-platform.rust.get-started.Property",
-                    "/double_endpoint",
-                    data,
-                )
-                .await?;
-
-            info!("Data sent on endpoint /double_endpoint, content: {data}");
-
-            // wait 1 sec before unsetting the property
-            interval.tick().await;
-
-            client_cl.unset("org.astarte-platform.rust.get-started.Property", "/double_endpoint").await?;
-
-            info!("Unset property on /double_endpoint endpoint");
-        }
-    });
+    tasks.spawn(send_property(client_cl));
 
     // ... handle tasks termination and client disconnection ...
-#   // properly handle tasks termination
-#   while let Some(res) = tasks.join_next().await {
-#       match res {
-#           Ok(res) => {
-#               res?;
-#               tasks.abort_all();
-#           }
-#           Err(err) if err.is_cancelled() => {}
-#           Err(err) => return Err(err.into()),
-#       }
-#   }
-#   // disconnect the device once finished processing all the tasks
-#   client.disconnect().await?;
 #   Ok(())
 }
 ```

@@ -16,4 +16,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! Example on how to send and receive to/from Astarte
+
 #![doc = include_str!("../../docs/get-started.md")]
