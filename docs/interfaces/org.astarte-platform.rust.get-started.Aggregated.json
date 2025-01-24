@@ -1,0 +1,21 @@
+{
+  "interface_name": "org.astarte-platform.rust.get-started.Aggregated",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "aggregation": "object",
+  "ownership": "device",
+  "description": "Aggregated interface for the get-started of the Astarte device SDK for the Rust programming language.",
+  "mappings": [
+    {
+      "endpoint": "/group_data/double_endpoint",
+      "type": "double",
+      "explicit_timestamp": false
+    },
+    {
+      "endpoint": "/group_data/string_endpoint",
+      "type": "string",
+      "explicit_timestamp": false
+    }
+  ]
+}

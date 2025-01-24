@@ -18,8 +18,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #![doc = include_str!("../README.md")]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/assets/logos/clea-24.svg"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/assets/logos/clea-24.ico"
+)]
 #![warn(clippy::dbg_macro, missing_docs, rustdoc::missing_crate_level_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+pub mod _docs;
 
 pub mod aggregate;
 pub mod builder;
