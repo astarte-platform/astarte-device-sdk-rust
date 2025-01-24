@@ -24,23 +24,32 @@ set -exEuo pipefail
 
 # List files in a package
 listPackage() {
-    cargo package -l -p "$1" | xargs -I '{}' echo "$1/{}"
+    cargo package --allow-dirty -l -p "$1" | xargs -I '{}' echo "$1/{}"
 }
 
 pkgsFiles=$(
-    cat <(cargo package -l -p "astarte-device-sdk") \
+    cat <(cargo package --allow-dirty -l -p "astarte-device-sdk") \
         <(listPackage "astarte-device-sdk-derive") \
         <(listPackage "astarte-device-sdk-mock") \
         <(listPackage "e2e-test") |
         sort
 )
 localFiles=$(
-    git ls-files | sort
+    git ls-files -cdmo | sort -u
 )
 
 # List files unique to localFiles and not present in pkgsFiles
-toRemove=$(comm -23 <(echo "$localFiles") <(echo "$pkgsFiles"))
+toCopy=$(comm -12 <(echo "$localFiles") <(echo "$pkgsFiles"))
 
-echo "$toRemove" | xargs --no-run-if-empty rm -v
+workingDir="$(mktemp -d)/astarte-device-sdk"
 
-cargo check --workspace --all-features --locked
+mkdir -p "$workingDir"
+
+echo "$toCopy" | while read -r file; do
+    parent=$(dirname "$file")
+    mkdir -p "$workingDir/${parent}"
+
+    cp -v "$file" "$workingDir/$file"
+done
+
+cargo check --manifest-path "$workingDir/Cargo.toml" --workspace --all-features --locked
