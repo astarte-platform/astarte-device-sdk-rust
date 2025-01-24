@@ -15,6 +15,7 @@ include = [
   "/LICENSES",
   "/examples",
   "/migrations",
+  "/docs",
   "/queries",
   "/src",
   "/CHANGELOG.md",
