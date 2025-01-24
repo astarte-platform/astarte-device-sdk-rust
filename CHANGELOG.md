@@ -9,6 +9,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Bump MSRV to 1.78.0.
 
+## [0.9.3] - 2025-01-24
+
+### Fixed
+
+- Update `rumqttc` to fix a bug in the MQTT unsubscribe [#403]
+
+### Changed
+
+- Bump `rustls` and related dependencies to version `0.23` [#403]
+
+[#403]: https://github.com/astarte-platform/astarte-device-sdk-rust/pull/403
+
 ## [0.9.2] - 2024-11-04
 
 ### Fixed

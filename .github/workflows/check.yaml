@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022-2024 SECO Mind Srl
+# Copyright 2022 - 2025 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,13 +22,16 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: stable / fmt
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +42,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check --all
   clippy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ${{ matrix.toolchain }} / clippy
     strategy:
       fail-fast: false
@@ -47,6 +50,10 @@ jobs:
         toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install ${{ matrix.toolchain }}
         uses: dtolnay/rust-toolchain@master
         with:
@@ -55,40 +62,54 @@ jobs:
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo clippy
-        run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features --workspace -- -D warnings
   doc:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: nightly / doc
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.7
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
-      - run: cargo docs-rs
+      - run: cargo docs-rs --locked
 
   hack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / stable / features
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.7
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      - name: cargo hack
-        run: cargo hack --workspace --feature-powerset check
+      - name: cargo hack test
+        # Doesn't test all combination of features, but the space is becoming too large and it takes
+        # too long
+        run: cargo hack --each-feature test --locked
   minimal-versions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: ubuntu / stable / minimal-versions
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install nightly for -Zminimal-versions
@@ -106,13 +127,17 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        msrv: [1.78.0]
+        msrv: [1.78]
     name: ubuntu / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install ${{ matrix.msrv }}
         uses: dtolnay/rust-toolchain@master
         with:
@@ -122,12 +147,12 @@ jobs:
       - name: Install cargo hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo +1.78.0 hack --no-dev-deps check --workspace --exclude astarte-device-sdk-mock --exclude e2e-test
+        run: cargo +${{ matrix.msrv }} hack --no-dev-deps check --all-features --exclude astarte-device-sdk-mock --exclude e2e-test
   # Run semver-check on release branch push or PR
   semver:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
     name: stable / semver
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install sccache-cache
@@ -136,3 +161,18 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           release-type: patch
+  # Check that the create can be compiled with only the packaged files
+  for-publish:
+    name: stable / for-publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev libssl-dev
+      - name: Install sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.7
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - run: ./scripts/check-for-publish.sh

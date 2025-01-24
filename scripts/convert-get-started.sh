@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # This file is part of Astarte.
 #
 # Copyright 2025 SECO Mind Srl
@@ -6,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,19 +18,24 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: REUSE Compliance Check
-on:
-  workflow_call:
-  workflow_dispatch:
-permissions:
-  contents: read
-defaults:
-  run:
-    shell: bash
-jobs:
-  test:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: REUSE Compliance Check
-        uses: fsfe/reuse-action@v5
+set -exEuo pipefail
+
+file=$1
+
+tmpout=$(mktemp)
+
+# shellcheck disable=SC2016
+sed 's/^```no_run$/```rust/' "$file" > "$tmpout"
+
+# shellcheck disable=SC2016
+to_delete=$(grep -zo '```rust[^`]\+```' "$tmpout" |
+  tr '\0' '\n' |
+  grep '^# ')
+
+echo "$to_delete" | while read -r line; do
+   # shellcheck disable=SC2001
+   line=$(echo "$line" | sed 's|/|\\/|g')
+   sed -i "/$line/d" "$tmpout"
+done
+
+cat "$tmpout"

@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 SECO Mind Srl
+# Copyright 2022 - 2025 SECO Mind Srl
 #
 # SPDX-License-Identifier: CC0-1.0
 
@@ -15,6 +15,7 @@ include = [
   "/LICENSES",
   "/examples",
   "/migrations",
+  "/docs",
   "/queries",
   "/src",
   "/CHANGELOG.md",
@@ -40,7 +41,7 @@ members = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.package]
-version = "0.9.2"
+version = "0.9.3"
 edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
@@ -62,7 +63,7 @@ itertools = { workspace = true }
 openssl = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 rcgen = { workspace = true }
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls-manual-roots-no-provider"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rusqlite = { workspace = true }
 rustls = { workspace = true }
@@ -80,12 +81,14 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
 async-trait = { workspace = true }
+color-eyre = { workspace = true }
 env_logger = { workspace = true }
 mockall = { workspace = true }
 mockito = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tracing-subscriber = { workspace = true }
 
 [features]
 default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
@@ -102,8 +105,8 @@ all-features = true
 rustc-args = ["--cfg=docsrs"]
 
 [workspace.dependencies]
-astarte-device-sdk = { path = "./", version = "=0.9.2" }
-astarte-device-sdk-derive = { version = "=0.9.2", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk = { path = "./", version = "=0.9.3" }
+astarte-device-sdk-derive = { version = "=0.9.3", path = "./astarte-device-sdk-derive" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto.git", rev = "5ff0672d8fdc8cba5a2ff023895ae505d75c3d1a" }
 async-trait = "0.1.67"
 base64 = "0.22.0"
@@ -121,25 +124,25 @@ itertools = "0.11.0"
 mockall = "0.12.1"
 mockito = "1.4.0"
 openssl = "0.10.46"
-proc-macro2 = "1.0.75"
+proc-macro2 = "1.0.83"
 quote = "1.0.35"
 rand_core = "0.6.4"
 rcgen = "0.13.1"
-reqwest = "0.12.0"
-rumqttc = { package = "rumqttc-dev-patched", version = "0.24.0-devpatch" }
+reqwest = "0.12.5"
+rumqttc = { package = "rumqttc-dev-patched", version = "0.24.4-devpatch" }
 rusqlite = "0.29.0"
-rustls = "0.22.2"
-rustls-native-certs = "0.7.0"
-rustls-pemfile = "2.1.0"
+rustls = "0.23.4"
+rustls-native-certs = "0.8.1"
+rustls-pemfile = "2.2.0"
 serde = "1.0.184"
 serde_json = "1.0.85"
-syn = "2.0.52"
+syn = "2.0.87"
 sync_wrapper = "1.0.0"
 tempfile = "3.6.0"
-thiserror = "1.0.35"
+thiserror = "2.0.8"
 tokio = "1.36.0"
 tokio-stream = "0.1.0"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
-url = "2.2.2"
+url = "2.4.0"
 uuid = "1.1.2"
