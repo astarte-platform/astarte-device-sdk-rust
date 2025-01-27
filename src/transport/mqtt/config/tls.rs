@@ -35,7 +35,6 @@ use crate::transport::mqtt::PairingError;
 
 use super::{CertificateFile, PrivateKeyFile};
 
-
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(
         std::env::var("IGNORE_SSL_ERRORS").as_deref(),
@@ -158,7 +157,7 @@ pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError
 
         let (added, ignored) = root_cert_store.add_parsable_certificates(res.certs);
 
-        trace!("loaded {added} certs and {ignored} ignored");
+        tracing::trace!("loaded {added} certs and {ignored} ignored");
 
         root_cert_store
     })
