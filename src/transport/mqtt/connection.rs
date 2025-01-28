@@ -364,7 +364,13 @@ impl Disconnected {
     /// session. If it fails, it returns an error so that the whole connection process can
     /// be retried.
     async fn reconnect(&mut self, conn: &mut Connection, client_id: ClientId<&str>) -> Next {
-        let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id);
+        let api = ApiClient::new(
+            client_id.realm,
+            client_id.device_id,
+            conn.provider.pairing_url().clone(),
+            conn.provider.credential_secret().to_string(),
+            conn.provider.api_tls_config(),
+        );
 
         let transport = match conn.provider.recreate_transport(&api).await {
             Ok(transport) => transport,
@@ -846,14 +852,14 @@ impl Next {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use mockall::predicate;
-
     use crate::{
         store::{memory::MemoryStore, StoredProp},
         test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
         transport::mqtt::test::notify_success,
         AstarteType, Interface,
     };
+    use mockall::predicate;
+    use rustls::RootCertStore;
 
     use super::*;
 
@@ -987,6 +993,7 @@ mod tests {
                     "secret".to_string(),
                     None,
                     true,
+                    RootCertStore::empty(),
                 ),
                 ClientId {
                     realm: "realm",

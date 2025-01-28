@@ -862,6 +862,7 @@ pub(crate) mod test {
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
     };
+    use rustls::RootCertStore;
     use tempfile::TempDir;
     use test::{
         client::NEW_LOCK,
@@ -907,17 +908,21 @@ pub(crate) mod test {
         let volatile = SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
 
         let store = StoreWrapper::new(store);
+
+        let transport_provider = TransportProvider::new(
+            "http://api.astarte.localhost/pairing".parse().unwrap(),
+            "secret".to_string(),
+            None,
+            true,
+            RootCertStore::empty(),
+        );
+
         let mqtt = Mqtt::new(
             client_id.clone(),
             MqttConnection::new(
                 client.clone(),
                 eventloop,
-                TransportProvider::new(
-                    "http://api.astarte.localhost/pairing".parse().unwrap(),
-                    "secret".to_string(),
-                    None,
-                    true,
-                ),
+                transport_provider,
                 self::connection::Connected,
             ),
             MqttRetention::new(ret_rx),
