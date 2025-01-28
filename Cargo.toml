@@ -80,6 +80,7 @@ uuid = { workspace = true, features = ["v4", "v5"] }
 
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
+astarte-message-hub-proto = { workspace = true, features = ["mock"] }
 async-trait = { workspace = true }
 color-eyre = { workspace = true }
 env_logger = { workspace = true }
@@ -107,7 +108,7 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.3" }
 astarte-device-sdk-derive = { version = "=0.9.3", path = "./astarte-device-sdk-derive" }
-astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto.git", rev = "5ff0672d8fdc8cba5a2ff023895ae505d75c3d1a" }
+astarte-message-hub-proto = { git = "https://github.com/lucaato/astarte-message-hub-proto.git", rev = "3f866059d2f788646ffe91973d01216bcf40d29a" }
 async-trait = "0.1.67"
 base64 = "0.22.0"
 bson = "2.7.0"
