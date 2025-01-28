@@ -28,8 +28,10 @@ pub mod convert;
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_message_hub_proto::prost::{DecodeError, Message};
@@ -44,20 +46,25 @@ use astarte_message_hub_proto::{
     pbjson_types::Empty, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
     MessageHubEvent, Node,
 };
+use astarte_message_hub_proto::{PropertyIdentifier, StoredPropertiesFilter};
 use bytes::Bytes;
+use itertools::Itertools;
 use sync_wrapper::SyncWrapper;
+use tokio::sync::Mutex;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    WrapStore,
 };
 use crate::client::RecvError;
 use crate::error::AggregateError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
+use crate::store::{OptStoredProp, StoreInterfaceData, StoredProp};
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DeviceTransport},
     interface::{
@@ -516,9 +523,20 @@ where
 
 impl<S> Connection for Grpc<S>
 where
-    S: Send + Sync,
+    S: PropertyStore,
 {
     type Sender = GrpcClient<S>;
+}
+
+impl<S> WrapStore<S> for Grpc<S>
+where
+    S: PropertyStore,
+{
+    type Store = GrpcStore<S>;
+
+    fn wrap_store(store: S, sender: &Self::Sender) -> Self::Store {
+        GrpcStore::new(store, sender.client.clone())
+    }
 }
 
 /// Internal struct holding the received grpc message
@@ -572,7 +590,7 @@ where
         builder: &DeviceBuilder<S, C>,
     ) -> Result<DeviceTransport<Grpc<S>>, Self::Err>
     where
-        C: Connection + Send + Sync,
+        C: Send + Sync,
     {
         let channel = self.endpoint.connect().await.map_err(GrpcError::from)?;
 
@@ -585,7 +603,7 @@ where
 
         let sender = GrpcClient::new(
             client.clone(),
-            builder.store.clone(),
+            StoreWrapper::new(builder.store.clone()),
             builder.volatile.clone(),
         );
         let receiver = Grpc::new(self.uuid, client, stream);
@@ -622,13 +640,264 @@ impl<'a> TryFrom<&'a Interfaces> for NodeData {
     }
 }
 
+/// Store wrapper designed specifically for the grpc connection
+/// Used mainly to request device owned properties to the message hub instead of looking them up in the local storage
+#[derive(Debug, Clone)]
+pub struct GrpcStore<S> {
+    pub(crate) store: S,
+    pub(crate) client: Arc<Mutex<MsgHubClient>>,
+}
+
+impl<S> GrpcStore<S> {
+    pub(crate) fn new(store: S, client: MsgHubClient) -> Self {
+        Self {
+            store,
+            client: Arc::new(Mutex::new(client)),
+        }
+    }
+
+    async fn load_device_properties(&self) -> Result<Vec<StoredProp>, GrpcStoreError<S::Err>>
+    where
+        S: PropertyStore,
+    {
+        self.client
+            .lock()
+            .await
+            .get_all_properties(StoredPropertiesFilter {
+                ownership: Some(astarte_message_hub_proto::Ownership::Device.into()),
+            })
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(GrpcStoreError::from_status)
+            .and_then(|p| {
+                convert::map_set_stored_properties(p).map_err(GrpcStoreError::from_conversion)
+            })
+    }
+}
+
+/// Error returned while operating on the store of a grpc connection
+/// This store needs to request properties from the message hub server
+/// and has additional errors consequently
+#[non_exhaustive]
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum GrpcStoreError<E> {
+    /// Underlying store error
+    #[error("Underlying store error: {0}")]
+    StoreError(E),
+    /// Error while retrieving data from the message hub server
+    #[error("Error while retrieving data from the message hub server: {0}")]
+    StatusError(tonic::Status),
+    /// Error while converting a proto received value to an internal type
+    #[error("Error while converting a proto received value to an internal type: {0}")]
+    ConversionError(MessageHubProtoError),
+}
+
+impl<E> GrpcStoreError<E> {
+    fn from_err(err: E) -> Self {
+        Self::StoreError(err)
+    }
+
+    fn from_status(status: tonic::Status) -> Self {
+        Self::StatusError(status)
+    }
+
+    fn from_conversion(conversion: MessageHubProtoError) -> Self {
+        Self::ConversionError(conversion)
+    }
+}
+
+impl<S> StoreCapabilities for GrpcStore<S>
+where
+    S: StoreCapabilities,
+{
+    type Retention = S::Retention;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        self.store.get_retention()
+    }
+}
+
+/// We implement the PropertyStore to override the behavior when retrieving or storing
+/// device owned properies. We only want to store and load from the store server owned properties.
+/// Device owned properties won't be stored and will be requested to the message hub server.
+impl<S> PropertyStore for GrpcStore<S>
+where
+    S: PropertyStore,
+    S::Err: Display,
+{
+    type Err = GrpcStoreError<S::Err>;
+
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+        if prop.ownership.is_device() {
+            // do not store device owned properties
+            return Ok(());
+        }
+
+        self.store
+            .store_prop(prop)
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn load_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+        interface_major: i32,
+    ) -> Result<Option<AstarteType>, Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            return self
+                .store
+                .load_prop(interface, path, interface_major)
+                .await
+                .map_err(GrpcStoreError::from_err);
+        }
+
+        let property = self
+            .client
+            .lock()
+            .await
+            .get_property(PropertyIdentifier {
+                interface_name: interface.name.as_ref().to_owned(),
+                path: path.to_owned(),
+            })
+            .await
+            .map_err(GrpcStoreError::from_status)
+            .map(tonic::Response::into_inner)?;
+
+        convert::map_property_to_astarte_type(property).map_err(GrpcStoreError::from_conversion)
+    }
+
+    async fn unset_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_device() {
+            // we won't store a device unset since we always request the properties to the server
+            return Ok(());
+        }
+
+        self.store
+            .unset_prop(interface, path)
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn delete_prop<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+        path: &str,
+    ) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_device() {
+            // we won't delete a device property since we always request the properties to the server
+            return Ok(());
+        }
+
+        self.store
+            .delete_prop(interface, path)
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn clear(&self) -> Result<(), Self::Err> {
+        self.store.clear().await.map_err(GrpcStoreError::from_err)
+    }
+
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        let load_server = async {
+            self.store
+                .server_props()
+                .await
+                .map_err(GrpcStoreError::from_err)
+        };
+
+        let (server_result, device_result) =
+            futures::future::join(load_server, self.load_device_properties()).await;
+
+        let mut merged_properties = server_result?;
+        merged_properties.append(&mut device_result?);
+
+        Ok(merged_properties)
+    }
+
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.store
+            .server_props()
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+        self.load_device_properties().await
+    }
+
+    async fn interface_props<I>(
+        &self,
+        interface: &StoreInterfaceData<I>,
+    ) -> Result<Vec<StoredProp>, Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_server() {
+            return self
+                .store
+                .interface_props(interface)
+                .await
+                .map_err(GrpcStoreError::from_err);
+        }
+
+        self.client
+            .lock()
+            .await
+            .get_properties(InterfacesName {
+                names: vec![interface.name.as_ref().to_owned()],
+            })
+            .await
+            .map(tonic::Response::into_inner)
+            .map_err(GrpcStoreError::from_status)
+            .and_then(|p| {
+                convert::map_set_stored_properties(p).map_err(GrpcStoreError::from_conversion)
+            })
+    }
+
+    async fn delete_interface<I>(&self, interface: &StoreInterfaceData<I>) -> Result<(), Self::Err>
+    where
+        I: AsRef<str> + Send + Sync,
+    {
+        if interface.ownership.is_device() {
+            // we don't delete a device interface locally
+            return Ok(());
+        }
+
+        self.store
+            .delete_interface(interface)
+            .await
+            .map_err(GrpcStoreError::from_err)
+    }
+
+    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+        // unused for grpc connection
+        Ok(vec![])
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{future::Future, net::SocketAddr, str::FromStr};
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        AstarteMessage, AstarteUnset,
+        AstarteMessage, AstarteUnset, Property, StoredProperties,
     };
     use async_trait::async_trait;
     use tokio::{
@@ -639,9 +908,12 @@ mod test {
 
     use crate::{
         builder::DEFAULT_VOLATILE_CAPACITY,
+        interface::Ownership,
         store::memory::MemoryStore,
-        transport::test::{mock_validate_individual, mock_validate_object},
-        transport::ReceivedEvent,
+        transport::{
+            test::{mock_validate_individual, mock_validate_object},
+            ReceivedEvent,
+        },
         AstarteAggregate, DeviceEvent, Value,
     };
 
@@ -656,6 +928,9 @@ mod test {
         Detach(Empty),
         AddInterfaces(InterfacesJson),
         RemoveInterfaces(InterfacesName),
+        GetProperties(InterfacesName),
+        GetAllProperties(StoredPropertiesFilter),
+        GetProperty(PropertyIdentifier),
     }
 
     type ServerSenderValuesVec = Vec<Result<MessageHubEvent, tonic::Status>>;
@@ -764,6 +1039,51 @@ mod test {
 
             Ok(tonic::Response::new(Empty::default()))
         }
+
+        async fn get_properties(
+            &self,
+            request: Request<InterfacesName>,
+        ) -> Result<tonic::Response<StoredProperties>, Status> {
+            self.server_received
+                .send(ServerReceivedRequest::GetProperties(request.into_inner()))
+                .await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
+
+            // return no properties
+            Ok(tonic::Response::new(StoredProperties {
+                interface_properties: HashMap::new(),
+            }))
+        }
+
+        async fn get_all_properties(
+            &self,
+            request: Request<StoredPropertiesFilter>,
+        ) -> Result<tonic::Response<StoredProperties>, Status> {
+            self.server_received
+                .send(ServerReceivedRequest::GetAllProperties(
+                    request.into_inner(),
+                ))
+                .await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
+
+            // return no properties
+            Ok(tonic::Response::new(StoredProperties {
+                interface_properties: HashMap::new(),
+            }))
+        }
+
+        async fn get_property(
+            &self,
+            request: Request<PropertyIdentifier>,
+        ) -> Result<tonic::Response<Property>, Status> {
+            self.server_received
+                .send(ServerReceivedRequest::GetProperty(request.into_inner()))
+                .await.expect("Could not send notification of a server received message, connect a channel to the Receiver");
+
+            // return no properties
+            Ok(tonic::Response::new(Property {
+                path: "".to_owned(),
+                value: None,
+            }))
+        }
     }
 
     fn make_server(
@@ -820,19 +1140,20 @@ mod test {
         Ok((server, client))
     }
 
-    async fn mock_astarte_grpc_client(
+    async fn mock_astarte_grpc_client<S>(
         mut message_hub_client: MsgHubClient,
         interfaces: &Interfaces,
-    ) -> Result<(GrpcClient<MemoryStore>, Grpc<MemoryStore>), Box<dyn std::error::Error>> {
+        store: S,
+    ) -> Result<(GrpcClient<S>, Grpc<S>), Box<dyn std::error::Error>>
+    where
+        S: PropertyStore,
+    {
         let node_data = NodeData::try_from(interfaces)?;
-        let stream =
-            Grpc::<StoreWrapper<MemoryStore>>::attach(&mut message_hub_client, node_data).await?;
-
-        let store = StoreWrapper::new(MemoryStore::new());
+        let stream = Grpc::<S>::attach(&mut message_hub_client, node_data).await?;
 
         let client = GrpcClient::new(
             message_hub_client.clone(),
-            store.clone(),
+            StoreWrapper::new(store),
             SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         );
         let grcp = Grpc::new(ID, message_hub_client, stream);
@@ -914,9 +1235,10 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (mut client, _connection) = mock_astarte_grpc_client(client, &Interfaces::new())
-                .await
-                .unwrap();
+            let (mut client, _connection) =
+                mock_astarte_grpc_client(client, &Interfaces::new(), MemoryStore::new())
+                    .await
+                    .unwrap();
 
             // manually calling detach
             client.disconnect().await.unwrap();
@@ -969,9 +1291,10 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (mut client, mut connection) = mock_astarte_grpc_client(client, &Interfaces::new())
-                .await
-                .unwrap();
+            let (mut client, mut connection) =
+                mock_astarte_grpc_client(client, &Interfaces::new(), MemoryStore::new())
+                    .await
+                    .unwrap();
 
             // poll the three messages the first two received errors will simply reconnect without returning
             assert!(matches!(connection.next_event().await, Ok(None)));
@@ -1025,9 +1348,10 @@ mod test {
         let client_operations = async move {
             let client = client_future.await;
             // When the grpc connection gets created the attach methods is called
-            let (mut client, _connection) = mock_astarte_grpc_client(client, &Interfaces::new())
-                .await
-                .unwrap();
+            let (mut client, _connection) =
+                mock_astarte_grpc_client(client, &Interfaces::new(), MemoryStore::new())
+                    .await
+                    .unwrap();
 
             let interfaces = Interfaces::new();
 
@@ -1130,7 +1454,9 @@ mod test {
             let mapping_ref = interfaces.interface_mapping(INTERFACE_NAME, &path).unwrap();
 
             let (mut client, _connection) =
-                mock_astarte_grpc_client(client, &interfaces).await.unwrap();
+                mock_astarte_grpc_client(client, &interfaces, MemoryStore::new())
+                    .await
+                    .unwrap();
 
             let validated_individual = mock_validate_individual(
                 mapping_ref,
@@ -1199,7 +1525,9 @@ mod test {
             let interfaces = Interfaces::from_iter([interface.clone()]);
 
             let (mut client, _connection) =
-                mock_astarte_grpc_client(client, &interfaces).await.unwrap();
+                mock_astarte_grpc_client(client, &interfaces, MemoryStore::new())
+                    .await
+                    .unwrap();
 
             let validated_object = mock_validate_object(
                 &interface,
@@ -1265,7 +1593,7 @@ mod test {
         let client_connection = async {
             let client = client_future.await;
 
-            mock_astarte_grpc_client(client, &interfaces).await
+            mock_astarte_grpc_client(client, &interfaces, MemoryStore::new()).await
         };
 
         let (_client, mut connection) = tokio::select! {
@@ -1323,7 +1651,7 @@ mod test {
         let client_connection = async {
             let client = client_future.await;
 
-            mock_astarte_grpc_client(client, &interfaces).await
+            mock_astarte_grpc_client(client, &interfaces, MemoryStore::new()).await
         };
 
         let (_client, mut connection) = tokio::select! {
@@ -1356,5 +1684,154 @@ mod test {
         let mut config = GrpcConfig::from_url(uuid, "http://hub.example.com").unwrap();
 
         assert_eq!(config.endpoint_mut().uri().host(), Some("hub.example.com"));
+    }
+
+    #[tokio::test]
+    async fn test_grpc_store_grpc_client_calls() {
+        let (server_impl, mut channels) = build_test_message_hub_server();
+        let (server_future, client_future) = mock_grpc_actors(server_impl)
+            .await
+            .expect("Could not construct test client and server");
+        let base_store = MemoryStore::new();
+
+        channels.server_response_sender.send(vec![]).await.unwrap();
+
+        let client_operations = async move {
+            let client = client_future.await;
+            let grpc_store = GrpcStore::new(base_store, client.clone());
+            // When the grpc connection gets created the attach methods is called
+            let (mut client, _connection) =
+                mock_astarte_grpc_client(client.clone(), &Interfaces::new(), grpc_store.clone())
+                    .await
+                    .unwrap();
+
+            let _device_properties = grpc_store.device_props().await.unwrap();
+            // no call should be preformed if calling server properties
+            let _server_properties = grpc_store.server_props().await.unwrap();
+
+            let device_interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+            let _device_interface_properties = grpc_store
+                .interface_props(&(&device_interface).into())
+                .await
+                .unwrap();
+            // if you get the properties of a server interface no request should be made
+            let server_interface = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
+            let _server_interface_properties = grpc_store
+                .interface_props(&(&server_interface).into())
+                .await
+                .unwrap();
+
+            let _device_prop = grpc_store
+                .load_prop(&(&device_interface).into(), "/path1", 1)
+                .await;
+            // no requst should be made
+            let _server_prop = grpc_store
+                .load_prop(&(&server_interface).into(), "/path1", 1)
+                .await;
+
+            // manually calling detach
+            client.disconnect().await.unwrap();
+        };
+
+        tokio::select! {
+            _ = server_future => panic!("The server closed before the client could complete sending the data"),
+            _ = client_operations => println!("Client sent its data"),
+        }
+
+        let device_interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        expect_messages!(channels.server_request_receiver.try_recv();
+            // connection creation attach
+            ServerReceivedRequest::Attach((id, _)) if id == ID,
+            // load device properties should call the message hub
+            ServerReceivedRequest::GetAllProperties(StoredPropertiesFilter {
+                ownership: Some(ownership),
+            }) if ownership == astarte_message_hub_proto::Ownership::Device as i32,
+            // if a property interface is device owned the message hub should be called
+            ServerReceivedRequest::GetProperties(InterfacesName {
+                names,
+            }) if names.len() == 1 && names.first().unwrap() == device_interface.interface_name(),
+            // loading a device property from the message hub
+            ServerReceivedRequest::GetProperty(PropertyIdentifier {
+                interface_name,
+                path,
+            }) if interface_name == device_interface.interface_name() && path == "/path1",
+            // detach
+            ServerReceivedRequest::Detach(Empty {}),
+        );
+    }
+
+    #[tokio::test]
+    async fn test_grpc_store_device_prop_not_stored() {
+        let (server_impl, mut _channels) = build_test_message_hub_server();
+        let (_server_future, client_future) = mock_grpc_actors(server_impl)
+            .await
+            .expect("Could not construct test client and server");
+
+        let base_store = MemoryStore::new();
+        let client = client_future.await;
+        let grpc_store = GrpcStore::new(base_store.clone(), client);
+
+        let inner_value = AstarteType::Integer(1);
+        let path = "/path1";
+        let server_interface = "com.server.interface";
+        let server_prop = StoredProp {
+            interface: server_interface,
+            path,
+            value: &inner_value,
+            interface_major: 1,
+            ownership: Ownership::Server,
+        };
+        let server_interface_data = &(&server_prop).into();
+        let device_interface = "com.device.interface";
+        let device_prop = StoredProp {
+            interface: device_interface,
+            path,
+            value: &inner_value,
+            interface_major: 1,
+            ownership: Ownership::Device,
+        };
+        let device_interface_data = &(&device_prop).into();
+
+        // test store server owned property
+        grpc_store.store_prop(server_prop).await.unwrap();
+        let prop = base_store
+            .load_prop(server_interface_data, path, 1)
+            .await
+            .unwrap();
+        assert_eq!(prop, Some(inner_value.clone()));
+        // test store device owned property
+        grpc_store.store_prop(device_prop).await.unwrap();
+        let prop = base_store
+            .load_prop(device_interface_data, path, 1)
+            .await
+            .unwrap();
+        assert!(prop.is_none());
+
+        // cleanup
+        base_store.clear().await.unwrap();
+
+        // delete server owned should delete the underlying prop
+        base_store.store_prop(server_prop).await.unwrap();
+        grpc_store
+            .delete_prop(server_interface_data, path)
+            .await
+            .unwrap();
+        let prop = base_store
+            .load_prop(server_interface_data, path, 1)
+            .await
+            .unwrap();
+        assert!(prop.is_none());
+        // deleting a device owned prop should not delete the underlying prop
+        // since those don't get stored
+        base_store.store_prop(device_prop).await.unwrap();
+        grpc_store
+            .delete_prop(device_interface_data, path)
+            .await
+            .unwrap();
+        let prop = base_store
+            .load_prop(device_interface_data, path, 1)
+            .await
+            .unwrap();
+        assert_eq!(prop, Some(inner_value.clone()));
     }
 }
