@@ -16,7 +16,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
@@ -24,12 +25,12 @@ use tokio::fs;
 use tracing::{debug, error, info};
 use url::Url;
 
-use crate::{
-    error::Report,
-    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
-};
-
-use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use super::tls::ClientAuth;
+use super::{CertificateFile, PrivateKeyFile};
+use crate::error::Report;
+use crate::transport::mqtt::crypto::Bundle;
+use crate::transport::mqtt::pairing::ApiClient;
+use crate::transport::mqtt::PairingError;
 
 /// Structure to create an authenticated [`Transport`]
 #[derive(Debug)]
@@ -190,9 +191,8 @@ mod tests {
     use mockito::Server;
     use tempfile::TempDir;
 
-    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
-
     use super::*;
+    use crate::transport::mqtt::pairing::tests::mock_create_certificate;
 
     #[tokio::test]
     async fn should_create_transport_insecure() {

@@ -168,10 +168,9 @@ mod tests {
     fn should_derive_form_event_obj() {
         use std::collections::HashMap;
 
-        use crate::{DeviceEvent, FromEvent, Value};
-
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk};
+        use crate::{DeviceEvent, FromEvent, Value};
 
         #[derive(Debug, FromEvent, PartialEq, Eq)]
         #[from_event(interface = "com.example.Sensor", path = "/sensor")]
@@ -203,10 +202,8 @@ mod tests {
     #[cfg(feature = "derive")]
     #[test]
     fn should_derive_form_event_individual() {
-        use crate::{AstarteType, DeviceEvent, FromEvent, Value};
-
         // Alias the crate to the resulting macro
-        use crate::{self as astarte_device_sdk};
+        use crate::{self as astarte_device_sdk, AstarteType, DeviceEvent, FromEvent, Value};
 
         #[derive(Debug, FromEvent, PartialEq)]
         #[from_event(interface = "com.example.Sensor", aggregation = "individual")]

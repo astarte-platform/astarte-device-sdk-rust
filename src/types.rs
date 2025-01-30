@@ -23,7 +23,8 @@
 use bson::{Binary, Bson};
 use serde::Serialize;
 
-use crate::{interface::MappingType, Timestamp};
+use crate::interface::MappingType;
+use crate::Timestamp;
 
 /// Astarte type conversion errors.
 #[non_exhaustive]
@@ -525,9 +526,8 @@ impl TryFrom<BsonConverter> for AstarteType {
 mod test {
     use chrono::{DateTime, TimeZone, Utc};
 
-    use crate::Value;
-
     use super::*;
+    use crate::Value;
 
     #[test]
     fn test_eq() {

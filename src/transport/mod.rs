@@ -26,20 +26,17 @@
 //! The module includes traits for publishing and receiving Astarte data over a connection,
 //! as well as registering and managing interfaces on a device.
 
-use std::{collections::HashMap, future::Future};
+use std::collections::HashMap;
+use std::future::Future;
 
-use crate::{
-    client::RecvError,
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-    },
-    interfaces::{self, Interfaces},
-    retention::{PublishInfo, RetentionId},
-    types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Interface, Timestamp,
-};
+use crate::client::RecvError;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::{MappingRef, ObjectRef};
+use crate::interfaces::{self, Interfaces};
+use crate::retention::{PublishInfo, RetentionId};
+use crate::types::AstarteType;
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::{Interface, Timestamp};
 
 #[cfg(feature = "message-hub")]
 #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
@@ -222,12 +219,11 @@ pub trait Disconnect {
 #[cfg(test)]
 mod test {
     use crate::error::AggregateError;
-    use crate::{
-        interface::{mapping::path::MappingPath, reference::MappingRef},
-        types::{AstarteType, TypeError},
-        validate::{ValidatedIndividual, ValidatedObject},
-        AstarteAggregate, Interface,
-    };
+    use crate::interface::mapping::path::MappingPath;
+    use crate::interface::reference::MappingRef;
+    use crate::types::{AstarteType, TypeError};
+    use crate::validate::{ValidatedIndividual, ValidatedObject};
+    use crate::{AstarteAggregate, Interface};
 
     pub(crate) fn mock_validate_object<'a, D>(
         interface: &'a Interface,

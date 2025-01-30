@@ -18,22 +18,17 @@
 
 //! MQTT TLS configuration
 
-use std::{
-    fs::File,
-    io::{self, BufReader},
-    sync::Arc,
-};
+use std::fs::File;
+use std::io::{self, BufReader};
+use std::sync::Arc;
 
 use itertools::Itertools;
-use rustls::{
-    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    RootCertStore,
-};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::RootCertStore;
 use tracing::{debug, error, trace, warn};
 
-use crate::transport::mqtt::PairingError;
-
 use super::{CertificateFile, PrivateKeyFile};
+use crate::transport::mqtt::PairingError;
 
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(

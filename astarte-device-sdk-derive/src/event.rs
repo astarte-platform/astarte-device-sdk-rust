@@ -22,15 +22,13 @@ use std::fmt::Debug;
 
 use proc_macro2::Ident;
 use quote::{quote, quote_spanned};
-use syn::{
-    parse::{Parse, ParseStream},
-    parse_quote,
-    spanned::Spanned,
-    Expr, GenericParam, Generics, Variant,
-};
+use syn::parse::{Parse, ParseStream};
+use syn::spanned::Spanned;
+use syn::{parse_quote, Expr, GenericParam, Generics, Variant};
 
+use crate::case::RenameRule;
 use crate::{
-    case::RenameRule, parse_attribute_list, parse_bool_lit, parse_name_value_attrs, parse_str_lit,
+    parse_attribute_list, parse_bool_lit, parse_name_value_attrs, parse_str_lit,
     parse_struct_fields,
 };
 

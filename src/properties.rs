@@ -18,19 +18,20 @@
 
 //! Handles the properties for the device.
 
-use std::{future::Future, io::Write};
+use std::future::Future;
+use std::io::Write;
 
-use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
+use flate2::bufread::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use futures::{future, StreamExt, TryStreamExt};
 use tracing::{debug, error, warn};
 
-use crate::{
-    client::DeviceClient,
-    error::Error,
-    interface::mapping::path::MappingPath,
-    store::{PropertyStore, StoredProp},
-    types::AstarteType,
-};
+use crate::client::DeviceClient;
+use crate::error::Error;
+use crate::interface::mapping::path::MappingPath;
+use crate::store::{PropertyStore, StoredProp};
+use crate::types::AstarteType;
 
 /// Error handling the properties.
 #[non_exhaustive]
@@ -263,15 +264,13 @@ fn encode_prop(
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use super::*;
     use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
     use crate::store::SqliteStore;
     use crate::test::mock_astarte_device_store;
-    use crate::Interface;
-
     use crate::transport::mqtt::client::{AsyncClient, EventLoop};
-
-    use super::*;
+    use crate::Interface;
 
     pub(crate) const PROPERTIES_PAYLOAD: [u8; 66] = [
         0x00, 0x00, 0x00, 0x46, 0x78, 0x9c, 0x4b, 0xce, 0xcf, 0xd5, 0x4b, 0xad, 0x48, 0xcc, 0x2d,

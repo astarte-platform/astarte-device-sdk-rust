@@ -18,16 +18,18 @@
 
 //! Endpoint of an interface mapping.
 
-use std::{
-    borrow::Borrow, cmp::Ordering, fmt::Display, ops::Deref, slice::Iter as SliceIter, unreachable,
-};
+use std::borrow::Borrow;
+use std::cmp::Ordering;
+use std::fmt::Display;
+use std::ops::Deref;
+use std::slice::Iter as SliceIter;
+use std::unreachable;
 
 use itertools::{EitherOrBoth, Itertools};
 use tracing::{error, trace};
 
-use crate::error::Report;
-
 use super::path::MappingPath;
+use crate::error::Report;
 
 /// A mapping endpoint.
 ///

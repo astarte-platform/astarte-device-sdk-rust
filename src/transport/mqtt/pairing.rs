@@ -20,13 +20,15 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
-use std::{io, path::PathBuf};
+use std::io;
+use std::path::PathBuf;
 
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use url::ParseError;
 
-use super::{config::transport::TransportProvider, crypto::CryptoError};
+use super::config::transport::TransportProvider;
+use super::crypto::CryptoError;
 
 /// Error returned during pairing.
 #[non_exhaustive]
@@ -240,9 +242,9 @@ struct AstarteMqttV1Info {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
-
     use mockito::Server;
+
+    use super::*;
 
     pub(crate) fn mock_get_broker_url(server: &mut mockito::ServerGuard) -> mockito::Mock {
         server

@@ -18,28 +18,22 @@
 
 //! Handles stored retention for the connections.
 
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    fmt::Display,
-    future::Future,
-    num::TryFromIntError,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::borrow::Cow;
+use std::collections::HashSet;
+use std::fmt::Display;
+use std::future::Future;
+use std::num::TryFromIntError;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures::{StreamExt, TryStreamExt};
 use tracing::{error, warn};
 
-use crate::{
-    error::{DynError, Report},
-    interface::{Reliability, Retention},
-    interfaces::Interfaces,
-    validate::{ValidatedIndividual, ValidatedObject},
-};
+use crate::error::{DynError, Report};
+use crate::interface::{Reliability, Retention};
+use crate::interfaces::Interfaces;
+use crate::validate::{ValidatedIndividual, ValidatedObject};
 
 pub(crate) mod memory;
 pub(crate) mod sqlite;

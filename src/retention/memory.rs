@@ -20,21 +20,16 @@
 //!
 //! It's a configurable size FIFO cache for the volatile packets.
 
-use std::{
-    collections::VecDeque,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use tokio::sync::Mutex;
 use tracing::error;
 
-use crate::{
-    interface::Retention,
-    validate::{ValidatedIndividual, ValidatedObject},
-};
-
 use super::Id;
+use crate::interface::Retention;
+use crate::validate::{ValidatedIndividual, ValidatedObject};
 
 /// Shared struct for the volatile retention.
 ///
@@ -276,13 +271,10 @@ impl TryFrom<ValidatedObject> for ItemValue {
 mod tests {
     use std::time::Duration;
 
-    use crate::{
-        interface::{Reliability, Retention},
-        retention::Context,
-        AstarteType,
-    };
-
     use super::*;
+    use crate::interface::{Reliability, Retention};
+    use crate::retention::Context;
+    use crate::AstarteType;
 
     #[test]
     fn should_be_full() {

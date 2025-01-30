@@ -20,10 +20,9 @@
 //! Provides mock data to be used for testing the Astarte propertiy.
 use std::collections::HashMap;
 
+use astarte_device_sdk::types::AstarteType;
 use base64::Engine;
 use chrono::{DateTime, Utc};
-
-use astarte_device_sdk::types::AstarteType;
 use eyre::{eyre, OptionExt};
 
 use crate::utils;

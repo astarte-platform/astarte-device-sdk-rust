@@ -33,7 +33,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use astarte_device_sdk::transport::mqtt::Credential;
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::client::RecvError;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::transport::mqtt::{Credential, MqttConfig};
+use astarte_device_sdk::types::AstarteType;
 use astarte_device_sdk::{Interface, Value};
 use eyre::{bail, eyre, OptionExt, WrapErr};
 use itertools::Itertools;
@@ -43,11 +47,6 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio::time;
 use tracing::{debug, error, info};
-
-use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, prelude::*, transport::mqtt::MqttConfig,
-    types::AstarteType,
-};
 
 mod mock_data_aggregate;
 mod mock_data_datastream;

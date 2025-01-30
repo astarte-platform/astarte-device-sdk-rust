@@ -20,9 +20,9 @@
 
 use std::iter::FusedIterator;
 
+use super::vec::ItemIter;
+use super::{BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
 use crate::interface::{DatastreamObject, InterfaceType, Mapping, MappingVec};
-
-use super::{vec::ItemIter, BaseMapping, DatastreamIndividualMapping, PropertiesMapping};
 
 /// Iterator over an [`Interface`](crate::Interface) mappings.
 pub struct MappingIter<'a>(InnerIter<'a>);
@@ -221,10 +221,8 @@ impl FusedIterator for ObjectMappingIter<'_> {}
 mod tests {
     use std::str::FromStr;
 
-    use crate::{
-        test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY},
-        Interface,
-    };
+    use crate::test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY};
+    use crate::Interface;
 
     #[test]
     fn should_iter() {

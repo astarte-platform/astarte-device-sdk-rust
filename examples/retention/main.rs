@@ -16,9 +16,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env::VarError, error::Error, time::Duration};
+use std::env::VarError;
+use std::error::Error;
+use std::time::Duration;
 
-use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
 
 type DynError = Box<dyn Error + Send + Sync + 'static>;
 

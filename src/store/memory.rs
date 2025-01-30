@@ -18,13 +18,18 @@
 
 //! In memory store for the properties.
 
-use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::hash::Hash;
+use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tracing::error;
 
 use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
-use crate::{interface::Ownership, retention::Missing, types::AstarteType};
+use crate::interface::Ownership;
+use crate::retention::Missing;
+use crate::types::AstarteType;
 
 /// Error from the memory store.
 ///

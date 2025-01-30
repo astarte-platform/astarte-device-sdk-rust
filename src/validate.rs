@@ -22,16 +22,12 @@ use std::collections::HashMap;
 
 use tracing::{debug, error, warn};
 
-use crate::{
-    error::Report,
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef, PropertyRef},
-        MappingAccess, Ownership, Reliability, Retention,
-    },
-    types::AstarteType,
-    Interface, Timestamp,
-};
+use crate::error::Report;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::{MappingRef, ObjectRef, PropertyRef};
+use crate::interface::{MappingAccess, Ownership, Reliability, Retention};
+use crate::types::AstarteType;
+use crate::{Interface, Timestamp};
 
 /// Errors returned while validating a send payload
 #[non_exhaustive]
@@ -223,11 +219,11 @@ impl ValidatedUnset {
 mod tests {
     use std::str::FromStr;
 
-    use crate::{interface::mapping::path::tests::mapping, interfaces::tests::DEVICE_OBJECT};
+    use chrono::{TimeZone, Utc};
 
     use super::*;
-
-    use chrono::{TimeZone, Utc};
+    use crate::interface::mapping::path::tests::mapping;
+    use crate::interfaces::tests::DEVICE_OBJECT;
 
     const DEVICE_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"

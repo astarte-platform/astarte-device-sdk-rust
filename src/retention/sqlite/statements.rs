@@ -16,20 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet, time::Duration};
+use std::borrow::Cow;
+use std::collections::HashSet;
+use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use tracing::{trace, warn};
 
-use crate::{
-    retention::{Id, PublishInfo, StoredInterface},
-    store::sqlite::{
-        statements::{include_query, ReadConnection, WriteConnection},
-        wrap_sync_call, SqliteError,
-    },
-};
-
 use super::{RetentionMapping, RetentionPublish, TimestampSecs};
+use crate::retention::{Id, PublishInfo, StoredInterface};
+use crate::store::sqlite::statements::{include_query, ReadConnection, WriteConnection};
+use crate::store::sqlite::{wrap_sync_call, SqliteError};
 
 impl WriteConnection {
     pub(super) fn store(
@@ -352,13 +349,10 @@ fn expiry_from_sql(expiry: Option<i64>) -> Option<Duration> {
 pub(crate) mod tests {
     use itertools::Itertools;
 
-    use crate::{
-        interface::Reliability,
-        retention::{Context, StoredRetention, TimestampMillis},
-        store::SqliteStore,
-    };
-
     use super::*;
+    use crate::interface::Reliability;
+    use crate::retention::{Context, StoredRetention, TimestampMillis};
+    use crate::store::SqliteStore;
 
     impl ReadConnection {
         fn publish(&self, id: &Id) -> Result<Option<RetentionPublish<'static>>, SqliteError> {

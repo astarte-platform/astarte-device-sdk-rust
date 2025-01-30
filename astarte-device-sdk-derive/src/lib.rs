@@ -20,21 +20,21 @@
 
 //! Proc macro helpers for the [Astarte Device SDK](https://crates.io/crates/astarte-device-sdk)
 
-use std::{collections::HashMap, fmt::Debug};
+use std::collections::HashMap;
+use std::fmt::Debug;
 
 use proc_macro::TokenStream;
-
 use proc_macro2::Ident;
 use quote::{quote, quote_spanned};
+use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::{
-    parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote,
-    punctuated::Punctuated,
-    spanned::Spanned,
-    Attribute, Expr, GenericParam, Generics, MetaNameValue, Token,
+    parse_macro_input, parse_quote, Attribute, Expr, GenericParam, Generics, MetaNameValue, Token,
 };
 
-use crate::{case::RenameRule, event::FromEventDerive};
+use crate::case::RenameRule;
+use crate::event::FromEventDerive;
 
 mod case;
 mod event;

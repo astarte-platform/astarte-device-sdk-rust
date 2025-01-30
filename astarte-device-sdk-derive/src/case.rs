@@ -22,10 +22,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::{
-    borrow::Cow,
-    fmt::{self, Debug, Display},
-};
+use std::borrow::Cow;
+use std::fmt::{self, Debug, Display};
 
 /// The different possible ways to change case of fields in a struct.
 #[derive(Debug, Copy, Clone, PartialEq, Default)]

@@ -18,6 +18,9 @@
 
 //! Error types for the Astarte SDK.
 
+use std::convert::Infallible;
+use std::fmt::{Display, Formatter};
+
 use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
 use crate::interface::{Aggregation, InterfaceTypeDef};
@@ -28,8 +31,6 @@ use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
-use std::convert::Infallible;
-use std::fmt::{Display, Formatter};
 
 /// Dynamic error type
 pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;

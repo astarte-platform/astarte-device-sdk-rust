@@ -22,18 +22,16 @@
 //! For more information see:
 //! [Interface Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html)
 
-use std::{fmt::Display, time::Duration};
+use std::fmt::Display;
+use std::time::Duration;
 
 use rumqttc::QoS;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::{
-    interface::{DatastreamIndividual, DatastreamObject, Properties},
-    Interface,
-};
-
 use super::{DatabaseRetention, InterfaceError, InterfaceType, Retention};
+use crate::interface::{DatastreamIndividual, DatastreamObject, Properties};
+use crate::Interface;
 
 /// Utility to skip default value
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
@@ -552,7 +550,8 @@ pub(super) enum DatabaseRetentionPolicyDef {
 
 #[cfg(not(feature = "interface-doc"))]
 mod doc {
-    use serde::{de::Visitor, Deserializer};
+    use serde::de::Visitor;
+    use serde::Deserializer;
     use tracing::trace;
 
     pub(super) fn deserialize_doc<'de, D>(de: D) -> Result<(), D::Error>
@@ -586,9 +585,8 @@ mod doc {
 mod tests {
     use std::str::FromStr;
 
-    use crate::test::{DEVICE_PROPERTIES, SERVER_PROPERTIES};
-
     use super::*;
+    use crate::test::{DEVICE_PROPERTIES, SERVER_PROPERTIES};
 
     #[cfg(feature = "interface-strict")]
     #[test]

@@ -18,14 +18,13 @@
 
 //! Handle the introspection for the device
 
-use std::{
-    future::Future,
-    path::{Path, PathBuf},
-};
+use std::future::Future;
+use std::path::{Path, PathBuf};
 
 use tracing::{debug, error};
 
-use crate::{interface::error::InterfaceError, Error, Interface};
+use crate::interface::error::InterfaceError;
+use crate::{Error, Interface};
 
 /// Error while adding an [`Interface`] to the device introspection.
 #[non_exhaustive]
@@ -173,7 +172,6 @@ mod tests {
     use rumqttc::SubscribeFilter;
 
     use super::*;
-
     use crate::interfaces::Introspection;
     use crate::test::{
         mock_astarte_device, E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY,

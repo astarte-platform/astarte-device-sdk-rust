@@ -19,7 +19,8 @@
 //! Path of a mapping in interface. It's the parsed struct path received from the MQTT levels
 //! structure of the topic received.
 
-use std::{cmp::Ordering, fmt::Display};
+use std::cmp::Ordering;
+use std::fmt::Display;
 
 use itertools::{EitherOrBoth, Itertools};
 
@@ -194,9 +195,8 @@ fn parse_mapping(input: &str) -> Result<MappingPath, MappingError> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::interface::mapping::endpoint::Level;
-
     use super::*;
+    use crate::interface::mapping::endpoint::Level;
 
     /// Helper to create a `MappingPath` from a string literal.
     pub(crate) fn mapping(path: &str) -> MappingPath<'_> {
