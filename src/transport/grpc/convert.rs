@@ -26,24 +26,19 @@ use std::num::TryFromIntError;
 use std::str::FromStr;
 
 use astarte_message_hub_proto::astarte_data_type::Data as ProtoData;
+use astarte_message_hub_proto::astarte_data_type_individual::IndividualData as ProtoIndividualData;
+use astarte_message_hub_proto::astarte_message::Payload as ProtoPayload;
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::types::InterfaceJson;
-use astarte_message_hub_proto::{
-    astarte_data_type_individual::IndividualData as ProtoIndividualData,
-    astarte_message::Payload as ProtoPayload, pbjson_types,
-};
-use astarte_message_hub_proto::{AstarteDataTypeObject, MessageHubEvent};
+use astarte_message_hub_proto::{pbjson_types, AstarteDataTypeObject, MessageHubEvent};
 use chrono::TimeZone;
 use itertools::Itertools;
 
-use crate::validate::ValidatedUnset;
-use crate::{
-    transport::ReceivedEvent, types::AstarteType, validate::ValidatedIndividual,
-    validate::ValidatedObject,
-};
-use crate::{DeviceEvent, Interface, Value};
-
 use super::{GrpcError, GrpcPayload};
+use crate::transport::ReceivedEvent;
+use crate::types::AstarteType;
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::{DeviceEvent, Interface, Value};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
@@ -397,10 +392,9 @@ impl From<Value> for ProtoPayload {
 
 #[cfg(test)]
 mod test {
-    use astarte_message_hub_proto::{
-        astarte_data_type_individual::IndividualData, astarte_message::Payload as ProtoPayload,
-        AstarteMessage,
-    };
+    use astarte_message_hub_proto::astarte_data_type_individual::IndividualData;
+    use astarte_message_hub_proto::astarte_message::Payload as ProtoPayload;
+    use astarte_message_hub_proto::AstarteMessage;
     use chrono::{DateTime, Utc};
 
     use super::*;

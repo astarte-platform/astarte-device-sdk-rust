@@ -22,16 +22,13 @@
 
 use std::ffi::OsStr;
 use std::fmt::Debug;
-use std::fs;
 use std::future::Future;
-use std::io;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::{fs, io};
 
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::debug;
 
 use crate::client::DeviceClient;
@@ -42,8 +39,7 @@ use crate::introspection::AddInterfaceError;
 use crate::retention::memory::SharedVolatileStore;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
-use crate::store::PropertyStore;
-use crate::store::SqliteStore;
+use crate::store::{PropertyStore, SqliteStore};
 use crate::transport::Connection;
 
 /// Default capacity of the channels
@@ -110,7 +106,7 @@ where
     C: Connection + Send,
 {
     async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
-        // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
+        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
 
@@ -438,17 +434,12 @@ mod test {
     use rumqttc::{ConnAck, ConnectReturnCode, Event, Packet, QoS};
     use tempfile::TempDir;
 
-    use crate::{
-        properties::extract_set_properties,
-        transport::mqtt::{
-            client::{AsyncClient, EventLoop, NEW_LOCK},
-            pairing::tests::{mock_create_certificate, mock_get_broker_url},
-            test::notify_success,
-            MqttConfig,
-        },
-    };
-
     use super::*;
+    use crate::properties::extract_set_properties;
+    use crate::transport::mqtt::client::{AsyncClient, EventLoop, NEW_LOCK};
+    use crate::transport::mqtt::pairing::tests::{mock_create_certificate, mock_get_broker_url};
+    use crate::transport::mqtt::test::notify_success;
+    use crate::transport::mqtt::MqttConfig;
 
     #[test]
     fn interface_directory() {

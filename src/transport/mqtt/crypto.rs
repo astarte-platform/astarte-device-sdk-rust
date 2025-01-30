@@ -21,6 +21,9 @@
 //! Crypto module to generate the CSR to authenticate the device to the Astarte.
 
 #[cfg(feature = "openssl")]
+#[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
+pub use openssl;
+#[cfg(feature = "openssl")]
 use openssl::{
     ec::{EcGroup, EcKey},
     hash::MessageDigest,
@@ -30,10 +33,6 @@ use openssl::{
 };
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P384_SHA384};
 use rustls::pki_types::PrivatePkcs8KeyDer;
-
-#[cfg(feature = "openssl")]
-#[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
-pub use openssl;
 
 /// Errors that can occur while generating the Certificate and CSR.
 #[non_exhaustive]

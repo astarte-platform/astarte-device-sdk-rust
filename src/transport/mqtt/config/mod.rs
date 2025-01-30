@@ -18,12 +18,10 @@
 
 //! Configuration for the MQTT connection
 
-use std::{
-    fmt::{Debug, Display},
-    io,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::fmt::{Debug, Display};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rumqttc::{MqttOptions, NetworkOptions, Transport};
 use serde::{Deserialize, Serialize};
@@ -31,25 +29,20 @@ use tokio::fs;
 use tracing::debug;
 use url::Url;
 
-use crate::{
-    builder::{ConnectionConfig, DeviceBuilder, DeviceTransport, DEFAULT_CHANNEL_SIZE},
-    store::{PropertyStore, StoreCapabilities},
-    transport::{
-        mqtt::{
-            config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-            registration::register_device, retention::MqttRetention, ClientId,
-        },
-        Connection,
-    },
-    Error,
-};
-
 use self::tls::is_env_ignore_ssl;
-
-use super::{
-    client::AsyncClient, pairing::ApiClient, Mqtt, MqttClient, PairingError,
-    DEFAULT_CONNECTION_TIMEOUT, DEFAULT_KEEP_ALIVE,
-};
+use super::client::AsyncClient;
+use super::pairing::ApiClient;
+use super::{Mqtt, MqttClient, PairingError, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_KEEP_ALIVE};
+use crate::builder::{ConnectionConfig, DeviceBuilder, DeviceTransport, DEFAULT_CHANNEL_SIZE};
+use crate::store::{PropertyStore, StoreCapabilities};
+use crate::transport::mqtt::config::transport::TransportProvider;
+use crate::transport::mqtt::connection::MqttConnection;
+use crate::transport::mqtt::error::MqttError;
+use crate::transport::mqtt::registration::register_device;
+use crate::transport::mqtt::retention::MqttRetention;
+use crate::transport::mqtt::ClientId;
+use crate::transport::Connection;
+use crate::Error;
 
 mod tls;
 pub(crate) mod transport;

@@ -18,22 +18,22 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{cell::Cell, fmt::Debug, path::Path, sync::Arc, time::Duration};
+use std::cell::Cell;
+use std::fmt::Debug;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use futures::lock::Mutex;
-use rusqlite::{
-    types::{FromSql, FromSqlError},
-    OptionalExtension, ToSql,
-};
+use rusqlite::types::{FromSql, FromSqlError};
+use rusqlite::{OptionalExtension, ToSql};
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace};
 
 use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
-use crate::{
-    interface::{MappingType, Ownership},
-    transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteType, BsonConverter, TypeError},
-};
+use crate::interface::{MappingType, Ownership};
+use crate::transport::mqtt::payload::{Payload, PayloadError};
+use crate::types::{AstarteType, BsonConverter, TypeError};
 
 pub(crate) mod statements;
 

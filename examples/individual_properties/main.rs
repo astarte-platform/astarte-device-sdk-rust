@@ -20,12 +20,14 @@
 
 use std::error::Error as StdError;
 
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::client::RecvError;
+use astarte_device_sdk::error::Error;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::SqliteStore;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
+use astarte_device_sdk::Value;
 use serde::{Deserialize, Serialize};
-
-use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
-    transport::mqtt::MqttConfig, Value,
-};
 use tracing::error;
 
 type DynError = Box<dyn StdError + Send + Sync + 'static>;

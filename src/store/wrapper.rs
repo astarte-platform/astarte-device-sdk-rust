@@ -18,9 +18,9 @@
 
 //! Provides functionality to wrap a generic Store to convert the error in Error.
 
+use super::error::StoreError;
+use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::types::AstarteType;
-
-use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
@@ -131,7 +131,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{memory::MemoryStore, tests::test_property_store, SqliteStore};
+    use crate::store::memory::MemoryStore;
+    use crate::store::tests::test_property_store;
+    use crate::store::SqliteStore;
 
     #[tokio::test]
     async fn test_memory_wrapped() {

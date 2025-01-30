@@ -35,11 +35,9 @@ pub mod registration;
 mod retention;
 pub mod topic;
 
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    future::{Future, IntoFuture},
-};
+use std::collections::HashMap;
+use std::fmt::{Debug, Display};
+use std::future::{Future, IntoFuture};
 
 use bytes::Bytes;
 use futures::future::Either;
@@ -47,40 +45,32 @@ use itertools::Itertools;
 use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
 use tracing::{debug, error, info, trace};
 
+use self::client::AsyncClient;
+pub use self::config::{Credential, MqttConfig};
+use self::connection::MqttConnection;
+use self::error::MqttError;
+pub use self::pairing::PairingError;
+pub use self::payload::PayloadError;
+use self::retention::{MqttRetention, RetSender};
+use self::topic::ParsedTopic;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
-
-pub use self::config::Credential;
-pub use self::config::MqttConfig;
-pub use self::pairing::PairingError;
-pub use self::payload::PayloadError;
-use crate::{
-    client::RecvError,
-    error::Report,
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-        Ownership, Reliability,
-    },
-    interfaces::{self, Interfaces, Introspection},
-    properties,
-    retention::{
-        memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
-    },
-    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteType, Error, Interface, Timestamp,
+use crate::client::RecvError;
+use crate::error::Report;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::{MappingRef, ObjectRef};
+use crate::interface::{Ownership, Reliability};
+use crate::interfaces::{self, Interfaces, Introspection};
+use crate::retention::memory::SharedVolatileStore;
+use crate::retention::{
+    PublishInfo, RetentionError, RetentionId, StoredRetention, StoredRetentionExt,
 };
-use crate::{retention::RetentionError, store::OptStoredProp};
-
-use self::{
-    client::AsyncClient,
-    connection::MqttConnection,
-    error::MqttError,
-    retention::{MqttRetention, RetSender},
-    topic::ParsedTopic,
-};
+use crate::store::error::StoreError;
+use crate::store::wrapper::StoreWrapper;
+use crate::store::{OptStoredProp, PropertyStore, StoreCapabilities};
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::{properties, AstarteType, Error, Interface, Timestamp};
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
@@ -855,7 +845,8 @@ impl AsyncClientExt for AsyncClient {
 
 #[cfg(test)]
 pub(crate) mod test {
-    use std::{str::FromStr, time::Duration};
+    use std::str::FromStr;
+    use std::time::Duration;
 
     use mockito::Server;
     use properties::extract_set_properties;
@@ -863,22 +854,14 @@ pub(crate) mod test {
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
     };
     use tempfile::TempDir;
-    use test::{
-        client::NEW_LOCK,
-        pairing::tests::{mock_create_certificate, mock_get_broker_url},
-    };
+    use test::client::NEW_LOCK;
+    use test::pairing::tests::{mock_create_certificate, mock_get_broker_url};
 
-    use crate::{
-        builder::{ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
-        store::memory::MemoryStore,
-    };
-
-    use self::{
-        client::{AsyncClient, EventLoop},
-        config::transport::TransportProvider,
-    };
-
+    use self::client::{AsyncClient, EventLoop};
+    use self::config::transport::TransportProvider;
     use super::*;
+    use crate::builder::{ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY};
+    use crate::store::memory::MemoryStore;
 
     pub(crate) fn notify_success<E>() -> Result<NoticeFuture, E> {
         let (tx, notice) = rumqttc::NoticeTx::new();

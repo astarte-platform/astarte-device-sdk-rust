@@ -18,14 +18,17 @@
 
 //! Sorted collection of interfaces accessible by endpoint or path.
 
-use std::{
-    cmp::Ordering, collections::BTreeSet, fmt::Debug, iter::FusedIterator, ops::Deref,
-    slice::Iter as SliceIter,
-};
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+use std::fmt::Debug;
+use std::iter::FusedIterator;
+use std::ops::Deref;
+use std::slice::Iter as SliceIter;
 
 use itertools::Itertools;
 
-use super::{endpoint::Endpoint, InterfaceMapping};
+use super::endpoint::Endpoint;
+use super::InterfaceMapping;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MappingVec<T> {

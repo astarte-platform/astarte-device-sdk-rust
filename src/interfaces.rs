@@ -26,14 +26,10 @@ use std::ops::Deref;
 use itertools::Itertools;
 use tracing::{debug, trace};
 
-use crate::{
-    interface::{
-        error::InterfaceError,
-        mapping::path::MappingPath,
-        reference::{MappingRef, PropertyRef},
-    },
-    Error, Interface,
-};
+use crate::interface::error::InterfaceError;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::{MappingRef, PropertyRef};
+use crate::{Error, Interface};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -353,11 +349,9 @@ pub(crate) mod tests {
     use std::str::FromStr;
 
     use super::*;
-
-    use crate::{
-        builder::DeviceBuilder,
-        interface::{mapping::path::tests::mapping, MappingType},
-    };
+    use crate::builder::DeviceBuilder;
+    use crate::interface::mapping::path::tests::mapping;
+    use crate::interface::MappingType;
 
     pub(crate) const PROPERTIES_SERVER: &str = r#"
         {

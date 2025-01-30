@@ -47,6 +47,9 @@ pub mod transport;
 pub mod types;
 mod validate;
 
+// Re-export rumqttc since we return its types in some methods
+pub use {chrono, rumqttc};
+
 /// Re-exported internal structs
 pub use crate::aggregate::{AstarteAggregate, Value};
 pub use crate::client::{Client, DeviceClient};
@@ -55,10 +58,6 @@ pub use crate::error::Error;
 pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::interface::Interface;
 pub use crate::types::AstarteType;
-
-// Re-export rumqttc since we return its types in some methods
-pub use chrono;
-pub use rumqttc;
 
 /// Timestamp returned in the astarte payload
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
@@ -69,12 +68,16 @@ pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
 mod test {
-    use base64::Engine;
-    use mockall::predicate;
-    use rumqttc::Event;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
+
+    use astarte_device_sdk::AstarteAggregate;
+    #[cfg(not(feature = "derive"))]
+    use astarte_device_sdk_derive::AstarteAggregate;
+    use base64::Engine;
+    use mockall::predicate;
+    use rumqttc::Event;
     use tokio::sync::{mpsc, RwLock};
 
     use crate::builder::DEFAULT_VOLATILE_CAPACITY;
@@ -85,18 +88,15 @@ mod test {
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
+    use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
     use crate::transport::mqtt::Mqtt;
+    use crate::types::AstarteType;
     use crate::{
         self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop, Interface,
+        Value,
     };
-    use crate::{types::AstarteType, Value};
-    use astarte_device_sdk::AstarteAggregate;
-    #[cfg(not(feature = "derive"))]
-    use astarte_device_sdk_derive::AstarteAggregate;
-
-    use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
 
     // Interfaces
     pub(crate) const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");

@@ -16,23 +16,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    ops::{Deref, DerefMut},
-    path::Path,
-};
+use std::ops::{Deref, DerefMut};
+use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
-
-use crate::{
-    interface::Ownership,
-    store::{OptStoredProp, StoredProp},
-    AstarteType,
-};
 
 use super::{
     into_stored_type, wrap_sync_call, PropRecord, RecordOwnership, SqliteError, StoredRecord,
     SQLITE_BUSY_TIMEOUT,
 };
+use crate::interface::Ownership;
+use crate::store::{OptStoredProp, StoredProp};
+use crate::AstarteType;
 
 #[cfg(feature = "sqlite-trace")]
 /// Logs the execution of SQLite statements

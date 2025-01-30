@@ -20,7 +20,8 @@
 
 use std::collections::HashMap;
 
-use crate::{error::Error, types::AstarteType};
+use crate::error::Error;
+use crate::types::AstarteType;
 
 /// Trait returning an object aggregate to be sent.
 ///

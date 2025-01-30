@@ -17,7 +17,8 @@
 
 //! Validate an interface and the version change between two interfaces.
 
-use std::{cmp::Ordering, fmt::Display};
+use std::cmp::Ordering;
+use std::fmt::Display;
 
 use super::Interface;
 

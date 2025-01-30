@@ -24,9 +24,8 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::transport::mqtt::PairingError;
-
 use super::pairing::ApiData;
+use crate::transport::mqtt::PairingError;
 
 #[derive(Debug, Serialize)]
 struct MqttV1HwId<'a> {

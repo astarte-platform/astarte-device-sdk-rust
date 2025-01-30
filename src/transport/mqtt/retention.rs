@@ -25,7 +25,9 @@
 //! When an interface major version is updated the retention cache must be invalidated. Since the
 //! payload will be publish on the new introspection.
 
-use std::{collections::HashMap, future::IntoFuture, task::Poll};
+use std::collections::HashMap;
+use std::future::IntoFuture;
+use std::task::Poll;
 
 use rumqttc::{NoticeError, NoticeFuture};
 use tracing::trace;
@@ -132,9 +134,8 @@ impl std::future::Future for MqttRetentionFuture<'_> {
 mod tests {
     use rumqttc::NoticeTx;
 
-    use crate::retention::Context;
-
     use super::*;
+    use crate::retention::Context;
 
     #[test]
     fn should_queue_and_get_next() {

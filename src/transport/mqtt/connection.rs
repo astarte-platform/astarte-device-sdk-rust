@@ -43,11 +43,9 @@
 //!
 //! Incoming messages must be processed as they arrive. If an error occurs during this process, it should be propagated up to the client with appropriate error-handling mechanisms.
 
-use std::{
-    collections::VecDeque,
-    fmt::{Debug, Display},
-    time::Duration,
-};
+use std::collections::VecDeque;
+use std::fmt::{Debug, Display};
+use std::time::Duration;
 
 use rumqttc::{
     mqttbytes, ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError,
@@ -57,20 +55,19 @@ use sync_wrapper::SyncWrapper;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{
-    error::Report,
-    interfaces::Interfaces,
-    properties::{encode_set_properties, PropertiesError},
-    retry::ExponentialIter,
-    store::{error::StoreError, wrapper::StoreWrapper, OptStoredProp, PropertyStore},
-    transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
-};
-
-use super::{
-    client::{AsyncClient, EventLoop},
-    config::transport::TransportProvider,
-    ClientId, PayloadError, SessionData,
-};
+use super::client::{AsyncClient, EventLoop};
+use super::config::transport::TransportProvider;
+use super::{ClientId, PayloadError, SessionData};
+use crate::error::Report;
+use crate::interfaces::Interfaces;
+use crate::properties::{encode_set_properties, PropertiesError};
+use crate::retry::ExponentialIter;
+use crate::store::error::StoreError;
+use crate::store::wrapper::StoreWrapper;
+use crate::store::{OptStoredProp, PropertyStore};
+use crate::transport::mqtt::pairing::ApiClient;
+use crate::transport::mqtt::payload::Payload;
+use crate::transport::mqtt::AsyncClientExt;
 
 /// Errors while initializing the MQTT connection.
 #[non_exhaustive]
@@ -844,18 +841,17 @@ impl Next {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, time::Duration};
+    use std::str::FromStr;
+    use std::time::Duration;
 
     use mockall::predicate;
 
-    use crate::{
-        store::{memory::MemoryStore, StoredProp},
-        test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
-        transport::mqtt::test::notify_success,
-        AstarteType, Interface,
-    };
-
     use super::*;
+    use crate::store::memory::MemoryStore;
+    use crate::store::StoredProp;
+    use crate::test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM};
+    use crate::transport::mqtt::test::notify_success;
+    use crate::{AstarteType, Interface};
 
     #[tokio::test]
     async fn test_connect_client_response() {

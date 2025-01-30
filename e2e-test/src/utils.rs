@@ -19,11 +19,10 @@
  */
 use std::collections::HashMap;
 
+use astarte_device_sdk::types::AstarteType;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
-
-use astarte_device_sdk::types::AstarteType;
 
 /// Produces a newly initialized HashMap containing the specified arguments.
 ///

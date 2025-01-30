@@ -18,17 +18,15 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{error::Error as StdError, fmt::Debug, future::Future};
+use std::error::Error as StdError;
+use std::fmt::Debug;
+use std::future::Future;
 
 pub use self::sqlite::SqliteStore;
-use crate::{
-    interface::{
-        reference::{MappingRef, PropertyRef},
-        Ownership,
-    },
-    retention::StoredRetention,
-    types::AstarteType,
-};
+use crate::interface::reference::{MappingRef, PropertyRef};
+use crate::interface::Ownership;
+use crate::retention::StoredRetention;
+use crate::types::AstarteType;
 
 pub mod error;
 pub mod memory;
@@ -198,11 +196,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
-
     use chrono::{TimeZone, Utc};
 
     use super::*;
+    use crate::store::memory::MemoryStore;
+    use crate::store::wrapper::StoreWrapper;
 
     pub(crate) async fn test_property_store<S>(store: S)
     where

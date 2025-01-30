@@ -20,11 +20,10 @@
 //! Provides mock data to be used for testing the Astarte aggregates.
 use std::collections::HashMap;
 
-use base64::Engine;
-use chrono::{DateTime, Utc};
-
 use astarte_device_sdk::types::AstarteType;
 use astarte_device_sdk::AstarteAggregate;
+use base64::Engine;
+use chrono::{DateTime, Utc};
 
 use crate::utils;
 

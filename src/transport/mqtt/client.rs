@@ -16,10 +16,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(test)]
-pub(crate) use self::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 #[cfg(not(test))]
 pub(crate) use rumqttc::{AsyncClient, EventLoop};
+
+#[cfg(test)]
+pub(crate) use self::mock::{MockAsyncClient as AsyncClient, MockEventLoop as EventLoop};
 
 #[cfg(test)]
 /// Lock for synchronizing the calls to [`AsyncClient::new`]

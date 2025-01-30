@@ -18,39 +18,34 @@
 
 //! Connection to Astarte, for handling events and reconnection on error.
 
+use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::{collections::HashMap, sync::atomic::AtomicBool};
 
 use futures::future::Either;
 use itertools::Itertools;
-use tokio::sync::{Barrier, Notify};
-use tokio::{
-    sync::{mpsc, oneshot, RwLock},
-    task::JoinSet,
-};
+use tokio::sync::{mpsc, oneshot, Barrier, Notify, RwLock};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::error::AggregateError;
-use crate::transport::TransportError;
-use crate::{
-    builder::DEFAULT_CHANNEL_SIZE,
-    client::RecvError,
-    error::Report,
-    event::DeviceEvent,
-    interface::{
-        mapping::path::MappingPath, Aggregation as InterfaceAggregation, Ownership, Retention,
-    },
-    interfaces::Interfaces,
-    introspection::AddInterfaceError,
-    retention::memory::{ItemValue, SharedVolatileStore},
-    retention::{self, RetentionId, StoredRetention, StoredRetentionExt},
-    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities, StoredProp},
-    transport::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register},
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Value,
+use crate::builder::DEFAULT_CHANNEL_SIZE;
+use crate::client::RecvError;
+use crate::error::{AggregateError, Report};
+use crate::event::DeviceEvent;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::{Aggregation as InterfaceAggregation, Ownership, Retention};
+use crate::interfaces::Interfaces;
+use crate::introspection::AddInterfaceError;
+use crate::retention::memory::{ItemValue, SharedVolatileStore};
+use crate::retention::{self, RetentionId, StoredRetention, StoredRetentionExt};
+use crate::store::wrapper::StoreWrapper;
+use crate::store::{PropertyStore, StoreCapabilities, StoredProp};
+use crate::transport::{
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::{Error, Interface, Value};
 
 /// Handles the messages from the device and astarte.
 pub trait EventLoop {

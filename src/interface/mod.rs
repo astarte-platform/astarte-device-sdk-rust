@@ -26,31 +26,29 @@ pub mod mapping;
 pub mod reference;
 pub(crate) mod validation;
 
-use serde::{Deserialize, Serialize};
-use tracing::info;
-
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::str::FromStr;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+use tracing::info;
+
 pub(crate) use self::def::{
     Aggregation, InterfaceTypeDef, Mapping, MappingType, Ownership, Reliability,
 };
+use self::def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef};
 use self::error::InterfaceError;
-use self::mapping::vec::Item;
-use self::mapping::InterfaceMapping;
-use self::reference::{MappingRef, ObjectRef, PropertyRef};
-use self::{
-    def::{DatabaseRetentionPolicyDef, InterfaceDef, RetentionDef},
-    mapping::{
-        iter::{IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter},
-        path::MappingPath,
-        vec::MappingVec,
-        BaseMapping, DatastreamIndividualMapping, PropertiesMapping,
-    },
-    validation::VersionChange,
+use self::mapping::iter::{
+    IndividualMappingIter, MappingIter, ObjectMappingIter, PropertiesMappingIter,
 };
+use self::mapping::path::MappingPath;
+use self::mapping::vec::{Item, MappingVec};
+use self::mapping::{
+    BaseMapping, DatastreamIndividualMapping, InterfaceMapping, PropertiesMapping,
+};
+use self::reference::{MappingRef, ObjectRef, PropertyRef};
+use self::validation::VersionChange;
 
 /// Mapping between the endpoint and the path
 ///
@@ -850,20 +848,16 @@ where
 mod tests {
     use std::str::FromStr;
 
-    use crate::{
-        interface::{
-            def::{DatabaseRetentionPolicyDef, RetentionDef},
-            mapping::{
-                path::MappingPath,
-                vec::{Item, MappingVec},
-                BaseMapping, DatastreamIndividualMapping,
-            },
-            Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
-            Mapping, MappingAccess, MappingSet, MappingType, Ownership, Reliability, Retention,
-        },
-        test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY},
-        Interface,
+    use crate::interface::def::{DatabaseRetentionPolicyDef, RetentionDef};
+    use crate::interface::mapping::path::MappingPath;
+    use crate::interface::mapping::vec::{Item, MappingVec};
+    use crate::interface::mapping::{BaseMapping, DatastreamIndividualMapping};
+    use crate::interface::{
+        Aggregation, DatabaseRetention, DatastreamIndividual, InterfaceType, InterfaceTypeDef,
+        Mapping, MappingAccess, MappingSet, MappingType, Ownership, Reliability, Retention,
     };
+    use crate::test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM, E2E_DEVICE_PROPERTY};
+    use crate::Interface;
 
     // The mappings are sorted alphabetically by endpoint, so we can confront them
     #[cfg(feature = "interface-doc")]

@@ -18,11 +18,12 @@
 
 //! Typed reference to an interface.
 
-use std::{borrow::Borrow, ops::Deref};
+use std::borrow::Borrow;
+use std::ops::Deref;
 
+use super::mapping::path::MappingPath;
+use super::{DatastreamObject, Mapping};
 use crate::Interface;
-
-use super::{mapping::path::MappingPath, DatastreamObject, Mapping};
 
 /// Struct to hold a reference to an [`Interface`], which is a property.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

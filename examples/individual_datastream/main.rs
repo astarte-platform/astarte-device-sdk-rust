@@ -20,12 +20,12 @@
 
 use std::time::{Duration, SystemTime};
 
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::client::RecvError;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::memory::MemoryStore;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
 use serde::Deserialize;
-
-use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
-};
 use tokio::task::JoinSet;
 use tracing::error;
 

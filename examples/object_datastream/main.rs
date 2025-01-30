@@ -18,16 +18,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use serde::{Deserialize, Serialize};
-
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::error::Error;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::memory::MemoryStore;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
 #[cfg(feature = "derive")]
 use astarte_device_sdk::AstarteAggregate;
-use astarte_device_sdk::{
-    builder::DeviceBuilder, error::Error, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
-};
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::AstarteAggregate;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 struct Config {

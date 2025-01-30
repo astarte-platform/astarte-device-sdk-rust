@@ -23,18 +23,15 @@
 
 /// Device module that exports trait commonly used when sending or receiving data.
 pub mod device {
-    pub use crate::client::Client;
-    pub use crate::client::ClientDisconnect;
+    pub use crate::client::{Client, ClientDisconnect};
     pub use crate::connection::EventLoop;
     pub use crate::introspection::DynamicIntrospection;
-    pub use crate::AstarteAggregate;
-    pub use crate::FromEvent;
+    pub use crate::{AstarteAggregate, FromEvent};
 }
 
 /// Exports common trait used by the [`Builder`](crate::builder::DeviceSdkBuild)
 pub mod builder {
-    pub use crate::builder::ConnectionConfig;
-    pub use crate::builder::DeviceSdkBuild;
+    pub use crate::builder::{ConnectionConfig, DeviceSdkBuild};
 }
 
 /// Exports common trait used when accessing stored properties.

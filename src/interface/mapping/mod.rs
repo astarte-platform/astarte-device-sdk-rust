@@ -18,12 +18,12 @@
 
 //! Mapping of an interface.
 
-use std::{borrow::Borrow, ops::Deref};
+use std::borrow::Borrow;
+use std::ops::Deref;
 
 use tracing::warn;
 
 use self::endpoint::Endpoint;
-
 use super::{DatabaseRetention, InterfaceError, Mapping, MappingType, Reliability, Retention};
 
 pub mod endpoint;

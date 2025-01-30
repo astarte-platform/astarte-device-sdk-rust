@@ -16,18 +16,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{future::Future, path::Path};
+use std::future::Future;
+use std::path::Path;
 
-use astarte_device_sdk::{
-    client::{ClientDisconnect, RecvError},
-    properties::PropAccess,
-    store::StoredProp,
-    AstarteAggregate, AstarteType, DeviceEvent, Error, Interface,
-};
-use mockall::mock;
-
+use astarte_device_sdk::client::{ClientDisconnect, RecvError};
+use astarte_device_sdk::properties::PropAccess;
+use astarte_device_sdk::store::StoredProp;
+use astarte_device_sdk::{AstarteAggregate, AstarteType, DeviceEvent, Error, Interface};
 // Export public facing dependencies
 pub use mockall;
+use mockall::mock;
 
 pub trait Client {
     fn send_object_with_timestamp<D>(

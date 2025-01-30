@@ -18,19 +18,20 @@
 
 //! Retention implemented using an SQLite database.
 
-use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duration};
+use std::borrow::Cow;
+use std::collections::HashSet;
+use std::num::TryFromIntError;
+use std::time::Duration;
 
-use rusqlite::{
-    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
-    ToSql,
-};
-
-use crate::{interface::Reliability, store::SqliteStore};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
+use rusqlite::ToSql;
 
 use super::{
     duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
     TimestampMillis,
 };
+use crate::interface::Reliability;
+use crate::store::SqliteStore;
 
 mod statements;
 
@@ -288,9 +289,8 @@ impl StoredRetention for SqliteStore {
 mod tests {
     use statements::tests::{fetch_mapping, fetch_publish};
 
-    use crate::retention::Context;
-
     use super::*;
+    use crate::retention::Context;
 
     #[tokio::test]
     async fn should_store_publish() {

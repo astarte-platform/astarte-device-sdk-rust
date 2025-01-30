@@ -23,19 +23,14 @@
 use std::collections::HashMap;
 
 use bson::Bson;
-
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
-use crate::{
-    interface::{
-        mapping::path::{MappingError, MappingPath},
-        reference::{MappingRef, ObjectRef},
-        MappingAccess,
-    },
-    types::{AstarteType, BsonConverter, TypeError},
-    Interface, Timestamp,
-};
+use crate::interface::mapping::path::{MappingError, MappingPath};
+use crate::interface::reference::{MappingRef, ObjectRef};
+use crate::interface::MappingAccess;
+use crate::types::{AstarteType, BsonConverter, TypeError};
+use crate::{Interface, Timestamp};
 
 /// Errors that can occur while handling the payload.
 #[non_exhaustive]
@@ -209,21 +204,16 @@ pub(super) fn deserialize_object(
 
 #[cfg(test)]
 mod test {
-    use chrono::Utc;
     use std::str::FromStr;
 
-    use chrono::TimeZone;
-
-    use crate::{
-        interface::{mapping::path::tests::mapping, MappingType},
-        transport::test::{mock_validate_individual, mock_validate_object},
-        validate::ValidatedIndividual,
-    };
+    use chrono::{TimeZone, Utc};
 
     use super::*;
-
-    use crate::test::E2E_DEVICE_AGGREGATE;
-    use crate::test::E2E_DEVICE_DATASTREAM;
+    use crate::interface::mapping::path::tests::mapping;
+    use crate::interface::MappingType;
+    use crate::test::{E2E_DEVICE_AGGREGATE, E2E_DEVICE_DATASTREAM};
+    use crate::transport::test::{mock_validate_individual, mock_validate_object};
+    use crate::validate::ValidatedIndividual;
 
     fn mapping_type(value: &AstarteType) -> MappingType {
         match value {

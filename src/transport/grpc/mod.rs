@@ -32,7 +32,13 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::time::Duration;
 
+use astarte_message_hub_proto::astarte_message::Payload as ProtoPayload;
+use astarte_message_hub_proto::message_hub_client::MessageHubClient;
+use astarte_message_hub_proto::pbjson_types::Empty;
 use astarte_message_hub_proto::prost::{DecodeError, Message};
+#[cfg(feature = "message-hub")]
+#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+pub use astarte_message_hub_proto::tonic;
 use astarte_message_hub_proto::tonic::codec::Streaming;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
@@ -40,9 +46,7 @@ use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
-    astarte_message::Payload as ProtoPayload, message_hub_client::MessageHubClient,
-    pbjson_types::Empty, AstarteMessage, InterfacesJson, InterfacesName, MessageHubError,
-    MessageHubEvent, Node,
+    AstarteMessage, InterfacesJson, InterfacesName, MessageHubError, MessageHubEvent, Node,
 };
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
@@ -53,30 +57,22 @@ use self::convert::MessageHubProtoError;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
+use crate::builder::{ConnectionConfig, DeviceBuilder, DeviceTransport};
 use crate::client::RecvError;
 use crate::error::AggregateError;
+use crate::interface::mapping::path::MappingPath;
+use crate::interface::reference::{MappingRef, ObjectRef};
 use crate::interface::Aggregation;
+use crate::interfaces::{self, Interfaces};
 use crate::retention::memory::SharedVolatileStore;
-use crate::retention::{PublishInfo, RetentionId};
-use crate::{
-    builder::{ConnectionConfig, DeviceBuilder, DeviceTransport},
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-    },
-    interfaces::{self, Interfaces},
-    retention::StoredRetention,
-    retry::ExponentialIter,
-    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
-    transport::grpc::convert::map_values_to_astarte_type,
-    types::AstarteType,
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Timestamp,
-};
-
-#[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
-pub use astarte_message_hub_proto::tonic;
+use crate::retention::{PublishInfo, RetentionId, StoredRetention};
+use crate::retry::ExponentialIter;
+use crate::store::wrapper::StoreWrapper;
+use crate::store::{PropertyStore, StoreCapabilities};
+use crate::transport::grpc::convert::map_values_to_astarte_type;
+use crate::types::AstarteType;
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::{Error, Interface, Timestamp};
 
 /// Errors raised while using the [`Grpc`] transport
 #[non_exhaustive]
@@ -624,28 +620,23 @@ impl<'a> TryFrom<&'a Interfaces> for NodeData {
 
 #[cfg(test)]
 mod test {
-    use std::{future::Future, net::SocketAddr, str::FromStr};
+    use std::future::Future;
+    use std::net::SocketAddr;
+    use std::str::FromStr;
 
-    use astarte_message_hub_proto::{
-        message_hub_server::{MessageHub, MessageHubServer},
-        AstarteMessage, AstarteUnset,
-    };
+    use astarte_message_hub_proto::message_hub_server::{MessageHub, MessageHubServer};
+    use astarte_message_hub_proto::{AstarteMessage, AstarteUnset};
     use async_trait::async_trait;
-    use tokio::{
-        net::TcpListener,
-        sync::{mpsc, Mutex},
-    };
+    use tokio::net::TcpListener;
+    use tokio::sync::{mpsc, Mutex};
     use uuid::uuid;
 
-    use crate::{
-        builder::DEFAULT_VOLATILE_CAPACITY,
-        store::memory::MemoryStore,
-        transport::test::{mock_validate_individual, mock_validate_object},
-        transport::ReceivedEvent,
-        AstarteAggregate, DeviceEvent, Value,
-    };
-
     use super::*;
+    use crate::builder::DEFAULT_VOLATILE_CAPACITY;
+    use crate::store::memory::MemoryStore;
+    use crate::transport::test::{mock_validate_individual, mock_validate_object};
+    use crate::transport::ReceivedEvent;
+    use crate::{AstarteAggregate, DeviceEvent, Value};
 
     const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
