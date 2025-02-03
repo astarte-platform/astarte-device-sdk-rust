@@ -197,7 +197,7 @@ impl ValidatedObject {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ValidatedUnset {
-    pub(crate) interface: InterfaceInfo,
+    pub(crate) interface: String,
     pub(crate) path: String,
 }
 
@@ -206,6 +206,13 @@ impl ValidatedUnset {
         mapping: MappingRef<'_, PropertyRef<'_>>,
         path: &MappingPath<'_>,
     ) -> Result<Self, UserValidationError> {
+        if mapping.interface().ownership() != Ownership::Device {
+            return Err(UserValidationError::Ownership {
+                exp: Ownership::Device,
+                got: mapping.interface().ownership(),
+            });
+        }
+
         if !mapping.allow_unset() {
             return Err(UserValidationError::Unset {
                 interface: mapping.interface().interface_name().to_string(),
@@ -214,9 +221,16 @@ impl ValidatedUnset {
         }
 
         Ok(Self {
-            interface: Into::<InterfaceInfo<&'_ str>>::into(mapping.interface()).owned_name(),
+            interface: mapping.interface().interface_name().to_string(),
             path: path.to_string(),
         })
+    }
+}
+
+impl<'a> From<&'a ValidatedUnset> for InterfaceInfo<'a> {
+    /// an unset is allowed to be sent only by the device [`ValidatedUnset::validate`]
+    fn from(value: &'a ValidatedUnset) -> Self {
+        InterfaceInfo::new(&value.interface, Ownership::Device)
     }
 }
 

@@ -346,7 +346,7 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
 impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedUnset) -> Self {
         Self {
-            interface_name: value.interface.name,
+            interface_name: value.interface,
             path: value.path,
             timestamp: None,
             payload: Some(ProtoPayload::AstarteUnset(

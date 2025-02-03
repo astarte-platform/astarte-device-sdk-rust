@@ -379,7 +379,7 @@ where
     async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {
         // We send an empty vector as payload to unset the property, https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#payload-format
         self.send(
-            &validated.interface.name,
+            &validated.interface,
             &validated.path,
             Reliability::Unique.into(),
             Vec::new(),

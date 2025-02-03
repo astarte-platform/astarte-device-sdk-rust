@@ -329,19 +329,20 @@ where
                 Ok(())
             }
             ClientMessage::Unset(data) => {
-                self.store.unset_prop(&data.interface, &data.path).await?;
+                let interface_info = (&data).into();
+                self.store.unset_prop(&interface_info, &data.path).await?;
 
                 if self.status.is_connected() {
                     self.sender.unset(data.clone()).await?;
 
                     debug!(
                         "deleting property {}{} from store",
-                        data.interface.name, data.path
+                        data.interface, data.path
                     );
 
                     // TODO: this should be done when the package has been acknowledged, but it's hard
                     //       for the MQTT implementation at the moment so we delete it here to cleanup
-                    self.store.delete_prop(&data.interface, &data.path).await?;
+                    self.store.delete_prop(&interface_info, &data.path).await?;
                 }
 
                 Ok(())

@@ -52,43 +52,33 @@ pub trait StoreCapabilities {
 
 /// Data passed to the store that identifies an interface
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InterfaceInfo<S = String> {
-    pub(crate) name: S,
+pub struct InterfaceInfo<'a> {
+    pub(crate) name: &'a str,
     pub(crate) ownership: Ownership,
 }
 
-impl<S> InterfaceInfo<S> {
-    fn new(name: S, ownership: Ownership) -> Self {
+impl<'a> InterfaceInfo<'a> {
+    pub(crate) fn new(name: &'a str, ownership: Ownership) -> Self {
         Self { name, ownership }
-    }
-
-    pub(crate) fn owned_name(self) -> InterfaceInfo
-    where
-        S: ToString,
-    {
-        InterfaceInfo {
-            name: self.name.to_string(),
-            ownership: self.ownership,
-        }
     }
 }
 
 /// Converts an interface object reference to the store needed input
-impl<'a> From<&'a Interface> for InterfaceInfo<&'a str> {
+impl<'a> From<&'a Interface> for InterfaceInfo<'a> {
     fn from(interface: &'a Interface) -> Self {
         Self::new(interface.interface_name(), interface.ownership())
     }
 }
 
 /// Converts a property ref object reference to the store needed input
-impl<'a> From<&'a PropertyRef<'a>> for InterfaceInfo<&'a str> {
+impl<'a> From<&'a PropertyRef<'a>> for InterfaceInfo<'a> {
     fn from(prop_ref: &'a PropertyRef) -> Self {
         Self::new(prop_ref.0.interface_name(), prop_ref.0.ownership())
     }
 }
 
 /// Converts a stored prop reference to the store needed input
-impl<'a, S, V> From<&'a StoredProp<S, V>> for InterfaceInfo<&'a str>
+impl<'a, S, V> From<&'a StoredProp<S, V>> for InterfaceInfo<'a>
 where
     S: AsRef<str>,
 {
@@ -122,30 +112,24 @@ where
     ///
     /// The property store should delete the property from the database if the major version of the
     /// interface does not match the one provided.
-    fn load_prop<I>(
+    fn load_prop(
         &self,
-        interface: &InterfaceInfo<I>,
+        interface: &InterfaceInfo<'_>,
         path: &str,
         interface_major: i32,
-    ) -> impl Future<Output = Result<Option<AstarteType>, Self::Err>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
+    ) -> impl Future<Output = Result<Option<AstarteType>, Self::Err>> + Send;
     /// Unset a property from the database.
-    fn unset_prop<I>(
+    fn unset_prop(
         &self,
-        interface: &InterfaceInfo<I>,
+        interface: &InterfaceInfo<'_>,
         path: &str,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Delete a property from the database.
-    fn delete_prop<I>(
+    fn delete_prop(
         &self,
-        interface: &InterfaceInfo<I>,
+        interface: &InterfaceInfo<'_>,
         path: &str,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Removes all saved properties from the database.
     fn clear(&self) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
@@ -158,19 +142,15 @@ where
     /// and major version.
     fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Retrieves all the property values of a specific interface in the database.
-    fn interface_props<I>(
+    fn interface_props(
         &self,
-        interface: &InterfaceInfo<I>,
-    ) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
+        interface: &InterfaceInfo<'_>,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Deletes all the properties of the interface from the database.
-    fn delete_interface<I>(
+    fn delete_interface(
         &self,
-        interface: &InterfaceInfo<I>,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
+        interface: &InterfaceInfo<'_>,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all the device properties, including the one that were unset but not deleted.
     fn device_props_with_unset(
         &self,
@@ -376,7 +356,7 @@ mod tests {
             interface_major: 1,
             ownership: Ownership::Device,
         };
-        let device_interface_data = (Into::<InterfaceInfo<&'_ str>>::into(&device)).owned_name();
+        let device_interface_data = Into::<InterfaceInfo<'_>>::into(&device);
         let server = StoredProp {
             interface: "com.test2".into(),
             path: "/test2".into(),
@@ -405,9 +385,9 @@ mod tests {
 
         // props from interface
         let props = store.interface_props(&device_interface_data).await.unwrap();
-        assert_eq!(props, vec![device]);
+        assert_eq!(props, vec![device.clone()]);
         let props = store.interface_props(&server_interface_data).await.unwrap();
-        assert_eq!(props, vec![server]);
+        assert_eq!(props, vec![server.clone()]);
 
         // delete interface properties
         store
@@ -476,14 +456,23 @@ mod tests {
             interface_major: 1,
             ownership: Ownership::Device,
         };
-        let prop_interface_data = Into::<InterfaceInfo<&'_ str>>::into(&prop).owned_name();
         mem.store_prop(prop).await.unwrap();
 
-        let res =
-            tokio::spawn(async move { mem.load_prop(&prop_interface_data, "/test", 1).await })
-                .await
-                .unwrap()
-                .unwrap();
+        let exp2 = exp.clone();
+        let res = tokio::spawn(async move {
+            let prop = StoredProp {
+                interface: "com.test",
+                path: "/test",
+                value: &exp2,
+                interface_major: 1,
+                ownership: Ownership::Device,
+            };
+            let prop_interface_data = Into::<InterfaceInfo<'_>>::into(&prop);
+            mem.load_prop(&prop_interface_data, "/test", 1).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
         assert_eq!(res, Some(exp));
     }

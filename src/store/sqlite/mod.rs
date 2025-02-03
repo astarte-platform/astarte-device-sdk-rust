@@ -464,15 +464,12 @@ impl PropertyStore for SqliteStore {
         Ok(())
     }
 
-    async fn load_prop<I>(
+    async fn load_prop(
         &self,
-        interface: &InterfaceInfo<I>,
+        interface: &InterfaceInfo<'_>,
         path: &str,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
+    ) -> Result<Option<AstarteType>, Self::Err> {
         let opt_record =
             self.with_reader(|reader| reader.load_prop(interface.name.as_ref(), path))?;
 
@@ -480,7 +477,7 @@ impl PropertyStore for SqliteStore {
             Some(record) => {
                 trace!(
                     "Loaded property {} {} in db {:?}",
-                    interface.name.as_ref(),
+                    interface.name,
                     path,
                     record
                 );
@@ -489,10 +486,7 @@ impl PropertyStore for SqliteStore {
                 if record.interface_major != interface_major {
                     error!(
                         "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                        interface.name.as_ref(),
-                        path,
-                        record.interface_major,
-                        interface_major
+                        interface.name, path, record.interface_major, interface_major
                     );
 
                     self.delete_prop(interface, path).await?;
@@ -506,10 +500,7 @@ impl PropertyStore for SqliteStore {
         }
     }
 
-    async fn unset_prop<I>(&self, interface: &InterfaceInfo<I>, path: &str) -> Result<(), Self::Err>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
+    async fn unset_prop(&self, interface: &InterfaceInfo<'_>, path: &str) -> Result<(), Self::Err> {
         self.writer
             .lock()
             .await
@@ -518,14 +509,11 @@ impl PropertyStore for SqliteStore {
         Ok(())
     }
 
-    async fn delete_prop<I>(
+    async fn delete_prop(
         &self,
-        interface: &InterfaceInfo<I>,
+        interface: &InterfaceInfo<'_>,
         path: &str,
-    ) -> Result<(), Self::Err>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
+    ) -> Result<(), Self::Err> {
         self.writer
             .lock()
             .await
@@ -552,20 +540,14 @@ impl PropertyStore for SqliteStore {
         self.with_reader(|reader| reader.props_with_ownership(Ownership::Server))
     }
 
-    async fn interface_props<I>(
+    async fn interface_props(
         &self,
-        interface: &InterfaceInfo<I>,
-    ) -> Result<Vec<StoredProp>, Self::Err>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
+        interface: &InterfaceInfo<'_>,
+    ) -> Result<Vec<StoredProp>, Self::Err> {
         self.with_reader(|reader| reader.interface_props(interface.name.as_ref()))
     }
 
-    async fn delete_interface<I>(&self, interface: &InterfaceInfo<I>) -> Result<(), Self::Err>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
+    async fn delete_interface(&self, interface: &InterfaceInfo<'_>) -> Result<(), Self::Err> {
         self.writer
             .lock()
             .await
