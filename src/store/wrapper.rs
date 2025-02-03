@@ -47,7 +47,6 @@ where
     }
 }
 
-// TODO could this be a blanket implementation for every S that returns dyn error
 impl<S> PropertyStore for StoreWrapper<S>
 where
     S: PropertyStore,
