@@ -261,13 +261,14 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             true,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -288,13 +289,14 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             true,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -321,13 +323,14 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -348,13 +351,14 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -381,13 +385,14 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -408,13 +413,14 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let api = ApiClient::new(
             "realm",
@@ -440,13 +446,14 @@ mod tests {
             .create_async()
             .await;
 
-        let mut provider = TransportProvider::new(
+        let mut provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().join("non existing")),
             false,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let tls_cfg = provider.api_tls_config();
         let api = ApiClient::new(
