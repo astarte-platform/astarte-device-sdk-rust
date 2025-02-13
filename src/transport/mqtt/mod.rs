@@ -93,7 +93,7 @@ struct ClientId<'a> {
     device_id: &'a str,
 }
 
-impl<'a> Display for ClientId<'a> {
+impl Display for ClientId<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.realm, self.device_id)
     }

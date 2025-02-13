@@ -165,10 +165,10 @@ impl<S, C> AstarteDeviceSdk<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
-    async fn handle_payload_individual<'a>(
+    async fn handle_payload_individual(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
@@ -206,10 +206,10 @@ impl<S, C> AstarteDeviceSdk<S, C> {
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
-    async fn handle_payload_object<'a>(
+    async fn handle_payload_object(
         &self,
         interface: &Interface,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<(Aggregation, Option<chrono::DateTime<chrono::Utc>>), Error>
     where
@@ -320,7 +320,7 @@ impl<S, C> AstarteDeviceSdk<S, C> {
 
         let prop_stored = self.is_property_stored(&mapping, path, &individual).await?;
 
-        if prop_stored.map_or(false, |r| r.is_ok()) {
+        if prop_stored.is_some_and(|r| r.is_ok()) {
             debug!("property was already sent, no need to send it again");
             return Ok(());
         }
@@ -353,10 +353,10 @@ impl<S, C> AstarteDeviceSdk<S, C> {
         Ok(())
     }
 
-    async fn send_object_impl<'a, D>(
+    async fn send_object_impl<D>(
         &self,
         interface_name: &str,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error>
