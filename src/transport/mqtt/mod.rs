@@ -544,16 +544,9 @@ impl SessionData {
     where
         S: PropertyStore,
     {
-        let device_properties = store.device_props().await?;
         let interfaces = interfaces.read().await;
 
-        let server_interfaces = Self::filter_server_interfaces(&interfaces);
-
-        Ok(Self {
-            interfaces: interfaces.get_introspection_string(),
-            server_interfaces,
-            device_properties,
-        })
+        Self::try_from_unlocked(&interfaces, store).await
     }
 
     pub(crate) async fn try_from_unlocked<S>(
@@ -563,7 +556,14 @@ impl SessionData {
     where
         S: PropertyStore<Err = StoreError>,
     {
-        let device_properties = store.device_props().await?;
+        let mut device_properties = store.device_props().await?;
+        // Filter interfaces that are missing or have been updated
+        device_properties.retain(|prop| {
+            interfaces
+                .get(&prop.interface)
+                .is_some_and(|interface| interface.version_major() == prop.interface_major)
+        });
+
         let server_interfaces = Self::filter_server_interfaces(interfaces);
 
         Ok(Self {
