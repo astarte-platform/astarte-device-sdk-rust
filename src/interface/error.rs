@@ -86,6 +86,7 @@ pub enum InterfaceFileError {
     #[error("invalid interface file {}", .path.display())]
     Interface {
         path: PathBuf,
+        #[source]
         backtrace: InterfaceError,
     },
 }
