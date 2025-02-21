@@ -103,7 +103,7 @@ astarte-message-hub-proto = { workspace = true }
 astarte-message-hub-proto-mock = { workspace = true }
 async-trait = { workspace = true }
 color-eyre = { workspace = true }
-env_logger = { workspace = true }
+eyre = { workspace = true }
 mockall = { workspace = true }
 mockito = { workspace = true }
 pretty_assertions = { workspace = true }
@@ -143,7 +143,6 @@ bytes = "1.5.0"
 cfg-if = "1.0.0"
 chrono = "0.4.20"
 color-eyre = "0.6.3"
-env_logger = "0.11.0"
 eyre = "0.6.12"
 flate2 = "1.0.0"
 flume = "0.11.0"
