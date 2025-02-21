@@ -25,11 +25,12 @@ Quick links:
 - [API documentation](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/).
 - [Astarte documentation](https://docs.astarte-platform.org/latest/001-intro_user.html) for more information regarding Astarte.
 - [Get started](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_get_started/index.html) for a guide on how to use the SDK functionalities.
+- [Connect to the Astarte MessageHub](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_connect_to_the_astarte_msghub/index.html) tutorial.
 - [OS requirements](https://github.com/astarte-platform/astarte-device-sdk-rust/tree/master/docs/os-requirements.md) for system libraries.
 
 ## Use the library
 
-You can add the library tro your project with:
+You can add the library to your project with:
 
 ```sh
 cargo new astarte-project && cd astarte-project
