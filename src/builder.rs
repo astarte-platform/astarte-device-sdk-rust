@@ -110,7 +110,7 @@ where
     C: Connection + Send,
 {
     async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
-        // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
+        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(self.channel_size);
         let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
 
