@@ -20,6 +20,7 @@
 
 use std::time::{Duration, SystemTime};
 
+use eyre::OptionExt;
 use serde::Deserialize;
 
 use astarte_device_sdk::{
@@ -28,8 +29,7 @@ use astarte_device_sdk::{
 };
 use tokio::task::JoinSet;
 use tracing::error;
-
-type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Deserialize)]
 struct Config {
@@ -40,14 +40,17 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
+
     let now = SystemTime::now();
 
     // Load configuration
-    let file =
-        std::fs::read_to_string("./examples/individual_datastream/configuration.json").unwrap();
-    let cfg: Config = serde_json::from_str(&file).unwrap();
+    let file = std::fs::read_to_string("./examples/individual_datastream/configuration.json")?;
+    let cfg: Config = serde_json::from_str(&file)?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
@@ -67,7 +70,7 @@ async fn main() -> Result<(), DynError> {
     let client_cl = client.clone();
     println!("Connection to Astarte established.");
 
-    let mut tasks = JoinSet::<Result<(), DynError>>::new();
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
     // Create a task to transmit
     tasks.spawn(async move {
@@ -113,7 +116,7 @@ async fn main() -> Result<(), DynError> {
                         let led_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or("Incorrect error received.")?;
+                            .ok_or_eyre("Incorrect error received.")?;
 
                         match iter.next() {
                             Some("enable") => {
@@ -124,7 +127,7 @@ async fn main() -> Result<(), DynError> {
                         );
                             }
                             Some("intensity") => {
-                                let value: f64 = var.try_into().unwrap();
+                                let value: f64 = var.try_into()?;
                                 println!(
                             "Received new intensity datastream for LED number {}. LED intensity is now {}",
                             led_id, value

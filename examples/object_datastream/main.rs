@@ -16,16 +16,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "derive")]
 use astarte_device_sdk::IntoAstarteObject;
 use astarte_device_sdk::{
-    builder::DeviceBuilder, error::Error, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
+    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
 };
 #[cfg(not(feature = "derive"))]
 use astarte_device_sdk_derive::IntoAstarteObject;
+use tokio::task::JoinSet;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -43,12 +46,15 @@ struct DataObject {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
 
     // Load configuration
-    let file = std::fs::read_to_string("./examples/object_datastream/configuration.json").unwrap();
-    let cfg: Config = serde_json::from_str(&file).unwrap();
+    let file = std::fs::read_to_string("./examples/object_datastream/configuration.json")?;
+    let cfg: Config = serde_json::from_str(&file)?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
@@ -67,8 +73,11 @@ async fn main() -> Result<(), Error> {
         .build()
         .await?;
 
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
+
     // Create an thread to transmit
-    tokio::task::spawn(async move {
+    tasks.spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
             let data = DataObject {
                 endpoint1: 1.34,
@@ -83,15 +92,30 @@ async fn main() -> Result<(), Error> {
                     "/23",
                     data.try_into().unwrap(),
                 )
-                .await
-                .unwrap();
+                .await?;
 
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            interval.tick().await;
         }
     });
 
     // Use the current thread to handle the connection (no incoming messages are expected in this example)
-    connection.handle_events().await?;
+    tasks.spawn(async move {
+        connection.handle_events().await?;
+
+        Ok(())
+    });
+
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(res) => {
+                res?;
+
+                tasks.abort_all();
+            }
+            Err(err) if err.is_cancelled() => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
 
     Ok(())
 }
