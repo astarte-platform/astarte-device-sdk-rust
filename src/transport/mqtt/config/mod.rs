@@ -18,15 +18,14 @@
 
 //! Configuration for the MQTT connection
 
+use rumqttc::{MqttOptions, NetworkOptions, Transport};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Debug, Display},
     io,
     path::{Path, PathBuf},
     time::Duration,
 };
-
-use rumqttc::{MqttOptions, NetworkOptions, Transport};
-use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::debug;
 use url::Url;
@@ -402,14 +401,23 @@ where
             .map_err(|err| MqttError::Pairing(PairingError::InvalidUrl(err)))?;
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
-        let provider = TransportProvider::new(
+
+        let mut provider = TransportProvider::configure(
             pairing_url,
             secret.clone(),
             builder.writable_dir.clone(),
             insecure_ssl,
-        );
+        )
+        .await
+        .map_err(MqttError::Pairing)?;
 
-        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id);
+        let client = ApiClient::new(
+            &self.realm,
+            &self.device_id,
+            provider.pairing_url().clone(),
+            provider.credential_secret().to_string(),
+            provider.api_tls_config(),
+        );
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
 

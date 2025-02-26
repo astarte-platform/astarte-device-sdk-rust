@@ -7,7 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- Bump MSRV to 1.78.0.
+### Added
+
+- Introduce `webpki` feature to use Mozilla webpki root certificates rather than the native ones
+  [#396](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/396).
+
+### Changed
+
+- Bump MSRV to 1.78.0 [#395](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/395).
 
 ## [0.9.3] - 2025-01-24
 
