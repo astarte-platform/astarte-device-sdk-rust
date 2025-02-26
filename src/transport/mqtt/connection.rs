@@ -859,7 +859,6 @@ mod tests {
         AstarteType, Interface,
     };
     use mockall::predicate;
-    use rustls::RootCertStore;
 
     use super::*;
 
@@ -988,13 +987,14 @@ mod tests {
             MqttConnection::wait_connack(
                 client,
                 eventl,
-                TransportProvider::new(
+                TransportProvider::configure(
                     "http://api.astarte.localhost/pairing".parse().unwrap(),
                     "secret".to_string(),
                     None,
                     true,
-                    RootCertStore::empty(),
-                ),
+                )
+                .await
+                .unwrap(),
                 ClientId {
                     realm: "realm",
                     device_id: "device_id",

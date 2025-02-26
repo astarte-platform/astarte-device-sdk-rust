@@ -234,7 +234,7 @@ mod tests {
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
             .returning(|_|notify_success());
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []).await;
 
         let handle = tokio::spawn(async move {
             for _ in 0..3 {
@@ -317,7 +317,7 @@ mod tests {
             })
             .returning(|_, _, _, _| notify_success());
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []).await;
 
         let handle = tokio::spawn(async move {
             let msg = connection.sender.client.recv().await.unwrap();
@@ -380,7 +380,7 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|_| notify_success());
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces).await;
 
         let handle = tokio::spawn(async move {
             let msg = connection.sender.client.recv().await.unwrap();
@@ -469,7 +469,7 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|_| notify_success());
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []).await;
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
@@ -505,7 +505,7 @@ mod tests {
         // no expectations since no interfaces will be added
 
         // trying to add the already-present interfaces
-        let (client, mut connection) = mock_astarte_device(client, eventloop, to_add.clone());
+        let (client, mut connection) = mock_astarte_device(client, eventloop, to_add.clone()).await;
 
         let handle = tokio::spawn(async move {
             let msg = connection.sender.client.recv().await.unwrap();
@@ -571,7 +571,7 @@ mod tests {
 
         // no unsubscribe is called since no server-owned interfaces have been added
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []).await;
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
@@ -604,7 +604,7 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(AsyncClient::default);
 
-        let (client, mut connection) = mock_astarte_device(client, eventloop, []);
+        let (client, mut connection) = mock_astarte_device(client, eventloop, []).await;
 
         let handle = tokio::spawn(async move {
             for _ in 0..2 {
@@ -682,7 +682,8 @@ mod tests {
                 Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap(),
                 Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap(),
             ],
-        );
+        )
+        .await;
 
         let interface = device
             .get_interface("org.astarte-platform.rust.e2etest.DeviceProperty", |i| {

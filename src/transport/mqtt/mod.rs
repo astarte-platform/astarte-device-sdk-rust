@@ -862,7 +862,6 @@ pub(crate) mod test {
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
     };
-    use rustls::RootCertStore;
     use tempfile::TempDir;
     use test::{
         client::NEW_LOCK,
@@ -889,7 +888,7 @@ pub(crate) mod test {
         Ok(notice)
     }
 
-    pub(crate) fn mock_mqtt_connection<S>(
+    pub(crate) async fn mock_mqtt_connection<S>(
         client: AsyncClient,
         eventloop: EventLoop,
         store: S,
@@ -909,13 +908,14 @@ pub(crate) mod test {
 
         let store = StoreWrapper::new(store);
 
-        let transport_provider = TransportProvider::new(
+        let transport_provider = TransportProvider::configure(
             "http://api.astarte.localhost/pairing".parse().unwrap(),
             "secret".to_string(),
             None,
             true,
-            RootCertStore::empty(),
-        );
+        )
+        .await
+        .unwrap();
 
         let mqtt = Mqtt::new(
             client_id.clone(),
@@ -991,7 +991,7 @@ pub(crate) mod test {
             .returning(|_, _, _, _| notify_success());
 
         let (mut client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new());
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1045,7 +1045,8 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success());
 
-        let (mut client, _connection) = mock_mqtt_connection(client, eventl, MemoryStore::new());
+        let (mut client, _connection) =
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1107,7 +1108,7 @@ pub(crate) mod test {
             });
 
         let (mut mqtt_client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new());
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         mqtt_client
             .extend_interfaces(&interfaces, &to_add)

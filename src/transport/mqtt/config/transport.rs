@@ -46,23 +46,6 @@ pub(crate) struct TransportProvider {
 }
 
 impl TransportProvider {
-    #[allow(dead_code)]
-    pub(crate) fn new(
-        pairing_url: Url,
-        credential_secret: String,
-        store_dir: Option<PathBuf>,
-        insecure_ssl: bool,
-        root_cert_store: RootCertStore,
-    ) -> Self {
-        Self {
-            pairing_url,
-            credential_secret,
-            store_dir,
-            insecure_ssl,
-            root_cert_store: Arc::new(root_cert_store),
-        }
-    }
-
     #[instrument(skip_all)]
     pub(crate) async fn configure(
         pairing_url: Url,
