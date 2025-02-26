@@ -32,13 +32,10 @@ use url::Url;
 
 use crate::{
     builder::{ConnectionConfig, DeviceBuilder, DeviceTransport, DEFAULT_CHANNEL_SIZE},
-    store::{PropertyStore, StoreCapabilities},
-    transport::{
-        mqtt::{
-            config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-            registration::register_device, retention::MqttRetention, ClientId,
-        },
-        Connection,
+    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
+    transport::mqtt::{
+        config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
+        registration::register_device, retention::MqttRetention, ClientId,
     },
     Error,
 };
@@ -275,10 +272,7 @@ impl MqttConfig {
     async fn credentials<S, C>(
         &mut self,
         builder: &DeviceBuilder<S, C>,
-    ) -> Result<String, MqttError>
-    where
-        C: Connection,
-    {
+    ) -> Result<String, MqttError> {
         // We need to clone to not return something owning a mutable reference to self
         match &self.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
@@ -391,7 +385,7 @@ where
         builder: &DeviceBuilder<S, C>,
     ) -> Result<DeviceTransport<Mqtt<S>>, Self::Err>
     where
-        C: Connection + Send + Sync,
+        C: Send + Sync,
     {
         let secret = self.credentials(builder).await?;
 
@@ -436,6 +430,8 @@ where
 
         eventloop.set_network_options(net_opts);
 
+        let wrapper_store = StoreWrapper::new(builder.store.clone());
+
         let client_id = ClientId {
             device_id: self.device_id.clone(),
             realm: self.realm.clone(),
@@ -446,7 +442,7 @@ where
             provider,
             client_id.as_ref(),
             &builder.interfaces,
-            &builder.store,
+            &wrapper_store,
         )
         .await?;
 
@@ -458,14 +454,14 @@ where
             client_id.clone(),
             client,
             retention_tx,
-            builder.store.clone(),
+            wrapper_store.clone(),
             builder.volatile.clone(),
         );
         let connection = Mqtt::new(
             client_id,
             connection,
             retention,
-            builder.store.clone(),
+            wrapper_store.clone(),
             builder.volatile.clone(),
         );
 
