@@ -91,7 +91,7 @@ struct ClientId<'a> {
     device_id: &'a str,
 }
 
-impl<'a> Display for ClientId<'a> {
+impl Display for ClientId<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", self.realm, self.device_id)
     }
@@ -647,7 +647,14 @@ impl SessionData {
     where
         S: PropertyStore<Err = StoreError>,
     {
-        let device_properties = store.device_props().await?;
+        let mut device_properties = store.device_props().await?;
+        // Filter interfaces that are missing or have been updated
+        device_properties.retain(|prop| {
+            interfaces
+                .get(&prop.interface)
+                .is_some_and(|interface| interface.version_major() == prop.interface_major)
+        });
+
         let server_interfaces = Self::filter_server_interfaces(interfaces);
 
         Ok(Self {

@@ -35,13 +35,13 @@ pub struct MappingPath<'a> {
     pub(crate) levels: Vec<&'a str>,
 }
 
-impl<'a> MappingPath<'a> {
+impl MappingPath<'_> {
     pub(crate) fn as_str(&self) -> &str {
         self.path
     }
 }
 
-impl<'a> Display for MappingPath<'a> {
+impl Display for MappingPath<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.path)
     }
@@ -55,19 +55,19 @@ impl<'a> TryFrom<&'a str> for MappingPath<'a> {
     }
 }
 
-impl<'a> PartialEq<&str> for MappingPath<'a> {
+impl PartialEq<&str> for MappingPath<'_> {
     fn eq(&self, &other: &&str) -> bool {
         self.path == other
     }
 }
 
-impl<'a> PartialEq<str> for MappingPath<'a> {
+impl PartialEq<str> for MappingPath<'_> {
     fn eq(&self, other: &str) -> bool {
         self.path == other
     }
 }
 
-impl<'a, T> PartialEq<Endpoint<T>> for MappingPath<'a>
+impl<T> PartialEq<Endpoint<T>> for MappingPath<'_>
 where
     T: AsRef<str>,
 {
@@ -76,7 +76,7 @@ where
     }
 }
 
-impl<'a, T> PartialOrd<Endpoint<T>> for MappingPath<'a>
+impl<T> PartialOrd<Endpoint<T>> for MappingPath<'_>
 where
     T: AsRef<str>,
 {
@@ -85,7 +85,7 @@ where
     }
 }
 
-impl<'a, S, T> PartialEq<Endpoint<T>> for (&MappingPath<'a>, S)
+impl<S, T> PartialEq<Endpoint<T>> for (&MappingPath<'_>, S)
 where
     S: AsRef<str>,
     T: AsRef<str>,
@@ -111,7 +111,7 @@ where
     }
 }
 
-impl<'a, S, T> PartialOrd<Endpoint<T>> for (&MappingPath<'a>, S)
+impl<S, T> PartialOrd<Endpoint<T>> for (&MappingPath<'_>, S)
 where
     S: AsRef<str>,
     T: AsRef<str>,
