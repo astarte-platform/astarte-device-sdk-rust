@@ -320,10 +320,10 @@ impl<S> DeviceClient<S> {
         self.send_msg(msg).await
     }
 
-    async fn send_object_impl<'a, D>(
+    async fn send_object_impl<D>(
         &self,
         interface_name: &str,
-        path: &MappingPath<'a>,
+        path: &MappingPath<'_>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), Error>
@@ -353,11 +353,7 @@ impl<S> DeviceClient<S> {
         self.send_msg(ClientMessage::Object(validated)).await
     }
 
-    async fn unset_prop<'a>(
-        &self,
-        interface_name: &str,
-        path: &MappingPath<'a>,
-    ) -> Result<(), Error>
+    async fn unset_prop(&self, interface_name: &str, path: &MappingPath<'_>) -> Result<(), Error>
     where
         S: PropertyStore,
     {

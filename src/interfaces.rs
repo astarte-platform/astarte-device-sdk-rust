@@ -387,7 +387,7 @@ pub(crate) mod tests {
         allow_unset: bool,
     }
 
-    impl<'a> CheckEndpoint<'a> {
+    impl CheckEndpoint<'_> {
         pub(crate) fn check(&self) {
             let path = mapping(self.path);
             let mapping = self.interfaces.interface_mapping(self.name, &path).unwrap();

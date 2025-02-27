@@ -47,6 +47,7 @@ pub enum AddInterfaceError {
         /// The path of the invalid interface json.
         path: PathBuf,
         /// Reason why the interface couldn't be added.
+        #[source]
         backtrace: InterfaceError,
     },
 }
