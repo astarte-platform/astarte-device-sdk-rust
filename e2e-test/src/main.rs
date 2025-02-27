@@ -290,8 +290,10 @@ async fn test_datastream_device_to_server(
 /// Run the end to end tests from server to device for individual datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_datastream_server_to_device(
@@ -379,8 +381,10 @@ async fn test_aggregate_device_to_server(
 /// Run the end to end tests from server to device for aggregate datastreams.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received datastreams.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_aggregate_server_to_device(
@@ -501,8 +505,10 @@ async fn test_property_device_to_server(
 /// Run the end to end tests from server to device for properties.
 ///
 /// # Arguments
+///
 /// - *test_cfg*: struct containing configuration settings for the tests.
 /// - *rx_data*: shared memory containing the received properties.
+///
 /// A different process will poll the device and then store the matching received messages
 /// in this shared memory location.
 async fn test_property_server_to_device(

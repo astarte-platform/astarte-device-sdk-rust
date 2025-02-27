@@ -178,7 +178,7 @@ struct Introspection<'a> {
     interfaces: &'a HashMap<String, Interface>,
 }
 
-impl<'a> Display for Introspection<'a> {
+impl Display for Introspection<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut iter = self.interfaces.iter();
 
@@ -286,7 +286,7 @@ pub(crate) mod tests {
         allow_unset: bool,
     }
 
-    impl<'a> CheckEndpoint<'a> {
+    impl CheckEndpoint<'_> {
         pub(crate) fn check(&self) {
             let path = mapping!(self.path);
             let mapping = self.interfaces.interface_mapping(self.name, path).unwrap();

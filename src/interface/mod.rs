@@ -343,7 +343,7 @@ impl DatastreamIndividual {
     }
 }
 
-impl<'a, T> TryFrom<&'a InterfaceDef<T>> for DatastreamIndividual
+impl<T> TryFrom<&InterfaceDef<T>> for DatastreamIndividual
 where
     T: AsRef<str> + Into<String>,
 {

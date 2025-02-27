@@ -34,13 +34,13 @@ impl<'a> PropertyRef<'a> {
     }
 }
 
-impl<'a> Borrow<Interface> for PropertyRef<'a> {
+impl Borrow<Interface> for PropertyRef<'_> {
     fn borrow(&self) -> &Interface {
         self.0
     }
 }
 
-impl<'a> Deref for PropertyRef<'a> {
+impl Deref for PropertyRef<'_> {
     type Target = Interface;
 
     fn deref(&self) -> &Self::Target {
@@ -48,7 +48,7 @@ impl<'a> Deref for PropertyRef<'a> {
     }
 }
 
-impl<'a> AsRef<Interface> for PropertyRef<'a> {
+impl AsRef<Interface> for PropertyRef<'_> {
     fn as_ref(&self) -> &Interface {
         self.0
     }
@@ -74,7 +74,7 @@ impl<'a> ObjectRef<'a> {
     }
 }
 
-impl<'a> Deref for ObjectRef<'a> {
+impl Deref for ObjectRef<'_> {
     type Target = DatastreamObject;
 
     fn deref(&self) -> &Self::Target {
