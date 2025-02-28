@@ -23,7 +23,7 @@ use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{InterfaceInfo, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{interface::Ownership, retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
@@ -88,11 +88,11 @@ impl PropertyStore for MemoryStore {
 
     async fn load_prop(
         &self,
-        interface: &str,
+        interface: &InterfaceInfo<'_>,
         path: &str,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
-        let key = Key::new(interface, path);
+        let key = Key::new(interface.name, path);
 
         // We need to drop the lock before calling delete_prop
         let opt_val = {
@@ -105,7 +105,7 @@ impl PropertyStore for MemoryStore {
             Some(value) if value.interface_major != interface_major => {
                 error!(
                     "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                    interface, path, value.interface_major, interface_major
+                    interface.name, path, value.interface_major, interface_major
                 );
 
                 self.delete_prop(interface, path).await?;
@@ -117,8 +117,8 @@ impl PropertyStore for MemoryStore {
         }
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        let key = Key::new(interface, path);
+    async fn unset_prop(&self, interface: &InterfaceInfo<'_>, path: &str) -> Result<(), Self::Err> {
+        let key = Key::new(interface.name, path);
 
         let mut writer = self.store.write().await;
 
@@ -129,8 +129,12 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
-        let key = Key::new(interface, path);
+    async fn delete_prop(
+        &self,
+        interface: &InterfaceInfo<'_>,
+        path: &str,
+    ) -> Result<(), Self::Err> {
+        let key = Key::new(interface.name, path);
 
         let mut store = self.store.write().await;
 
@@ -183,14 +187,17 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(
+        &self,
+        interface: &InterfaceInfo<'_>,
+    ) -> Result<Vec<StoredProp>, Self::Err> {
         Ok(self
             .store
             .read()
             .await
             .iter()
             .filter_map(|(k, v)| {
-                if k.interface == interface {
+                if k.interface == interface.name {
                     v.as_prop(k)
                 } else {
                     None
@@ -199,11 +206,11 @@ impl PropertyStore for MemoryStore {
             .collect())
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &InterfaceInfo<'_>) -> Result<(), Self::Err> {
         self.store
             .write()
             .await
-            .retain(|k, _v| k.interface != interface);
+            .retain(|k, _v| k.interface != interface.name);
 
         Ok(())
     }

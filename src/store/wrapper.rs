@@ -20,7 +20,9 @@
 
 use crate::types::AstarteType;
 
-use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{
+    error::StoreError, InterfaceInfo, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp,
+};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
@@ -57,7 +59,7 @@ where
 
     async fn load_prop(
         &self,
-        interface: &str,
+        interface: &InterfaceInfo<'_>,
         path: &str,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
@@ -67,14 +69,18 @@ where
             .map_err(StoreError::load)
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn unset_prop(&self, interface: &InterfaceInfo<'_>, path: &str) -> Result<(), Self::Err> {
         self.store
             .unset_prop(interface, path)
             .await
             .map_err(StoreError::unset)
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn delete_prop(
+        &self,
+        interface: &InterfaceInfo<'_>,
+        path: &str,
+    ) -> Result<(), Self::Err> {
         self.store
             .delete_prop(interface, path)
             .await
@@ -106,14 +112,17 @@ where
             .map_err(StoreError::device_props)
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(
+        &self,
+        interface: &InterfaceInfo<'_>,
+    ) -> Result<Vec<StoredProp>, Self::Err> {
         self.store
             .interface_props(interface)
             .await
             .map_err(StoreError::interface_props)
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &InterfaceInfo<'_>) -> Result<(), Self::Err> {
         self.store
             .delete_interface(interface)
             .await
