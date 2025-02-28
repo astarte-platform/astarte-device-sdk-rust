@@ -50,11 +50,11 @@ use std::{
 };
 
 use rumqttc::{
-    mqttbytes, ClientError, ConnectionError, Event, NoticeError, Packet, Publish, QoS, StateError,
+    mqttbytes, ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError,
     Transport,
 };
 use sync_wrapper::SyncWrapper;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
@@ -85,9 +85,9 @@ enum InitError {
     },
     /// Couldn't wait for the message acknowledgment.
     #[error("couldn't wait the message acknowledgment for {ctx}")]
-    Notice {
+    Ack {
         #[source]
-        backtrace: NoticeError,
+        backtrace: TokenError,
         ctx: &'static str,
     },
     /// Couldn't serialize the device property payload.
@@ -106,8 +106,8 @@ impl InitError {
         move |backtrace: ClientError| InitError::Client { backtrace, ctx }
     }
 
-    const fn notice(ctx: &'static str) -> impl Fn(NoticeError) -> InitError {
-        move |backtrace: NoticeError| InitError::Notice { backtrace, ctx }
+    const fn ack(ctx: &'static str) -> impl Fn(TokenError) -> InitError {
+        move |backtrace: TokenError| InitError::Ack { backtrace, ctx }
     }
 }
 
@@ -215,6 +215,8 @@ impl MqttConnection {
                 .await?;
 
             if let Some(publish) = opt_publish {
+                debug!("received a publish");
+
                 disable_clean_session(self.connection.eventloop_mut());
 
                 self.buff.push_back(publish);
@@ -476,9 +478,8 @@ impl Handshake {
                 .send_introspection(client_id, session_data.interfaces)
                 .await
                 .map_err(InitError::client("send introspection"))?
-                .wait_async()
                 .await
-                .map_err(InitError::notice("subscribe server interface"))?;
+                .map_err(InitError::ack("subscribe server interface"))?;
 
             debug!("session present {}", self.session_present);
             if !self.session_present {
@@ -517,9 +518,8 @@ impl Handshake {
             )
             .await
             .map_err(InitError::client("subscribe consumer properties"))?
-            .wait_async()
             .await
-            .map_err(InitError::notice("subscribe consumer properties"))?;
+            .map_err(InitError::ack("subscribe consumer properties"))?;
 
         debug!(
             "subscribing on {} server interfaces",
@@ -533,9 +533,8 @@ impl Handshake {
 
         if let Some(notice) = notice {
             notice
-                .wait_async()
                 .await
-                .map_err(InitError::notice("subscribe server interface"))?;
+                .map_err(InitError::ack("subscribe server interface"))?;
         }
 
         Ok(())
@@ -557,9 +556,10 @@ impl Handshake {
             )
             .await
             .map_err(InitError::client("empty cache"))?
-            .wait_async()
             .await
-            .map_err(InitError::notice("empty cache"))
+            .map_err(InitError::ack("empty cache"))?;
+
+        Ok(())
     }
 
     /// Sends the passed device owned properties
@@ -584,9 +584,10 @@ impl Handshake {
             )
             .await
             .map_err(InitError::client("purge device properties"))?
-            .wait_async()
             .await
-            .map_err(InitError::notice("purge device properties"))
+            .map_err(InitError::ack("purge device properties"))?;
+
+        Ok(())
     }
 
     /// Sends the passed device owned properties
@@ -618,9 +619,8 @@ impl Handshake {
                 .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
                 .await
                 .map_err(InitError::client("device property"))?
-                .wait_async()
                 .await
-                .map_err(InitError::notice("device properties"))?;
+                .map_err(InitError::ack("device properties"))?;
 
             if prop.value.is_none() {
                 trace!("clearing unset property {}/{}", prop.interface, prop.path);
@@ -655,31 +655,30 @@ impl WaitAcks {
     /// packets in are sent correctly and the handle can advance to completion. Eventual published
     /// packets are returned.
     async fn wait_connection(&mut self, conn: &mut Connection) -> Result<Next, StoreError> {
-        // HACK: This is to make the function pass with mockall, since the poll function would never
-        //       yield while using the mocks. With the real implementation the `Eventloop::poll`
-        //       would have to wait for the connection and the sent packets.
-        #[cfg(test)]
-        tokio::task::yield_now().await;
+        tokio::select! {
+            // Join handle is cancel safe
+            res = &mut self.handle => {
+                debug!("task joined");
 
-        if self.handle.is_finished() {
-            debug!("init task finished");
+                Self::handle_join(res)
+            }
+            // I hope this is cancel safe
+            res = conn.eventloop_mut().poll() => {
+                debug!("next event polled");
 
-            return self.handle_join().await;
+                let next = match res {
+                    Ok(event) => Next::handle_event(event),
+                    Err(err) => Next::handle_error(err),
+                };
+
+                Ok(next)
+            }
         }
-
-        trace!("polling next event");
-
-        let next = match conn.eventloop_mut().poll().await {
-            Ok(event) => Next::handle_event(event),
-            Err(err) => Next::handle_error(err),
-        };
-
-        Ok(next)
     }
 
-    async fn handle_join(&mut self) -> Result<Next, StoreError> {
+    fn handle_join(res: Result<Result<(), InitError>, JoinError>) -> Result<Next, StoreError> {
         // Don't move the handle to await the task
-        match (&mut self.handle).await {
+        match res {
             Ok(Ok(())) => {
                 info!("device connected");
                 Ok(Next::state(Connected))
@@ -847,6 +846,7 @@ mod tests {
     use std::{str::FromStr, time::Duration};
 
     use mockall::predicate;
+    use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
         store::{memory::MemoryStore, StoredProp},
@@ -870,12 +870,16 @@ mod tests {
             .once()
             .in_sequence(&mut seq)
             .returning(|| {
-                Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                    rumqttc::ConnAck {
-                        session_present: false,
-                        code: rumqttc::ConnectReturnCode::Success,
-                    },
-                )))
+                Box::pin(async {
+                    tokio::task::yield_now().await;
+
+                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                        rumqttc::ConnAck {
+                            session_present: false,
+                            code: rumqttc::ConnectReturnCode::Success,
+                        },
+                    )))
+                })
             });
 
         client
@@ -895,14 +899,14 @@ mod tests {
                         predicate::eq("realm/device_id/control/consumer/properties".to_string()),
                         predicate::always(),
                     )
-                    .returning(|_topic, _qos| notify_success());
+                    .returning(|_topic, _qos| notify_success(SubAck::new(0,Vec::new())));
 
                 client
                     .expect_subscribe()
                     .once()
                     .in_sequence(&mut seq)
                     .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()), predicate::always())
-                    .returning(|_: String, _| notify_success());
+                    .returning(|_: String, _| notify_success(SubAck::new(0, Vec::new())));
 
                 // Client id
                 client
@@ -915,7 +919,7 @@ mod tests {
                         predicate::always(),
                         predicate::always(),
                     )
-                    .returning(|_, _, _, _| notify_success());
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                 // empty cache
                 client
@@ -928,7 +932,7 @@ mod tests {
                         predicate::always(),
                         predicate::eq("1"),
                     )
-                    .returning(|_, _, _, _| notify_success());
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
 
                 // purge device properties
@@ -940,7 +944,7 @@ mod tests {
                         topic == "realm/device_id/control/producer/properties"
                             && *qos == QoS::ExactlyOnce
                     })
-                    .returning(|_, _, _, _| notify_success());
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                 // device property publish
                 client
@@ -948,9 +952,22 @@ mod tests {
                     .once()
                     .in_sequence(&mut seq)
                     .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/sensor1/name".to_string()), predicate::always(), predicate::always(), predicate::always())
-                    .returning(|_, _, _, _| notify_success());
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                 client
+            });
+
+        // Catch other call to poll
+        eventl
+            .expect_poll()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| {
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+
+                    Ok(Event::Incoming(rumqttc::Packet::PingReq))
+                })
             });
 
         let interfaces = [

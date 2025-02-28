@@ -21,4 +21,3 @@ SPDX-License-Identifier: Apache-2.0
 # System dependencies
 
 - `libsqlite3`: for the persistent store of data
-- `openssl` or `libssl`: for the OpenSSL key generation optional feature

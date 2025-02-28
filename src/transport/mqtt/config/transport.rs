@@ -123,6 +123,8 @@ impl TransportProvider {
 
         // If no store dir is set we just create a new certificate
         if let Some(store_dir) = &self.store_dir {
+            debug!("storing credentials");
+
             let certificate_file = CertificateFile::new(store_dir);
             let private_key_file = PrivateKeyFile::new(store_dir);
 
@@ -187,7 +189,9 @@ impl TransportProvider {
 
 #[cfg(test)]
 mod tests {
+
     use mockito::Server;
+    use rumqttc::TlsConfiguration;
     use tempfile::TempDir;
 
     use crate::transport::mqtt::pairing::tests::mock_create_certificate;
@@ -215,13 +219,21 @@ mod tests {
 
         let api = ApiClient::from_transport(&provider, "realm", "device_id");
 
-        let _ = provider.transport(&api).await.unwrap();
+        let transport = provider.transport(&api).await.unwrap();
+
+        assert!(matches!(
+            transport,
+            Transport::Tls(TlsConfiguration::Rustls(..))
+        ));
 
         let certificate_file = CertificateFile::new(dir.path());
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 
@@ -267,7 +279,10 @@ mod tests {
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 
@@ -313,7 +328,10 @@ mod tests {
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 

@@ -151,7 +151,7 @@ mod tests {
 
     use itertools::Itertools;
     use mockall::predicate;
-    use rumqttc::SubscribeFilter;
+    use rumqttc::{AckOfPub, SubAck, SubscribeFilter, UnsubAck};
 
     use super::*;
 
@@ -183,7 +183,7 @@ mod tests {
                 predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
                 predicate::always()
             )
-            .returning(|_, _| notify_success());
+            .returning(|_, _| notify_success(SubAck::new(0,Vec::new())));
 
         client
             .expect_publish::<String, String>()
@@ -198,7 +198,7 @@ mod tests {
                         .to_string(),
                 ),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_publish::<String, String>()
@@ -208,12 +208,12 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_unsubscribe::<String>()
             .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()))
-            .returning(|_|notify_success());
+            .returning(|_|notify_success(UnsubAck::new(0)));
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -281,7 +281,7 @@ mod tests {
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| notify_success());
+            .returning(|_| notify_success(SubAck::new(0, Vec::new())));
 
         let introspection_cpy = introspection.clone();
 
@@ -296,7 +296,7 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection_cpy
             })
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -352,14 +352,14 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_| notify_success());
+            .returning(|_| notify_success(UnsubAck::new(0)));
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, interfaces);
 
@@ -416,7 +416,7 @@ mod tests {
             .expect_subscribe_many::<Vec<SubscribeFilter>>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| notify_success());
+            .returning(|_| notify_success(SubAck::new(0, Vec::new())));
 
         client
             .expect_publish::<String, String>()
@@ -429,7 +429,7 @@ mod tests {
 
                 publish == "realm/device_id" && intro == introspection
             })
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_publish::<String, String>()
@@ -441,14 +441,14 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_unsubscribe::<String>()
             // 2 times since only 2 out of 4 interfaces are server-owned
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_| notify_success());
+            .returning(|_| notify_success(UnsubAck::new(0)));
 
         let (client, mut connection) = mock_astarte_device(client, eventloop, []);
 
@@ -536,7 +536,7 @@ mod tests {
             .expect_publish::<String, String>()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_publish::<String, String>()
@@ -548,7 +548,7 @@ mod tests {
                 predicate::eq(false),
                 predicate::eq(String::new()),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         // no unsubscribe is called since no server-owned interfaces have been added
 
