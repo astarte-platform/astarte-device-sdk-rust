@@ -18,9 +18,6 @@
 
 //! Example on connecting to the Astarte MessageHub.
 
-// Features required by the example
-#![cfg(all(feature = "message-hub", feature = "derive"))]
-
 use std::{f64, time::Duration};
 
 use astarte_device_sdk::{

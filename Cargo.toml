@@ -148,3 +148,13 @@ tracing-subscriber = "0.3.0"
 url = "2.4.0"
 uuid = "1.1.2"
 webpki-roots = "0.26.0"
+
+[[example]]
+name = "msghub_client"
+path = "examples/message_hub_client/main.rs"
+required-features = ["message-hub", "derive"]
+
+[[example]]
+name = "object_datastream"
+path = "examples/object_datastream/main.rs"
+required-features = ["derive"]
