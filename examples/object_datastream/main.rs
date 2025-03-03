@@ -22,13 +22,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "derive")]
 use astarte_device_sdk::AstarteAggregate;
 use astarte_device_sdk::{
     builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
 };
-#[cfg(not(feature = "derive"))]
-use astarte_device_sdk_derive::AstarteAggregate;
 use tokio::task::JoinSet;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

@@ -18,17 +18,13 @@
 
 //! Example on connecting to the Astarte MessageHub.
 
-// Features required by the example
-#![cfg(all(feature = "message-hub", feature = "derive"))]
-
 use std::{f64, time::Duration};
 
 use astarte_device_sdk::{
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
-    store::SqliteStore,
-    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
+    transport::grpc::{store::GrpcStore, tonic::transport::Endpoint, Grpc, GrpcConfig},
     DeviceClient, DeviceConnection,
 };
 use eyre::OptionExt;
@@ -69,8 +65,8 @@ enum ServerIndividual {
 }
 
 async fn init() -> eyre::Result<(
-    DeviceClient<SqliteStore>,
-    DeviceConnection<SqliteStore, Grpc<SqliteStore>>,
+    DeviceClient<GrpcStore>,
+    DeviceConnection<GrpcStore, Grpc<GrpcStore>>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -84,15 +80,14 @@ async fn init() -> eyre::Result<(
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?
         .interface_str(PROPERTY_DEVICE)?
-        .connect(grpc_config)
-        .await?
+        .connection(grpc_config)
         .build()
-        .await;
+        .await?;
 
     Ok((client, connection))
 }
 
-async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn receive_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -138,7 +133,7 @@ struct AggregatedDevice {
 }
 
 /// Send data after an interval to every interface
-async fn send_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 

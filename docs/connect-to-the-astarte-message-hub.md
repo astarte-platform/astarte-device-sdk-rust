@@ -15,7 +15,7 @@ The Astarte Device SDK supports two different connection types:
 Here we will go through, step by step, on how to connect and send data to the Message Hub.
 
 > You can find the full code by going to the
-> [msghub-client example](https://github.com/astarte-platform/astarte-device-sdk-rust/tree/master/examples/msghub-client)
+> [message hub client example](https://github.com/astarte-platform/astarte-device-sdk-rust/tree/master/examples/message_hub_client)
 
 ## Before you begin
 
@@ -37,9 +37,9 @@ Hub server, and all the keys necessary to register the Message Hub server as a n
 ### Message Hub Server
 
 To register the server you can follow the guide and examples in
-[the MessageHub repository](https://github.com/astarte-platform/astarte-message-hub). Following
-this, we assume the Server is listening on the same machine IP v4 address `127.0.0.1` and port
-`50051`.
+[the Astarte MessageHub repository](https://github.com/astarte-platform/astarte-message-hub).
+Following this, we assume the Server is listening on the same machine IP v4 address `127.0.0.1` and
+port `50051`.
 
 #### Client Auth
 
@@ -291,8 +291,8 @@ function that we declared previously.
 # const NODE_UUID: uuid::Uuid = uuid::uuid!("0444d8c3-f3f1-4b89-9e68-6ffb50ec1839");
 # const MESSAGE_HUB_URL: &str = "http://127.0.0.1:50051";
 # const STORE_DIRECTORY: &str = "./store-dir";
-
-// NOTO: set the interface directory in your project, these are relative to this file
+#
+// NOTE: set the interface directory in your project, these are relative to this file
 const AGGREGATED_DEVICE: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Aggregated.json");
 const INDIVIDUAL_DEVICE: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.IndividualDevice.json");
 const INDIVIDUAL_SERVER: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.IndividualServer.json");
@@ -337,8 +337,6 @@ We can now spawn a task to receive data from Astarte. Using the
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
-
-
 # #[cfg(not(feature = "derive"))]
 # use astarte_device_sdk_derive::FromEvent;
 # #[cfg(feature = "derive")]
@@ -398,8 +396,6 @@ async fn receive_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
     }
 }
 
-
-
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
@@ -448,7 +444,7 @@ convert the Rust struct in an Object Aggregate to send.
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
-
+#
 use std::time::Duration;
 
 # #[cfg(feature = "derive")]
