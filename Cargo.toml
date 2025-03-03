@@ -181,3 +181,13 @@ webpki-roots = "0.26.0"
 # Transitive dependencies
 litemap = "=0.7.4"
 zerofrom = "=0.1.5"
+
+[[example]]
+name = "msghub_client"
+path = "examples/message_hub_client/main.rs"
+required-features = ["message-hub", "derive"]
+
+[[example]]
+name = "object_datastream"
+path = "examples/object_datastream/main.rs"
+required-features = ["derive"]
