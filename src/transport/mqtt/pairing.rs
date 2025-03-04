@@ -102,17 +102,42 @@ pub(crate) struct ApiClient<'a> {
 }
 
 impl<'a> ApiClient<'a> {
+    fn new(
+        realm: &'a str,
+        device_id: &'a str,
+        pairing_url: &'a Url,
+        credentials_secret: &'a str,
+    ) -> Self {
+        // TODO: remove this when we can configure TlsClient
+        #[cfg(test)]
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            tracing::debug!("no provider set, installing default provider");
+
+            rustls::crypto::CryptoProvider::install_default(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            )
+            .expect("failed to install default provider");
+        }
+
+        Self {
+            realm,
+            device_id,
+            pairing_url,
+            credentials_secret,
+        }
+    }
+
     pub(crate) fn from_transport(
         provider: &'a TransportProvider,
         realm: &'a str,
         device_id: &'a str,
     ) -> Self {
-        Self {
+        Self::new(
             realm,
             device_id,
-            pairing_url: provider.pairing_url(),
-            credentials_secret: provider.credential_secret(),
-        }
+            provider.pairing_url(),
+            provider.credential_secret(),
+        )
     }
 
     fn url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
@@ -240,9 +265,15 @@ struct AstarteMqttV1Info {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::transport::mqtt::crypto::Bundle;
+
     use super::*;
 
     use mockito::Server;
+    use pretty_assertions::assert_eq;
+
+    const ASTARTE_CA_PEM: &str = include_str!("../../../tests/ca/astarte-ca.pem");
+    const ASTARTE_CA_KEY_PEM: &str = include_str!("../../../tests/ca/astarte-ca-key.pem");
 
     pub(crate) fn mock_get_broker_url(server: &mut mockito::ServerGuard) -> mockito::Mock {
         server
@@ -257,6 +288,32 @@ pub(crate) mod tests {
             .match_header("authorization", "Bearer secret")
     }
 
+    // Returns the self signed certificate from a CSR
+    fn self_sign_csr_to_pem(csr_pem: &str) -> String {
+        // NOTE: read the doc for this function if crypto backend changes
+        let issuer_key = rcgen::KeyPair::from_pem_and_sign_algo(
+            ASTARTE_CA_KEY_PEM,
+            &rcgen::PKCS_ECDSA_P256_SHA256,
+        )
+        .expect("couldn't parse Astarte CA private key");
+        let issuer = rcgen::CertificateParams::from_ca_cert_pem(ASTARTE_CA_PEM)
+            .expect("couldn't parse Astarte CA")
+            .self_signed(&issuer_key)
+            .expect("couldn't self sign CA");
+
+        rcgen::CertificateSigningRequestParams::from_pem(csr_pem)
+            .expect("couldn't parse csr")
+            .signed_by(&issuer, &issuer_key)
+            .unwrap()
+            .pem()
+    }
+
+    // owned version of the req
+    #[derive(Debug, Deserialize)]
+    struct MqttV1CsrOwned {
+        csr: String,
+    }
+
     pub(crate) fn mock_create_certificate(server: &mut mockito::ServerGuard) -> mockito::Mock {
         server
             .mock(
@@ -264,7 +321,17 @@ pub(crate) mod tests {
                 "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials",
             )
             .with_status(201)
-            .with_body(r#"{"data":{"client_crt":"certificate"}}"#)
+            .with_body_from_request(|req| {
+                let body = req.body().expect("couln't read req body");
+                let ApiData {
+                    data: MqttV1CsrOwned { csr },
+                } = serde_json::from_slice(body).expect("couldn't parse json request");
+
+                let client_crt = self_sign_csr_to_pem(&csr);
+
+                serde_json::to_vec(&ApiData::new(MqttV1Certificate { client_crt }))
+                    .expect("couldn't serialize reposonse")
+            })
             .match_header("authorization", "Bearer secret")
     }
 
@@ -272,21 +339,19 @@ pub(crate) mod tests {
     async fn should_create_certificate() {
         let mut server = Server::new_async().await;
 
-        let mock = mock_create_certificate(&mut server)
-            .match_body(r#"{"data":{"csr":"csr"}}"#)
-            .create_async()
-            .await;
+        let mock = mock_create_certificate(&mut server).create_async().await;
 
-        let client = ApiClient {
-            realm: "realm",
-            device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
-        };
+        let parse = Url::parse(&server.url()).unwrap();
+        let client = ApiClient::new("realm", "device_id", &parse, "secret");
 
-        let res = client.create_certificate("csr").await.unwrap();
+        let bundle = Bundle::new("test", "device_id").unwrap();
 
-        assert_eq!(res, "certificate");
+        let res = client.create_certificate(&bundle.csr).await.unwrap();
+
+        rustls_pemfile::certs(&mut res.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
 
         mock.assert_async().await;
     }
@@ -307,12 +372,8 @@ pub(crate) mod tests {
             .create_async()
             .await;
 
-        let client = ApiClient {
-            realm: "realm",
-            device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
-        };
+        let url = Url::parse(&server.url()).unwrap();
+        let client = ApiClient::new("realm", "device_id", &url, "secret");
 
         let res = client
             .create_certificate("csr")
@@ -330,12 +391,8 @@ pub(crate) mod tests {
 
         let mock = mock_get_broker_url(&mut server).create_async().await;
 
-        let client = ApiClient {
-            realm: "realm",
-            device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
-        };
+        let url = Url::parse(&server.url()).unwrap();
+        let client = ApiClient::new("realm", "device_id", &url, "secret");
 
         let res = client.get_broker_url().await.unwrap();
 
@@ -357,12 +414,8 @@ pub(crate) mod tests {
             .create_async()
             .await;
 
-        let client = ApiClient {
-            realm: "realm",
-            device_id: "device_id",
-            pairing_url: &Url::parse(&server.url()).unwrap(),
-            credentials_secret: "secret",
-        };
+        let url = Url::parse(&server.url()).unwrap();
+        let client = ApiClient::new("realm", "device_id", &url, "secret");
 
         let res = client.get_broker_url().await.expect_err("should error");
 

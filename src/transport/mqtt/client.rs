@@ -31,18 +31,18 @@ pub(crate) mod mock {
 
     use mockall::mock;
     use rumqttc::{
-        ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, NoticeFuture, QoS,
-        SubscribeFilter,
+        AckOfPub, ClientError, ConnectionError, Event, MqttOptions, NetworkOptions, QoS, SubAck,
+        SubscribeFilter, Token, UnsubAck,
     };
 
     mock!(
         pub AsyncClient {
             pub fn new(options: MqttOptions, cap: usize) -> (MockAsyncClient, MockEventLoop);
-            pub async fn subscribe<S: Into<String> + 'static>(&self, topic: S, qos: QoS) -> Result<NoticeFuture, ClientError>;
-            pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<NoticeFuture, ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
-            pub async fn unsubscribe<S: Into<String> + 'static>(&self, topic: S) -> Result<NoticeFuture, ClientError>;
-            pub async fn subscribe_many<T>(&self, topics: T) -> Result<NoticeFuture, ClientError> where T: IntoIterator<Item = SubscribeFilter> + 'static;
-            pub async fn disconnect(&self) -> Result<NoticeFuture, ClientError>;
+            pub async fn subscribe<S: Into<String> + 'static>(&self, topic: S, qos: QoS) -> Result<Token<SubAck>, ClientError>;
+            pub async fn publish<S, V>(&self, topic: S, qos: QoS, retain: bool, payload: V,) -> Result<Token<AckOfPub>, ClientError> where S: Into<String> + 'static, V: Into<Vec<u8>> + 'static;
+            pub async fn unsubscribe<S: Into<String> + 'static>(&self, topic: S) -> Result<Token<UnsubAck>, ClientError>;
+            pub async fn subscribe_many<T>(&self, topics: T) -> Result<Token<SubAck>, ClientError> where T: IntoIterator<Item = SubscribeFilter> + 'static;
+            pub async fn disconnect(&self) -> Result<Token<()>, ClientError>;
         }
         impl Clone for AsyncClient {
             fn clone(&self) -> Self;
@@ -55,7 +55,8 @@ pub(crate) mod mock {
 
     mock! {
         pub EventLoop{
-            pub async fn poll(&mut self) -> Result<Event, ConnectionError>;
+            // If we don't return a future, the pool function will loop
+            pub fn poll(&mut self) -> impl std::future::Future<Output = Result<Event, ConnectionError>> + Send + 'static;
             pub fn set_network_options(&mut self, network_options: NetworkOptions) -> &mut Self;
             pub fn clean(&mut self);
         }

@@ -431,8 +431,9 @@ where
 mod test {
     use std::time::Duration;
 
+    use mockall::predicate;
     use mockito::Server;
-    use rumqttc::{ConnAck, ConnectReturnCode, Event, Packet, QoS};
+    use rumqttc::{AckOfPub, ConnAck, ConnectReturnCode, Event, Packet, QoS, SubAck};
     use tempfile::TempDir;
 
     use crate::{
@@ -563,24 +564,27 @@ mod test {
 
                             client
                                 .expect_subscribe::<String>()
+                                .with(
+                                    predicate::eq(
+                                        "realm/device_id/control/consumer/properties".to_string(),
+                                    ),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                )
                                 .once()
                                 .in_sequence(&mut seq)
-                                .withf(|topic, qos| {
-                                    topic == "realm/device_id/control/consumer/properties"
-                                        && *qos == QoS::ExactlyOnce
-                                })
-                                .returning(|_, _| notify_success());
+                                .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
 
                             client
                                 .expect_publish::<String, String>()
                                 .once()
                                 .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, introspection| {
-                                    topic == "realm/device_id"
-                                        && *qos == QoS::ExactlyOnce
-                                        && introspection.is_empty()
-                                })
-                                .returning(|_, _, _, _| notify_success());
+                                .with(
+                                    predicate::eq("realm/device_id".to_string()),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                    predicate::eq(false),
+                                    predicate::eq(String::new()),
+                                )
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                                 .expect_publish::<String, &str>()
@@ -591,7 +595,7 @@ mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && *payload == "1"
                                 })
-                                .returning(|_, _, _, _| notify_success());
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                                 .expect_publish::<String, Vec<u8>>()
@@ -602,7 +606,7 @@ mod test {
                                         && *qos == QoS::ExactlyOnce
                                         && extract_set_properties(payload).unwrap().is_empty()
                                 })
-                                .returning(|_, _, _, _| notify_success());
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                         });
@@ -615,11 +619,24 @@ mod test {
                 .once()
                 .in_sequence(&mut seq)
                 .returning(|| {
-                    Ok(Event::Incoming(Packet::ConnAck(ConnAck {
-                        session_present: false,
-                        code: ConnectReturnCode::Success,
-                    })))
+                    Box::pin(async {
+                        tokio::task::yield_now().await;
+
+                        Ok(Event::Incoming(Packet::ConnAck(ConnAck {
+                            session_present: false,
+                            code: ConnectReturnCode::Success,
+                        })))
+                    })
                 });
+
+            // catch other calls to pool
+            ev_loop.expect_poll().once().returning(|| {
+                Box::pin(async {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+
+                    Ok(Event::Incoming(Packet::PingReq))
+                })
+            });
 
             (client, ev_loop)
         });

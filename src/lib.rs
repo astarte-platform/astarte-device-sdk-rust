@@ -71,7 +71,7 @@ pub use astarte_device_sdk_derive::*;
 mod test {
     use base64::Engine;
     use mockall::predicate;
-    use rumqttc::Event;
+    use rumqttc::{AckOfPub, Event};
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -341,7 +341,7 @@ mod test {
             .expect_publish::<String, Vec<u8>>()
             .times(2)
             .in_sequence(&mut seq)
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (device, mut connection) = mock_astarte_device(
             client,
@@ -421,7 +421,7 @@ mod test {
                     value == "name number 1"
                 }),
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let mut eventloop = MqttEventLoop::default();
 
@@ -431,24 +431,33 @@ mod test {
 
         // Purge properties
         eventloop.expect_poll().once().returning(|| {
-            Ok(Event::Incoming(rumqttc::Packet::Publish(
-                rumqttc::Publish::new(
-                    "realm/device_id/control/consumer/properties",
-                    rumqttc::QoS::AtLeastOnce,
-                    PROPERTIES_PAYLOAD,
-                ),
-            )))
+            Box::pin(async {
+                tokio::task::yield_now().await;
+
+                Ok(Event::Incoming(rumqttc::Packet::Publish(
+                    rumqttc::Publish::new(
+                        "realm/device_id/control/consumer/properties",
+                        rumqttc::QoS::AtLeastOnce,
+                        PROPERTIES_PAYLOAD,
+                    ),
+                )))
+            })
         });
 
         // Send properties
         eventloop.expect_poll().once().returning(move || {
-            Ok(Event::Incoming(rumqttc::Packet::Publish(
-                rumqttc::Publish::new(
-                    "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
-                    rumqttc::QoS::AtLeastOnce,
-                    bson::to_vec(&data).unwrap()
-                ),
-            )))
+            let data = data.clone();
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+
+                Ok(Event::Incoming(rumqttc::Packet::Publish(
+                    rumqttc::Publish::new(
+                        "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/1/enable",
+                        rumqttc::QoS::AtLeastOnce,
+                        bson::to_vec(&data).unwrap()
+                    ),
+                )))
+            })
         });
 
         let (client, connection) = mock_astarte_device(
@@ -516,7 +525,7 @@ mod test {
                 topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/1/name"
                 && *payload == buf
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         client
             .expect_publish::<String, Vec<u8>>()
@@ -528,7 +537,7 @@ mod test {
                 predicate::always(),
                 predicate::eq(unset)
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let eventloop = MqttEventLoop::default();
 
@@ -582,13 +591,16 @@ mod test {
 
         // Send object
         eventloop.expect_poll().returning(move || {
-            Ok(Event::Incoming(rumqttc::Packet::Publish(
-                rumqttc::Publish::new(
-                    "realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1",
-                    rumqttc::QoS::AtLeastOnce,
-                    bson::to_vec(&data).unwrap()
-                ),
-            )))
+            let data = data.clone();
+            Box::pin(async move {
+                Ok(Event::Incoming(rumqttc::Packet::Publish(
+                    rumqttc::Publish::new(
+                        "realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1",
+                        rumqttc::QoS::AtLeastOnce,
+                        bson::to_vec(&data).unwrap()
+                    ),
+                )))
+            })
         });
 
         let (client, connection) = mock_astarte_device(
@@ -670,7 +682,7 @@ mod test {
                 predicate::always(),
                 predicate::always()
             )
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (device, mut connection) = mock_astarte_device(
             client,

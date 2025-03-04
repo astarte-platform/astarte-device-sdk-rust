@@ -27,16 +27,16 @@
 
 use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
-use rumqttc::{NoticeError, NoticeFuture};
+use rumqttc::{AckOfPub, Token, TokenError};
 use tracing::trace;
 
 use crate::retention::RetentionId;
 
-pub(crate) type RetSender = flume::Sender<(RetentionId, NoticeFuture)>;
-pub(crate) type RetReceiver = flume::Receiver<(RetentionId, NoticeFuture)>;
+pub(crate) type RetSender = flume::Sender<(RetentionId, Token<AckOfPub>)>;
+pub(crate) type RetReceiver = flume::Receiver<(RetentionId, Token<AckOfPub>)>;
 
 pub(crate) struct MqttRetention {
-    packets: HashMap<RetentionId, NoticeFuture>,
+    packets: HashMap<RetentionId, Token<AckOfPub>>,
     rx: RetReceiver,
 }
 
@@ -76,22 +76,26 @@ impl MqttRetention {
         count
     }
 
-    fn next_received(&mut self) -> Option<Result<RetentionId, NoticeError>> {
+    fn next_received(&mut self) -> Option<Result<RetentionId, TokenError>> {
         let (id, res) = self
             .packets
             .iter_mut()
-            .find_map(|(id, v)| v.try_wait().map(|res| (*id, res)))?;
+            .find_map(|(id, v)| match v.check() {
+                Ok(_) => Some((*id, Ok(*id))),
+                Err(TokenError::Waiting) => None,
+                Err(TokenError::Disconnected) => Some((*id, Err(TokenError::Disconnected))),
+            })?;
 
         self.packets.remove(&id);
 
         trace!("remove packet {id}");
 
-        Some(res.map(|()| id))
+        Some(res)
     }
 }
 
 impl<'a> IntoFuture for &'a mut MqttRetention {
-    type Output = Result<RetentionId, NoticeError>;
+    type Output = Result<RetentionId, TokenError>;
 
     type IntoFuture = MqttRetentionFuture<'a>;
 
@@ -101,7 +105,7 @@ impl<'a> IntoFuture for &'a mut MqttRetention {
 }
 
 impl Iterator for MqttRetention {
-    type Item = Result<RetentionId, NoticeError>;
+    type Item = Result<RetentionId, TokenError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_received()
@@ -111,7 +115,7 @@ impl Iterator for MqttRetention {
 pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 
 impl std::future::Future for MqttRetentionFuture<'_> {
-    type Output = Result<RetentionId, NoticeError>;
+    type Output = Result<RetentionId, TokenError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -130,7 +134,7 @@ impl std::future::Future for MqttRetentionFuture<'_> {
 
 #[cfg(test)]
 mod tests {
-    use rumqttc::NoticeTx;
+    use rumqttc::Resolver;
 
     use crate::retention::Context;
 
@@ -145,13 +149,13 @@ mod tests {
         let ctx = Context::new();
 
         let i1 = ctx.next();
-        let (t1, n1) = NoticeTx::new();
+        let (t1, n1) = Resolver::new();
 
         let i2 = ctx.next();
-        let (t2, n2) = NoticeTx::new();
+        let (t2, n2) = Resolver::new();
 
         let i3 = ctx.next();
-        let (_t3, n3) = NoticeTx::new();
+        let (_t3, n3) = Resolver::new();
 
         tx.send((RetentionId::Stored(i1), n1)).unwrap();
         tx.send((RetentionId::Stored(i2), n2)).unwrap();
@@ -162,12 +166,12 @@ mod tests {
         let n = retention.next();
         assert!(n.is_none());
 
-        t2.success();
+        t2.resolve(AckOfPub::None);
 
         let n = retention.next().unwrap().unwrap();
         assert_eq!(n, RetentionId::Stored(i2));
 
-        t1.error(NoticeError::Recv);
+        drop(t1);
         let res = retention.next().unwrap();
         assert!(res.is_err(), "expected error but got {:?}", res.unwrap());
     }

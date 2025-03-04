@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2025-02-27
+
+### Changed
+
+- Update `rumqttc` and `rustls` dependencies [#423]
+- Drop `openssl` as a dependency and deprecate the feature [#423]
+
+### Fixed
+
+- Fix a bug in the MQTT connection that will wait for the keep-alive timeout before connecting
+  [#403]
+
+[#423]: https://github.com/astarte-platform/astarte-device-sdk-rust/pull/423
+
 ## [0.9.4] - 2025-02-27
 
 ## [0.8.5] - 2025-02-27

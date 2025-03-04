@@ -46,7 +46,7 @@ use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use rumqttc::{ClientError, NoticeError, NoticeFuture, QoS, SubscribeFilter};
+use rumqttc::{AckOfPub, ClientError, QoS, SubAck, SubscribeFilter, Token, TokenError};
 use tracing::{debug, error, info, trace};
 
 use super::{
@@ -178,7 +178,7 @@ impl<S> MqttClient<S> {
         path: &str,
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
-    ) -> Result<NoticeFuture, MqttError> {
+    ) -> Result<Token<AckOfPub>, MqttError> {
         self.client
             .publish(
                 format!("{}/{interface}{path}", self.client_id),
@@ -586,7 +586,7 @@ impl<S> Mqtt<S> {
     async fn mark_packet_received(
         volatile: &SharedVolatileStore,
         stored: &impl StoreCapabilities,
-        res_id: Result<RetentionId, NoticeError>,
+        res_id: Result<RetentionId, TokenError>,
     ) -> Result<(), RetentionError>
     where
         S: StoreCapabilities,
@@ -801,14 +801,14 @@ trait AsyncClientExt {
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> Result<NoticeFuture, ClientError>;
+    ) -> Result<Token<AckOfPub>, ClientError>;
 
     /// Subscribe to many interfaces
     async fn subscribe_interfaces<S>(
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<Option<NoticeFuture>, ClientError>
+    ) -> Result<Option<Token<SubAck>>, ClientError>
     where
         S: Display + Debug + Send + Sync;
 }
@@ -819,7 +819,7 @@ impl AsyncClientExt for AsyncClient {
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> Result<NoticeFuture, ClientError> {
+    ) -> Result<Token<AckOfPub>, ClientError> {
         debug!("sending introspection: {introspection}");
 
         let path = client_id.to_string();
@@ -833,7 +833,7 @@ impl AsyncClientExt for AsyncClient {
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<Option<NoticeFuture>, ClientError>
+    ) -> Result<Option<Token<SubAck>>, ClientError>
     where
         S: Display + Debug + Send + Sync,
     {
@@ -876,10 +876,12 @@ impl AsyncClientExt for AsyncClient {
 pub(crate) mod test {
     use std::{str::FromStr, time::Duration};
 
+    use mockall::predicate;
     use mockito::Server;
     use properties::extract_set_properties;
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
+        Resolver,
     };
     use tempfile::TempDir;
     use test::{
@@ -899,12 +901,12 @@ pub(crate) mod test {
 
     use super::*;
 
-    pub(crate) fn notify_success<E>() -> Result<NoticeFuture, E> {
-        let (tx, notice) = rumqttc::NoticeTx::new();
+    pub(crate) fn notify_success<T, E>(out: T) -> Result<Token<T>, E> {
+        let (tx, token) = Resolver::new();
 
-        tx.success();
+        tx.resolve(out);
 
-        Ok(notice)
+        Ok(token)
     }
 
     pub(crate) fn mock_mqtt_connection<S>(
@@ -984,12 +986,12 @@ pub(crate) mod test {
         client
             .expect_subscribe::<String>()
             .once()
-            .withf(|s, qos| {
-                s == "realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#"
-                && *qos == QoS::ExactlyOnce
-            })
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::eq( QoS::ExactlyOnce)
+            )
             .in_sequence(&mut seq)
-            .returning(|_, _| notify_success());
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
 
         client
             .expect_publish::<String, String>()
@@ -1002,7 +1004,7 @@ pub(crate) mod test {
 
                 publish == "realm/device_id" && intro == introspection
             })
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (mut client, _mqtt_connection) =
             mock_mqtt_connection(client, eventl, MemoryStore::new());
@@ -1057,7 +1059,7 @@ pub(crate) mod test {
 
                 publish == "realm/device_id" && intro == introspection && *qos == QoS::ExactlyOnce
             })
-            .returning(|_, _, _, _| notify_success());
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (mut client, _connection) = mock_mqtt_connection(client, eventl, MemoryStore::new());
 
@@ -1091,12 +1093,13 @@ pub(crate) mod test {
 
         client
             .expect_subscribe::<String>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/#".to_string()),
+                predicate::eq(QoS::ExactlyOnce ),
+            )
             .once()
-            .withf(|s, qos| {
-                *qos == QoS::ExactlyOnce && s == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/#"
-            })
             .in_sequence(&mut seq)
-            .returning(|_, _| notify_success());
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
 
         client
             .expect_publish::<String, String>()
@@ -1107,7 +1110,7 @@ pub(crate) mod test {
             .returning(|_, _, _, _| {
                 // Random error
                 Err(ClientError::Request(rumqttc::Request::Disconnect(
-                    rumqttc::Disconnect,
+                    Resolver::new().0,
                 )))
             });
 
@@ -1117,7 +1120,7 @@ pub(crate) mod test {
             .withf(move |topic| topic == "realm/device_id/org.astarte-platform.rust.examples.individual-properties.ServerProperties/#")
             .returning(|_| {
                 // We are disconnected so we cannot unsubscribe
-                Err(ClientError::Request(rumqttc::Request::Disconnect(rumqttc::Disconnect)))
+                Err(ClientError::Request(rumqttc::Request::Disconnect(Resolver::new().0)))
             });
 
         let (mut mqtt_client, _mqtt_connection) =
@@ -1168,46 +1171,55 @@ pub(crate) mod test {
 
                             client
                                 .expect_subscribe::<String>()
-                                .withf(|topic, qos| {
-                                    topic == "realm/device_id/control/consumer/properties"
-                                        && *qos == QoS::ExactlyOnce
-                                })
-                                .returning(|_, _| notify_success())
+                                .with(
+                                    predicate::eq(
+                                        "realm/device_id/control/consumer/properties".to_string(),
+                                    ),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                )
                                 .once()
-                                .in_sequence(&mut seq);
+                                .in_sequence(&mut seq)
+                                .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
 
                             client
                                 .expect_publish::<String, String>()
+                                .with(
+                                    predicate::eq("realm/device_id".to_string()),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                    predicate::eq(false),
+                                    predicate::eq(String::new()),
+                                )
                                 .once()
                                 .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, introspection| {
-                                    topic == "realm/device_id"
-                                        && *qos == QoS::ExactlyOnce
-                                        && introspection.is_empty()
-                                })
-                                .returning(|_, _, _, _| notify_success());
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                                 .expect_publish::<String, &str>()
                                 .once()
                                 .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/emptyCache"
-                                        && *qos == QoS::ExactlyOnce
-                                        && *payload == "1"
-                                })
-                                .returning(|_, _, _, _| notify_success());
+                                .with(
+                                    predicate::eq("realm/device_id/control/emptyCache".to_string()),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                    predicate::eq(false),
+                                    predicate::eq("1"),
+                                )
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                                 .expect_publish::<String, Vec<u8>>()
+                                .with(
+                                    predicate::eq(
+                                        "realm/device_id/control/producer/properties".to_string(),
+                                    ),
+                                    predicate::eq(QoS::ExactlyOnce),
+                                    predicate::eq(false),
+                                    predicate::function(|payload: &Vec<u8>| {
+                                        extract_set_properties(payload).unwrap().is_empty()
+                                    }),
+                                )
                                 .once()
                                 .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/producer/properties"
-                                        && *qos == QoS::ExactlyOnce
-                                        && extract_set_properties(payload).unwrap().is_empty()
-                                })
-                                .returning(|_, _, _, _| notify_success());
+                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
                             client
                         });
@@ -1220,9 +1232,13 @@ pub(crate) mod test {
                 .once()
                 .in_sequence(&mut seq)
                 .returning(|| {
-                    Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
-                        rustls::Error::AlertReceived(rustls::AlertDescription::CertificateExpired),
-                    )))
+                    Box::pin(async {
+                        Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
+                            rustls::Error::AlertReceived(
+                                rustls::AlertDescription::CertificateExpired,
+                            ),
+                        )))
+                    })
                 });
 
             // First clean for the good connection
@@ -1237,16 +1253,24 @@ pub(crate) mod test {
                 .once()
                 .in_sequence(&mut seq)
                 .returning(|| {
-                    Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
-                        session_present: false,
-                        code: ConnectReturnCode::Success,
-                    })))
+                    Box::pin(async {
+                        tokio::task::yield_now().await;
+
+                        Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
+                            session_present: false,
+                            code: ConnectReturnCode::Success,
+                        })))
+                    })
                 });
 
             // This guaranties we can keep polling while we are waiting for the ACKs.
-            ev_loop
-                .expect_poll()
-                .returning(|| Ok(MqttEvent::Outgoing(rumqttc::Outgoing::Publish(0))));
+            ev_loop.expect_poll().returning(|| {
+                Box::pin(async {
+                    tokio::task::yield_now().await;
+
+                    Ok(MqttEvent::Outgoing(rumqttc::Outgoing::Publish(0)))
+                })
+            });
 
             (client, ev_loop)
         });
