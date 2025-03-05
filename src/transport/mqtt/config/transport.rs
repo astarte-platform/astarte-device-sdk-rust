@@ -19,17 +19,25 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rumqttc::Transport;
-use rustls::pki_types::PrivatePkcs8KeyDer;
+use rustls::{pki_types::PrivatePkcs8KeyDer, RootCertStore};
 use tokio::fs;
 use tracing::{debug, error, info};
 use url::Url;
 
 use crate::{
     error::Report,
-    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
+    transport::mqtt::{
+        config::tls::{insecure_tls_config_builder, tls_config_builder},
+        crypto::Bundle,
+        pairing::ApiClient,
+        PairingError,
+    },
 };
 
-use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use super::{
+    tls::{read_root_cert_store, ClientAuth},
+    CertificateFile, PrivateKeyFile,
+};
 
 /// Structure to create an authenticated [`Transport`]
 #[derive(Debug)]
@@ -38,21 +46,37 @@ pub(crate) struct TransportProvider {
     credential_secret: String,
     store_dir: Option<PathBuf>,
     insecure_ssl: bool,
+    root_cert_store: Arc<RootCertStore>,
 }
 
 impl TransportProvider {
-    pub(crate) fn new(
+    pub(crate) async fn configure(
         pairing_url: Url,
         credential_secret: String,
         store_dir: Option<PathBuf>,
         insecure_ssl: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, PairingError> {
+        let root_certs = read_root_cert_store().await?;
+
+        Ok(Self {
             pairing_url,
             credential_secret,
             store_dir,
             insecure_ssl,
-        }
+            root_cert_store: Arc::new(root_certs),
+        })
+    }
+
+    pub(crate) fn api_tls_config(&self) -> Result<rustls::ClientConfig, PairingError> {
+        let client_cfg = if self.insecure_ssl {
+            insecure_tls_config_builder()?.with_no_client_auth()
+        } else {
+            tls_config_builder(self.root_cert_store())?.with_no_client_auth()
+        };
+
+        debug!("TLS client config read");
+
+        Ok(client_cfg)
     }
 
     /// Create the certificate using the Astarte API
@@ -102,12 +126,17 @@ impl TransportProvider {
         ClientAuth::try_read(certificate_file, private_key_file).await
     }
 
+    fn root_cert_store(&self) -> Arc<RootCertStore> {
+        Arc::clone(&self.root_cert_store)
+    }
+
     /// Config the TLS for the transport.
-    async fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
+    fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
-            client_auth.insecure_tls_config().await?
+            client_auth.insecure_tls_config()?
         } else {
-            client_auth.tls_config().await?
+            let roots = self.root_cert_store();
+            client_auth.tls_config(roots)?
         };
 
         Ok(Transport::tls_with_config(
@@ -165,7 +194,7 @@ impl TransportProvider {
     ) -> Result<Transport, PairingError> {
         let client_auth = self.retrieve_credentials(client).await?;
 
-        self.config_transport(client_auth).await
+        self.config_transport(client_auth)
     }
 
     /// Create a new transport, including the creation of new credentials.
@@ -175,7 +204,7 @@ impl TransportProvider {
     ) -> Result<Transport, PairingError> {
         let client_auth = self.create_credentials(client).await?;
 
-        self.config_transport(client_auth).await
+        self.config_transport(client_auth)
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
@@ -210,14 +239,17 @@ mod tests {
             .await;
 
         // With store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             true,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let transport = provider.transport(&api).await.unwrap();
 
@@ -238,14 +270,17 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             true,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -264,14 +299,17 @@ mod tests {
             .await;
 
         // With store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -287,14 +325,17 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -313,14 +354,17 @@ mod tests {
             .await;
 
         // With store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -336,14 +380,17 @@ mod tests {
         assert!(!key.is_empty());
 
         // Without store
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -361,14 +408,17 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = TransportProvider::new(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().join("non existing")),
             false,
-        );
+        )
+        .await
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id");
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 

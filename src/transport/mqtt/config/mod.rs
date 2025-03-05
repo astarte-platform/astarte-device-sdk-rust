@@ -404,14 +404,18 @@ where
             .map_err(|err| MqttError::Pairing(PairingError::InvalidUrl(err)))?;
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
-        let provider = TransportProvider::new(
+
+        let provider = TransportProvider::configure(
             pairing_url,
-            secret.clone(),
+            secret,
             builder.writable_dir.clone(),
             insecure_ssl,
-        );
+        )
+        .await
+        .map_err(MqttError::Pairing)?;
 
-        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id);
+        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id)
+            .map_err(MqttError::Pairing)?;
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
 

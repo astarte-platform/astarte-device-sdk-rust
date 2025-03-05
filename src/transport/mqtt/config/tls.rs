@@ -26,10 +26,12 @@ use std::{
 
 use itertools::Itertools;
 use rustls::{
+    client::WantsClientCert,
+    crypto::CryptoProvider,
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    RootCertStore,
+    ClientConfig, ConfigBuilder, RootCertStore,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, instrument, warn};
 
 use crate::transport::mqtt::PairingError;
 
@@ -107,43 +109,74 @@ impl ClientAuth {
         Ok(Some(ClientAuth { private_key, certs }))
     }
 
-    pub(crate) async fn tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
-        let roots = read_root_cert_store().await?;
-
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
+    pub(crate) fn tls_config(
+        self,
+        roots: Arc<RootCertStore>,
+    ) -> Result<rustls::ClientConfig, PairingError> {
+        tls_config_builder(roots)?
             .with_client_auth_cert(self.certs, self.private_key.into())
             .map_err(PairingError::Tls)
     }
 
-    pub(crate) async fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
+    pub(crate) fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
         warn!("INSECURE: ignore TLS certificates");
 
-        rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
+        insecure_tls_config_builder()?
             .with_client_auth_cert(self.certs, self.private_key.into())
             .map_err(PairingError::Tls)
     }
 }
 
-async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+#[instrument]
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+    debug!("reading root cert store from native certs");
+
     tokio::task::spawn_blocking(|| {
         let mut root_cert_store = RootCertStore::empty();
 
         let res = rustls_native_certs::load_native_certs();
-
         for err in res.errors {
             error!(error = %crate::error::Report::new(err), "couldn't load root certificate");
         }
 
         let (added, ignored) = root_cert_store.add_parsable_certificates(res.certs);
 
-        trace!("loaded {added} certs and {ignored} ignored");
+        tracing::trace!("loaded {added} certs and {ignored} ignored");
 
-        Ok(root_cert_store)
+        root_cert_store
     })
-    .await?
+    .await
+    .map_err(PairingError::ReadNativeCerts)
+}
+
+pub(crate) fn tls_config_builder(
+    roots: Arc<RootCertStore>,
+) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
+    let provider = CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(PairingError::Tls)?
+        .with_root_certificates(roots);
+
+    Ok(builder)
+}
+
+pub(crate) fn insecure_tls_config_builder(
+) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
+    let provider = CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(rustls::ALL_VERSIONS)
+        .map_err(PairingError::Tls)?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier {}));
+
+    Ok(builder)
 }
 
 #[derive(Debug)]
@@ -238,11 +271,12 @@ pub(crate) mod tests {
 
         assert_eq!(client.private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
 
-        client.tls_config().await.unwrap();
+        let root_cert_store = Arc::new(rustls::RootCertStore::empty());
+        client.tls_config(root_cert_store).unwrap();
 
         // Reuse the file setup
         let client = ClientAuth::try_read(cert, key).await.unwrap();
 
-        client.insecure_tls_config().await.unwrap();
+        client.insecure_tls_config().unwrap();
     }
 }

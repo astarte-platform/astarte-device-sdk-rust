@@ -909,7 +909,7 @@ pub(crate) mod test {
         Ok(token)
     }
 
-    pub(crate) fn mock_mqtt_connection<S>(
+    pub(crate) async fn mock_mqtt_connection<S>(
         client: AsyncClient,
         eventloop: EventLoop,
         store: S,
@@ -933,12 +933,14 @@ pub(crate) mod test {
             MqttConnection::new(
                 client.clone(),
                 eventloop,
-                TransportProvider::new(
+                TransportProvider::configure(
                     "http://api.astarte.localhost/pairing".parse().unwrap(),
                     "secret".to_string(),
                     None,
                     true,
-                ),
+                )
+                .await
+                .expect("failed to configure transport provider"),
                 self::connection::Connected,
             ),
             MqttRetention::new(ret_rx),
@@ -1007,7 +1009,7 @@ pub(crate) mod test {
             .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
         let (mut client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new());
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1061,7 +1063,8 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
-        let (mut client, _connection) = mock_mqtt_connection(client, eventl, MemoryStore::new());
+        let (mut client, _connection) =
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1124,7 +1127,7 @@ pub(crate) mod test {
             });
 
         let (mut mqtt_client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new());
+            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
 
         mqtt_client
             .extend_interfaces(&interfaces, &to_add)
