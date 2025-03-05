@@ -115,7 +115,7 @@ mod test {
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
     );
 
-    pub(crate) fn mock_astarte_device<I>(
+    pub(crate) async fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: MqttEventLoop,
         interfaces: I,
@@ -126,10 +126,10 @@ mod test {
     where
         I: IntoIterator<Item = Interface>,
     {
-        mock_astarte_device_store(client, eventloop, interfaces, MemoryStore::new())
+        mock_astarte_device_store(client, eventloop, interfaces, MemoryStore::new()).await
     }
 
-    pub(crate) fn mock_astarte_device_store<I, S>(
+    pub(crate) async fn mock_astarte_device_store<I, S>(
         async_client: AsyncClient,
         eventloop: MqttEventLoop,
         interfaces: I,
@@ -145,7 +145,7 @@ mod test {
         let interfaces = Arc::new(RwLock::new(Interfaces::from_iter(interfaces)));
 
         let (mqtt_client, mqtt_connection) =
-            mock_mqtt_connection(async_client, eventloop, store.clone());
+            mock_mqtt_connection(async_client, eventloop, store.clone()).await;
 
         let store = StoreWrapper::new(store);
         let client =
@@ -347,7 +347,8 @@ mod test {
             client,
             eventloop,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
-        );
+        )
+        .await;
 
         let expected = AstarteType::String("value".to_string());
         device
@@ -467,7 +468,8 @@ mod test {
                 Interface::from_str(DEVICE_PROPERTIES).unwrap(),
                 Interface::from_str(SERVER_PROPERTIES).unwrap(),
             ],
-        );
+        )
+        .await;
 
         client
             .send(
@@ -545,7 +547,8 @@ mod test {
             client,
             eventloop,
             [Interface::from_str(DEVICE_PROPERTIES).unwrap()],
-        );
+        )
+        .await;
 
         client
             .send(
@@ -607,7 +610,8 @@ mod test {
             client,
             eventloop,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
-        );
+        )
+        .await;
 
         let handle_events = tokio::spawn(async move {
             connection
@@ -688,7 +692,8 @@ mod test {
             client,
             eventloop,
             [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
-        );
+        )
+        .await;
 
         device
             .send_object_with_timestamp(
