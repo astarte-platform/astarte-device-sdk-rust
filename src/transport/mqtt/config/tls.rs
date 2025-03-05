@@ -171,7 +171,7 @@ pub(crate) fn insecure_tls_config_builder(
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
     let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
+        .with_protocol_versions(rustls::ALL_VERSIONS)
         .map_err(PairingError::Tls)?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoVerifier {}));

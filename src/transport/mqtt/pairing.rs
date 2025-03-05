@@ -23,7 +23,6 @@
 use std::{io, path::PathBuf};
 
 use reqwest::{StatusCode, Url};
-use rustls::ClientConfig;
 use serde::{Deserialize, Serialize};
 use url::ParseError;
 
@@ -100,7 +99,7 @@ pub(crate) struct ApiClient<'a> {
     pub(crate) device_id: &'a str,
     pairing_url: &'a Url,
     credentials_secret: &'a str,
-    tls_config: ClientConfig,
+    client: reqwest::Client,
 }
 
 impl<'a> ApiClient<'a> {
@@ -109,12 +108,18 @@ impl<'a> ApiClient<'a> {
         realm: &'a str,
         device_id: &'a str,
     ) -> Result<Self, PairingError> {
+        let tls_config = provider.api_tls_config()?;
+
+        let client = reqwest::Client::builder()
+            .use_preconfigured_tls(tls_config.clone())
+            .build()?;
+
         Ok(Self {
             realm,
             device_id,
             pairing_url: provider.pairing_url(),
             credentials_secret: provider.credential_secret(),
-            tls_config: provider.api_tls_config()?,
+            client,
         })
     }
 
@@ -147,11 +152,8 @@ impl<'a> ApiClient<'a> {
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let client = reqwest::Client::builder()
-            .use_preconfigured_tls(self.tls_config.clone())
-            .build()?;
-
-        let response = client
+        let response = self
+            .client
             .post(url)
             .bearer_auth(self.credentials_secret)
             .json(&payload)
@@ -178,11 +180,8 @@ impl<'a> ApiClient<'a> {
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
-        let client = reqwest::Client::builder()
-            .use_preconfigured_tls(self.tls_config.clone())
-            .build()?;
-
-        let response = client
+        let response = self
+            .client
             .get(url)
             .bearer_auth(self.credentials_secret)
             .send()
