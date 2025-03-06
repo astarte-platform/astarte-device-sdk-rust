@@ -140,6 +140,10 @@ async fn main() -> eyre::Result<()> {
         .with(EnvFilter::from_default_env())
         .try_init()?;
 
+    let default_provider = rustls::crypto::aws_lc_rs::default_provider();
+    rustls::crypto::CryptoProvider::install_default(default_provider)
+        .map_err(|_| eyre!("couldn't install default crypto provider"))?;
+
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
 
     let cred = if let Some(pairing) = &test_cfg.pairing_token {

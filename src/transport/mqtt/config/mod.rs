@@ -402,22 +402,17 @@ where
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
 
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             pairing_url,
-            secret.clone(),
+            secret,
             builder.writable_dir.clone(),
             insecure_ssl,
         )
         .await
         .map_err(MqttError::Pairing)?;
 
-        let client = ApiClient::new(
-            &self.realm,
-            &self.device_id,
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id)
+            .map_err(MqttError::Pairing)?;
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
 
@@ -448,7 +443,8 @@ where
             &builder.interfaces,
             &builder.store,
         )
-        .await?;
+        .await
+        .map_err(MqttError::Poll)?;
 
         let (retention_tx, retention_rx) = flume::bounded(builder.channel_size);
 

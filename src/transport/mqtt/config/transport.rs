@@ -22,17 +22,19 @@ use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
 use tokio::fs;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, instrument};
 use url::Url;
 
-use super::{
-    tls::{ClientAuth, NoVerifier},
-    CertificateFile, PrivateKeyFile,
-};
+use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
 use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
     error::Report,
-    transport::mqtt::{crypto::Bundle, pairing::ApiClient, PairingError},
+    transport::mqtt::{
+        config::tls::{insecure_tls_config_builder, tls_config_builder},
+        crypto::Bundle,
+        pairing::ApiClient,
+        PairingError,
+    },
 };
 
 /// Structure to create an authenticated [`Transport`]
@@ -65,12 +67,24 @@ impl TransportProvider {
         })
     }
 
+    pub(crate) fn api_tls_config(&self) -> Result<rustls::ClientConfig, PairingError> {
+        let client_cfg = if self.insecure_ssl {
+            insecure_tls_config_builder()?.with_no_client_auth()
+        } else {
+            tls_config_builder(self.root_cert_store())?.with_no_client_auth()
+        };
+
+        debug!("TLS client config read");
+
+        Ok(client_cfg)
+    }
+
     /// Create the certificate using the Astarte API
     async fn create_certificate(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<(Bundle, String), PairingError> {
-        let bundle = Bundle::new(client.realm, client.device_id)?;
+        let bundle = Bundle::generate_key(client.realm, client.device_id)?;
 
         let certificate = client.create_certificate(&bundle.csr).await?;
 
@@ -112,21 +126,17 @@ impl TransportProvider {
         ClientAuth::try_read(certificate_file, private_key_file).await
     }
 
-    #[instrument(skip_all)]
     fn root_cert_store(&self) -> Arc<RootCertStore> {
         Arc::clone(&self.root_cert_store)
     }
 
     /// Config the TLS for the transport.
-    async fn config_transport(
-        &mut self,
-        client_auth: ClientAuth,
-    ) -> Result<Transport, PairingError> {
+    fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
-            client_auth.insecure_tls_config().await?
+            client_auth.insecure_tls_config()?
         } else {
             let roots = self.root_cert_store();
-            client_auth.tls_config(roots).await?
+            client_auth.tls_config(roots)?
         };
 
         Ok(Transport::tls_with_config(
@@ -142,6 +152,8 @@ impl TransportProvider {
 
         // If no store dir is set we just create a new certificate
         if let Some(store_dir) = &self.store_dir {
+            debug!("storing credentials");
+
             let certificate_file = CertificateFile::new(store_dir);
             let private_key_file = PrivateKeyFile::new(store_dir);
 
@@ -177,22 +189,22 @@ impl TransportProvider {
 
     /// Create a new transport with the given credentials
     pub(crate) async fn transport(
-        &mut self,
+        &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
         let client_auth = self.retrieve_credentials(client).await?;
 
-        self.config_transport(client_auth).await
+        self.config_transport(client_auth)
     }
 
     /// Create a new transport, including the creation of new credentials.
     pub(crate) async fn recreate_transport(
-        &mut self,
+        &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
         let client_auth = self.create_credentials(client).await?;
 
-        self.config_transport(client_auth).await
+        self.config_transport(client_auth)
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
@@ -202,30 +214,13 @@ impl TransportProvider {
     pub(crate) fn credential_secret(&self) -> &str {
         &self.credential_secret
     }
-
-    #[instrument(skip_all)]
-    pub(crate) fn api_tls_config(&mut self) -> rustls::ClientConfig {
-        let client_cfg = if self.insecure_ssl {
-            warn!("INSECURE: ignore TLS certificates");
-            rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(NoVerifier {}))
-                .with_no_client_auth()
-        } else {
-            rustls::ClientConfig::builder()
-                .with_root_certificates(Arc::clone(&self.root_cert_store))
-                .with_no_client_auth()
-        };
-
-        debug!("TLS client config read");
-
-        client_cfg
-    }
 }
 
 #[cfg(test)]
 mod tests {
+
     use mockito::Server;
+    use rumqttc::TlsConfiguration;
     use tempfile::TempDir;
 
     use crate::transport::mqtt::pairing::tests::mock_create_certificate;
@@ -244,50 +239,48 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             true,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
-        let _ = provider.transport(&api).await.unwrap();
+        let transport = provider.transport(&api).await.unwrap();
+
+        assert!(matches!(
+            transport,
+            Transport::Tls(TlsConfiguration::Rustls(..))
+        ));
 
         let certificate_file = CertificateFile::new(dir.path());
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             true,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -306,22 +299,17 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -329,27 +317,25 @@ mod tests {
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -368,22 +354,17 @@ mod tests {
             .await;
 
         // With store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().to_owned()),
             false,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -391,27 +372,25 @@ mod tests {
         let private_key_file = PrivateKeyFile::new(dir.path());
 
         let cert = tokio::fs::read_to_string(&certificate_file).await.unwrap();
-        assert_eq!(cert, "certificate");
+        rustls_pemfile::certs(&mut cert.as_bytes())
+            .next()
+            .unwrap()
+            .unwrap();
         let key = tokio::fs::read(&private_key_file).await.unwrap();
         assert!(!key.is_empty());
 
         // Without store
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             None,
             false,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            provider.api_tls_config(),
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -429,23 +408,17 @@ mod tests {
             .create_async()
             .await;
 
-        let mut provider = TransportProvider::configure(
+        let provider = TransportProvider::configure(
             server.url().parse().unwrap(),
             "secret".to_string(),
             Some(dir.path().join("non existing")),
             false,
         )
         .await
-        .unwrap();
+        .expect("failed to configure transport provider");
 
-        let tls_cfg = provider.api_tls_config();
-        let api = ApiClient::new(
-            "realm",
-            "device_id",
-            provider.pairing_url().clone(),
-            provider.credential_secret().to_string(),
-            tls_cfg,
-        );
+        let api = ApiClient::from_transport(&provider, "realm", "device_id")
+            .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 

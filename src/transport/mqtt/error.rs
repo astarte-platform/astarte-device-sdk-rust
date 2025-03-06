@@ -20,6 +20,7 @@
 
 use rumqttc::ClientError;
 
+use super::connection::PollError;
 use super::{PairingError, PayloadError};
 use crate::store::error::StoreError;
 use crate::transport::mqtt::topic::TopicError;
@@ -60,6 +61,9 @@ pub enum MqttError {
     /// See the [`ParingToken`](super::Credential::ParingToken) for more information.
     #[error("missing writable directory to store credentials to use the pairing token")]
     NoStorePairingToken,
+    /// Couldn't poll the connection
+    #[error("couldn't poll the connection")]
+    Poll(#[from] PollError),
     /// Couldn't send the disconnect
     #[error("couldn't send the disconnect")]
     Disconnect(#[source] ClientError),
