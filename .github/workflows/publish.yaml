@@ -46,7 +46,7 @@ jobs:
           sudo apt update
           sudo apt-get -y install libsqlite3-dev libssl-dev
       - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.8
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - run: ./scripts/check-for-publish.sh
