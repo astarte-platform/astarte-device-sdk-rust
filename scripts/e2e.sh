@@ -17,7 +17,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -eEuo pipefail
+set -xeEuo pipefail
 
 if [[ $# != 1 ]]; then
     echo "e2e.sh <key-path>"
