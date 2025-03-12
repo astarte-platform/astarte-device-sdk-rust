@@ -18,7 +18,7 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{error::Error as StdError, fmt::Debug, future::Future};
+use std::{error::Error as StdError, fmt::Debug, future::Future, ops::Deref};
 
 pub use self::sqlite::SqliteStore;
 use crate::{
@@ -28,6 +28,8 @@ use crate::{
     },
     retention::StoredRetention,
     types::AstarteType,
+    validate::ValidatedUnset,
+    Interface,
 };
 
 pub mod error;
@@ -47,6 +49,109 @@ pub trait StoreCapabilities {
 
     /// Returns the retention if the store supports it.
     fn get_retention(&self) -> Option<&Self::Retention>;
+}
+
+/// Data passed to the store that identifies a property
+pub struct PropertyMapping<'a> {
+    interface_info: PropertyInterface<'a>,
+    path: &'a str,
+}
+
+impl<'a> PropertyMapping<'a> {
+    pub(crate) fn with_property_path(property_ref: &'a PropertyRef<'a>, path: &'a str) -> Self {
+        Self {
+            interface_info: property_ref.into(),
+            path,
+        }
+    }
+
+    pub(crate) fn new_unchecked(interface_info: PropertyInterface<'a>, path: &'a str) -> Self {
+        Self {
+            interface_info,
+            path,
+        }
+    }
+
+    /// Retrieve the interface info object of this property
+    pub fn interface_info(&self) -> &PropertyInterface<'a> {
+        &self.interface_info
+    }
+
+    /// Retrieve the path of this property
+    pub fn path(&self) -> &str {
+        self.path
+    }
+}
+
+impl<'a> Deref for PropertyMapping<'a> {
+    type Target = PropertyInterface<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.interface_info
+    }
+}
+
+/// Converts a stored prop reference to the store needed input
+impl<'a, S, V> From<&'a StoredProp<S, V>> for PropertyMapping<'a>
+where
+    S: AsRef<str>,
+{
+    fn from(stored_prop: &'a StoredProp<S, V>) -> Self {
+        Self::new_unchecked(stored_prop.into(), stored_prop.path.as_ref())
+    }
+}
+
+impl<'a> From<&'a ValidatedUnset> for PropertyMapping<'a> {
+    fn from(value: &'a ValidatedUnset) -> Self {
+        Self::new_unchecked(value.into(), &value.path)
+    }
+}
+
+/// Data passed to the store that identifies an interface
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PropertyInterface<'a> {
+    name: &'a str,
+    ownership: Ownership,
+}
+
+impl<'a> PropertyInterface<'a> {
+    pub(crate) fn new(name: &'a str, ownership: Ownership) -> Self {
+        Self { name, ownership }
+    }
+
+    /// Retrieve the name of the interface
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// Retrieve the ownership of the interface
+    pub fn ownership(&self) -> Ownership {
+        self.ownership
+    }
+}
+
+/// Converts an interface object reference to the store needed input
+impl<'a> From<&'a Interface> for PropertyInterface<'a> {
+    fn from(interface: &'a Interface) -> Self {
+        Self::new(interface.interface_name(), interface.ownership())
+    }
+}
+
+/// Converts a property ref object reference to the store needed input
+impl<'a> From<&'a PropertyRef<'a>> for PropertyInterface<'a> {
+    fn from(prop_ref: &'a PropertyRef) -> Self {
+        Self::new(prop_ref.0.interface_name(), prop_ref.0.ownership())
+    }
+}
+
+/// Converts a stored prop reference to the store needed input
+impl<'a, S, V> From<&'a StoredProp<S, V>> for PropertyInterface<'a>
+where
+    S: AsRef<str>,
+{
+    fn from(stored_prop: &'a StoredProp<S, V>) -> Self {
+        Self::new(stored_prop.interface.as_ref(), stored_prop.ownership)
+    }
 }
 
 /// Trait providing compatibility with Astarte devices to databases.
@@ -76,21 +181,18 @@ where
     /// interface does not match the one provided.
     fn load_prop(
         &self,
-        interface: &str,
-        path: &str,
+        property: &PropertyMapping<'_>,
         interface_major: i32,
     ) -> impl Future<Output = Result<Option<AstarteType>, Self::Err>> + Send;
     /// Unset a property from the database.
     fn unset_prop(
         &self,
-        interface: &str,
-        path: &str,
+        property: &PropertyMapping<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Delete a property from the database.
     fn delete_prop(
         &self,
-        interface: &str,
-        path: &str,
+        property: &PropertyMapping<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Removes all saved properties from the database.
     fn clear(&self) -> impl Future<Output = Result<(), Self::Err>> + Send;
@@ -106,12 +208,12 @@ where
     /// Retrieves all the property values of a specific interface in the database.
     fn interface_props(
         &self,
-        interface: &str,
+        interface: &PropertyInterface<'_>,
     ) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
     /// Deletes all the properties of the interface from the database.
     fn delete_interface(
         &self,
-        interface: &str,
+        interface: &PropertyInterface<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all the device properties, including the one that were unset but not deleted.
     fn device_props_with_unset(
@@ -209,12 +311,6 @@ mod tests {
         S: PropertyStore,
     {
         let ty = AstarteType::Integer(23);
-
-        store.clear().await.unwrap();
-
-        // non existing
-        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
-
         let prop = StoredProp {
             interface: "com.test",
             path: "/test",
@@ -222,35 +318,27 @@ mod tests {
             interface_major: 1,
             ownership: Ownership::Device,
         };
+        let store_data = (&prop).into();
+
+        store.clear().await.unwrap();
+
+        // non existing
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap(), None);
 
         store.store_prop(prop).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            ty
-        );
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap().unwrap(), ty);
 
         //major version mismatch
-        assert_eq!(store.load_prop("com.test", "/test", 2).await.unwrap(), None);
+        assert_eq!(store.load_prop(&store_data, 2).await.unwrap(), None);
 
         // after mismatch the path should be deleted
-        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap(), None);
 
         // unset
         store.store_prop(prop).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            ty
-        );
-        store.unset_prop("com.test", "/test").await.unwrap();
-        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap().unwrap(), ty);
+        store.unset_prop(&store_data).await.unwrap();
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap(), None);
         // with unset
         assert!(store.device_props().await.unwrap().is_empty());
         assert!(store.load_all_props().await.unwrap().is_empty());
@@ -268,29 +356,15 @@ mod tests {
 
         // delete
         store.store_prop(prop).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            ty
-        );
-        store.delete_prop("com.test", "/test").await.unwrap();
-        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap().unwrap(), ty);
+        store.delete_prop(&store_data).await.unwrap();
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap(), None);
 
         // clear
         store.store_prop(prop).await.unwrap();
-        assert_eq!(
-            store
-                .load_prop("com.test", "/test", 1)
-                .await
-                .unwrap()
-                .unwrap(),
-            ty
-        );
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap().unwrap(), ty);
         store.clear().await.unwrap();
-        assert_eq!(store.load_prop("com.test", "/test", 1).await.unwrap(), None);
+        assert_eq!(store.load_prop(&store_data, 1).await.unwrap(), None);
 
         // load all props
         let device = StoredProp {
@@ -300,6 +374,7 @@ mod tests {
             interface_major: 1,
             ownership: Ownership::Device,
         };
+        let device_interface_data = Into::<PropertyInterface<'_>>::into(&device);
         let server = StoredProp {
             interface: "com.test2".into(),
             path: "/test2".into(),
@@ -307,6 +382,7 @@ mod tests {
             interface_major: 1,
             ownership: Ownership::Server,
         };
+        let server_interface_data = (&server).into();
 
         store.store_prop(device.as_ref()).await.unwrap();
         store.store_prop(server.as_ref()).await.unwrap();
@@ -326,14 +402,17 @@ mod tests {
         assert_eq!(serv_props, [server.clone()]);
 
         // props from interface
-        let props = store.interface_props("com.test1").await.unwrap();
-        assert_eq!(props, vec![device]);
-        let props = store.interface_props("com.test2").await.unwrap();
-        assert_eq!(props, vec![server]);
+        let props = store.interface_props(&device_interface_data).await.unwrap();
+        assert_eq!(props, vec![device.clone()]);
+        let props = store.interface_props(&server_interface_data).await.unwrap();
+        assert_eq!(props, vec![server.clone()]);
 
         // delete interface properties
-        store.delete_interface("com.test1").await.unwrap();
-        let prop = store.interface_props("com.test1").await.unwrap();
+        store
+            .delete_interface(&device_interface_data)
+            .await
+            .unwrap();
+        let prop = store.interface_props(&device_interface_data).await.unwrap();
 
         assert!(prop.is_empty());
 
@@ -369,10 +448,11 @@ mod tests {
                 interface_major: 1,
                 ownership: Ownership::Server,
             };
+            let prop_interface_data = (&prop).into();
 
             store.store_prop(prop).await.unwrap();
 
-            let res = store.load_prop("com.test", &path, 1).await.unwrap();
+            let res = store.load_prop(&prop_interface_data, 1).await.unwrap();
 
             assert_eq!(res, Some(ty));
         }
@@ -393,10 +473,21 @@ mod tests {
         };
         mem.store_prop(prop).await.unwrap();
 
-        let res = tokio::spawn(async move { mem.load_prop("com.test", "/test", 1).await })
-            .await
-            .unwrap()
-            .unwrap();
+        let exp2 = exp.clone();
+        let res = tokio::spawn(async move {
+            let prop = StoredProp {
+                interface: "com.test",
+                path: "/test",
+                value: &exp2,
+                interface_major: 1,
+                ownership: Ownership::Device,
+            };
+            let prop_interface_data = (&prop).into();
+            mem.load_prop(&prop_interface_data, 1).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
 
         assert_eq!(res, Some(exp));
     }

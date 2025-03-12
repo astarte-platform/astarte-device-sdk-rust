@@ -20,7 +20,10 @@
 
 use crate::types::AstarteType;
 
-use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use super::{
+    error::StoreError, OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore,
+    StoreCapabilities, StoredProp,
+};
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
 #[derive(Debug, Clone)]
@@ -57,26 +60,25 @@ where
 
     async fn load_prop(
         &self,
-        interface: &str,
-        path: &str,
+        property: &PropertyMapping<'_>,
         interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
         self.store
-            .load_prop(interface, path, interface_major)
+            .load_prop(property, interface_major)
             .await
             .map_err(StoreError::load)
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
         self.store
-            .unset_prop(interface, path)
+            .unset_prop(property)
             .await
             .map_err(StoreError::unset)
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn delete_prop(&self, interface: &PropertyMapping<'_>) -> Result<(), Self::Err> {
         self.store
-            .delete_prop(interface, path)
+            .delete_prop(interface)
             .await
             .map_err(StoreError::delete)
     }
@@ -106,14 +108,17 @@ where
             .map_err(StoreError::device_props)
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(
+        &self,
+        interface: &PropertyInterface<'_>,
+    ) -> Result<Vec<StoredProp>, Self::Err> {
         self.store
             .interface_props(interface)
             .await
             .map_err(StoreError::interface_props)
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &PropertyInterface<'_>) -> Result<(), Self::Err> {
         self.store
             .delete_interface(interface)
             .await

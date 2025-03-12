@@ -71,8 +71,8 @@ pub trait PropAccess {
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
-    ///         .connect(mqtt_config).await.unwrap()
-    ///         .build().await;
+    ///         .connection(mqtt_config)
+    ///         .build().await.unwrap();
     ///
     ///     let property_value: Option<AstarteType> = device
     ///         .property("my.interface.name", "/endpoint/path")
@@ -118,13 +118,13 @@ where
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
         let interfaces = &self.interfaces.read().await;
         let prop_if =
-            interfaces
+            &interfaces
                 .get_property(interface_name)
                 .ok_or_else(|| Error::InterfaceNotFound {
                     name: interface_name.to_string(),
                 })?;
 
-        let stored_prop = self.store.interface_props(prop_if.interface_name()).await?;
+        let stored_prop = self.store.interface_props(&prop_if.into()).await?;
 
         futures::stream::iter(stored_prop)
             .then(|p| async {
@@ -137,7 +137,7 @@ where
                         prop_if.version_major()
                     );
 
-                    self.store.delete_prop(&p.interface, &p.path).await?;
+                    self.store.delete_prop(&(&p).into()).await?;
 
                     Ok(None)
                 } else {

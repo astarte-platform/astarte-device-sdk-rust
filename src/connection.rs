@@ -33,6 +33,7 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::AggregateError;
+use crate::store::PropertyMapping;
 use crate::transport::TransportError;
 use crate::{
     builder::DEFAULT_CHANNEL_SIZE,
@@ -71,8 +72,8 @@ pub trait EventLoop {
     ///
     ///     let (client, mut connection) = DeviceBuilder::new()
     ///         .store(MemoryStore::new())
-    ///         .connect(mqtt_config).await.unwrap()
-    ///         .build().await;
+    ///         .connection(mqtt_config)
+    ///         .build().await.unwrap();
     ///
     ///     tokio::spawn(async move {
     ///         loop {
@@ -329,7 +330,8 @@ where
                 Ok(())
             }
             ClientMessage::Unset(data) => {
-                self.store.unset_prop(&data.interface, &data.path).await?;
+                let property_info = (&data).into();
+                self.store.unset_prop(&property_info).await?;
 
                 if self.status.is_connected() {
                     self.sender.unset(data.clone()).await?;
@@ -341,7 +343,7 @@ where
 
                     // TODO: this should be done when the package has been acknowledged, but it's hard
                     //       for the MQTT implementation at the moment so we delete it here to cleanup
-                    self.store.delete_prop(&data.interface, &data.path).await?;
+                    self.store.delete_prop(&property_info).await?;
                 }
 
                 Ok(())
@@ -663,9 +665,9 @@ where
 
         self.sender.remove_interface(&interfaces, to_remove).await?;
 
-        if let Some(prop) = to_remove.as_prop() {
+        if let Some(ref prop) = to_remove.as_prop() {
             // We cannot error here since we have already unsubscribed from the interface
-            if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+            if let Err(err) = self.store.delete_interface(&prop.into()).await {
                 error!(error = %Report::new(err),"failed to remove property");
             }
         } else if let Some(retention) = self.store.get_retention() {
@@ -719,8 +721,8 @@ where
 
         for (_, iface) in to_remove.iter() {
             // We cannot error here since we have already unsubscribed from the interface
-            if let Some(prop) = iface.as_prop() {
-                if let Err(err) = self.store.delete_interface(prop.interface_name()).await {
+            if let Some(ref prop) = iface.as_prop() {
+                if let Err(err) = self.store.delete_interface(&prop.into()).await {
                     error!(error = %Report::new(err), "failed to remove property");
                 }
             }
@@ -897,7 +899,10 @@ impl<S, C> DeviceReceiver<S, C> {
             None => {
                 // Unset can only be received for a property
                 self.store
-                    .delete_prop(interface.interface_name(), path.as_str())
+                    .delete_prop(&PropertyMapping::new_unchecked(
+                        interface.into(),
+                        path.as_str(),
+                    ))
                     .await
                     .map_err(|err| TransportError::Transport(Error::Store(err)))?;
 

@@ -642,7 +642,7 @@ impl Handshake {
                 trace!("clearing unset property {}/{}", prop.interface, prop.path);
 
                 store
-                    .delete_prop(&prop.interface, &prop.path)
+                    .delete_prop(&prop.into())
                     .await
                     .map_err(InitError::Unset)?;
             }

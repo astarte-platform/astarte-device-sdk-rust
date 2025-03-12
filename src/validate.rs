@@ -29,6 +29,7 @@ use crate::{
         reference::{MappingRef, ObjectRef, PropertyRef},
         MappingAccess, Ownership, Reliability, Retention,
     },
+    store::PropertyInterface,
     types::AstarteType,
     Interface, Timestamp,
 };
@@ -205,6 +206,13 @@ impl ValidatedUnset {
         mapping: MappingRef<'_, PropertyRef<'_>>,
         path: &MappingPath<'_>,
     ) -> Result<Self, UserValidationError> {
+        if mapping.interface().ownership() != Ownership::Device {
+            return Err(UserValidationError::Ownership {
+                exp: Ownership::Device,
+                got: mapping.interface().ownership(),
+            });
+        }
+
         if !mapping.allow_unset() {
             return Err(UserValidationError::Unset {
                 interface: mapping.interface().interface_name().to_string(),
@@ -216,6 +224,13 @@ impl ValidatedUnset {
             interface: mapping.interface().interface_name().to_string(),
             path: path.to_string(),
         })
+    }
+}
+
+impl<'a> From<&'a ValidatedUnset> for PropertyInterface<'a> {
+    /// an unset is allowed to be sent only by the device [`ValidatedUnset::validate`]
+    fn from(value: &'a ValidatedUnset) -> Self {
+        Self::new(&value.interface, Ownership::Device)
     }
 }
 

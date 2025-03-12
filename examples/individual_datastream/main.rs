@@ -60,10 +60,9 @@ async fn main() -> Result<(), DynError> {
     let (client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
-        .connect(mqtt_config)
-        .await?
+        .connection(mqtt_config)
         .build()
-        .await;
+        .await?;
 
     let client_cl = client.clone();
     println!("Connection to Astarte established.");
