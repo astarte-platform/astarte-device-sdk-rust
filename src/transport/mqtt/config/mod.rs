@@ -31,16 +31,14 @@ use tracing::debug;
 use url::Url;
 
 use crate::{
-    builder::{ConnectionConfig, DeviceBuilder, DeviceTransport, DEFAULT_CHANNEL_SIZE},
-    store::{PropertyStore, StoreCapabilities},
-    transport::{
-        mqtt::{
-            config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-            registration::register_device, retention::MqttRetention, ClientId,
-        },
-        Connection,
+    builder::{
+        Config, ConnectionBuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE,
     },
-    Error,
+    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
+    transport::mqtt::{
+        config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
+        registration::register_device, retention::MqttRetention, ClientId,
+    },
 };
 
 use self::tls::is_env_ignore_ssl;
@@ -74,8 +72,8 @@ pub enum Credential {
     /// ## Note
     ///
     /// You need to set a writable directory on the builder to store the registered credential
-    /// secret used for authentication. You can either use the [`DeviceBuilder::writable_dir`] or
-    /// [`DeviceBuilder::store_dir`] methods.
+    /// secret used for authentication. You can either use the [`crate::builder::DeviceBuilder::writable_dir`] or
+    /// [`crate::builder::DeviceBuilder::store_dir`] methods.
     ParingToken {
         /// The JWT secret to pair the device to astarte.
         pairing_token: String,
@@ -221,7 +219,7 @@ impl MqttConfig {
     ///
     ///     let builder = DeviceBuilder::new()
     ///         .store_dir("/some/dir").await?
-    ///         .connect(mqtt_options).await?;
+    ///         .connection(mqtt_options);
     ///
     ///     Ok(())
     /// }
@@ -272,20 +270,14 @@ impl MqttConfig {
     }
 
     /// Retrieves the credentials for the connection
-    async fn credentials<S, C>(
-        &mut self,
-        builder: &DeviceBuilder<S, C>,
-    ) -> Result<String, MqttError>
-    where
-        C: Connection,
-    {
+    async fn credentials(&mut self, config: &Config) -> Result<String, MqttError> {
         // We need to clone to not return something owning a mutable reference to self
         match &self.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
             Credential::ParingToken { pairing_token } => {
                 debug!("pairing token provided, retrieving credentials secret");
 
-                let Some(dir) = &builder.writable_dir else {
+                let Some(dir) = &config.writable_dir else {
                     return Err(MqttError::NoStorePairingToken);
                 };
 
@@ -383,17 +375,21 @@ impl<S> ConnectionConfig<S> for MqttConfig
 where
     S: StoreCapabilities + PropertyStore + Send + Sync,
 {
-    type Conn = Mqtt<S>;
-    type Err = Error;
+    type Conn = Mqtt<Self::Store>;
+    type Store = S;
+    type Err = MqttError;
 
-    async fn connect<C>(
+    async fn connect(
         mut self,
-        builder: &DeviceBuilder<S, C>,
-    ) -> Result<DeviceTransport<Mqtt<S>>, Self::Err>
-    where
-        C: Connection + Send + Sync,
-    {
-        let secret = self.credentials(builder).await?;
+        config: ConnectionBuildConfig<'_, S>,
+    ) -> Result<DeviceTransport<Self::Store, Self::Conn>, Self::Err> {
+        let ConnectionBuildConfig {
+            store,
+            interfaces,
+            config,
+        } = config;
+
+        let secret = self.credentials(&config).await?;
 
         let pairing_url = self
             .pairing_url
@@ -405,7 +401,7 @@ where
         let provider = TransportProvider::configure(
             pairing_url,
             secret,
-            builder.writable_dir.clone(),
+            config.writable_dir.clone(),
             insecure_ssl,
         )
         .await
@@ -431,6 +427,8 @@ where
 
         eventloop.set_network_options(net_opts);
 
+        let store_wrapper = StoreWrapper::new(store);
+
         let client_id = ClientId {
             device_id: self.device_id.clone(),
             realm: self.realm.clone(),
@@ -440,13 +438,13 @@ where
             eventloop,
             provider,
             client_id.as_ref(),
-            &builder.interfaces,
-            &builder.store,
+            interfaces,
+            &store_wrapper,
         )
         .await
         .map_err(MqttError::Poll)?;
 
-        let (retention_tx, retention_rx) = flume::bounded(builder.channel_size);
+        let (retention_tx, retention_rx) = flume::bounded(config.channel_size);
 
         let retention = MqttRetention::new(retention_rx);
 
@@ -454,20 +452,21 @@ where
             client_id.clone(),
             client,
             retention_tx,
-            builder.store.clone(),
-            builder.volatile.clone(),
+            store_wrapper.clone(),
+            config.volatile.clone(),
         );
         let connection = Mqtt::new(
             client_id,
             connection,
             retention,
-            builder.store.clone(),
-            builder.volatile.clone(),
+            store_wrapper.clone(),
+            config.volatile.clone(),
         );
 
         Ok(DeviceTransport {
             sender: client,
             connection,
+            store: store_wrapper,
         })
     }
 }
