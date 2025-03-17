@@ -108,6 +108,11 @@ impl VolatileStore {
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
         if self.is_full() {
+            if self.store.capacity() == 0 {
+                // we shouldn't store anything
+                return;
+            }
+
             // remote the expired only if its full, it will be done while iterating
             self.remove_expired();
 
@@ -167,6 +172,7 @@ impl VolatileStore {
         self.store.len() == self.store.capacity()
     }
 
+    /// A capacity of 0 will make every push into this store a noop.
     fn set_capacity(&mut self, capacity: usize) {
         let current = self.store.capacity();
 
@@ -550,5 +556,25 @@ mod tests {
 
         assert_eq!(store.store.len(), 2);
         assert_eq!(store.store[1].value, ItemValue::Individual(info3));
+    }
+
+    #[test]
+    fn capacity_0_volatile_store_should_not_store() {
+        let mut store = VolatileStore::with_capacity(0);
+        let ctx = Context::new();
+
+        let info = ValidatedIndividual {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile { expiry: None },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        store.push(ctx.next(), info.clone());
+
+        assert_eq!(None, store.pop_next());
     }
 }

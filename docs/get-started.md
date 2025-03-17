@@ -166,10 +166,9 @@ async fn init() -> eyre::Result<(DeviceClient<SqliteStore>, DeviceConnection<Sql
         .store(store)
         // NOTE: here we are not defining any Astarte interface, thus the device will not be able to
         // send or receive data to/from Astarte
-        .connect(mqtt_config)
-        .await?
+        .connection(mqtt_config)
         .build()
-        .await;
+        .await?;
 
     Ok((client, connection))
 }
@@ -424,8 +423,7 @@ async fn main() -> eyre::Result<()> {
     let (client, connection) = DeviceBuilder::new()
         .store(store)
         .interface_directory("interfaces")?
-        .connect(mqtt_config)
-        .await?
+        .connection(mqtt_config)
         .build()
         .await;
     */
