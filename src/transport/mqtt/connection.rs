@@ -866,7 +866,7 @@ mod tests {
 
     use crate::{
         store::{memory::MemoryStore, StoredProp},
-        test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
+        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
         AstarteType, Interface,
     };
@@ -988,8 +988,8 @@ mod tests {
 
         let interfaces = [
             Interface::from_str(DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap(),
-            Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+            Interface::from_str(DEVICE_OBJECT).unwrap(),
+            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
         ];
 
         let interfaces = Interfaces::from_iter(interfaces);

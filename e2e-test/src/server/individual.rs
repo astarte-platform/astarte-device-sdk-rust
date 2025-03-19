@@ -19,13 +19,13 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, Client, DeviceClient, DeviceEvent};
+use astarte_device_sdk::{AstarteType, Client, DeviceEvent};
 use eyre::{ensure, OptionExt};
 use tracing::info;
 
 use crate::api::ApiClient;
 use crate::data::InterfaceData;
+use crate::AstarteClient;
 
 #[derive(Debug)]
 struct ServerDatastream {}
@@ -61,7 +61,7 @@ impl InterfaceData for ServerDatastreamOverflow {
     }
 }
 
-async fn validate<T>(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()>
+async fn validate<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceData,
 {
@@ -93,7 +93,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn check(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()> {
+pub(crate) async fn check(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()> {
     validate::<ServerDatastream>(api, client).await?;
     validate::<ServerDatastreamOverflow>(api, client).await?;
 

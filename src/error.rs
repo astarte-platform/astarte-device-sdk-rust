@@ -120,10 +120,15 @@ pub struct AggregationError {
 }
 
 impl AggregationError {
-    pub(crate) fn new(interface: String, path: String, exp: Aggregation, got: Aggregation) -> Self {
+    pub(crate) fn new(
+        interface: impl Into<String>,
+        path: impl Into<String>,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
         Self {
-            interface,
-            path,
+            interface: interface.into(),
+            path: path.into(),
             exp,
             got,
         }
@@ -132,10 +137,12 @@ impl AggregationError {
 
 /// Invalid interface type when sending or receiving.
 #[derive(Debug, thiserror::Error)]
-#[error("invalid interface type for {name}, expected {exp} but got {got}")]
+#[error("invalid interface type for {name}{}, expected {exp} but got {got}", path.as_deref().unwrap_or_default())]
 pub struct InterfaceTypeError {
     /// Name of the interface.
     name: String,
+    /// Optional path
+    path: Option<String>,
     /// Expected interface type.
     exp: InterfaceTypeDef,
     /// Actual interface type.
@@ -150,6 +157,21 @@ impl InterfaceTypeError {
     ) -> Self {
         Self {
             name: name.into(),
+            path: None,
+            exp,
+            got,
+        }
+    }
+
+    pub(crate) fn with_path(
+        name: impl Into<String>,
+        path: impl Into<String>,
+        exp: InterfaceTypeDef,
+        got: InterfaceTypeDef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            path: Some(path.into()),
             exp,
             got,
         }

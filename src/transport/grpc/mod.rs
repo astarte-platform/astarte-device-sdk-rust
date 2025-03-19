@@ -24,8 +24,8 @@
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_message_hub_proto::prost::{DecodeError, Message};
@@ -47,14 +47,15 @@ use self::convert::MessageHubProtoError;
 use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 use crate::aggregate::AstarteObject;
-use crate::builder::ConnectionBuildConfig;
+use crate::builder::BuildConfig;
 use crate::client::RecvError;
-use crate::error::AggregationError;
-use crate::interface::Aggregation;
-use crate::retention::memory::SharedVolatileStore;
+use crate::error::{AggregationError, InterfaceTypeError};
+use crate::interface::{Aggregation, InterfaceTypeDef};
 use crate::retention::{PublishInfo, RetentionId};
+use crate::state::SharedState;
 use crate::Value;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
@@ -155,7 +156,7 @@ impl Interceptor for NodeIdInterceptor {
 pub struct GrpcClient<S> {
     client: MsgHubClient,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> GrpcClient<S> {
@@ -163,12 +164,12 @@ impl<S> GrpcClient<S> {
     pub(crate) fn new(
         client: MsgHubClient,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client,
             store,
-            volatile,
+            state,
         }
     }
 
@@ -178,7 +179,7 @@ impl<S> GrpcClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_received(id).await;
+                self.state.volatile_store.mark_received(id).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -204,6 +205,15 @@ where
     S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
+        self.client
+            .send(tonic::Request::new(data.into()))
+            .await
+            .map_err(GrpcError::from)?;
+
+        Ok(())
+    }
+
+    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
         self.client
             .send(tonic::Request::new(data.into()))
             .await
@@ -377,15 +387,13 @@ where
 /// It manages the interaction with the
 /// [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and
 /// receiving [`AstarteMessage`] following the Astarte message hub protocol.
-pub struct Grpc<S> {
+pub struct Grpc {
     uuid: Uuid,
     client: MsgHubClient,
     stream: SyncWrapper<Streaming<MessageHubEvent>>,
-    /// Store used in the client
-    _store: PhantomData<S>,
 }
 
-impl<S> Grpc<S> {
+impl Grpc {
     pub(crate) fn new(
         uuid: Uuid,
         client: MsgHubClient,
@@ -395,7 +403,6 @@ impl<S> Grpc<S> {
             uuid,
             client,
             stream: SyncWrapper::new(stream),
-            _store: PhantomData,
         }
     }
 
@@ -419,7 +426,7 @@ impl<S> Grpc<S> {
     }
 }
 
-impl<S> std::fmt::Debug for Grpc<S> {
+impl std::fmt::Debug for Grpc {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Grpc")
             .field("uuid", &self.uuid)
@@ -427,10 +434,7 @@ impl<S> std::fmt::Debug for Grpc<S> {
     }
 }
 
-impl<T> Receive for Grpc<T>
-where
-    T: Send,
-{
+impl Receive for Grpc {
     type Payload = GrpcPayload;
 
     async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError> {
@@ -453,19 +457,18 @@ where
         }
     }
 
-    fn deserialize_individual(
+    fn deserialize_property(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
+    ) -> Result<Option<AstarteType>, TransportError> {
         let value: Value = payload.data.try_into().map_err(RecvError::connection)?;
 
         match value {
             Value::Individual(astarte_type) => {
                 trace!("received {}", astarte_type.display_type());
 
-                // FIXME: replace None with the actual timestamp
-                Ok(Some((astarte_type, None)))
+                Ok(Some(astarte_type))
             }
 
             Value::Object(_hash_map) => {
@@ -480,6 +483,47 @@ where
             Value::Unset => {
                 debug!("unset received");
                 Ok(None)
+            }
+        }
+    }
+
+    fn deserialize_individual(
+        &self,
+        mapping: &MappingRef<'_, &Interface>,
+        payload: Self::Payload,
+    ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
+        let value: Value = payload.data.try_into().map_err(RecvError::connection)?;
+
+        match value {
+            Value::Individual(astarte_type) => {
+                trace!("received {}", astarte_type.display_type());
+
+                // FIXME
+                Ok((astarte_type, None))
+            }
+            Value::Object(_hash_map) => {
+                debug!("object received");
+
+                Err(TransportError::Recv(RecvError::Aggregation(
+                    AggregationError::new(
+                        mapping.interface().interface_name(),
+                        mapping.path().to_string(),
+                        Aggregation::Individual,
+                        Aggregation::Object,
+                    ),
+                )))
+            }
+            Value::Unset => {
+                debug!("unset received");
+
+                Err(TransportError::Recv(RecvError::InterfaceType(
+                    InterfaceTypeError::with_path(
+                        mapping.interface().interface_name(),
+                        mapping.path().to_string(),
+                        InterfaceTypeDef::Datastream,
+                        InterfaceTypeDef::Properties,
+                    ),
+                )))
             }
         }
     }
@@ -510,10 +554,7 @@ where
     }
 }
 
-impl<S> Reconnect for Grpc<S>
-where
-    S: StoreCapabilities + Send + Sync,
-{
+impl Reconnect for Grpc {
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
         // try reattaching
         let data = NodeData::try_from(interfaces)?;
@@ -521,7 +562,7 @@ where
         let mut exp_back = ExponentialIter::default();
 
         let stream = loop {
-            match Grpc::<S>::attach(&mut self.client, data.clone()).await {
+            match Grpc::attach(&mut self.client, data.clone()).await {
                 Ok(stream) => break stream,
                 Err(err) => {
                     error!("Grpc error while trying to reconnect {err}");
@@ -541,11 +582,10 @@ where
     }
 }
 
-impl<S> Connection for Grpc<S>
-where
-    S: PropertyStore,
-{
+impl Connection for Grpc {
     type Sender = GrpcClient<GrpcStore>;
+
+    type Store = GrpcStore;
 }
 
 /// Internal struct holding the received grpc message
@@ -590,40 +630,40 @@ impl<S> ConnectionConfig<S> for GrpcConfig
 where
     S: StoreCapabilities + PropertyStore + Send + Sync,
 {
+    type Conn = Grpc;
     type Store = GrpcStore;
-    type Conn = Grpc<GrpcStore>;
     type Err = GrpcError;
 
     async fn connect(
         self,
-        config: ConnectionBuildConfig<'_, S>,
-    ) -> Result<DeviceTransport<Self::Store, Self::Conn>, Self::Err> {
-        let ConnectionBuildConfig {
-            interfaces, config, ..
-        } = config;
-
+        config: BuildConfig<S>,
+    ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
         let channel = self.endpoint.connect().await.map_err(GrpcError::from)?;
         let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
         let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
 
-        let node_data = NodeData::try_from(interfaces)?;
-        let stream = Grpc::<StoreWrapper<S>>::attach(&mut client, node_data).await?;
+        let stream = {
+            let interfaces = config.state.interfaces.read().await;
+            let node_data = NodeData::try_from(&*interfaces)?;
 
-        let grpc_store = StoreWrapper::new(GrpcStore::new(client.clone()));
+            Grpc::attach(&mut client, node_data).await?
+        };
 
-        let sender = GrpcClient::new(client.clone(), grpc_store.clone(), config.volatile.clone());
-        let receiver = Grpc::new(self.uuid, client, stream);
+        let store = StoreWrapper::new(GrpcStore::new(client.clone()));
+
+        // HACK: disable the volatile retention
+        config.state.volatile_store.set_capacity(0).await;
+
+        let state = Arc::clone(&config.state);
+
+        let sender = GrpcClient::new(client.clone(), store.clone(), state);
+        let connection = Grpc::new(self.uuid, client, stream);
 
         Ok(DeviceTransport {
             sender,
-            connection: receiver,
-            store: grpc_store,
+            connection,
+            store,
         })
-    }
-
-    fn volatile_capacity_override() -> Option<usize> {
-        // disable retention for the store
-        Some(0)
     }
 }
 
@@ -666,6 +706,9 @@ mod test {
     use itertools::Itertools;
     use uuid::uuid;
 
+    use crate::retention::memory::VolatileStore;
+    use crate::test::{DEVICE_OBJECT, E2E_SERVER_DATASTREAM};
+    use crate::transport::test::mock_validate_object;
     use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY, DeviceEvent, Value};
 
     use super::*;
@@ -768,18 +811,23 @@ mod test {
     async fn mock_grpc<S>(
         message_hub_client_tx: MsgHubClient,
         mut message_hub_client_rx: MsgHubClient,
-        interfaces: &Interfaces,
+        interfaces: Interfaces,
         store: S,
-    ) -> Result<(GrpcClient<S>, Grpc<S>), Box<dyn std::error::Error>>
+    ) -> Result<(GrpcClient<S>, Grpc), Box<dyn std::error::Error>>
     where
         S: PropertyStore,
     {
         let store = StoreWrapper::new(store);
-        let volatile = SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
-        let client = GrpcClient::new(message_hub_client_tx, store, volatile);
 
-        let node_data = NodeData::try_from(interfaces)?;
-        let stream = Grpc::<S>::attach(&mut message_hub_client_rx, node_data).await?;
+        let node_data = NodeData::try_from(&interfaces)?;
+        let state = SharedState::new(
+            interfaces,
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+        );
+
+        let client = GrpcClient::new(message_hub_client_tx, store, Arc::new(state));
+
+        let stream = Grpc::attach(&mut message_hub_client_rx, node_data).await?;
         let connection = Grpc::new(ID, message_hub_client_rx, stream);
 
         Ok((client, connection))
@@ -827,7 +875,7 @@ mod test {
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
         let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 
@@ -869,7 +917,7 @@ mod test {
 
         // first attach is called when the connection is created
         let (mut client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
         // poll the next message (error)
@@ -958,7 +1006,7 @@ mod test {
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
         let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 
@@ -1002,9 +1050,9 @@ mod test {
         let mut mock_client_tx = MsgHubClient::new();
         let mut mock_client_rx = MsgHubClient::new();
 
-        const PATH: &str = "/1/name";
+        const PATH: &str = "/string_endpoint";
         const STRING_VALUE: &str = "value";
-        let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let interface = Interface::from_str(crate::test::E2E_DEVICE_DATASTREAM).unwrap();
         let interface_name = interface.interface_name().to_owned();
 
         mock_client_rx
@@ -1038,7 +1086,7 @@ mod test {
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
         let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 
@@ -1050,7 +1098,7 @@ mod test {
         let validated = ValidatedIndividual::validate(
             mapping_ref,
             AstarteType::String(STRING_VALUE.to_string()),
-            None,
+            Some(Utc::now()),
         )
         .unwrap();
         client.send_individual(validated).await.unwrap();
@@ -1066,7 +1114,7 @@ mod test {
         let mut mock_client_rx = MsgHubClient::new();
 
         const PATH: &str = "/1";
-        let interface = Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap();
+        let interface = Interface::from_str(DEVICE_OBJECT).unwrap();
         let interface_name = interface.interface_name().to_owned();
 
         mock_client_rx
@@ -1093,25 +1141,14 @@ mod test {
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
-        mock_client_tx
-            .expect_detach::<Request<pbjson_types::Empty>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
-
         let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 
         let path = MappingPath::try_from(PATH).unwrap();
-        let interfaces = Interfaces::from_iter([interface]);
-        let object_ref = interfaces
-            .get(&interface_name)
-            .and_then(ObjectRef::new)
-            .unwrap();
-        let validated = ValidatedObject::validate(
-            object_ref,
+        let validated = mock_validate_object(
+            &interface,
             &path,
             MockDeviceObject::mock_object(),
             Some(Utc::now()),
@@ -1119,7 +1156,6 @@ mod test {
         .unwrap();
 
         client.send_object(validated).await.unwrap();
-        client.disconnect().await.unwrap();
     }
 
     #[tokio::test]
@@ -1131,7 +1167,7 @@ mod test {
         let mut mock_client_rx = MsgHubClient::new();
 
         const PATH: &str = "/1";
-        let interface = Interface::from_str(crate::test::E2E_SERVER_DATASTREAM).unwrap();
+        let interface = Interface::from_str(E2E_SERVER_DATASTREAM).unwrap();
         let interface_name = interface.interface_name().to_owned();
         let proto_payload = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
             data: MockServerObject::mock_object()
@@ -1164,7 +1200,7 @@ mod test {
             });
 
         let (_client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 
@@ -1213,7 +1249,7 @@ mod test {
             });
 
         let (_client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, &Interfaces::new(), store)
+            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
                 .await
                 .unwrap();
 

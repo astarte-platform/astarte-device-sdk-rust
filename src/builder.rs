@@ -29,8 +29,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::client::DeviceClient;
@@ -38,12 +36,15 @@ use crate::connection::DeviceConnection;
 use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
-use crate::retention::memory::SharedVolatileStore;
+use crate::retention::memory::VolatileStore;
+use crate::state::SharedState;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
+use crate::store::StoreCapabilities;
 use crate::transport::Connection;
+use crate::Error;
 
 /// Default capacity of the channels
 ///
@@ -97,34 +98,28 @@ pub struct NoStore;
 #[derive(Debug, Clone, Copy)]
 pub struct NoConnect;
 
-/// Configuration struct for the device, used internally by the builder
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub(crate) channel_size: usize,
-    pub(crate) volatile_retention: usize,
-    pub(crate) volatile: SharedVolatileStore,
-    pub(crate) writable_dir: Option<PathBuf>,
-}
-
 /// Struct used to pass the connection configuration to the [`ConnectionConfig`]
-#[derive(Debug, Clone)]
-pub struct ConnectionBuildConfig<'a, S> {
+#[derive(Debug)]
+pub struct BuildConfig<S> {
+    pub(crate) channel_size: usize,
+    pub(crate) writable_dir: Option<PathBuf>,
     pub(crate) store: S,
-    pub(crate) interfaces: &'a Interfaces,
-    pub(crate) config: Config,
+    pub(crate) state: Arc<SharedState>,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
 /// [`DeviceConnection`].
-#[derive(Debug, Clone)]
-pub struct DeviceBuilder<S = NoStore, C = NoConnect> {
+#[derive(Debug)]
+pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
+    pub(crate) channel_size: usize,
+    pub(crate) volatile_retention: usize,
     pub(crate) store: S,
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
-    pub(crate) config: Config,
+    pub(crate) writable_dir: Option<PathBuf>,
 }
 
-impl DeviceBuilder<NoStore, NoConnect> {
+impl DeviceBuilder<NoConnect, NoStore> {
     /// Create a new instance of the DeviceBuilder.
     /// Has a default [`DeviceBuilder::channel_size`] that equals to [`crate::builder::DEFAULT_CHANNEL_SIZE`].
     ///
@@ -141,15 +136,12 @@ impl DeviceBuilder<NoStore, NoConnect> {
     /// ```
     pub fn new() -> Self {
         Self {
-            config: Config {
-                channel_size: DEFAULT_CHANNEL_SIZE,
-                volatile_retention: DEFAULT_VOLATILE_CAPACITY,
-                volatile: SharedVolatileStore::new(),
-                writable_dir: None,
-            },
+            channel_size: DEFAULT_CHANNEL_SIZE,
+            volatile_retention: DEFAULT_VOLATILE_CAPACITY,
+            writable_dir: None,
             interfaces: Interfaces::new(),
-            store: NoStore,
             connection_config: NoConnect,
+            store: NoStore,
         }
     }
 }
@@ -218,7 +210,7 @@ impl<S, C> DeviceBuilder<S, C> {
 
     /// This method configures the bounded channel size.
     pub fn channel_size(mut self, size: usize) -> Self {
-        self.config.channel_size = size;
+        self.channel_size = size;
 
         self
     }
@@ -244,18 +236,18 @@ impl<S, C> DeviceBuilder<S, C> {
             return Err(BuilderError::DirectoryReadonly(path.to_owned()));
         }
 
-        self.config.writable_dir = Some(path.to_owned());
+        self.writable_dir = Some(path.to_owned());
 
         Ok(self)
     }
 }
 
-impl<C> DeviceBuilder<NoStore, C> {
+impl<C> DeviceBuilder<C, NoStore> {
     /// Configure a writable directory and initializes the [`SqliteStore`] in it.
     pub async fn store_dir<P>(
         mut self,
         path: P,
-    ) -> Result<DeviceBuilder<SqliteStore, C>, BuilderError>
+    ) -> Result<DeviceBuilder<C, SqliteStore>, BuilderError>
     where
         P: AsRef<Path>,
     {
@@ -271,20 +263,22 @@ impl<C> DeviceBuilder<NoStore, C> {
     /// Set the backing storage for the device.
     ///
     /// This will store and retrieve the device's properties.
-    pub fn store<S>(self, store: S) -> DeviceBuilder<S, C>
+    pub fn store<S>(self, store: S) -> DeviceBuilder<C, S>
     where
         S: PropertyStore,
     {
         DeviceBuilder {
-            config: self.config,
             interfaces: self.interfaces,
             connection_config: self.connection_config,
             store,
+            channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
+            writable_dir: self.writable_dir,
         }
     }
 }
 
-impl<S> DeviceBuilder<S, NoConnect>
+impl<S> DeviceBuilder<NoConnect, S>
 where
     S: PropertyStore,
 {
@@ -292,17 +286,19 @@ where
     ///
     /// If the connection gets established correctly, the caller can than construct
     /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceBuilder::build`] method.
-    pub fn connection<C>(self, connection_config: C) -> DeviceBuilder<S, C>
+    pub fn connection<C>(self, connection_config: C) -> DeviceBuilder<C, S>
     where
         C: ConnectionConfig<S>,
         // required to call [`DeviceBuilder::build`]
-        crate::Error: From<C::Err>,
+        Error: From<C::Err>,
     {
         DeviceBuilder {
             interfaces: self.interfaces,
             connection_config,
             store: self.store,
-            config: self.config,
+            channel_size: self.channel_size,
+            volatile_retention: self.volatile_retention,
+            writable_dir: self.writable_dir,
         }
     }
 }
@@ -313,37 +309,35 @@ impl<S> DeviceBuilder<S, crate::transport::mqtt::MqttConfig> {
     /// Sets the number of elements with retention volatile that will be kept in memory if
     /// disconnected.
     pub fn volatile_retention(mut self, items: usize) -> Self {
-        self.config.volatile_retention = items;
+        self.volatile_retention = items;
 
         self
     }
 }
 
-impl<S, C> DeviceBuilder<S, C>
+type BuildRes<C> = (DeviceClient<C>, DeviceConnection<C>);
+
+impl<C, S> DeviceBuilder<C, S>
 where
-    S: PropertyStore,
+    S: StoreCapabilities,
     C: ConnectionConfig<S>,
-    crate::Error: From<C::Err>,
+    Error: From<C::Err>,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
-    pub async fn build(
-        self,
-    ) -> Result<(DeviceClient<C::Store>, DeviceConnection<C::Store, C::Conn>), crate::Error> {
-        let channel_size = self.config.channel_size;
+    pub async fn build(self) -> Result<BuildRes<C::Conn>, Error> {
         // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
-        let (tx_connection, rx_client) = flume::bounded(channel_size);
-        let (tx_client, rx_connection) = mpsc::channel(channel_size);
+        let (tx_connection, rx_client) = flume::bounded(self.channel_size);
 
-        let volatile = self.config.volatile.clone();
-        volatile
-            .set_capacity(C::volatile_capacity_override().unwrap_or(self.config.volatile_retention))
-            .await;
+        let volatile_store = VolatileStore::with_capacity(self.volatile_retention);
 
-        let config = ConnectionBuildConfig {
+        let state = Arc::new(SharedState::new(self.interfaces, volatile_store));
+
+        let config = BuildConfig {
             store: self.store,
-            interfaces: &self.interfaces,
-            config: self.config,
+            channel_size: self.channel_size,
+            writable_dir: self.writable_dir,
+            state: Arc::clone(&state),
         };
 
         let DeviceTransport {
@@ -352,20 +346,10 @@ where
             store,
         } = self.connection_config.connect(config).await?;
 
-        let interfaces = Arc::new(RwLock::new(self.interfaces));
-
         let client =
-            DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
+            DeviceClient::new(sender.clone(), rx_client, store.clone(), Arc::clone(&state));
 
-        let connection = DeviceConnection::new(
-            interfaces,
-            tx_connection,
-            rx_connection,
-            volatile,
-            store,
-            connection,
-            sender,
-        );
+        let connection = DeviceConnection::new(tx_connection, store, state, connection, sender);
 
         Ok((client, connection))
     }
@@ -378,18 +362,21 @@ impl Default for DeviceBuilder {
 }
 
 /// Structure that stores a successfully established connection
-pub struct DeviceTransport<S, C: Connection> {
+pub struct DeviceTransport<C>
+where
+    C: Connection,
+{
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
-    pub(crate) store: StoreWrapper<S>,
+    pub(crate) store: StoreWrapper<C::Store>,
 }
 
 /// Crate private connection implementation.
 pub trait ConnectionConfig<S> {
     /// Type of the store used by the connection
-    type Store: PropertyStore;
+    type Store: StoreCapabilities;
     /// Type of the constructed Connection
-    type Conn: Connection + Send + Sync;
+    type Conn: Connection;
     /// Type of the error got while opening the connection
     type Err;
 
@@ -397,18 +384,10 @@ pub trait ConnectionConfig<S> {
     /// This method is called internally by the builder.
     fn connect(
         self,
-        config: ConnectionBuildConfig<S>,
-    ) -> impl Future<Output = Result<DeviceTransport<Self::Store, Self::Conn>, Self::Err>> + Send
+        config: BuildConfig<S>,
+    ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, Self::Err>> + Send
     where
         S: PropertyStore;
-
-    /// This method allows the connection config to modify the retention capacity.
-    /// The default implementation returns a [`None`] to avoid editing the default
-    /// retention config.
-    // NOTE: Used by the GrpcConfig to disable retention of messages.
-    fn volatile_capacity_override() -> Option<usize> {
-        None
-    }
 }
 
 /// Walks a directory returning an array of json files
@@ -442,20 +421,11 @@ where
 mod test {
     use std::time::Duration;
 
-    use mockall::predicate;
-    use mockito::Server;
-    use rumqttc::{AckOfPub, ConnAck, ConnectReturnCode, Event, Packet, QoS, SubAck};
+    use mockall::Sequence;
     use tempfile::TempDir;
 
-    use crate::{
-        properties::extract_set_properties,
-        transport::mqtt::{
-            client::{AsyncClient, EventLoop, NEW_LOCK},
-            pairing::tests::{mock_create_certificate, mock_get_broker_url},
-            test::notify_success,
-            MqttConfig,
-        },
-    };
+    use crate::test::DEVICE_PROPERTIES;
+    use crate::transport::mock::{MockCon, MockConfig, MockSender};
 
     use super::*;
 
@@ -491,7 +461,7 @@ mod test {
 
         let builder = DeviceBuilder::new().writable_dir(dir.path()).unwrap();
 
-        assert_eq!(builder.config.writable_dir, Some(dir.path().to_owned()))
+        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
     }
 
     #[tokio::test]
@@ -500,7 +470,7 @@ mod test {
 
         let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
 
-        assert_eq!(builder.config.writable_dir, Some(dir.path().to_owned()))
+        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
     }
 
     #[tokio::test]
@@ -538,124 +508,41 @@ mod test {
 
     #[tokio::test]
     async fn should_build() {
-        let _m = NEW_LOCK.lock().await;
-
         let dir = TempDir::new().unwrap();
 
-        let ctx = AsyncClient::new_context();
-        ctx.expect().once().returning(move |_, _| {
-            let mut client = AsyncClient::default();
-            let mut ev_loop = EventLoop::default();
+        // TODO: add expectations
+        let mut config = MockConfig::<SqliteStore>::new();
+        let mut seq = Sequence::new();
 
-            let mut seq = mockall::Sequence::new();
+        let tmp_path = Some(dir.path().to_path_buf());
 
-            ev_loop
-                .expect_set_network_options()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|_| EventLoop::default());
+        config
+            .expect_connect()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(
+                move |BuildConfig {
+                          channel_size,
+                          writable_dir,
+                          store: _,
+                          state,
+                      }| {
+                    channel_size == channel_size
+                        && *writable_dir == tmp_path
+                        && state.interfaces.try_read().unwrap().get("org.astarte-platform.rust.examples.individual-properties.DeviceProperties").is_some()
+                },
+            )
+            .returning(|config| {
+                let mut sender = MockSender::new();
+                let mut seq = Sequence::new();
+                sender.expect_clone().once().in_sequence(&mut seq).returning(MockSender::new);
 
-            client
-                .expect_clone()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    let mut client = AsyncClient::default();
-
-                    let mut seq = mockall::Sequence::new();
-
-                    client
-                        .expect_clone()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .returning(|| {
-                            let mut client = AsyncClient::default();
-
-                            let mut seq = mockall::Sequence::new();
-
-                            client
-                                .expect_subscribe::<String>()
-                                .with(
-                                    predicate::eq(
-                                        "realm/device_id/control/consumer/properties".to_string(),
-                                    ),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                )
-                                .once()
-                                .in_sequence(&mut seq)
-                                .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
-
-                            client
-                                .expect_publish::<String, String>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .with(
-                                    predicate::eq("realm/device_id".to_string()),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                    predicate::eq(false),
-                                    predicate::eq(String::new()),
-                                )
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, &str>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/emptyCache"
-                                        && *qos == QoS::ExactlyOnce
-                                        && *payload == "1"
-                                })
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, Vec<u8>>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/producer/properties"
-                                        && *qos == QoS::ExactlyOnce
-                                        && extract_set_properties(payload).unwrap().is_empty()
-                                })
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                        });
-
-                    client
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        tokio::task::yield_now().await;
-
-                        Ok(Event::Incoming(Packet::ConnAck(ConnAck {
-                            session_present: false,
-                            code: ConnectReturnCode::Success,
-                        })))
-                    })
-                });
-
-            // catch other calls to pool
-            ev_loop.expect_poll().once().returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-
-                    Ok(Event::Incoming(Packet::PingReq))
+                Ok(DeviceTransport {
+                    connection: MockCon::new(),
+                    sender,
+                    store: StoreWrapper::new(config.store),
                 })
             });
-
-            (client, ev_loop)
-        });
-
-        let mut server = Server::new_async().await;
-
-        let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server).create_async().await;
 
         let (_client, _connection) = tokio::time::timeout(
             Duration::from_secs(3),
@@ -663,19 +550,13 @@ mod test {
                 .store_dir(dir.path())
                 .await
                 .unwrap()
-                .connection(MqttConfig::with_credential_secret(
-                    "realm",
-                    "device_id",
-                    "secret",
-                    server.url(),
-                ))
+                .interface_str(DEVICE_PROPERTIES)
+                .unwrap()
+                .connection(config)
                 .build(),
         )
         .await
         .unwrap()
         .unwrap();
-
-        mock_url.assert_async().await;
-        mock_cert.assert_async().await;
     }
 }
