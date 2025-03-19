@@ -27,6 +27,7 @@
 use std::{collections::HashMap, future::Future};
 
 use crate::{
+    aggregate::AstarteObject,
     client::RecvError,
     interface::{
         mapping::path::MappingPath,
@@ -156,7 +157,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
 }
 
 /// Reconnect the device to Astarte.
@@ -214,23 +215,21 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
+    use crate::aggregate::AstarteObject;
     use crate::error::AggregateError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
         validate::{ValidatedIndividual, ValidatedObject},
-        Interface, IntoAstarteObject,
+        Interface,
     };
 
-    pub(crate) fn mock_validate_object<'a, D>(
+    pub(crate) fn mock_validate_object<'a>(
         interface: &'a Interface,
         path: &'a MappingPath<'a>,
-        data: D,
+        data: AstarteObject,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedObject, crate::Error>
-    where
-        D: IntoAstarteObject + Send,
-    {
+    ) -> Result<ValidatedObject, crate::Error> {
         let object = interface.as_object_ref().ok_or_else(|| {
             let aggr_err = AggregateError::for_interface(
                 interface.interface_name(),
@@ -241,9 +240,7 @@ mod test {
             crate::Error::Aggregation(aggr_err)
         })?;
 
-        let aggregate = data.into_astarte_object()?;
-
-        ValidatedObject::validate(object, path, aggregate, timestamp).map_err(|uve| uve.into())
+        ValidatedObject::validate(object, path, data, timestamp).map_err(|uve| uve.into())
     }
 
     pub(crate) fn mock_validate_individual<'a, D>(

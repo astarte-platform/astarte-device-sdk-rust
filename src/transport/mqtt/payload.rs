@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::{
+    aggregate::AstarteObject,
     interface::{
         mapping::path::{MappingError, MappingPath},
         reference::{MappingRef, ObjectRef},
@@ -156,7 +157,7 @@ pub(super) fn deserialize_object(
     object: &ObjectRef,
     path: &MappingPath,
     buf: &[u8],
-) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), PayloadError> {
+) -> Result<(AstarteObject, Option<Timestamp>), PayloadError> {
     if buf.is_empty() {
         return Err(PayloadError::Unset);
     }
@@ -202,7 +203,7 @@ pub(super) fn deserialize_object(
 
             Some(Ok((key, ast_val)))
         })
-        .collect::<Result<HashMap<String, AstarteType>, _>>()?;
+        .collect::<Result<AstarteObject, _>>()?;
 
     Ok((aggregate, payload.timestamp))
 }
@@ -314,7 +315,7 @@ mod test {
         ];
 
         let base_path = "/1";
-        let data: HashMap<_, _> = alltypes
+        let mut data: AstarteObject = alltypes
             .into_iter()
             .map(|ty| {
                 let mapping_type = mapping_type(&ty);
@@ -330,8 +331,11 @@ mod test {
         let validated = mock_validate_object(&interface, &path, data.clone(), None).unwrap();
         let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
-        let (res, _) =
+        let (mut res, _) =
             deserialize_object(&interface.as_object_ref().unwrap(), &path, &buf).unwrap();
+
+        res.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
+        data.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         assert_eq!(res, data)
     }

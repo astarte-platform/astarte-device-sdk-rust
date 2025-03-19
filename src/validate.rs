@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use tracing::{debug, error, warn};
 
 use crate::{
+    aggregate::AstarteObject,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -146,7 +147,7 @@ impl ValidatedObject {
     pub(crate) fn validate(
         object: ObjectRef<'_>,
         path: &MappingPath<'_>,
-        data: HashMap<String, AstarteType>,
+        data: AstarteObject,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedObject, UserValidationError> {
         if let Err(err) = optional_object_checks(object, &timestamp) {
@@ -158,6 +159,7 @@ impl ValidatedObject {
 
         // Filter only the valid fields
         let aggregate: HashMap<String, AstarteType> = data
+            .inner
             .into_iter()
             .filter_map(|(key, value)| {
                 let Some(mapping) = object.get_field(path, &key) else {

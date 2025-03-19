@@ -237,7 +237,7 @@ async fn main() -> eyre::Result<()> {
                         sensor_n.remove(0);
                         rx_data.0 = sensor_n;
 
-                        for (key, value) in var {
+                        for (key, value) in var.into_key_values() {
                             rx_data.1.insert(key, value);
                         }
                     } else if event.interface == test_cfg.interface_property_so {
@@ -412,7 +412,7 @@ async fn test_aggregate_device_to_server(
         .send_object(
             &test_cfg.interface_aggregate_do,
             &format!("/{sensor_number}"),
-            tx_data.clone(),
+            tx_data.clone().try_into().unwrap(),
         )
         .await?;
 
