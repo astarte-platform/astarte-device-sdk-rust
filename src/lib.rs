@@ -47,7 +47,7 @@ pub mod types;
 mod validate;
 
 /// Re-exported internal structs
-pub use crate::aggregate::{IntoAstarteObject, Value};
+pub use crate::aggregate::Value;
 pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
@@ -71,11 +71,11 @@ mod test {
     use base64::Engine;
     use mockall::predicate;
     use rumqttc::{AckOfPub, Event};
-    use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
 
+    use crate::aggregate::AstarteObject;
     use crate::builder::DEFAULT_VOLATILE_CAPACITY;
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
@@ -208,7 +208,7 @@ mod test {
             ]),
             endpoint14: Vec::from([chrono::offset::Utc::now(), chrono::offset::Utc::now()]),
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "endpoint01".to_string(),
                 AstarteType::Double(my_aggregate.endpoint01),
@@ -266,7 +266,7 @@ mod test {
                 AstarteType::DateTimeArray(my_aggregate.endpoint14.clone()),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.into_astarte_object().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
         println!("{expected_res:?}");
     }
 
@@ -283,7 +283,7 @@ mod test {
             first_endpoint: 4.34,
             second_endpoint: 23.0,
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "FIRST_ENDPOINT".to_string(),
                 AstarteType::Double(my_aggregate.first_endpoint),
@@ -293,7 +293,7 @@ mod test {
                 AstarteType::Double(my_aggregate.second_endpoint),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.into_astarte_object().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
     }
 
     #[derive(IntoAstarteObject)]
@@ -309,7 +309,7 @@ mod test {
             first_endpoint: 4.34,
             second_endpoint: 23.0,
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "FirstEndpoint".to_string(),
                 AstarteType::Double(my_aggregate.first_endpoint),
@@ -319,7 +319,7 @@ mod test {
                 AstarteType::Double(my_aggregate.second_endpoint),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.into_astarte_object().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
     }
 
     #[tokio::test]
@@ -621,7 +621,7 @@ mod test {
 
         let event = client.recv().await.expect("no event received");
 
-        let mut obj = HashMap::new();
+        let mut obj = AstarteObject::new();
         obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
         obj.insert(
             "endpoint2".to_string(),
@@ -646,27 +646,16 @@ mod test {
 
     #[tokio::test]
     async fn test_send_object() {
-        struct MockObject {}
-
-        impl IntoAstarteObject for MockObject {
-            fn into_astarte_object(
-                self,
-            ) -> Result<HashMap<String, AstarteType>, astarte_device_sdk::error::Error>
-            {
-                let mut obj = HashMap::new();
-                obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
-                obj.insert(
-                    "endpoint2".to_string(),
-                    AstarteType::String("obj".to_string()),
-                );
-                obj.insert(
-                    "endpoint3".to_string(),
-                    AstarteType::BooleanArray(vec![true]),
-                );
-
-                Ok(obj)
-            }
-        }
+        let mut obj = AstarteObject::new();
+        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+        obj.insert(
+            "endpoint2".to_string(),
+            AstarteType::String("obj".to_string()),
+        );
+        obj.insert(
+            "endpoint3".to_string(),
+            AstarteType::BooleanArray(vec![true]),
+        );
 
         let mut client = AsyncClient::default();
         let eventloop = MqttEventLoop::default();
@@ -698,7 +687,7 @@ mod test {
             .send_object_with_timestamp(
                 "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
                 "/1",
-                MockObject {},
+                obj,
                 chrono::offset::Utc::now(),
             )
             .await

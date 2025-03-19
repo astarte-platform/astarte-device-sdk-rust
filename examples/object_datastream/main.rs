@@ -25,7 +25,7 @@ use astarte_device_sdk::{
     transport::mqtt::MqttConfig,
 };
 #[cfg(not(feature = "derive"))]
-use astarte_device_sdk_derive::AstarteAggregate;
+use astarte_device_sdk_derive::IntoAstarteObject;
 
 #[derive(Serialize, Deserialize)]
 struct Config {
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Error> {
                 .send_object(
                     "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
                     "/23",
-                    data,
+                    data.try_into().unwrap(),
                 )
                 .await
                 .unwrap();

@@ -554,13 +554,13 @@ interface.
 # use tokio::task::JoinSet;
 # use tracing::info;
 # #[cfg(not(feature = "derive"))]
-# use astarte_device_sdk_derive::AstarteAggregate;
+# use astarte_device_sdk_derive::IntoAstarteObject;
 # /// Load connection configuration and connect a device to Astarte.
 # async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
 #     todo!()
 # }
 
-#[derive(Debug, AstarteAggregate)]
+#[derive(Debug, IntoAstarteObject)]
 struct DataObject {
     double_endpoint: f64,
     string_endpoint: String,
@@ -585,7 +585,7 @@ async fn send_aggregate(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
             .send_object(
                 "org.astarte-platform.rust.get-started.Aggregated",
                 "/group_data",
-                data,
+                data.try_into()?,
             )
             .await?;
 
