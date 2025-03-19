@@ -63,7 +63,7 @@ async fn main() -> eyre::Result<()> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connection(mqtt_config)
