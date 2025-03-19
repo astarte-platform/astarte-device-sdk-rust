@@ -155,6 +155,7 @@ impl ObjectDerive {
 
         let name = &self.name;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
+        let capacity = self.fields.len();
         let fields = self.fields.iter().map(|i| {
             let name = i.to_string();
             let name = rename_rule.apply_to_field(&name);
@@ -162,22 +163,19 @@ impl ObjectDerive {
                 // TODO *Temporarily* ignore this new lint will be fixed in a new pr
                 #[allow(unknown_lints)]
                 #[allow(clippy::unnecessary_fallible_conversions)]
-                let value: astarte_device_sdk::types::AstarteType = std::convert::TryInto::try_into(self.#i)?;
-                result.insert(#name.to_string(), value);
+                let v: astarte_device_sdk::types::AstarteType = ::std::convert::TryInto::try_into(value.#i)?;
+                object.insert(#name.to_string(), v);
             }
         });
 
         quote! {
-            impl #impl_generics astarte_device_sdk::IntoAstarteObject for #name #ty_generics #where_clause {
-                fn into_astarte_object(
-                    self,
-                ) -> ::std::result::Result<
-                    std::collections::HashMap<String, astarte_device_sdk::types::AstarteType>,
-                    astarte_device_sdk::error::Error,
-                > {
-                    let mut result = std::collections::HashMap::new();
+            impl #impl_generics ::std::convert::TryFrom<#name #ty_generics> for astarte_device_sdk::aggregate::AstarteObject #where_clause {
+                type Error = astarte_device_sdk::error::Error;
+
+                fn try_from(value: #name #ty_generics) -> ::std::result::Result<Self, Self::Error> {
+                    let mut object = Self::with_capacity(#capacity);
                     #(#fields)*
-                    Ok(result)
+                    Ok(object)
                 }
             }
         }

@@ -26,7 +26,6 @@ pub mod device {
     pub use crate::connection::EventLoop;
     pub use crate::introspection::DynamicIntrospection;
     pub use crate::FromEvent;
-    pub use crate::IntoAstarteObject;
 }
 
 /// Exports common trait used when accessing stored properties.

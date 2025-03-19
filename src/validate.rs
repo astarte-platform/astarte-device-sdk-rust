@@ -18,11 +18,10 @@
 
 //! Validate the submission and reception of a payload.
 
-use std::collections::HashMap;
-
-use tracing::{debug, error, warn};
+use tracing::{error, trace, warn};
 
 use crate::{
+    aggregate::AstarteObject,
     error::Report,
     interface::{
         mapping::path::MappingPath,
@@ -138,58 +137,55 @@ pub(crate) struct ValidatedObject {
     pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
     pub(crate) retention: Retention,
-    pub(crate) data: HashMap<String, AstarteType>,
+    pub(crate) data: AstarteObject,
     pub(crate) timestamp: Option<Timestamp>,
 }
 
 impl ValidatedObject {
     pub(crate) fn validate(
-        object: ObjectRef<'_>,
+        interface: ObjectRef<'_>,
         path: &MappingPath<'_>,
-        data: HashMap<String, AstarteType>,
+        data: AstarteObject,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedObject, UserValidationError> {
-        if let Err(err) = optional_object_checks(object, &timestamp) {
+        if let Err(err) = optional_object_checks(interface, &timestamp) {
             error!(error = %Report::new(&err), "send validation failed");
 
             #[cfg(debug_assertions)]
             return Err(err);
         }
 
-        // Filter only the valid fields
-        let aggregate: HashMap<String, AstarteType> = data
-            .into_iter()
-            .filter_map(|(key, value)| {
-                let Some(mapping) = object.get_field(path, &key) else {
-                    warn!("unrecognized mapping {path}/{key}, ignoring");
-
-                    return None;
-                };
-
-                if value != mapping.mapping_type() {
-                    return Some(Err(UserValidationError::SerializeType {
-                        expected: mapping.mapping_type().to_string(),
-                        got: value.display_type().to_string(),
-                    }));
-                }
-
-                debug!("serialized object field {path} {}", value.display_type());
-
-                Some(Ok((key, value)))
-            })
-            .collect::<Result<_, _>>()?;
-
-        if aggregate.len() != object.len() {
+        if data.len() != interface.len() {
             return Err(UserValidationError::MissingMapping);
         }
 
+        // Filter only the valid fields
+        data.iter().try_for_each(|(key, value)| {
+            let Some(mapping) = interface.get_field(path, key) else {
+                warn!("unrecognized mapping {path}/{key}, ignoring");
+
+                return Ok(());
+            };
+
+            if *value != mapping.mapping_type() {
+                return Err(UserValidationError::SerializeType {
+                    expected: mapping.mapping_type().to_string(),
+                    got: value.display_type().to_string(),
+                });
+            }
+
+            trace!("valid object field {path} {}", value.display_type());
+
+            Ok(())
+        })?;
+
         Ok(ValidatedObject {
-            interface: object.interface.interface_name().to_string(),
+            interface: interface.interface.interface_name().to_string(),
             path: path.to_string(),
-            version_major: object.interface.version_major(),
-            reliability: object.reliability(),
-            retention: object.retention(),
-            data: aggregate,
+            version_major: interface.interface.version_major(),
+            reliability: interface.reliability(),
+            retention: interface.retention(),
+            data,
             timestamp,
         })
     }
@@ -252,8 +248,8 @@ mod tests {
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
-    fn initialize_aggregate() -> (Interface, HashMap<String, AstarteType>) {
-        let aggregate = HashMap::from_iter([
+    fn initialize_aggregate() -> (Interface, AstarteObject) {
+        let aggregate = AstarteObject::from_iter([
             (
                 "double_endpoint".to_string(),
                 AstarteType::Double(37.534543),
