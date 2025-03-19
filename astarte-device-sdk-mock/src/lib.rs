@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,7 +22,7 @@ use astarte_device_sdk::{
     client::{ClientDisconnect, RecvError},
     properties::PropAccess,
     store::StoredProp,
-    AstarteAggregate, AstarteType, DeviceEvent, Error, Interface,
+    AstarteType, DeviceEvent, Error, Interface, IntoAstarteObject,
 };
 use mockall::mock;
 
@@ -38,7 +38,7 @@ pub trait Client {
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> impl Future<Output = Result<(), Error>> + Send
     where
-        D: AstarteAggregate + Send + 'static;
+        D: IntoAstarteObject + Send + 'static;
 
     fn send_object<D>(
         &self,
@@ -47,7 +47,7 @@ pub trait Client {
         data: D,
     ) -> impl Future<Output = Result<(), Error>> + Send
     where
-        D: AstarteAggregate + Send + 'static;
+        D: IntoAstarteObject + Send + 'static;
 
     fn send_with_timestamp<D>(
         &self,
@@ -145,7 +145,7 @@ mock! {
             timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send + 'static;
+            D: IntoAstarteObject + Send + 'static;
 
         async fn send_object<D>(
             &self,
@@ -154,7 +154,7 @@ mock! {
             data: D,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send + 'static;
+            D: IntoAstarteObject + Send + 'static;
 
         async fn send_with_timestamp<D>(
             &self,
@@ -253,7 +253,7 @@ mod tests {
             timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send + 'static,
+            D: IntoAstarteObject + Send + 'static,
         {
             astarte_device_sdk::Client::send_object_with_timestamp(
                 self,
@@ -272,7 +272,7 @@ mod tests {
             data: D,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send + 'static,
+            D: IntoAstarteObject + Send + 'static,
         {
             astarte_device_sdk::Client::send_object(self, interface_name, interface_path, data)
                 .await
@@ -328,7 +328,7 @@ mod tests {
             _timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send,
+            D: IntoAstarteObject + Send,
         {
             Ok(())
         }
@@ -340,7 +340,7 @@ mod tests {
             _data: D,
         ) -> Result<(), Error>
         where
-            D: AstarteAggregate + Send,
+            D: IntoAstarteObject + Send,
         {
             Ok(())
         }

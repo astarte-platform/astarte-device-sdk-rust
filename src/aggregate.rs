@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,7 @@
 //! Value to send or receive from Astarte.
 
 use std::collections::HashMap;
+use std::hash::RandomState;
 
 use crate::{error::Error, types::AstarteType};
 
@@ -33,7 +34,7 @@ use crate::{error::Error, types::AstarteType};
 /// The Astarte Device SDK provides a procedural macro that can be used to automatically generate
 /// `AstarteAggregate` implementations for Structs. To use the procedural macro enable the feature
 /// `derive`.
-pub trait AstarteAggregate {
+pub trait IntoAstarteObject<S = RandomState> {
     /// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
     /// ```
     /// use std::collections::HashMap;
@@ -48,7 +49,7 @@ pub trait AstarteAggregate {
     /// }
     ///
     /// // This is what #[derive(AstarteAggregate)] would generate.
-    /// impl AstarteAggregate for Person {
+    /// impl IntoAstarteObject for Person {
     ///     fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>
     ///     {
     ///         let mut r = HashMap::new();
@@ -59,11 +60,46 @@ pub trait AstarteAggregate {
     ///     }
     /// }
     /// ```
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error>;
+    #[deprecated(
+        since = "0.10.0",
+        note = "use the prefered method `into_astarte_object"
+    )]
+    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType, S>, Error>
+    where
+        Self: Sized,
+    {
+        self.into_astarte_object()
+    }
+    /// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
+    /// ```
+    /// use std::collections::HashMap;
+    /// use std::convert::TryInto;
+    ///
+    /// use astarte_device_sdk::{types::AstarteType, error::Error, AstarteAggregate};
+    ///
+    /// struct Person {
+    ///     name: String,
+    ///     age: i32,
+    ///     phones: Vec<String>,
+    /// }
+    ///
+    /// // This is what #[derive(AstarteAggregate)] would generate.
+    /// impl IntoAstarteObject for Person {
+    ///     fn into_astarte_object(self) -> Result<HashMap<String, AstarteType>, Error>
+    ///     {
+    ///         let mut r = HashMap::new();
+    ///         r.insert("name".to_string(), self.name.try_into()?);
+    ///         r.insert("age".to_string(), self.age.try_into()?);
+    ///         r.insert("phones".to_string(), self.phones.try_into()?);
+    ///         Ok(r)
+    ///     }
+    /// }
+    /// ```
+    fn into_astarte_object(self) -> Result<HashMap<String, AstarteType, S>, Error>;
 }
 
-impl AstarteAggregate for HashMap<String, AstarteType> {
-    fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error> {
+impl IntoAstarteObject for HashMap<String, AstarteType> {
+    fn into_astarte_object(self) -> Result<HashMap<String, AstarteType, RandomState>, Error> {
         Ok(self)
     }
 }
