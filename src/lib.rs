@@ -87,11 +87,12 @@ mod test {
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
     use crate::transport::mqtt::Mqtt;
+    #[cfg(feature = "derive")]
+    use crate::IntoAstarteObject;
     use crate::{
         self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop, Interface,
     };
     use crate::{types::AstarteType, Value};
-    use astarte_device_sdk::IntoAstarteObject;
     #[cfg(not(feature = "derive"))]
     use astarte_device_sdk_derive::IntoAstarteObject;
 

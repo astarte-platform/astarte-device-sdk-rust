@@ -36,3 +36,6 @@ pub mod properties {
 
 pub use device::*;
 pub use properties::*;
+
+#[cfg(feature = "derive")]
+pub use crate::IntoAstarteObject;
