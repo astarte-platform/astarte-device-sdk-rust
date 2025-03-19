@@ -20,19 +20,15 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use astarte_device_sdk::prelude::DynamicIntrospection;
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{DeviceClient, Interface};
+use astarte_device_sdk::Interface;
 use eyre::ensure;
 use tracing::{debug, instrument};
 
 use crate::api::ApiClient;
-use crate::retry;
+use crate::{retry, AstarteClient};
 
 #[instrument(skip_all)]
-pub(crate) async fn check_add(
-    api: &ApiClient,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check_add(api: &ApiClient, client: &mut AstarteClient) -> eyre::Result<()> {
     let mut expected = HashSet::<String>::from_iter(
         [
             "org.astarte-platform.rust.e2etest.DeviceAggregate",
@@ -84,10 +80,7 @@ pub(crate) async fn check_add(
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check_remove(
-    api: &ApiClient,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check_remove(api: &ApiClient, client: &mut AstarteClient) -> eyre::Result<()> {
     let expected = HashSet::<String>::from_iter(
         [
             "org.astarte-platform.rust.e2etest.DeviceAggregate",

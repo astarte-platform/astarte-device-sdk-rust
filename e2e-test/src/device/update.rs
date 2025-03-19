@@ -23,14 +23,13 @@ use std::str::FromStr;
 
 use astarte_device_sdk::interface::error::InterfaceError;
 use astarte_device_sdk::prelude::DynamicIntrospection;
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, DeviceClient, Interface};
+use astarte_device_sdk::{AstarteType, Interface};
 use eyre::ensure;
 use tracing::{debug, instrument};
 
 use crate::api::ApiClient;
 use crate::data::InterfaceData;
-use crate::{retry, Channel};
+use crate::{retry, AstarteClient, Channel};
 
 use super::individual::validate_individual;
 use super::property::validate_property;
@@ -128,7 +127,7 @@ const UPDATED_INTERFACES: &[&str] = &[
 pub(crate) async fn check(
     api: &ApiClient,
     channel: &mut Channel,
-    client: &mut DeviceClient<SqliteStore>,
+    client: &mut AstarteClient,
 ) -> eyre::Result<()> {
     validate_property::<DeviceProperty01>(channel, client, false).await?;
     validate_individual::<DeviceDatastream01>(channel, client).await?;

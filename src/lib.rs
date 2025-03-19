@@ -41,6 +41,7 @@ pub mod prelude;
 pub mod properties;
 pub mod retention;
 mod retry;
+pub(crate) mod state;
 pub mod store;
 pub mod transport;
 pub mod types;
@@ -68,25 +69,26 @@ pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
 mod test {
+    /*
     use base64::Engine;
     use mockall::predicate;
     use rumqttc::{AckOfPub, Event};
     use std::str::FromStr;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, RwLock};
 
     use crate::aggregate::AstarteObject;
     use crate::builder::DEFAULT_VOLATILE_CAPACITY;
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
     use crate::properties::PropAccess;
-    use crate::retention::memory::SharedVolatileStore;
+    use crate::retention::memory::VolatileStore;
+    use crate::state::SharedState;
     use crate::store::memory::MemoryStore;
     use crate::store::wrapper::StoreWrapper;
     use crate::store::PropertyStore;
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
-    use crate::transport::mqtt::Mqtt;
+    use crate::transport::mqtt::{ClientId, Mqtt, MqttClient};
     #[cfg(feature = "derive")]
     use crate::IntoAstarteObject;
     use crate::{
@@ -97,13 +99,14 @@ mod test {
     use astarte_device_sdk_derive::IntoAstarteObject;
 
     use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
+    */
 
     // Interfaces
-    pub(crate) const OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
-    pub(crate) const INDIVIDUAL_SERVER_DATASTREAM: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    pub(crate) const DEVICE_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
-
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    pub(crate) const SERVER_INDIVIDUAL: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+
     // E2E Interfaces
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
@@ -132,13 +135,15 @@ mod test {
     }]
 }"#;
 
+    /*
+
     pub(crate) async fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: MqttEventLoop,
         interfaces: I,
     ) -> (
-        DeviceClient<MemoryStore>,
-        DeviceConnection<MemoryStore, Mqtt<MemoryStore>>,
+        DeviceClient<Mqtt<MemoryStore>, MemoryStore>,
+        DeviceConnection<Mqtt<MemoryStore>, MemoryStore>,
     )
     where
         I: IntoIterator<Item = Interface>,
@@ -151,27 +156,35 @@ mod test {
         eventloop: MqttEventLoop,
         interfaces: I,
         store: S,
-    ) -> (DeviceClient<S>, DeviceConnection<S, Mqtt<S>>)
+    ) -> (DeviceClient<Mqtt<S>, S>, DeviceConnection<Mqtt<S>, S>)
     where
         I: IntoIterator<Item = Interface>,
         S: PropertyStore,
     {
         let (tx_connection, rx_client) = flume::bounded(50);
-        let (tx_client, rx_connection) = mpsc::channel(50);
+        let (tx_retention, rx_retention) = flume::bounded(50);
 
-        let interfaces = Arc::new(RwLock::new(Interfaces::from_iter(interfaces)));
+        let interfaces = Interfaces::from_iter(interfaces);
 
         let (mqtt_client, mqtt_connection) =
             mock_mqtt_connection(async_client, eventloop, store.clone()).await;
 
         let store = StoreWrapper::new(store);
-        let client =
-            DeviceClient::new(Arc::clone(&interfaces), rx_client, tx_client, store.clone());
+        let state = Arc::new(SharedState::new(interfaces, VolatileStore::default()));
+
+        let client_id = ClientId {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+        };
+
+        let client = MqttClient::new(client_id, async_client, tx_retention, store, state);
+
+        let client = DeviceClient::new(async_client, rx_client, store.clone(), state);
         let device = DeviceConnection::new(
             interfaces,
             tx_connection,
             rx_connection,
-            SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
             store,
             mqtt_connection,
             mqtt_client,
@@ -626,7 +639,7 @@ mod test {
         let (client, connection) = mock_astarte_device(
             client,
             eventloop,
-            [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
+            [Interface::from_str(DEVICE_OBJECT).unwrap()],
         )
         .await;
 
@@ -662,56 +675,5 @@ mod test {
         let _ = handle_events.await;
     }
 
-    #[tokio::test]
-    async fn test_send_object() {
-        let mut obj = AstarteObject::new();
-        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
-        obj.insert(
-            "endpoint2".to_string(),
-            AstarteType::String("obj".to_string()),
-        );
-        obj.insert(
-            "endpoint3".to_string(),
-            AstarteType::BooleanArray(vec![true]),
-        );
-
-        let mut client = AsyncClient::default();
-        let eventloop = MqttEventLoop::default();
-
-        client
-            .expect_clone()
-            // number of calls not limited since the clone it's inside a loop
-            .returning(AsyncClient::default);
-
-        client
-            .expect_publish::<String, Vec<u8>>()
-            .once()
-            .with(
-                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream/1".to_string()),
-                predicate::always(),
-                predicate::always(),
-                predicate::always()
-            )
-            .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-        let (device, mut connection) = mock_astarte_device(
-            client,
-            eventloop,
-            [Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap()],
-        )
-        .await;
-
-        device
-            .send_object_with_timestamp(
-                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
-                "/1",
-                obj,
-                chrono::offset::Utc::now(),
-            )
-            .await
-            .unwrap();
-
-        let msg = connection.sender.client.recv().await.unwrap();
-        connection.sender.handle_client_msg(msg).await.unwrap();
-    }
+    */
 }

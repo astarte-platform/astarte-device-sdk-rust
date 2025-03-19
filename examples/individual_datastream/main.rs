@@ -20,6 +20,7 @@
 
 use std::time::{Duration, SystemTime};
 
+use astarte_device_sdk::AstarteType;
 use eyre::OptionExt;
 use serde::Deserialize;
 
@@ -60,14 +61,14 @@ async fn main() -> eyre::Result<()> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connection(mqtt_config)
         .build()
         .await?;
 
-    let client_cl = client.clone();
+    let mut client_cl = client.clone();
     println!("Connection to Astarte established.");
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
@@ -83,22 +84,24 @@ async fn main() -> eyre::Result<()> {
             // Send endpoint 1
             let elapsed: i64 = now.elapsed()?.as_secs().try_into()?;
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint1",
-                    elapsed,
+                    elapsed.into(),
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 1, content: {elapsed}");
             // Sleep 1 sec
             tokio::time::sleep(Duration::from_secs(1)).await;
             // Send endpoint 2
-            let elapsed: f64 = now.elapsed()?.as_secs_f64();
+            let elapsed = now.elapsed()?.as_secs_f64();
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint2",
-                    elapsed,
+                    AstarteType::try_from(elapsed)?,
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 2, content: {elapsed}");

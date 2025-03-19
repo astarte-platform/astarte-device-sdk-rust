@@ -19,14 +19,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{Client, DeviceClient, DeviceEvent};
+use astarte_device_sdk::{Client, DeviceEvent};
 use eyre::{ensure, eyre, OptionExt};
 use tracing::{info, instrument};
 
 use crate::api::ApiClient;
 use crate::data::{InterfaceData, InterfaceDataObject};
 use crate::utils::convert_type_to_json;
+use crate::AstarteClient;
 
 #[derive(Debug)]
 struct ServerAggregate {}
@@ -39,7 +39,7 @@ impl InterfaceData for ServerAggregate {
 
 impl InterfaceDataObject for ServerAggregate {}
 
-async fn validate_object<T>(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()>
+async fn validate_object<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceDataObject,
 {
@@ -84,7 +84,7 @@ where
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()> {
+pub(crate) async fn check(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()> {
     validate_object::<ServerAggregate>(api, client).await?;
 
     Ok(())

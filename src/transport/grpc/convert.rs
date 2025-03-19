@@ -42,7 +42,7 @@ use crate::{
 };
 use crate::{DeviceEvent, Value};
 
-use super::{GrpcError, GrpcPayload};
+use super::{GrpcError, GrpcPayload, ValidatedProperty};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
@@ -276,6 +276,20 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
             interface_name: value.interface,
             path: value.path,
             payload,
+        }
+    }
+}
+
+impl From<ValidatedProperty> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedProperty) -> Self {
+        Self {
+            interface_name: value.interface,
+            path: value.path,
+            payload: Some(ProtoPayload::PropertyIndividual(
+                astarte_message_hub_proto::AstartePropertyIndividual {
+                    data: Some(value.data.into()),
+                },
+            )),
         }
     }
 }

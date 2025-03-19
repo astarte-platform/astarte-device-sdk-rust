@@ -145,7 +145,7 @@ struct Config {
 }
 
 /// Load connection configuration and connect a device to Astarte.
-async fn init() -> eyre::Result<(DeviceClient<SqliteStore>, DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>, DeviceConnection<Mqtt<SqliteStore>>)> {
     // Load the device configuration
     let file = tokio::fs::read_to_string("config.json").await?;
     let cfg: Config = serde_json::from_str(&file)?;
@@ -178,7 +178,7 @@ async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt::init();
 
-    let (client, connection) = init().await?;
+    let (mut client, connection) = init().await?;
 
     info!("Connection to Astarte established.");
 
@@ -371,12 +371,12 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
     loop {
         match client.recv().await {
             Ok(data) => {
@@ -490,22 +490,22 @@ interface.
 # use tokio::task::JoinSet;
 # use tracing::info;
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn send_individual(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_individual(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
     // send data every 1 sec
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut data = 1.0;
 
     loop {
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
-                data,
+                data.try_into()?,
             )
             .await?;
 
@@ -556,7 +556,7 @@ interface.
 # #[cfg(not(feature = "derive"))]
 # use astarte_device_sdk_derive::IntoAstarteObject;
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
 #     todo!()
 # }
 
@@ -567,7 +567,7 @@ struct DataObject {
 }
 
 #[tracing::instrument(skip_all)]
-async fn send_aggregate(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_aggregate(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
     // send data every 1 sec
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
@@ -633,22 +633,22 @@ interface.
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
 # use tracing_subscriber;
-# async fn init() -> eyre::Result<(DeviceClient<SqliteStore>,DeviceConnection<SqliteStore, Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn send_property(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_property(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
     let mut data = 1.0;
 
     loop {
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
-                data,
+                data.try_into()?,
             )
             .await?;
 
@@ -657,7 +657,7 @@ async fn send_property(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
         // wait 1 sec before unsetting the property
         interval.tick().await;
 
-        client.unset("org.astarte-platform.rust.get-started.Property", "/double_endpoint").await?;
+        client.unset_property("org.astarte-platform.rust.get-started.Property", "/double_endpoint").await?;
 
         info!("Unset property on /double_endpoint endpoint");
 

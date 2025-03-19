@@ -39,9 +39,11 @@ pub mod wrapper;
 
 /// Inform what capabilities are implemented for a store.
 ///
+/// It requires the store to implement [`PropertyStore`] since it's a required features.
+///
 /// This is a crutch until specialization is implemented in the std library, while still being
 /// generic and accept external store implementations.
-pub trait StoreCapabilities {
+pub trait StoreCapabilities: PropertyStore {
     /// Type used for the [`StoredRetention`].
     ///
     /// This should be self, it's used as an associated type to not introduce dynamic dispatch.

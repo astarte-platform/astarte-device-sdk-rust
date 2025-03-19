@@ -18,8 +18,7 @@
 
 use std::collections::HashMap;
 
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, Client, DeviceClient};
+use astarte_device_sdk::{AstarteType, Client};
 use chrono::Utc;
 use eyre::ensure;
 use tracing::{info, instrument};
@@ -27,7 +26,7 @@ use tracing::{info, instrument};
 use crate::channel::IncomingData;
 use crate::data::InterfaceData;
 use crate::utils::check_astarte_value;
-use crate::Channel;
+use crate::{AstarteClient, Channel};
 
 #[derive(Debug)]
 struct DeviceDatastream {}
@@ -91,7 +90,7 @@ impl InterfaceData for CustomDeviceDatastream {
 
 pub(crate) async fn validate_individual<T>(
     channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
+    client: &mut AstarteClient,
 ) -> eyre::Result<()>
 where
     T: InterfaceData,
@@ -101,7 +100,7 @@ where
 
     for (data_path, data) in data {
         client
-            .send_with_timestamp(&interface_name, &data_path, data.clone(), Utc::now())
+            .send_individual_with_timestamp(&interface_name, &data_path, data.clone(), Utc::now())
             .await?;
 
         let IncomingData {
@@ -121,10 +120,7 @@ where
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()> {
     validate_individual::<DeviceDatastream>(channel, client).await?;
     validate_individual::<DeviceDatastreamOverflow>(channel, client).await?;
     validate_individual::<CustomDeviceDatastream>(channel, client).await?;

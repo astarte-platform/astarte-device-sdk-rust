@@ -22,7 +22,6 @@
 
 use std::{
     collections::VecDeque,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -30,32 +29,26 @@ use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::{
+    builder::DEFAULT_VOLATILE_CAPACITY,
     interface::Retention,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
 use super::Id;
 
-/// Shared struct for the volatile retention.
+/// Struct for the volatile retention.
 ///
 /// The methods will only require a `&self` and handle the locking internally to prevent problems
 /// in the critical sections.
-#[derive(Debug, Clone)]
-pub(crate) struct SharedVolatileStore {
-    store: Arc<Mutex<VolatileStore>>,
+#[derive(Debug, Default)]
+pub(crate) struct VolatileStore {
+    store: Mutex<State>,
 }
 
-impl SharedVolatileStore {
-    pub(crate) fn new() -> Self {
-        Self {
-            store: Arc::new(Mutex::new(VolatileStore::new())),
-        }
-    }
-
-    #[cfg(test)]
+impl VolatileStore {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            store: Arc::new(Mutex::new(VolatileStore::with_capacity(capacity))),
+            store: Mutex::new(State::with_capacity(capacity)),
         }
     }
 
@@ -74,29 +67,23 @@ impl SharedVolatileStore {
         self.store.lock().await.mark_received(id)
     }
 
-    pub(crate) async fn pop_next(&mut self) -> Option<ItemValue> {
+    pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
         self.store.lock().await.pop_next()
     }
 
     /// This method will swap the capacity.
+    #[cfg(feature = "message-hub")]
     pub(crate) async fn set_capacity(&self, capacity: usize) {
         self.store.lock().await.set_capacity(capacity);
     }
 }
 
 #[derive(Debug)]
-struct VolatileStore {
+struct State {
     store: VecDeque<VolatileItem>,
 }
 
-impl VolatileStore {
-    fn new() -> Self {
-        Self {
-            store: VecDeque::new(),
-        }
-    }
-
-    #[cfg(test)]
+impl State {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             store: VecDeque::with_capacity(capacity),
@@ -173,6 +160,7 @@ impl VolatileStore {
     }
 
     /// A capacity of 0 will make every push into this store a noop.
+    #[cfg(feature = "message-hub")]
     fn set_capacity(&mut self, capacity: usize) {
         let current = self.store.capacity();
 
@@ -191,9 +179,9 @@ impl VolatileStore {
     }
 }
 
-impl Default for VolatileStore {
+impl Default for State {
     fn default() -> Self {
-        Self::new()
+        Self::with_capacity(DEFAULT_VOLATILE_CAPACITY)
     }
 }
 
@@ -302,7 +290,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(1);
+        let mut store = State::with_capacity(1);
 
         let ctx = Context::new();
 
@@ -333,7 +321,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(1);
+        let mut store = State::with_capacity(1);
         let ctx = Context::new();
 
         store.push(ctx.next(), info1);
@@ -379,7 +367,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(2);
+        let mut store = State::with_capacity(2);
 
         let ctx = Context::new();
 
@@ -429,7 +417,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -495,7 +483,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -543,7 +531,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -560,7 +548,7 @@ mod tests {
 
     #[test]
     fn capacity_0_volatile_store_should_not_store() {
-        let mut store = VolatileStore::with_capacity(0);
+        let mut store = State::with_capacity(0);
         let ctx = Context::new();
 
         let info = ValidatedIndividual {

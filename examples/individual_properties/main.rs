@@ -86,7 +86,7 @@ async fn main() -> eyre::Result<()> {
         .connection(mqtt_config)
         .build()
         .await?;
-    let client_cl = client.clone();
+    let mut client_cl = client.clone();
 
     println!("Connection to Astarte established.");
 
@@ -118,10 +118,10 @@ async fn main() -> eyre::Result<()> {
         // Send in a loop the change of the property "name" of sensor 1
         loop {
             client_cl
-                .send(
+                .set_property(
                     "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                     "/1/name",
-                    format!("name number {i}"),
+                    format!("name number {i}").into(),
                 )
                 .await?;
 
