@@ -106,6 +106,8 @@ pub trait Client {
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
     ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
     /// };
+    /// # #[cfg(feature = "derive")]
+    /// use astarte_device_sdk::IntoAstarteObject;
     /// # #[cfg(not(feature = "derive"))]
     /// # use astarte_device_sdk_derive::IntoAstarteObject;
     /// use chrono::{TimeZone, Utc};

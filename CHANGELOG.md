@@ -11,10 +11,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Introduce `webpki` feature to use Mozilla webpki root certificates rather than the native ones
   [#396](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/396).
+- Add the AstarteObject struct for Object Datastream [#430].
 
 ### Changed
 
 - Bump MSRV to 1.78.0 [#395](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/395).
+- Rename the AstarteAggregate derive macro to IntoAstarteObject [#430].
+- Remove the AstarteAggregate trait in favor of the AstarteObject [#430].
+- Change the send_object client methods to receive an AstarteObject argument [#430].
+
+[#430]: (https://github.com/astarte-platform/astarte-device-sdk-rust/pull/430)
 
 ## [0.9.6] - 2025-03-06
 

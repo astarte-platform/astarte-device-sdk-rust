@@ -29,7 +29,7 @@ use crate::types::AstarteType;
 ///
 /// # Example
 ///
-/// Parse this data structure into a `HashMap` compatible with transmission of Astarte objects.
+/// Create the data structure `AstarteObject` used to transmit of Astarte objects.
 ///
 /// ```
 /// use astarte_device_sdk::aggregate::AstarteObject;
@@ -192,7 +192,7 @@ impl Value {
         }
     }
 
-    /// Take out of the enum an [`HashMap`] if the aggregate is [`Object`](Value::Object).
+    /// Take out of the enum an [`AstarteObject`] if the aggregate is [`Object`](Value::Object).
     pub fn take_object(self) -> Option<AstarteObject> {
         if let Self::Object(v) = self {
             Some(v)
