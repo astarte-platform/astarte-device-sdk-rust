@@ -20,7 +20,7 @@
 
 use crate::interface::error::InterfaceError;
 use crate::interface::mapping::path::MappingError;
-use crate::interface::{Aggregation, InterfaceTypeDef};
+use crate::interface::{Aggregation, InterfaceTypeDef, Ownership};
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
@@ -49,14 +49,6 @@ pub enum Error {
     /// Error while operating on the device introspection.
     #[error("couldn't complete introspection operation")]
     AddInterface(#[from] AddInterfaceError),
-    /// Invalid interface type when sending or receiving.
-    #[error("invalid interface type, expected {exp} but got {got}")]
-    InterfaceType {
-        /// Expected interface type.
-        exp: InterfaceTypeDef,
-        /// Actual interface type.
-        got: InterfaceTypeDef,
-    },
     /// Couldn't find an interface with the given name.
     #[error("couldn't find interface '{name}'")]
     InterfaceNotFound {
@@ -88,7 +80,7 @@ pub enum Error {
     Validation(#[from] UserValidationError),
     /// Invalid aggregation between the interface and the data.
     #[error(transparent)]
-    Aggregation(#[from] AggregateError),
+    Aggregation(#[from] AggregationError),
     /// Infallible conversion.
     #[error(transparent)]
     Infallible(#[from] Infallible),
@@ -110,88 +102,78 @@ pub enum Error {
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }
 
-/// Aggregate error variant.
+/// Aggregation error.
 ///
 /// This provides additional context in case of an aggregation error
 #[derive(Debug, thiserror::Error)]
-#[error("invalid aggregation in {ctx} for {interface}{path}, expected {exp} but got {got}")]
+#[error("invalid aggregation for {interface}{path}, expected {exp} but got {got}")]
 #[non_exhaustive]
-pub struct AggregateError {
+pub struct AggregationError {
     /// Interface name
     interface: String,
     /// Path
     path: String,
-    /// Context to differentiate interface from payload error
-    ctx: AggregationCtx,
     /// Expected aggregation of the interface.
     exp: Aggregation,
     /// The actual aggregation.
     got: Aggregation,
 }
 
-impl AggregateError {
-    pub(crate) fn new(
-        interface: String,
-        path: String,
-        ctx: AggregationCtx,
-        exp: Aggregation,
-        got: Aggregation,
-    ) -> Self {
+impl AggregationError {
+    pub(crate) fn new(interface: String, path: String, exp: Aggregation, got: Aggregation) -> Self {
         Self {
             interface,
             path,
-            ctx,
             exp,
             got,
         }
     }
+}
 
-    pub(crate) fn for_interface(
-        interface: impl Into<String>,
-        path: impl Into<String>,
-        exp: Aggregation,
-        got: Aggregation,
+/// Invalid interface type when sending or receiving.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid interface type for {name}, expected {exp} but got {got}")]
+pub struct InterfaceTypeError {
+    /// Name of the interface.
+    name: String,
+    /// Expected interface type.
+    exp: InterfaceTypeDef,
+    /// Actual interface type.
+    got: InterfaceTypeDef,
+}
+
+impl InterfaceTypeError {
+    pub(crate) fn new(
+        name: impl Into<String>,
+        exp: InterfaceTypeDef,
+        got: InterfaceTypeDef,
     ) -> Self {
-        Self::new(
-            interface.into(),
-            path.into(),
-            AggregationCtx::Interface,
+        Self {
+            name: name.into(),
             exp,
             got,
-        )
-    }
-
-    #[cfg(feature = "message-hub")]
-    pub(crate) fn for_payload(
-        interface: impl Into<String>,
-        path: impl Into<String>,
-        exp: Aggregation,
-        got: Aggregation,
-    ) -> Self {
-        Self::new(
-            interface.into(),
-            path.into(),
-            AggregationCtx::Payload,
-            exp,
-            got,
-        )
+        }
     }
 }
 
-/// Context for the [AggregateError] error variant.
-#[derive(Debug, Clone)]
-pub enum AggregationCtx {
-    /// Error occurring when checking the interface.
-    Interface,
-    /// Error occurring when checking the payload data.
-    Payload,
+/// Sending data on an interface not owned by the device
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ownership for interface {name}, expected {exp} but got {got}")]
+pub struct OwnershipError {
+    /// Name of the interface.
+    name: String,
+    /// Expected interface ownership.
+    exp: Ownership,
+    /// Actual interface ownership.
+    got: Ownership,
 }
 
-impl Display for AggregationCtx {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AggregationCtx::Interface => write!(f, "interface"),
-            AggregationCtx::Payload => write!(f, "payload"),
+impl OwnershipError {
+    pub(crate) fn new(name: impl Into<String>, exp: Ownership, got: Ownership) -> Self {
+        Self {
+            name: name.into(),
+            exp,
+            got,
         }
     }
 }
