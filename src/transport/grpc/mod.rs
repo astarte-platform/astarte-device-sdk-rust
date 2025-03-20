@@ -53,7 +53,7 @@ use super::{
 use crate::aggregate::AstarteObject;
 use crate::builder::ConnectionBuildConfig;
 use crate::client::RecvError;
-use crate::error::AggregateError;
+use crate::error::AggregationError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
@@ -441,8 +441,8 @@ where
         let astarte_type = match value {
             Value::Individual(astarte_type) => Ok(astarte_type),
             Value::Object(_hash_map) => {
-                let aggr_err = AggregateError::for_payload(
-                    mapping.interface().interface_name(),
+                let aggr_err = AggregationError::new(
+                    mapping.interface().interface_name().to_string(),
                     mapping.path().to_string(),
                     Aggregation::Individual,
                     Aggregation::Object,
@@ -468,8 +468,8 @@ where
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamObject(data) = payload.data else {
             return Err(TransportError::Recv(RecvError::Aggregation(
-                AggregateError::for_payload(
-                    object.interface.interface_name(),
+                AggregationError::new(
+                    object.interface.interface_name().to_string(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
@@ -1202,7 +1202,6 @@ mod test {
 
             let validated_individual = mock_validate_individual(
                 mapping_ref,
-                &path,
                 AstarteType::String(STRING_VALUE.to_string()),
                 None,
             )
