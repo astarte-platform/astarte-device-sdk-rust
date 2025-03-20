@@ -61,6 +61,7 @@ use crate::error::AggregateError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
+use crate::Value;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
     interface::{
@@ -71,7 +72,6 @@ use crate::{
     retention::StoredRetention,
     retry::ExponentialIter,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
-    transport::grpc::convert::map_values_to_astarte_type,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
@@ -435,29 +435,30 @@ where
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
-        let data = match payload.data {
-            ProtoPayload::AstarteData(data) => data,
-            ProtoPayload::AstarteUnset(astarte_message_hub_proto::AstarteUnset {}) => {
+        let Self::Payload { data, timestamp } = payload;
+
+        let value: Value = data.try_into().map_err(RecvError::connection)?;
+
+        let astarte_type = match value {
+            Value::Individual(astarte_type) => Ok(astarte_type),
+            Value::Object(_hash_map) => {
+                let aggr_err = AggregateError::for_payload(
+                    mapping.interface().interface_name(),
+                    mapping.path().to_string(),
+                    Aggregation::Individual,
+                    Aggregation::Object,
+                );
+                Err(RecvError::Aggregation(aggr_err))
+            }
+            Value::Unset => {
                 debug!("unset received");
                 return Ok(None);
             }
-        };
+        }?;
 
-        let individual = data.take_individual().ok_or_else(|| {
-            let aggr_err = AggregateError::for_payload(
-                mapping.interface().interface_name(),
-                mapping.path().to_string(),
-                Aggregation::Individual,
-                Aggregation::Object,
-            );
-            TransportError::Recv(RecvError::Aggregation(aggr_err))
-        })?;
+        trace!("received {}", astarte_type.display_type());
 
-        let data = AstarteType::try_from(individual).map_err(RecvError::connection)?;
-
-        trace!("received {}", data.display_type());
-
-        Ok(Some((data, payload.timestamp)))
+        Ok(Some((astarte_type, timestamp)))
     }
 
     fn deserialize_object(
@@ -466,24 +467,25 @@ where
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
-        let object = payload
-            .data
-            .take_data()
-            .and_then(|d| d.take_object())
-            .ok_or_else(|| {
-                RecvError::Aggregation(AggregateError::for_payload(
+        let Self::Payload { data, timestamp } = payload;
+
+        let value: Value = data.try_into().map_err(RecvError::connection)?;
+
+        let object = match value {
+            Value::Object(hash_map) => Ok(hash_map),
+            Value::Individual(_) | Value::Unset => {
+                Err(RecvError::Aggregation(AggregateError::for_payload(
                     object.interface.interface_name(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
-                ))
-            })?;
-
-        let data = map_values_to_astarte_type(object).map_err(RecvError::connection)?;
+                )))
+            }
+        }?;
 
         trace!("object received");
 
-        Ok((data, payload.timestamp))
+        Ok((object, timestamp))
     }
 }
 
@@ -638,8 +640,7 @@ mod test {
 
     use astarte_message_hub_proto::{
         message_hub_server::{MessageHub, MessageHubServer},
-        AstarteMessage, AstarteUnset, Property, PropertyIdentifier, StoredProperties,
-        StoredPropertiesFilter,
+        AstarteMessage, Property, PropertyIdentifier, StoredProperties, StoredPropertiesFilter,
     };
     use async_trait::async_trait;
     use tokio::{
@@ -822,7 +823,7 @@ mod test {
             // return no properties
             Ok(tonic::Response::new(Property {
                 path: "".to_owned(),
-                value: None,
+                data: None,
             }))
         }
     }
@@ -1370,17 +1371,16 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        let proto_payload = ProtoPayload::AstarteUnset(AstarteUnset {});
-
         let exp_interface =
             "org.astarte-platform.rust.examples.individual-properties.ServerProperties";
         let exp_path = "/1/enable";
-        let astarte_message = AstarteMessage {
-            interface_name: exp_interface.to_string(),
-            path: exp_path.to_string(),
-            timestamp: None,
-            payload: Some(proto_payload.clone()),
-        };
+        let proto_payload: ProtoPayload = Value::Unset.into();
+        let astarte_message = super::convert::test::new_astarte_message(
+            exp_interface.to_string(),
+            exp_path.to_string(),
+            None,
+            proto_payload.clone(),
+        );
 
         // Send object from server
         channels
