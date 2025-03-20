@@ -316,7 +316,11 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedObject) -> Self {
         let timestamp = value.timestamp.map(|t| t.into());
 
-        let object_data = value.data.into_iter().map(|(k, v)| (k, v.into())).collect();
+        let object_data = value
+            .data
+            .into_key_values()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
 
         let payload = Some(ProtoPayload::AstarteData(
             astarte_message_hub_proto::AstarteDataType {

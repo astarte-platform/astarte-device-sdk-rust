@@ -20,8 +20,6 @@
 //!
 //! You can find more information about the protocol v1 in the [Astarte MQTT v1 Protocol](https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html).
 
-use std::collections::HashMap;
-
 use bson::Bson;
 
 use serde::{Deserialize, Serialize};
@@ -123,7 +121,7 @@ pub(super) fn serialize_individual(
 
 /// Serialize an aggregate to a [`Bson`] buffer
 pub(super) fn serialize_object(
-    aggregate: &HashMap<String, AstarteType>,
+    aggregate: &AstarteObject,
     timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
     Payload::with_timestamp(aggregate, timestamp).to_vec()
