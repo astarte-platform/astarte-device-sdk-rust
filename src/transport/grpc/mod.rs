@@ -51,7 +51,7 @@ use super::{
 use crate::aggregate::AstarteObject;
 use crate::builder::ConnectionBuildConfig;
 use crate::client::RecvError;
-use crate::error::AggregateError;
+use crate::error::AggregationError;
 use crate::interface::Aggregation;
 use crate::retention::memory::SharedVolatileStore;
 use crate::retention::{PublishInfo, RetentionId};
@@ -469,8 +469,8 @@ where
             }
 
             Value::Object(_hash_map) => {
-                let aggr_err = AggregateError::for_payload(
-                    mapping.interface().interface_name(),
+                let aggr_err = AggregationError::new(
+                    mapping.interface().interface_name().to_string(),
                     mapping.path().to_string(),
                     Aggregation::Individual,
                     Aggregation::Object,
@@ -492,8 +492,8 @@ where
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamObject(data) = payload.data else {
             return Err(TransportError::Recv(RecvError::Aggregation(
-                AggregateError::for_payload(
-                    object.interface.interface_name(),
+                AggregationError::new(
+                    object.interface.interface_name().to_string(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
@@ -662,6 +662,7 @@ mod test {
         pbjson_types, tonic, AstarteDatastreamObject, AstartePropertyIndividual,
     };
     use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
+    use chrono::Utc;
     use itertools::Itertools;
     use uuid::uuid;
 
@@ -1048,7 +1049,6 @@ mod test {
             .unwrap();
         let validated = ValidatedIndividual::validate(
             mapping_ref,
-            &path,
             AstarteType::String(STRING_VALUE.to_string()),
             None,
         )
@@ -1110,9 +1110,13 @@ mod test {
             .get(&interface_name)
             .and_then(ObjectRef::new)
             .unwrap();
-        let validated =
-            ValidatedObject::validate(object_ref, &path, MockDeviceObject::mock_object(), None)
-                .unwrap();
+        let validated = ValidatedObject::validate(
+            object_ref,
+            &path,
+            MockDeviceObject::mock_object(),
+            Some(Utc::now()),
+        )
+        .unwrap();
 
         client.send_object(validated).await.unwrap();
         client.disconnect().await.unwrap();
