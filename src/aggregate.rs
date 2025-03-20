@@ -93,7 +93,7 @@ impl AstarteObject {
         Some(value)
     }
 
-    /// Returns the number of mapping elements.
+    /// Returns the number of mapping data in the object.
     pub fn len(&self) -> usize {
         self.inner.len()
     }
@@ -122,16 +122,17 @@ impl FromIterator<(String, AstarteType)> for AstarteObject {
     }
 }
 
+/// Serialize the [`AstarteObject`] as a map.
 impl Serialize for AstarteObject {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let mut s_map = serializer.serialize_map(Some(self.len()))?;
-        for (key, value) in self.iter() {
-            s_map.serialize_entry(key, value)?;
+        let mut s = serializer.serialize_map(Some(self.len()))?;
+        for (name, value) in self.iter() {
+            s.serialize_entry(name, value)?;
         }
-        s_map.end()
+        s.end()
     }
 }
 
@@ -212,6 +213,8 @@ impl Value {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -221,12 +224,86 @@ mod tests {
         assert!(val.is_individual());
         assert_eq!(val.as_individual(), Some(&individual));
         assert_eq!(val.as_object(), None);
+        assert_eq!(val.take_individual(), Some(individual));
+
+        let val = Value::Individual(AstarteType::Integer(42));
+        assert_eq!(val.take_object(), None);
 
         let val = Value::Object(AstarteObject::new());
         assert!(val.is_object());
         assert_eq!(val.as_individual(), None);
         assert_eq!(val.as_object(), Some(&AstarteObject::new()));
+        assert_eq!(val.take_object(), Some(AstarteObject::new()));
+
+        let val = Value::Object(AstarteObject::new());
+        assert_eq!(val.take_individual(), None);
 
         assert!(Value::Unset.is_unset());
+    }
+
+    #[test]
+    fn create_with_capacity() {
+        let exp = 10;
+        let object = AstarteObject::with_capacity(exp);
+        assert_eq!(object.inner.capacity(), exp);
+    }
+
+    #[test]
+    fn add_value_to_obj_and_replace() {
+        let mut object = AstarteObject::new();
+        let exp = AstarteType::from("foo");
+        object.insert("foo".to_string(), exp.clone());
+        assert_eq!(object.get("foo"), Some(&exp));
+
+        let exp = AstarteType::from("other");
+        object.insert("foo".to_string(), exp.clone());
+        assert_eq!(object.get("foo"), Some(&exp));
+    }
+
+    #[test]
+    fn iter_object_values() {
+        let values = [
+            ("foo", AstarteType::from("foo")),
+            ("bar", AstarteType::from("bar")),
+            ("some", AstarteType::from("some")),
+        ]
+        .map(|(n, v)| (n.to_string(), v));
+
+        let object = AstarteObject::from_iter(values.clone());
+
+        assert!(!object.is_empty());
+        assert_eq!(object.len(), values.len());
+
+        for (exp, val) in object.iter().zip(&values) {
+            assert_eq!(exp, val)
+        }
+
+        for (exp, val) in object.into_key_values().zip(values) {
+            assert_eq!(exp, val)
+        }
+    }
+
+    #[test]
+    fn astarte_object_custom_serialize_map() {
+        let values = [
+            ("foo", AstarteType::from("foo")),
+            ("bar", AstarteType::from("bar")),
+            ("some", AstarteType::from("some")),
+        ]
+        .map(|(n, v)| (n.to_string(), v));
+
+        let object = AstarteObject::from_iter(values.clone());
+
+        let json = serde_json::to_string(&object).unwrap();
+
+        let de: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let map = de.as_object().unwrap();
+        assert_eq!(map.len(), object.len());
+        let foo = map.get("foo").and_then(serde_json::Value::as_str).unwrap();
+        assert_eq!(foo, "foo");
+        let bar = map.get("bar").and_then(serde_json::Value::as_str).unwrap();
+        assert_eq!(bar, "bar");
+        let some = map.get("some").and_then(serde_json::Value::as_str).unwrap();
+        assert_eq!(some, "some");
     }
 }
