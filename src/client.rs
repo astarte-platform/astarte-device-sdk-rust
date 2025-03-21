@@ -26,7 +26,10 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-use crate::interface::mapping::path::MappingError;
+use crate::{
+    aggregate::AstarteObject, error::InterfaceTypeError, interface::mapping::path::MappingError,
+    validate::UserValidationError,
+};
 use crate::{
     connection::ClientMessage,
     event::DeviceEvent,
@@ -40,10 +43,10 @@ use crate::{
     store::{wrapper::StoreWrapper, PropertyStore},
     types::{AstarteType, TypeError},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteAggregate, Error, Interface,
+    Error, Interface,
 };
 use crate::{
-    error::{AggregateError, DynError},
+    error::{AggregationError, DynError},
     store::PropertyMapping,
 };
 
@@ -79,7 +82,7 @@ pub enum RecvError {
 
     /// Invalid aggregation between the interface and the data.
     #[error(transparent)]
-    Aggregation(#[from] AggregateError),
+    Aggregation(#[from] AggregationError),
 
     /// Error when the Device is disconnected from Astarte or client.
     ///
@@ -106,11 +109,13 @@ pub trait Client {
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
     ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
     /// };
-    /// #[cfg(not(feature = "derive"))]
-    /// use astarte_device_sdk_derive::AstarteAggregate;
+    /// # #[cfg(feature = "derive")]
+    /// use astarte_device_sdk::IntoAstarteObject;
+    /// # #[cfg(not(feature = "derive"))]
+    /// # use astarte_device_sdk_derive::IntoAstarteObject;
     /// use chrono::{TimeZone, Utc};
     ///
-    /// #[derive(AstarteAggregate)]
+    /// #[derive(IntoAstarteObject)]
     /// struct TestObject {
     ///     endpoint1: f64,
     ///     endpoint2: bool,
@@ -128,34 +133,30 @@ pub trait Client {
     ///         endpoint2: false
     ///     };
     ///     let timestamp = Utc.timestamp_opt(1537449422, 0).unwrap();
-    ///     client.send_object_with_timestamp("my.interface.name", "/endpoint/path", data, timestamp)
+    ///     client.send_object_with_timestamp("my.interface.name", "/endpoint/path", data.try_into().unwrap(), timestamp)
     ///         .await
     ///         .unwrap();
     /// }
     /// ```
-    fn send_object_with_timestamp<D>(
+    fn send_object_with_timestamp(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: D,
+        data: AstarteObject,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> impl Future<Output = Result<(), Error>> + Send
-    where
-        D: AstarteAggregate + Send;
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Send an object datastream on an interface.
     ///
     /// The usage is the same of
     /// [`send_object_with_timestamp`](crate::Client::send_object_with_timestamp),
     /// without the timestamp.
-    fn send_object<D>(
+    fn send_object(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: D,
-    ) -> impl Future<Output = Result<(), Error>> + Send
-    where
-        D: AstarteAggregate + Send;
+        data: AstarteObject,
+    ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Send an individual datastream/property on an interface, with an explicit timestamp.
     ///
@@ -367,7 +368,7 @@ impl<S> DeviceClient<S> {
             return Ok(());
         }
 
-        let validated = ValidatedIndividual::validate(mapping, path, individual, timestamp)?;
+        let validated = ValidatedIndividual::validate(mapping, individual, timestamp)?;
 
         let msg = if mapping.interface().is_property() {
             ClientMessage::Property {
@@ -381,16 +382,13 @@ impl<S> DeviceClient<S> {
         self.send_msg(msg).await
     }
 
-    async fn send_object_impl<D>(
+    async fn send_object_impl(
         &self,
         interface_name: &str,
         path: &MappingPath<'_>,
-        data: D,
+        data: AstarteObject,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), Error>
-    where
-        D: AstarteAggregate + Send,
-    {
+    ) -> Result<(), Error> {
         let interfaces = self.interfaces.read().await;
         let interface = interfaces
             .get(interface_name)
@@ -399,8 +397,8 @@ impl<S> DeviceClient<S> {
             })?;
 
         let object = interface.as_object_ref().ok_or_else(|| {
-            let aggr_err = AggregateError::for_interface(
-                interface_name,
+            let aggr_err = AggregationError::new(
+                interface_name.to_string(),
                 path.to_string(),
                 InterfaceAggregation::Object,
                 interface.aggregation(),
@@ -410,9 +408,7 @@ impl<S> DeviceClient<S> {
 
         debug!("sending {} {}", interface_name, path);
 
-        let aggregate = data.astarte_aggregate()?;
-
-        let validated = ValidatedObject::validate(object, path, aggregate, timestamp)?;
+        let validated = ValidatedObject::validate(object, path, data, timestamp)?;
 
         self.send_msg(ClientMessage::Object(validated)).await
     }
@@ -435,12 +431,15 @@ impl<S> DeviceClient<S> {
                 mapping: path.to_string(),
             })?;
 
-        let mapping = mapping.as_prop().ok_or_else(|| Error::InterfaceType {
-            exp: InterfaceTypeDef::Properties,
-            got: interface.interface_type(),
+        let mapping = mapping.as_prop().ok_or_else(|| {
+            Error::Validation(UserValidationError::InterfaceType(InterfaceTypeError::new(
+                interface.interface_name(),
+                InterfaceTypeDef::Properties,
+                interface.interface_type(),
+            )))
         })?;
 
-        let validated = ValidatedUnset::validate(mapping, path)?;
+        let validated = ValidatedUnset::validate(mapping)?;
 
         debug!("unsetting property {interface_name}{path}");
 
@@ -452,31 +451,25 @@ impl<S> Client for DeviceClient<S>
 where
     S: PropertyStore,
 {
-    async fn send_object_with_timestamp<D>(
+    async fn send_object_with_timestamp(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: D,
+        data: AstarteObject,
         timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
-    where
-        D: AstarteAggregate + Send,
-    {
+    ) -> Result<(), Error> {
         let path = MappingPath::try_from(interface_path)?;
 
         self.send_object_impl(interface_name, &path, data, Some(timestamp))
             .await
     }
 
-    async fn send_object<D>(
+    async fn send_object(
         &self,
         interface_name: &str,
         interface_path: &str,
-        data: D,
-    ) -> Result<(), Error>
-    where
-        D: AstarteAggregate + Send,
-    {
+        data: AstarteObject,
+    ) -> Result<(), Error> {
         let path = MappingPath::try_from(interface_path)?;
 
         self.send_object_impl(interface_name, &path, data, None)
