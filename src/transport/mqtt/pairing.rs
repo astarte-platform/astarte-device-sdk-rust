@@ -310,7 +310,7 @@ pub(crate) mod tests {
                 let client_crt = self_sign_csr_to_pem(&csr);
 
                 serde_json::to_vec(&ApiData::new(MqttV1Certificate { client_crt }))
-                    .expect("couldn't serialize reposonse")
+                    .expect("couldn't serialize response")
             })
             .match_header("authorization", "Bearer secret")
     }
