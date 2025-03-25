@@ -35,6 +35,7 @@ use std::time::Duration;
 
 use astarte_device_sdk::transport::mqtt::Credential;
 use astarte_device_sdk::{Interface, Value};
+use chrono::Utc;
 use eyre::{bail, eyre, OptionExt, WrapErr};
 use itertools::Itertools;
 use reqwest::StatusCode;
@@ -140,8 +141,8 @@ async fn main() -> eyre::Result<()> {
         .with(EnvFilter::from_default_env())
         .try_init()?;
 
-    let default_provider = rustls::crypto::aws_lc_rs::default_provider();
-    rustls::crypto::CryptoProvider::install_default(default_provider)
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
         .map_err(|_| eyre!("couldn't install default crypto provider"))?;
 
     let test_cfg = TestCfg::init().wrap_err("Failed configuration initialization")?;
@@ -329,7 +330,12 @@ async fn test_datastream_device_to_server(
     debug!("Sending device owned datastreams from device to server.");
     for (key, value) in tx_data.clone() {
         device
-            .send(&test_cfg.interface_datastream_do, &format!("/{key}"), value)
+            .send_with_timestamp(
+                &test_cfg.interface_datastream_do,
+                &format!("/{key}"),
+                value,
+                Utc::now(),
+            )
             .await?;
         time::sleep(Duration::from_millis(5)).await;
     }
@@ -409,10 +415,11 @@ async fn test_aggregate_device_to_server(
     // Send all the mock test data
     debug!("Sending device owned aggregate from device to server");
     device
-        .send_object(
+        .send_object_with_timestamp(
             &test_cfg.interface_aggregate_do,
             &format!("/{sensor_number}"),
             tx_data.clone().try_into().unwrap(),
+            Utc::now(),
         )
         .await?;
 
