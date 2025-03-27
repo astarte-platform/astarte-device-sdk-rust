@@ -332,7 +332,7 @@ where
         self,
     ) -> Result<(DeviceClient<C::Store>, DeviceConnection<C::Store, C::Conn>), crate::Error> {
         let channel_size = self.config.channel_size;
-        // We use the flume channel to have a clonable receiver, see the comment on the DeviceClient for more information.
+        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
         let (tx_connection, rx_client) = flume::bounded(channel_size);
         let (tx_client, rx_connection) = mpsc::channel(channel_size);
 
@@ -341,19 +341,18 @@ where
             .set_capacity(C::volatile_capacity_override().unwrap_or(self.config.volatile_retention))
             .await;
 
-        let transport = self
-            .connection_config
-            .connect(ConnectionBuildConfig {
-                store: self.store.clone(),
-                interfaces: &self.interfaces,
-                config: self.config,
-            })
-            .await?;
+        let config = ConnectionBuildConfig {
+            store: self.store,
+            interfaces: &self.interfaces,
+            config: self.config,
+        };
+
         let DeviceTransport {
             connection,
             sender,
             store,
-        } = transport;
+        } = self.connection_config.connect(config).await?;
+
         let interfaces = Arc::new(RwLock::new(self.interfaces));
 
         let client =
