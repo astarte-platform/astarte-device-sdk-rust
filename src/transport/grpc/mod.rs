@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! # Astarte GRPC Transport Module
 //!
@@ -52,6 +50,7 @@ use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
+use crate::aggregate::AstarteObject;
 use crate::builder::ConnectionBuildConfig;
 use crate::client::RecvError;
 use crate::error::AggregateError;
@@ -466,26 +465,23 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
-        let Self::Payload { data, timestamp } = payload;
-
-        let value: Value = data.try_into().map_err(RecvError::connection)?;
-
-        let object = match value {
-            Value::Object(hash_map) => Ok(hash_map),
-            Value::Individual(_) | Value::Unset => {
-                Err(RecvError::Aggregation(AggregateError::for_payload(
+    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
+        let ProtoPayload::DatastreamObject(data) = payload.data else {
+            return Err(TransportError::Recv(RecvError::Aggregation(
+                AggregateError::for_payload(
                     object.interface.interface_name(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
-                )))
-            }
-        }?;
+                ),
+            )));
+        };
+
+        let data = AstarteObject::try_from(data).map_err(RecvError::connection)?;
 
         trace!("object received");
 
-        Ok((object, timestamp))
+        Ok((data, payload.timestamp))
     }
 }
 
@@ -650,13 +646,14 @@ mod test {
     use uuid::uuid;
 
     use crate::{
+        aggregate::AstarteObject,
         builder::DEFAULT_VOLATILE_CAPACITY,
         store::memory::MemoryStore,
         transport::{
             test::{mock_validate_individual, mock_validate_object},
             ReceivedEvent,
         },
-        AstarteAggregate, DeviceEvent, Value,
+        DeviceEvent, Value,
     };
 
     use super::*;
@@ -1233,23 +1230,19 @@ mod test {
         );
     }
 
-    struct MockObject {}
+    fn mock_astarte_object() -> AstarteObject {
+        let mut obj = AstarteObject::new();
+        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+        obj.insert(
+            "endpoint2".to_string(),
+            AstarteType::String("obj".to_string()),
+        );
+        obj.insert(
+            "endpoint3".to_string(),
+            AstarteType::BooleanArray(vec![true]),
+        );
 
-    impl AstarteAggregate for MockObject {
-        fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, crate::error::Error> {
-            let mut obj = HashMap::new();
-            obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
-            obj.insert(
-                "endpoint2".to_string(),
-                AstarteType::String("obj".to_string()),
-            );
-            obj.insert(
-                "endpoint3".to_string(),
-                AstarteType::BooleanArray(vec![true]),
-            );
-
-            Ok(obj)
-        }
+        obj
     }
 
     #[tokio::test]
@@ -1277,7 +1270,7 @@ mod test {
             let validated_object = mock_validate_object(
                 &interface,
                 &path,
-                MockObject {},
+                mock_astarte_object(),
                 Some(chrono::offset::Utc::now()),
             )
             .unwrap();
@@ -1297,9 +1290,9 @@ mod test {
                 if data_event.interface == "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream"
                     && data_event.path == "/1",
             => object_value = {  let Value::Object(v) = data_event.data else { panic!("Expected object") }; v };
-                if object_value["endpoint1"] == AstarteType::Double(4.2)
-                    && object_value["endpoint2"] == AstarteType::String("obj".to_string())
-                    && object_value["endpoint3"] == AstarteType::BooleanArray(vec![true])
+                if object_value.get("endpoint1") == Some(&AstarteType::Double(4.2))
+                    && object_value.get("endpoint2") == Some(&AstarteType::String("obj".to_string()))
+                    && object_value.get("endpoint3") == Some(&AstarteType::BooleanArray(vec![true]))
         );
     }
 
@@ -1310,7 +1303,7 @@ mod test {
             .await
             .expect("Could not construct test client and server");
 
-        let expected_object = Value::Object((MockObject {}).astarte_aggregate().unwrap());
+        let expected_object = Value::Object(mock_astarte_object());
 
         let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
             expected_object.into();
