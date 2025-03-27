@@ -163,11 +163,10 @@ pub trait FromEvent: Sized {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "derive")]
     #[test]
+    #[cfg(feature = "derive")]
     fn should_derive_form_event_obj() {
-        use std::collections::HashMap;
-
+        use crate::aggregate::AstarteObject;
         use crate::{DeviceEvent, FromEvent, Value};
 
         // Alias the crate to the resulting macro
@@ -180,7 +179,7 @@ mod tests {
             value: i32,
         }
 
-        let mut data = HashMap::new();
+        let mut data = AstarteObject::new();
         data.insert("name".to_string(), "Foo".to_string().into());
         data.insert("value".to_string(), 42i32.into());
 

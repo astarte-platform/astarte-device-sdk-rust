@@ -20,14 +20,13 @@
 //!
 //! You can find more information about the protocol v1 in the [Astarte MQTT v1 Protocol](https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html).
 
-use std::collections::HashMap;
-
 use bson::Bson;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::{
+    aggregate::AstarteObject,
     interface::{
         mapping::path::{MappingError, MappingPath},
         reference::{MappingRef, ObjectRef},
@@ -122,7 +121,7 @@ pub(super) fn serialize_individual(
 
 /// Serialize an aggregate to a [`Bson`] buffer
 pub(super) fn serialize_object(
-    aggregate: &HashMap<String, AstarteType>,
+    aggregate: &AstarteObject,
     timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
     Payload::with_timestamp(aggregate, timestamp).to_vec()
@@ -156,7 +155,7 @@ pub(super) fn deserialize_object(
     object: &ObjectRef,
     path: &MappingPath,
     buf: &[u8],
-) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), PayloadError> {
+) -> Result<(AstarteObject, Option<Timestamp>), PayloadError> {
     if buf.is_empty() {
         return Err(PayloadError::Unset);
     }
@@ -202,14 +201,15 @@ pub(super) fn deserialize_object(
 
             Some(Ok((key, ast_val)))
         })
-        .collect::<Result<HashMap<String, AstarteType>, _>>()?;
+        .collect::<Result<AstarteObject, _>>()?;
 
     Ok((aggregate, payload.timestamp))
 }
 
 #[cfg(test)]
 mod test {
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     use chrono::TimeZone;
@@ -277,7 +277,12 @@ mod test {
             let path = mapping(endpoint.as_str());
             let mapping = interface.as_mapping_ref(&path).unwrap();
 
-            let validated = mock_validate_individual(mapping, &path, ty.clone(), None).unwrap();
+            let validated = mock_validate_individual(
+                mapping,
+                ty.clone(),
+                Some(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            )
+            .unwrap();
             let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
             let (res, _) = deserialize_individual(&mapping, &buf)
@@ -314,7 +319,7 @@ mod test {
         ];
 
         let base_path = "/1";
-        let data: HashMap<_, _> = alltypes
+        let mut data: AstarteObject = alltypes
             .into_iter()
             .map(|ty| {
                 let mapping_type = mapping_type(&ty);
@@ -327,11 +332,20 @@ mod test {
 
         let path = mapping(base_path);
 
-        let validated = mock_validate_object(&interface, &path, data.clone(), None).unwrap();
+        let validated = mock_validate_object(
+            &interface,
+            &path,
+            data.clone(),
+            Some(TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap()),
+        )
+        .unwrap();
         let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
-        let (res, _) =
+        let (mut res, _) =
             deserialize_object(&interface.as_object_ref().unwrap(), &path, &buf).unwrap();
+
+        res.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
+        data.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         assert_eq!(res, data)
     }
@@ -359,11 +373,19 @@ mod test {
         let mapping = interface.as_mapping_ref(&path).unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
-        let validated =
-            ValidatedIndividual::validate(mapping, &path, og_value.clone(), None).unwrap();
+        let validated = ValidatedIndividual::validate(
+            mapping,
+            og_value.clone(),
+            Some(DateTime::from_timestamp_millis(42).unwrap()),
+        )
+        .unwrap();
         let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
-        let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
+        let expected = [
+            48, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 2, 116, 0, 25, 0, 0, 0, 49, 57, 55,
+            48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 46, 48, 52, 50, 90, 0,
+            0,
+        ];
 
         assert_eq!(buf, expected);
 

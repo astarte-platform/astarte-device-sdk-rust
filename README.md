@@ -29,7 +29,7 @@ Quick links:
 
 ## Use the library
 
-You can add the library tro your project with:
+You can add the library to your project with:
 
 ```sh
 cargo new astarte-project && cd astarte-project
