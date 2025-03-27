@@ -24,9 +24,6 @@
 //! It defines the `Grpc` struct, which represents a GRPC connection, along with traits for publishing,
 //! receiving, and registering interfaces.
 
-pub mod convert;
-mod store;
-
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -46,12 +43,12 @@ use astarte_message_hub_proto::{
     MessageHubEvent, Node,
 };
 use bytes::Bytes;
-use store::GrpcStore;
 use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use self::convert::MessageHubProtoError;
+use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
 };
@@ -76,6 +73,9 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Interface, Timestamp,
 };
+
+pub mod convert;
+pub mod store;
 
 #[cfg(feature = "message-hub")]
 #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
