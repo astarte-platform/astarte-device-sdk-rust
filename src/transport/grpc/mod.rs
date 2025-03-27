@@ -571,7 +571,7 @@ where
     S: StoreCapabilities + PropertyStore + Send + Sync,
 {
     type Store = GrpcStore;
-    type Conn = Grpc<S>;
+    type Conn = Grpc<GrpcStore>;
     type Err = GrpcError;
 
     async fn connect(
