@@ -26,8 +26,7 @@ use std::num::TryFromIntError;
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
 use astarte_message_hub_proto::{
-    AstarteDatastreamIndividual, AstarteDatastreamObject, MessageHubEvent,
-};
+    AstarteDatastreamIndividual, AstarteDatastreamObject, MessageHubEvent};
 use chrono::TimeZone;
 use itertools::Itertools;
 
