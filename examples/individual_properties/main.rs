@@ -18,17 +18,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::error::Error as StdError;
-
+use eyre::OptionExt;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
     builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
     transport::mqtt::MqttConfig, Value,
 };
-use tracing::error;
-
-type DynError = Box<dyn StdError + Send + Sync + 'static>;
+use tokio::task::JoinSet;
+use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
@@ -57,13 +56,15 @@ async fn get_name_for_sensor(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
 
     // Load configuration
-    let file =
-        std::fs::read_to_string("./examples/individual_properties/configuration.json").unwrap();
-    let cfg: Config = serde_json::from_str(&file).unwrap();
+    let file = std::fs::read_to_string("./examples/individual_properties/configuration.json")?;
+    let cfg: Config = serde_json::from_str(&file)?;
 
     // Open the database, create it if it does not exists
     let db =
@@ -85,24 +86,29 @@ async fn main() -> Result<(), DynError> {
         .connection(mqtt_config)
         .build()
         .await?;
-    let device_cpy = client.clone();
+    let client_cl = client.clone();
 
     println!("Connection to Astarte established.");
 
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
+
     // Create an thread to transmit
-    tokio::task::spawn(async move {
+    tasks.spawn(async move {
         let mut i: u32 = 0;
 
         println!("Properties values at startup:");
         // Check the value of the name property for sensors 1
-        if let Ok(name) = get_name_for_sensor(&device_cpy, 1).await {
-            println!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
+        if let Ok(name) = get_name_for_sensor(&client_cl, 1).await {
+            info!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
             if name != *"None" {
-                i = name.strip_prefix("name number ").unwrap().parse().unwrap();
+                i = name
+                    .strip_prefix("name number ")
+                    .ok_or_eyre("couldn't strip prefix")?
+                    .parse()?;
             }
         }
         // Check the value of the name property for sensors 2
-        if let Ok(name) = get_name_for_sensor(&device_cpy, 2).await {
+        if let Ok(name) = get_name_for_sensor(&client_cl, 2).await {
             println!("  - Property \"name\" for sensor 2 has value: \"{name}\"");
         }
 
@@ -111,14 +117,14 @@ async fn main() -> Result<(), DynError> {
 
         // Send in a loop the change of the property "name" of sensor 1
         loop {
-            device_cpy
+            client_cl
                 .send(
                     "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                     "/1/name",
                     format!("name number {i}"),
                 )
-                .await
-                .unwrap();
+                .await?;
+
             println!("Sent property \"name\" for sensor 1 with new value \"name number {i}\"");
             i += 1;
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -126,7 +132,7 @@ async fn main() -> Result<(), DynError> {
     });
 
     // Use the current thread to receive changes in the server owned properties
-    tokio::spawn(async move {
+    tasks.spawn(async move {
         loop {
             match client.recv().await {
                 Ok(data) => {
@@ -135,7 +141,7 @@ async fn main() -> Result<(), DynError> {
                         let sensor_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or("Incorrect error received.")?;
+                            .ok_or_eyre("Incorrect error received.")?;
 
                         match iter.next() {
                             Some("enable") => {
@@ -146,7 +152,7 @@ async fn main() -> Result<(), DynError> {
                                 );
                             }
                             Some("samplingPeriod") => {
-                                let value: i32 = var.try_into().unwrap();
+                                let value: i32 = var.try_into()?;
                                 println!("Sampling period for sensor {} is {}", sensor_id, value);
                             }
                             _ => {}
@@ -158,10 +164,26 @@ async fn main() -> Result<(), DynError> {
             }
         }
 
-        Ok::<_, DynError>(())
+        Ok(())
     });
 
-    connection.handle_events().await?;
+    tasks.spawn(async move {
+        connection.handle_events().await?;
+
+        Ok(())
+    });
+
+    while let Some(res) = tasks.join_next().await {
+        match res {
+            Ok(res) => {
+                res?;
+
+                tasks.abort_all();
+            }
+            Err(err) if err.is_cancelled() => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
 
     Ok(())
 }
