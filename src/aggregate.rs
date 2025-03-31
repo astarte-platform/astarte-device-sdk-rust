@@ -45,7 +45,7 @@ use crate::types::AstarteType;
 /// assert_eq!(object.get("name"), Some(&sensor));
 /// assert_eq!(object.get("id"), Some(&id));
 /// ```
-#[derive(Debug, Clone, PartialEq, PartialOrd, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AstarteObject {
     pub(crate) inner: Vec<(String, AstarteType)>,
 }
@@ -119,6 +119,18 @@ impl FromIterator<(String, AstarteType)> for AstarteObject {
         Self {
             inner: Vec::from_iter(iter),
         }
+    }
+}
+
+// Ignore the order of elements for equality
+impl PartialEq for AstarteObject {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+
+        self.iter()
+            .all(|(key, value)| other.get(key).is_some_and(|other| other == value))
     }
 }
 
@@ -305,5 +317,22 @@ mod tests {
         assert_eq!(bar, "bar");
         let some = map.get("some").and_then(serde_json::Value::as_str).unwrap();
         assert_eq!(some, "some");
+    }
+
+    #[test]
+    fn astarte_object_custom_partial_eq() {
+        let values = [
+            ("foo", AstarteType::from("foo")),
+            ("bar", AstarteType::from("bar")),
+            ("some", AstarteType::from("some")),
+        ]
+        .map(|(n, v)| (n.to_string(), v));
+
+        let other: Vec<(String, AstarteType)> = values.iter().rev().cloned().collect();
+
+        let value = AstarteObject::from_iter(values);
+        let other = AstarteObject::from_iter(other);
+
+        assert_eq!(value, other);
     }
 }
