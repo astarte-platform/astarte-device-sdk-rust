@@ -1,22 +1,21 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021-2024 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 #![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/astarte-platform/astarte-device-sdk-rust/refs/heads/master/assets/logos/clea-24.svg"
@@ -48,7 +47,7 @@ pub mod types;
 mod validate;
 
 /// Re-exported internal structs
-pub use crate::aggregate::{AstarteAggregate, Value};
+pub use crate::aggregate::Value;
 pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
@@ -72,11 +71,11 @@ mod test {
     use base64::Engine;
     use mockall::predicate;
     use rumqttc::{AckOfPub, Event};
-    use std::collections::HashMap;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
 
+    use crate::aggregate::AstarteObject;
     use crate::builder::DEFAULT_VOLATILE_CAPACITY;
     use crate::interfaces::Interfaces;
     use crate::properties::tests::PROPERTIES_PAYLOAD;
@@ -88,13 +87,14 @@ mod test {
     use crate::transport::mqtt::payload::Payload as MqttPayload;
     use crate::transport::mqtt::test::{mock_mqtt_connection, notify_success};
     use crate::transport::mqtt::Mqtt;
+    #[cfg(feature = "derive")]
+    use crate::IntoAstarteObject;
     use crate::{
         self as astarte_device_sdk, Client, DeviceClient, DeviceConnection, EventLoop, Interface,
     };
     use crate::{types::AstarteType, Value};
-    use astarte_device_sdk::AstarteAggregate;
     #[cfg(not(feature = "derive"))]
-    use astarte_device_sdk_derive::AstarteAggregate;
+    use astarte_device_sdk_derive::IntoAstarteObject;
 
     use crate::transport::mqtt::client::{AsyncClient, EventLoop as MqttEventLoop};
 
@@ -163,8 +163,8 @@ mod test {
         (client, device)
     }
 
-    #[derive(AstarteAggregate)]
-    #[astarte_aggregate(rename_all = "lowercase")]
+    #[derive(IntoAstarteObject)]
+    #[astarte_object(rename_all = "lowercase")]
     struct MyLowerCasedAggregate {
         endpoint01: f64,
         endpoint02: i32,
@@ -209,7 +209,7 @@ mod test {
             ]),
             endpoint14: Vec::from([chrono::offset::Utc::now(), chrono::offset::Utc::now()]),
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "endpoint01".to_string(),
                 AstarteType::Double(my_aggregate.endpoint01),
@@ -267,12 +267,12 @@ mod test {
                 AstarteType::DateTimeArray(my_aggregate.endpoint14.clone()),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
         println!("{expected_res:?}");
     }
 
-    #[derive(AstarteAggregate)]
-    #[astarte_aggregate(rename_all = "UPPERCASE")]
+    #[derive(IntoAstarteObject)]
+    #[astarte_object(rename_all = "UPPERCASE")]
     struct MyUpperCasedAggregate {
         first_endpoint: f64,
         second_endpoint: f64,
@@ -284,7 +284,7 @@ mod test {
             first_endpoint: 4.34,
             second_endpoint: 23.0,
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "FIRST_ENDPOINT".to_string(),
                 AstarteType::Double(my_aggregate.first_endpoint),
@@ -294,11 +294,11 @@ mod test {
                 AstarteType::Double(my_aggregate.second_endpoint),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
     }
 
-    #[derive(AstarteAggregate)]
-    #[astarte_aggregate(rename_all = "PascalCase")]
+    #[derive(IntoAstarteObject)]
+    #[astarte_object(rename_all = "PascalCase")]
     struct MyPascalCasedAggregate {
         first_endpoint: f64,
         second_endpoint: f64,
@@ -310,7 +310,7 @@ mod test {
             first_endpoint: 4.34,
             second_endpoint: 23.0,
         };
-        let expected_res = HashMap::from([
+        let expected_res = AstarteObject::from_iter([
             (
                 "FirstEndpoint".to_string(),
                 AstarteType::Double(my_aggregate.first_endpoint),
@@ -320,7 +320,7 @@ mod test {
                 AstarteType::Double(my_aggregate.second_endpoint),
             ),
         ]);
-        assert_eq!(expected_res, my_aggregate.astarte_aggregate().unwrap());
+        assert_eq!(expected_res, my_aggregate.try_into().unwrap());
     }
 
     #[tokio::test]
@@ -622,7 +622,7 @@ mod test {
 
         let event = client.recv().await.expect("no event received");
 
-        let mut obj = HashMap::new();
+        let mut obj = AstarteObject::new();
         obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
         obj.insert(
             "endpoint2".to_string(),
@@ -647,27 +647,16 @@ mod test {
 
     #[tokio::test]
     async fn test_send_object() {
-        struct MockObject {}
-
-        impl AstarteAggregate for MockObject {
-            fn astarte_aggregate(
-                self,
-            ) -> Result<HashMap<String, AstarteType>, astarte_device_sdk::error::Error>
-            {
-                let mut obj = HashMap::new();
-                obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
-                obj.insert(
-                    "endpoint2".to_string(),
-                    AstarteType::String("obj".to_string()),
-                );
-                obj.insert(
-                    "endpoint3".to_string(),
-                    AstarteType::BooleanArray(vec![true]),
-                );
-
-                Ok(obj)
-            }
-        }
+        let mut obj = AstarteObject::new();
+        obj.insert("endpoint1".to_string(), AstarteType::Double(4.2));
+        obj.insert(
+            "endpoint2".to_string(),
+            AstarteType::String("obj".to_string()),
+        );
+        obj.insert(
+            "endpoint3".to_string(),
+            AstarteType::BooleanArray(vec![true]),
+        );
 
         let mut client = AsyncClient::default();
         let eventloop = MqttEventLoop::default();
@@ -699,7 +688,7 @@ mod test {
             .send_object_with_timestamp(
                 "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
                 "/1",
-                MockObject {},
+                obj,
                 chrono::offset::Utc::now(),
             )
             .await

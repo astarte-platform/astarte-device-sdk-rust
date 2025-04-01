@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! # Astarte Connection Traits
 //!
@@ -29,6 +27,7 @@
 use std::{collections::HashMap, future::Future};
 
 use crate::{
+    aggregate::AstarteObject,
     client::RecvError,
     interface::{
         mapping::path::MappingPath,
@@ -158,7 +157,7 @@ pub(crate) trait Receive {
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
 }
 
 /// Reconnect the device to Astarte.
@@ -216,23 +215,21 @@ pub trait Disconnect {
 
 #[cfg(test)]
 mod test {
+    use crate::aggregate::AstarteObject;
     use crate::error::AggregateError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
         validate::{ValidatedIndividual, ValidatedObject},
-        AstarteAggregate, Interface,
+        Interface,
     };
 
-    pub(crate) fn mock_validate_object<'a, D>(
+    pub(crate) fn mock_validate_object<'a>(
         interface: &'a Interface,
         path: &'a MappingPath<'a>,
-        data: D,
+        data: AstarteObject,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedObject, crate::Error>
-    where
-        D: AstarteAggregate + Send,
-    {
+    ) -> Result<ValidatedObject, crate::Error> {
         let object = interface.as_object_ref().ok_or_else(|| {
             let aggr_err = AggregateError::for_interface(
                 interface.interface_name(),
@@ -243,9 +240,7 @@ mod test {
             crate::Error::Aggregation(aggr_err)
         })?;
 
-        let aggregate = data.astarte_aggregate()?;
-
-        ValidatedObject::validate(object, path, aggregate, timestamp).map_err(|uve| uve.into())
+        ValidatedObject::validate(object, path, data, timestamp).map_err(|uve| uve.into())
     }
 
     pub(crate) fn mock_validate_individual<'a, D>(

@@ -56,6 +56,7 @@ pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 use crate::{
+    aggregate::AstarteObject,
     client::RecvError,
     error::Report,
     interface::{
@@ -716,7 +717,7 @@ where
         object: &ObjectRef,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(HashMap<String, AstarteType>, Option<Timestamp>), TransportError> {
+    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
         payload::deserialize_object(object, path, &payload)
             .map_err(|err| TransportError::Recv(RecvError::connection(err)))
     }

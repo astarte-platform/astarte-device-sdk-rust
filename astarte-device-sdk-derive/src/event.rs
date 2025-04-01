@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -61,19 +61,19 @@ impl FromEventAttrs {
 
 impl Parse for FromEventAttrs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut vars = parse_name_value_attrs(input)?;
+        let mut attrs = parse_name_value_attrs(input)?;
 
-        let interface = vars
+        let interface = attrs
             .remove("interface")
             .map(|expr| parse_str_lit(&expr))
             .transpose()?;
 
-        let path = vars
+        let path = attrs
             .remove("path")
             .map(|expr| parse_str_lit(&expr))
             .transpose()?;
 
-        let rename_all = vars
+        let rename_all = attrs
             .remove("rename_all")
             .map(|expr| {
                 parse_str_lit(&expr).and_then(|rename| {
@@ -83,10 +83,14 @@ impl Parse for FromEventAttrs {
             })
             .transpose()?;
 
-        let aggregation = vars
+        let aggregation = attrs
             .remove("aggregation")
             .map(Aggregation::try_from)
             .transpose()?;
+
+        if let Some((_, expr)) = attrs.iter().next() {
+            return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
+        }
 
         Ok(Self {
             rename_rule: rename_all,
@@ -456,10 +460,15 @@ impl Parse for MappingAttr {
             .and_then(|expr| parse_str_lit(&expr))?;
 
         let allow_unset = attrs
-            .get("allow_unset")
+            .remove("allow_unset")
+            .as_ref()
             .map(parse_bool_lit)
             .transpose()?
             .unwrap_or_default();
+
+        if let Some((_, expr)) = attrs.iter().next() {
+            return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
+        }
 
         Ok(Self {
             endpoint,

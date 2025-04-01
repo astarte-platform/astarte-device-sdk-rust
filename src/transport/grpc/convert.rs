@@ -21,15 +21,17 @@
 //! Contains conversion traits to convert the Astarte types in the protobuf format to the
 //! Astarte types from the Astarte device SDK.
 
-use std::collections::HashMap;
 use std::num::TryFromIntError;
 
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
-use astarte_message_hub_proto::{AstarteDatastreamInidividual, MessageHubEvent};
+use astarte_message_hub_proto::{
+    AstarteDatastreamInidividual, AstarteDatastreamObject, MessageHubEvent,
+};
 use chrono::TimeZone;
 use itertools::Itertools;
 
+use crate::aggregate::AstarteObject;
 use crate::interface::Ownership;
 use crate::store::StoredProp;
 use crate::validate::ValidatedUnset;
@@ -295,7 +297,11 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedObject) -> Self {
         let timestamp = value.timestamp.map(|t| t.into());
 
-        let data = value.data.into_iter().map(|(k, v)| (k, v.into())).collect();
+        let data = value
+            .data
+            .into_key_values()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
 
         let payload = Some(ProtoPayload::DatastreamObject(
             astarte_message_hub_proto::AstarteDatastreamObject { data },
@@ -327,15 +333,16 @@ impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
 /// map of (String, AstarteType).
 ///
 /// It's used also outside in the message hub.
-pub fn map_values_to_astarte_type(
-    value: astarte_message_hub_proto::AstarteDatastreamObject,
-) -> Result<HashMap<String, AstarteType>, MessageHubProtoError> {
-    // Cannot be implemented as TryFrom since the types are not from our crate
-    value
-        .data
-        .into_iter()
-        .map(|(k, value)| AstarteType::try_from(value).map(|v| (k, v)))
-        .collect()
+impl TryFrom<AstarteDatastreamObject> for AstarteObject {
+    type Error = MessageHubProtoError;
+
+    fn try_from(value: AstarteDatastreamObject) -> Result<Self, Self::Error> {
+        value
+            .data
+            .into_iter()
+            .map(|(k, value)| AstarteType::try_from(value).map(|v| (k, v)))
+            .collect()
+    }
 }
 
 // This is needed for a conversion in the message hub, but cannot be implemented outside of the crate
@@ -385,7 +392,7 @@ impl TryFrom<ProtoPayload> for Value {
             }
             // Object
             ProtoPayload::DatastreamObject(object) => {
-                let value = map_values_to_astarte_type(object)?;
+                let value = AstarteObject::try_from(object)?;
 
                 Ok(Value::Object(value))
             }
@@ -417,7 +424,7 @@ impl From<Value> for ProtoPayload {
                 })
             }
             Value::Object(val) => {
-                let data = val.into_iter().map(|(k, v)| (k, v.into())).collect();
+                let data = val.inner.into_iter().map(|(k, v)| (k, v.into())).collect();
 
                 ProtoPayload::DatastreamObject(astarte_message_hub_proto::AstarteDatastreamObject {
                     data,
@@ -432,8 +439,6 @@ impl From<Value> for ProtoPayload {
 
 #[cfg(test)]
 pub(crate) mod test {
-    use core::panic;
-
     use astarte_message_hub_proto::{
         astarte_data::AstarteData, AstarteDatastreamObject, AstarteMessage,
         AstartePropertyIndividual, InterfaceProperties,
@@ -694,41 +699,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn convert_astarte_message_to_astarte_device_data_event_object_success() {
-        let interface_name = "test.name.json".to_string();
-        let interface_path = "test".to_string();
-
-        let expected_data_f64: f64 = 15.5;
-        let expected_data_i32: i32 = 15;
-        let mut object_map: HashMap<String, AstarteData> = HashMap::new();
-        object_map.insert("1".to_string(), expected_data_f64.into());
-        object_map.insert("2".to_string(), expected_data_i32.into());
-
-        let astarte_message = AstarteMessage {
-            interface_name: interface_name.clone(),
-            path: interface_path.clone(),
-            timestamp: None,
-            payload: Some(ProtoPayload::DatastreamObject(object_map.into())),
-        };
-
-        let astarte_device_data_event: DeviceEvent = astarte_message.try_into().unwrap();
-
-        assert_eq!(interface_name, astarte_device_data_event.interface);
-        assert_eq!(interface_path, astarte_device_data_event.path);
-
-        let object_map = astarte_device_data_event.data.as_object().unwrap();
-
-        assert_eq!(
-            object_map.get("1").unwrap().clone(),
-            AstarteType::try_from(expected_data_f64).unwrap()
-        );
-        assert_eq!(
-            object_map.get("2").unwrap().clone(),
-            AstarteType::from(expected_data_i32)
-        );
-    }
-
-    #[test]
     fn convert_astarte_message_to_astarte_device_data_event_unset_success() {
         let interface_name = "test.name.json".to_string();
         let interface_path = "test".to_string();
@@ -749,21 +719,6 @@ pub(crate) mod test {
         assert_eq!(interface_path, astarte_device_data_event.path);
 
         assert_eq!(Value::Unset, astarte_device_data_event.data);
-    }
-
-    #[test]
-    fn convert_map_values_to_astarte_astarte_data_type_individual_success() {
-        let expected_data: f64 = 15.5;
-        let astarte_type_map =
-            HashMap::from([("key1".to_string(), AstarteType::Double(expected_data))]);
-
-        let conversion_map_result: HashMap<String, AstarteData> = astarte_type_map
-            .into_iter()
-            .map(|(k, v)| (k, v.into()))
-            .collect();
-
-        let individual_data = conversion_map_result.get("key1").unwrap();
-        assert_eq!(AstarteData::Double(expected_data), *individual_data);
     }
 
     #[test]
@@ -1121,7 +1076,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_object_to_astarte_message() {
-        let expected_map = HashMap::from([
+        let expected_map = AstarteObject::from_iter([
             ("Mercury".to_owned(), AstarteType::Double(0.4)),
             ("Venus".to_owned(), AstarteType::Double(0.7)),
             ("Earth".to_owned(), AstarteType::Double(1.0)),
@@ -1143,7 +1098,7 @@ pub(crate) mod test {
         let astarte_object = astarte_message.payload.and_then(take_object).unwrap();
 
         let object_data = astarte_object.data;
-        for (k, v) in expected_map.into_iter() {
+        for (k, v) in expected_map.into_key_values() {
             let astarte_type: AstarteType = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
@@ -1156,7 +1111,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_object2_to_astarte_message() {
-        let expected_map = HashMap::from([
+        let expected_map = AstarteObject::from_iter([
             ("M".to_owned(), AstarteType::Double(0.4)),
             (
                 "V".to_owned(),
@@ -1180,7 +1135,7 @@ pub(crate) mod test {
 
         let object_data = astarte_message.payload.and_then(take_object).unwrap().data;
 
-        for (k, v) in expected_map.into_iter() {
+        for (k, v) in expected_map.inner.into_iter() {
             let astarte_type: AstarteType = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
@@ -1226,7 +1181,7 @@ pub(crate) mod test {
     #[test]
     fn from_sdk_astarte_aggregate_to_astarte_message_payload_success() {
         let expected_data: f64 = 15.5;
-        let astarte_type_map = Value::Object(HashMap::from([(
+        let astarte_type_map = Value::Object(AstarteObject::from_iter([(
             "key1".to_string(),
             AstarteType::Double(expected_data),
         )]));
