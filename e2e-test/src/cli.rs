@@ -105,6 +105,12 @@ impl AstarteUrl {
 pub(crate) enum Command {
     /// Run the e2e tests
     Run(Run),
+    /// Check if Astarte is healthy
+    Healthy {
+        /// Wait for astarte to become healthy
+        #[arg(long, short, default_value = "false")]
+        wait: bool,
+    },
 }
 
 #[derive(Debug, Clone, Args)]

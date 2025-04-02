@@ -30,6 +30,7 @@ use tracing_subscriber::EnvFilter;
 
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
 
+use self::api::ApiClient;
 use self::channel::Channel;
 use self::cli::{Cli, Command, Config};
 use self::utils::retry;
@@ -58,6 +59,27 @@ async fn main() -> eyre::Result<()> {
 
     let config = match cli.command {
         Command::Run(run) => Config::new(cli.url, run),
+        Command::Healthy { wait: true } => {
+            let client = reqwest::Client::builder().build()?;
+
+            retry(20, || async {
+                ApiClient::cluster_healthy(&client, &cli.url.api_url()?).await
+            })
+            .await?;
+
+            info!("cluster is healthy");
+
+            return Ok(());
+        }
+        Command::Healthy { wait: false } => {
+            let client = reqwest::Client::builder().build()?;
+
+            ApiClient::cluster_healthy(&client, &cli.url.api_url()?).await?;
+
+            info!("cluster is healthy");
+
+            return Ok(());
+        }
     };
 
     let mut mqtt_config = MqttConfig::new(

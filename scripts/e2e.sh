@@ -27,8 +27,6 @@ if [[ -z $KEY && $# != 1 ]]; then
     exit 1
 fi
 
-export RUST_LOG=${RUST_LOG:-debug}
-
 astartectl realm-management interfaces sync -y \
     -u http://api.astarte.localhost \
     -r test \
@@ -48,4 +46,4 @@ export E2E_PAIRING_TOKEN
 export E2E_TOKEN
 export E2E_STORE_DIR
 
-cargo e2e-test
+cargo e2e-test run
