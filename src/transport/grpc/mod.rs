@@ -88,10 +88,15 @@ pub enum GrpcError {
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
     /// Status code error.
-    #[error("Status error {0}")]
-    Status(#[from] tonic::Status),
-    #[error("Error while serializing the interfaces")]
+    #[error("Status error {status}")]
+    Status {
+        /// Status code that for the error.
+        code: tonic::Code,
+        /// Display representation of the [`Status`]
+        status: String,
+    },
     /// Couldn't serialize interface to json.
+    #[error("Error while serializing the interfaces")]
     InterfacesSerialization(#[from] serde_json::Error),
     /// Couldn't decode gRPC message
     #[error("couldn't decode grpc message")]
@@ -102,6 +107,15 @@ pub enum GrpcError {
     /// Error returned by the message hub server
     #[error("error returned by the message hub server")]
     Server(#[from] MessageHubError),
+}
+
+impl From<Status> for GrpcError {
+    fn from(value: Status) -> Self {
+        Self::Status {
+            code: value.code(),
+            status: value.to_string(),
+        }
+    }
 }
 
 type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
@@ -281,7 +295,7 @@ where
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn extend_interfaces(
@@ -296,7 +310,7 @@ where
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn remove_interface(
@@ -312,7 +326,7 @@ where
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn remove_interfaces(
@@ -333,7 +347,7 @@ where
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 }
 
@@ -674,13 +688,15 @@ mod test {
 
     type ServerSenderValuesVec = Vec<Result<MessageHubEvent, tonic::Status>>;
 
-    fn get_node_id_from_metadata(request: &tonic::Request<Node>) -> Result<Uuid, tonic::Status> {
+    fn get_node_id_from_metadata(
+        request: &tonic::Request<Node>,
+    ) -> Result<Uuid, Box<tonic::Status>> {
         // check only node-id-bin since the Node does not insert node-id metadata in the request
         let Some(metadata_val) = request.metadata().get_bin("node-id-bin") else {
-            return Err(Status::new(
+            return Err(Box::new(Status::new(
                 tonic::Code::InvalidArgument,
                 "absent node id into metadata".to_string(),
-            ));
+            )));
         };
 
         let node_id_bytes = metadata_val
@@ -688,7 +704,7 @@ mod test {
             .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))?;
 
         Uuid::from_slice(&node_id_bytes)
-            .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))
+            .map_err(|e| Box::new(Status::new(tonic::Code::InvalidArgument, e.to_string())))
     }
 
     pub(crate) struct TestMessageHubServer {
@@ -724,7 +740,7 @@ mod test {
             request: tonic::Request<Node>,
         ) -> Result<tonic::Response<Self::AttachStream>, tonic::Status> {
             // retrieve the node id from the metadata request
-            let node_id = get_node_id_from_metadata(&request)?;
+            let node_id = get_node_id_from_metadata(&request).map_err(|s| *s)?;
 
             let inner = request.into_inner();
             println!("Client '{node_id}' attached");
