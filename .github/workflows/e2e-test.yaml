@@ -49,7 +49,9 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Wait for Astarte to be healthy
         timeout-minutes: 10
-        run: ./scripts/wait-for-astarte.sh
+        # use the full command to use the sccache
+        run: |
+          cargo run --locked -p e2e-test -- healthy --wait
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
