@@ -18,8 +18,10 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use reqwest::Url;
+
+use crate::api::ApiClient;
 
 #[derive(Debug, Parser)]
 pub(crate) struct Cli {
@@ -49,7 +51,7 @@ pub(crate) struct AstarteUrl {
     pub(crate) ignore_ssl: bool,
 }
 
-impl Cli {
+impl AstarteUrl {
     fn http_or_https(&self) -> &'static str {
         if self.secure_transport {
             "https"
@@ -74,5 +76,57 @@ impl Cli {
 
     pub(crate) fn appengine_url(&self) -> eyre::Result<Url> {
         self.api_url()?.join("/appengine").map_err(Into::into)
+    }
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub(crate) enum Command {
+    /// Run the e2e tests
+    Run(Run),
+    /// Check if Astarte is healthy
+    Healthy {
+        /// Wait for astarte to become healthy
+        #[arg(long, short, default_value = "false")]
+        wait: bool,
+    },
+}
+
+#[derive(Debug, Clone, Args)]
+pub(crate) struct Run {
+    /// Realm of the device.
+    #[arg(long, short, env = "E2E_REALM", default_value = "test")]
+    pub(crate) realm: String,
+    /// Device id.
+    #[arg(long, short, env = "E2E_DEVICE_ID")]
+    pub(crate) device_id: String,
+    /// Token with access to all the APIs.
+    #[arg(long, short, env = "E2E_TOKEN")]
+    pub(crate) token: String,
+    /// Token to pair the device to astarte.
+    #[arg(long, short, env = "E2E_PAIRING_TOKEN")]
+    pub(crate) pairing_token: String,
+    /// Token with access to all the APIs.
+    #[arg(long, short, env = "E2E_STORE_DIR")]
+    pub(crate) store_dir: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct Config {
+    pub(crate) url: AstarteUrl,
+    pub(crate) run: Run,
+}
+
+impl Config {
+    pub(crate) fn new(url: AstarteUrl, run: Run) -> Self {
+        Self { url, run }
+    }
+
+    pub(crate) fn api_client(&self) -> eyre::Result<ApiClient> {
+        ApiClient::build(
+            self.url.api_url()?,
+            self.run.realm.clone(),
+            self.run.device_id.clone(),
+            &self.run.token,
+        )
     }
 }

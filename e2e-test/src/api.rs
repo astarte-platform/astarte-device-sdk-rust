@@ -100,9 +100,10 @@ impl ApiClient {
         Ok(url)
     }
 
-    pub(crate) async fn cluster_healthy(&self) -> color_eyre::Result<()> {
-        let appengine = self.api_url.join("/appengine/health")?;
-        let pairing = self.api_url.join("/pairing/health")?;
+    pub(crate) async fn cluster_healthy(api_url: &Url) -> eyre::Result<()> {
+        let appengine = api_url.join("/appengine/health")?;
+        let pairing = api_url.join("/pairing/health")?;
+        let realm_management = api_url.join("/realmmanagement/health")?;
 
         let res = reqwest::get(appengine.clone())
             .await
@@ -117,6 +118,13 @@ impl ApiClient {
         check_response(&pairing, res)
             .await
             .wrap_err("pairing call failed")?;
+
+        let res = reqwest::get(realm_management.clone())
+            .await
+            .wrap_err("realm management call failed")?;
+        check_response(&realm_management, res)
+            .await
+            .wrap_err("realm management call failed")?;
 
         Ok(())
     }

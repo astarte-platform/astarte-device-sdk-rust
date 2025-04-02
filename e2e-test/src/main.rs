@@ -57,11 +57,32 @@ async fn main() -> eyre::Result<()> {
         .install_default()
         .map_err(|_| eyre!("couldn't install default crypto provider"))?;
 
-    let mut config = MqttConfig::new(
-        &cli.realm,
-        &cli.device_id,
-        Credential::paring_token(cli.pairing_token.clone()),
-        cli.pairing_url()?,
+    let config = match cli.command {
+        Command::Run(run) => Config::new(cli.url, run),
+        Command::Healthy { wait: true } => {
+            retry(20, || async {
+                ApiClient::cluster_healthy(&cli.url.api_url()?).await
+            })
+            .await?;
+
+            info!("cluster is healthy");
+
+            return Ok(());
+        }
+        Command::Healthy { wait: false } => {
+            ApiClient::cluster_healthy(&cli.url.api_url()?).await?;
+
+            info!("cluster is healthy");
+
+            return Ok(());
+        }
+    };
+
+    let mut mqtt_config = MqttConfig::new(
+        &config.run.realm,
+        &config.run.device_id,
+        Credential::paring_token(config.run.pairing_token.clone()),
+        config.url.pairing_url()?,
     );
 
     // Ignore SSL for local testing

@@ -27,8 +27,6 @@ if [[ -z $KEY && $# != 1 ]]; then
     exit 1
 fi
 
-export RUST_LOG=${RUST_LOG:-debug}
-
 astartectl realm-management interfaces sync -y \
     -u http://api.astarte.localhost \
     -r test \
