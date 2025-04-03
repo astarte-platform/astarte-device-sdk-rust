@@ -458,12 +458,16 @@ where
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
-        let Self::Payload { data, timestamp } = payload;
+        let value: Value = payload.data.try_into().map_err(RecvError::connection)?;
 
-        let value: Value = data.try_into().map_err(RecvError::connection)?;
+        match value {
+            Value::Individual(astarte_type) => {
+                trace!("received {}", astarte_type.display_type());
 
-        let astarte_type = match value {
-            Value::Individual(astarte_type) => Ok(astarte_type),
+                // FIXME: replace None with the actual timestamp
+                Ok(Some((astarte_type, None)))
+            }
+
             Value::Object(_hash_map) => {
                 let aggr_err = AggregateError::for_payload(
                     mapping.interface().interface_name(),
@@ -471,17 +475,13 @@ where
                     Aggregation::Individual,
                     Aggregation::Object,
                 );
-                Err(RecvError::Aggregation(aggr_err))
+                Err(RecvError::Aggregation(aggr_err).into())
             }
             Value::Unset => {
                 debug!("unset received");
-                return Ok(None);
+                Ok(None)
             }
-        }?;
-
-        trace!("received {}", astarte_type.display_type());
-
-        Ok(Some((astarte_type, timestamp)))
+        }
     }
 
     fn deserialize_object(
@@ -505,7 +505,8 @@ where
 
         trace!("object received");
 
-        Ok((data, payload.timestamp))
+        // FIXME: replace None with the actual timestamp
+        Ok((data, None))
     }
 }
 
@@ -551,12 +552,11 @@ where
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GrpcPayload {
     data: ProtoPayload,
-    timestamp: Option<Timestamp>,
 }
 
 impl GrpcPayload {
-    pub(crate) fn new(data: ProtoPayload, timestamp: Option<Timestamp>) -> Self {
-        Self { data, timestamp }
+    pub(crate) fn new(data: ProtoPayload) -> Self {
+        Self { data }
     }
 }
 
@@ -658,7 +658,9 @@ mod test {
 
     use astarte_message_hub_proto::tonic::Request;
     use astarte_message_hub_proto::AstarteMessage;
-    use astarte_message_hub_proto::{pbjson_types, tonic};
+    use astarte_message_hub_proto::{
+        pbjson_types, tonic, AstarteDatastreamObject, AstartePropertyIndividual,
+    };
     use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
     use itertools::Itertools;
     use uuid::uuid;
@@ -1127,13 +1129,17 @@ mod test {
         const PATH: &str = "/1";
         let interface = Interface::from_str(crate::test::E2E_SERVER_DATASTREAM).unwrap();
         let interface_name = interface.interface_name().to_owned();
-        let expected_object = Value::Object(MockServerObject::mock_object());
-        let proto_payload: astarte_message_hub_proto::astarte_message::Payload =
-            expected_object.into();
+        let proto_payload = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
+            data: MockServerObject::mock_object()
+                .into_key_values()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            timestamp: None,
+        });
+
         let astarte_message = super::convert::test::new_astarte_message(
             interface_name.clone(),
             PATH.to_string(),
-            None,
             proto_payload.clone(),
         );
 
@@ -1178,11 +1184,11 @@ mod test {
         const PATH: &str = "/1/enable";
         let interface = Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap();
         let interface_name = interface.interface_name().to_owned();
-        let proto_payload: ProtoPayload = Value::Unset.into();
+        let proto_payload: ProtoPayload =
+            ProtoPayload::PropertyIndividual(AstartePropertyIndividual { data: None });
         let astarte_message = super::convert::test::new_astarte_message(
             interface_name.clone(),
             PATH.to_string(),
-            None,
             proto_payload.clone(),
         );
 

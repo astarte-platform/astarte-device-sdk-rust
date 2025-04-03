@@ -229,30 +229,30 @@ impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
             .payload
             .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
 
-        let timestamp = message.timestamp.map(convert_timestamp).transpose()?;
-
         Ok(ReceivedEvent {
             interface: message.interface_name,
             path: message.path,
-            payload: GrpcPayload::new(payload, timestamp),
+            payload: GrpcPayload::new(payload),
         })
     }
 }
 
 impl From<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedIndividual) -> Self {
-        let timestamp = value.timestamp.map(|t| t.into());
+        let timestamp = value
+            .timestamp
+            .map(astarte_message_hub_proto::pbjson_types::Timestamp::from);
 
         let payload = Some(ProtoPayload::DatastreamIndividual(
             AstarteDatastreamIndividual {
                 data: Some(value.data.into()),
+                timestamp,
             },
         ));
 
         astarte_message_hub_proto::AstarteMessage {
             interface_name: value.interface,
             path: value.path,
-            timestamp,
             payload,
         }
     }
@@ -260,7 +260,9 @@ impl From<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
 
 impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: ValidatedObject) -> Self {
-        let timestamp = value.timestamp.map(|t| t.into());
+        let timestamp = value
+            .timestamp
+            .map(astarte_message_hub_proto::pbjson_types::Timestamp::from);
 
         let data = value
             .data
@@ -269,13 +271,12 @@ impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
             .collect();
 
         let payload = Some(ProtoPayload::DatastreamObject(
-            astarte_message_hub_proto::AstarteDatastreamObject { data },
+            astarte_message_hub_proto::AstarteDatastreamObject { data, timestamp },
         ));
 
         astarte_message_hub_proto::AstarteMessage {
             interface_name: value.interface,
             path: value.path,
-            timestamp,
             payload,
         }
     }
@@ -286,7 +287,6 @@ impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
         Self {
             interface_name: value.interface,
             path: value.path,
-            timestamp: None,
             payload: Some(ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual { data: None },
             )),
@@ -345,6 +345,7 @@ impl TryFrom<ProtoPayload> for Value {
             // Individual
             ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                 data: Some(data),
+                timestamp: _,
             })
             | ProtoPayload::PropertyIndividual(AstartePropertyIndividual { data: Some(data) }) => {
                 let value = data.try_into()?;
@@ -352,9 +353,10 @@ impl TryFrom<ProtoPayload> for Value {
                 Ok(Value::Individual(value))
             }
             // Individual error case
-            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual { data: None }) => {
-                Err(MessageHubProtoError::ExpectedField("data"))
-            }
+            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
+                data: None,
+                timestamp: _,
+            }) => Err(MessageHubProtoError::ExpectedField("data")),
             // Object
             ProtoPayload::DatastreamObject(object) => {
                 let value = AstarteObject::try_from(object)?;
@@ -369,26 +371,12 @@ impl TryFrom<ProtoPayload> for Value {
 // because the AstarteMessage is from the proto crate, while the AstarteDeviceDataEvent is ours.
 impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
     fn from(value: DeviceEvent) -> Self {
-        let payload: ProtoPayload = value.data.into();
-
-        astarte_message_hub_proto::AstarteMessage {
-            interface_name: value.interface,
-            path: value.path,
-            timestamp: None,
-            payload: Some(payload),
-        }
-    }
-}
-
-// TODO this is incomplete, no way of creating a PropertyIndividual with a set value
-// refactor value to include a property type or find a way of stashing that information
-// somewhere
-impl From<Value> for ProtoPayload {
-    fn from(value: Value) -> Self {
-        match value {
+        let payload = match value.data {
             Value::Individual(val) => {
                 ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                     data: Some(val.into()),
+                    // FIXME: how do i retrieve the timestamp if the Value type doesn't have it?
+                    timestamp: None,
                 })
             }
             Value::Object(val) => {
@@ -396,17 +384,27 @@ impl From<Value> for ProtoPayload {
 
                 ProtoPayload::DatastreamObject(astarte_message_hub_proto::AstarteDatastreamObject {
                     data,
+                    // FIXME: how do i retrieve the timestamp if the Value type doesn't have it?
+                    timestamp: None,
                 })
             }
             Value::Unset => ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual { data: None },
             ),
+        };
+
+        astarte_message_hub_proto::AstarteMessage {
+            interface_name: value.interface,
+            path: value.path,
+            payload: Some(payload),
         }
     }
 }
 
 #[cfg(test)]
 pub(crate) mod test {
+    use std::collections::HashMap;
+
     use astarte_message_hub_proto::{
         AstarteData, AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual,
         InterfaceProperties,
@@ -414,20 +412,16 @@ pub(crate) mod test {
     use chrono::Utc;
     use pretty_assertions::assert_eq;
 
-    use crate::Timestamp;
-
     use super::*;
 
     pub(crate) fn new_astarte_message(
         interface_name: String,
         path: String,
-        timestamp: Option<Timestamp>,
         payload: ProtoPayload,
     ) -> AstarteMessage {
         AstarteMessage {
             interface_name,
             path,
-            timestamp: timestamp.map(pbjson_types::Timestamp::from),
             payload: Some(payload),
         }
     }
@@ -482,12 +476,12 @@ pub(crate) mod test {
         let payload: ProtoPayload =
             ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                 data: Some(astarte_type.into()),
+                timestamp: None,
             });
 
         let astarte_message = AstarteMessage {
             interface_name: interface_name.clone(),
             path: interface_path.clone(),
-            timestamp: None,
             payload: Some(payload),
         };
 
@@ -504,13 +498,12 @@ pub(crate) mod test {
         let interface_name = "test.name.json".to_string();
         let interface_path = "test".to_string();
 
-        let astarte_type = Value::Unset;
-        let payload: ProtoPayload = astarte_type.into();
+        let payload: ProtoPayload =
+            ProtoPayload::PropertyIndividual(AstartePropertyIndividual { data: None });
 
         let astarte_message = AstarteMessage {
             interface_name: interface_name.clone(),
             path: interface_path.clone(),
-            timestamp: None,
             payload: Some(payload),
         };
 
@@ -971,6 +964,7 @@ pub(crate) mod test {
         let payload: ProtoPayload =
             ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                 data: Some(astarte_sdk_type_double.into()),
+                timestamp: None,
             });
 
         let double_value = take_individual(payload)
@@ -997,13 +991,20 @@ pub(crate) mod test {
 
     #[test]
     fn from_sdk_astarte_aggregate_to_astarte_message_payload_success() {
-        let expected_data: f64 = 15.5;
-        let astarte_type_map = Value::Object(AstarteObject::from_iter([(
-            "key1".to_string(),
-            AstarteType::Double(expected_data),
-        )]));
+        use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
+        use astarte_message_hub_proto::AstarteData;
 
-        let payload_result: ProtoPayload = astarte_type_map.into();
+        let expected_data: f64 = 15.5;
+
+        let payload_result = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
+            data: HashMap::from([(
+                "key1".to_string(),
+                AstarteData {
+                    astarte_data: Some(ProtoData::Double(expected_data)),
+                },
+            )]),
+            timestamp: None,
+        });
 
         let double_data = take_object(payload_result)
             .and_then(|mut obj| obj.data.remove("key1"))
