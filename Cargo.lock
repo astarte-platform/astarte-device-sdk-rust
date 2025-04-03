@@ -177,10 +177,12 @@ version = "0.9.6"
 dependencies = [
  "astarte-device-sdk-derive",
  "astarte-message-hub-proto",
+ "astarte-message-hub-proto-mock",
  "async-trait",
  "base64 0.22.1",
  "bson",
  "bytes",
+ "cfg-if",
  "chrono",
  "color-eyre",
  "env_logger",
@@ -190,7 +192,7 @@ dependencies = [
  "http",
  "itertools 0.11.0",
  "litemap",
- "mockall",
+ "mockall 0.12.1",
  "mockito",
  "pretty_assertions",
  "rand_core 0.6.4",
@@ -232,13 +234,13 @@ version = "0.9.6"
 dependencies = [
  "astarte-device-sdk",
  "chrono",
- "mockall",
+ "mockall 0.12.1",
 ]
 
 [[package]]
 name = "astarte-message-hub-proto"
 version = "0.7.0"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=27f386114528ceeeb81440879f259146fbed6052#27f386114528ceeeb81440879f259146fbed6052"
+source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=20ba40215172613bfab149676adf0dbd9f3ccc92#20ba40215172613bfab149676adf0dbd9f3ccc92"
 dependencies = [
  "chrono",
  "pbjson-types",
@@ -248,6 +250,17 @@ dependencies = [
  "thiserror 2.0.12",
  "tonic",
  "uuid",
+]
+
+[[package]]
+name = "astarte-message-hub-proto-mock"
+version = "0.7.0"
+source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=20ba40215172613bfab149676adf0dbd9f3ccc92#20ba40215172613bfab149676adf0dbd9f3ccc92"
+dependencies = [
+ "astarte-message-hub-proto",
+ "mockall 0.13.1",
+ "pbjson-types",
+ "tonic",
 ]
 
 [[package]]
@@ -1573,7 +1586,21 @@ dependencies = [
  "downcast",
  "fragile",
  "lazy_static",
- "mockall_derive",
+ "mockall_derive 0.12.1",
+ "predicates",
+ "predicates-tree",
+]
+
+[[package]]
+name = "mockall"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a6bfcc6c8c7eed5ee98b9c3e33adc726054389233e201c95dab2d41a3839d2"
+dependencies = [
+ "cfg-if",
+ "downcast",
+ "fragile",
+ "mockall_derive 0.13.1",
  "predicates",
  "predicates-tree",
 ]
@@ -1583,6 +1610,18 @@ name = "mockall_derive"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af7cbce79ec385a1d4f54baa90a76401eb15d9cab93685f62e7e9f942aa00ae2"
+dependencies = [
+ "cfg-if",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "mockall_derive"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ca3004c2efe9011bd4e461bd8256445052b9615405b4f7ea43fc8ca5c20898"
 dependencies = [
  "cfg-if",
  "proc-macro2",
