@@ -379,11 +379,11 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
     loop {
         match client.recv().await {
-            Ok(data) => {
-                if let astarte_device_sdk::Value::Individual(var) = data.data {
+            Ok(event) => {
+                if let astarte_device_sdk::Value::Individual{data, timestamp: _} = event.data {
                     // we want to analyze a mapping similar to "/id/data" so we split by '/' and use the
                     // parts of interest
-                    let mut iter = data.path.splitn(3, '/').skip(1);
+                    let mut iter = event.path.splitn(3, '/').skip(1);
 
                     let id = iter
                         .next()
@@ -393,7 +393,7 @@ async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Resu
 
                     match iter.next() {
                         Some("data") => {
-                            let value: f64 = var.try_into()?;
+                            let value: f64 = data.try_into()?;
                             info!(
                                 "Received new data datastream for LED {}. LED data is now {}",
                                 id, value

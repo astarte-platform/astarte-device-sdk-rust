@@ -21,10 +21,12 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use tracing::{debug, info};
+use chrono::Utc;
+use tracing::{debug, info, warn};
 
 use crate::state::SharedState;
 use crate::transport::TransportError;
+use crate::Timestamp;
 use crate::{
     client::RecvError,
     event::DeviceEvent,
@@ -101,6 +103,31 @@ where
             state,
             connection,
             sender,
+        }
+    }
+
+    /// Validate a timestamp based on the mapping explicit_timestamp value.
+    ///
+    // The order of incoming message is guaranteed so, even if we generate the reception
+    // timestamp late, we still (should) have a consistent order of timestamp between messages
+    fn validate_timestamp(
+        interface_name: &str,
+        path: &str,
+        explicit_timestamp: bool,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Timestamp, RecvError> {
+        match (timestamp, explicit_timestamp) {
+            (None, false) => Ok(Utc::now()),
+            (Some(timestamp), true) => Ok(timestamp),
+            (Some(_), false) => {
+                warn!("received timestamp on interface without `explicit_timestamp`, ignoring");
+
+                Ok(Utc::now())
+            }
+            (None, true) => Err(RecvError::MissingTimestamp {
+                interface_name: interface_name.to_string(),
+                path: path.to_string(),
+            }),
         }
     }
 }

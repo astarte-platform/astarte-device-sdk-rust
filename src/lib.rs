@@ -48,10 +48,10 @@ pub mod types;
 mod validate;
 
 /// Re-exported internal structs
-pub use crate::aggregate::Value;
 pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
+pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::interface::Interface;
 pub use crate::types::AstarteType;
