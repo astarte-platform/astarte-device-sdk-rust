@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "astarte-message-hub-proto"
 version = "0.7.0"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=20ba40215172613bfab149676adf0dbd9f3ccc92#20ba40215172613bfab149676adf0dbd9f3ccc92"
+source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=29c9d6f99c2c1fa004a53d51f287d7e0ba342137#29c9d6f99c2c1fa004a53d51f287d7e0ba342137"
 dependencies = [
  "chrono",
  "pbjson-types",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "astarte-message-hub-proto-mock"
 version = "0.7.0"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=20ba40215172613bfab149676adf0dbd9f3ccc92#20ba40215172613bfab149676adf0dbd9f3ccc92"
+source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=29c9d6f99c2c1fa004a53d51f287d7e0ba342137#29c9d6f99c2c1fa004a53d51f287d7e0ba342137"
 dependencies = [
  "astarte-message-hub-proto",
  "mockall 0.13.1",
@@ -414,7 +414,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -1368,27 +1368,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -1990,7 +1972,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "log",
  "multimap",
  "once_cell",
@@ -2010,7 +1992,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn",

@@ -23,10 +23,11 @@
 
 use std::num::TryFromIntError;
 
+use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
 use astarte_message_hub_proto::{
-    AstarteDatastreamInidividual, AstarteDatastreamObject, MessageHubEvent,
+    AstarteDatastreamIndividual, AstarteDatastreamObject, MessageHubEvent,
 };
 use chrono::TimeZone;
 use itertools::Itertools;
@@ -120,36 +121,25 @@ impl TryFrom<astarte_message_hub_proto::AstarteData> for AstarteType {
     type Error = MessageHubProtoError;
 
     fn try_from(value: astarte_message_hub_proto::AstarteData) -> Result<Self, Self::Error> {
-        value
+        let astarte_data = value
             .astarte_data
-            .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?
-            .try_into()
-    }
-}
+            .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?;
 
-impl TryFrom<astarte_message_hub_proto::astarte_data::AstarteData> for AstarteType {
-    type Error = MessageHubProtoError;
-
-    fn try_from(
-        value: astarte_message_hub_proto::astarte_data::AstarteData,
-    ) -> Result<Self, Self::Error> {
-        use astarte_message_hub_proto::astarte_data::AstarteData::*;
-
-        match value {
-            DateTime(v) => convert_timestamp(v).map(AstarteType::DateTime),
-            Double(v) => Ok(AstarteType::Double(v)),
-            Integer(v) => Ok(AstarteType::Integer(v)),
-            Boolean(v) => Ok(AstarteType::Boolean(v)),
-            LongInteger(v) => Ok(AstarteType::LongInteger(v)),
-            String(v) => Ok(AstarteType::String(v)),
-            BinaryBlob(v) => Ok(AstarteType::BinaryBlob(v)),
-            DoubleArray(arr) => Ok(AstarteType::DoubleArray(arr.values)),
-            IntegerArray(arr) => Ok(AstarteType::IntegerArray(arr.values)),
-            BooleanArray(arr) => Ok(AstarteType::BooleanArray(arr.values)),
-            LongIntegerArray(arr) => Ok(AstarteType::LongIntegerArray(arr.values)),
-            StringArray(arr) => Ok(AstarteType::StringArray(arr.values)),
-            BinaryBlobArray(arr) => Ok(AstarteType::BinaryBlobArray(arr.values)),
-            DateTimeArray(arr) => arr
+        match astarte_data {
+            ProtoData::DateTime(v) => convert_timestamp(v).map(AstarteType::DateTime),
+            ProtoData::Double(v) => Ok(AstarteType::Double(v)),
+            ProtoData::Integer(v) => Ok(AstarteType::Integer(v)),
+            ProtoData::Boolean(v) => Ok(AstarteType::Boolean(v)),
+            ProtoData::LongInteger(v) => Ok(AstarteType::LongInteger(v)),
+            ProtoData::String(v) => Ok(AstarteType::String(v)),
+            ProtoData::BinaryBlob(v) => Ok(AstarteType::BinaryBlob(v)),
+            ProtoData::DoubleArray(arr) => Ok(AstarteType::DoubleArray(arr.values)),
+            ProtoData::IntegerArray(arr) => Ok(AstarteType::IntegerArray(arr.values)),
+            ProtoData::BooleanArray(arr) => Ok(AstarteType::BooleanArray(arr.values)),
+            ProtoData::LongIntegerArray(arr) => Ok(AstarteType::LongIntegerArray(arr.values)),
+            ProtoData::StringArray(arr) => Ok(AstarteType::StringArray(arr.values)),
+            ProtoData::BinaryBlobArray(arr) => Ok(AstarteType::BinaryBlobArray(arr.values)),
+            ProtoData::DateTimeArray(arr) => arr
                 .values
                 .into_iter()
                 .map(convert_timestamp)
@@ -174,69 +164,50 @@ fn convert_timestamp(
         .ok_or_else(|| MessageHubProtoError::DateConversion(format!("{val:?}")))
 }
 
-impl TryFrom<astarte_message_hub_proto::AstarteDatastreamInidividual> for AstarteType {
-    type Error = MessageHubProtoError;
-
-    fn try_from(
-        value: astarte_message_hub_proto::AstarteDatastreamInidividual,
-    ) -> Result<Self, Self::Error> {
-        value
-            .data
-            .ok_or(MessageHubProtoError::ExpectedField("data"))?
-            .try_into()
-    }
-}
-
 impl From<AstarteType> for astarte_message_hub_proto::AstarteData {
     fn from(value: AstarteType) -> Self {
-        Self {
-            astarte_data: Some(value.into()),
-        }
-    }
-}
-
-impl From<AstarteType> for astarte_message_hub_proto::astarte_data::AstarteData {
-    fn from(value: AstarteType) -> Self {
-        use astarte_message_hub_proto::{
-            astarte_data::AstarteData, AstarteBinaryBlobArray, AstarteBooleanArray,
-            AstarteDateTimeArray, AstarteDoubleArray, AstarteIntegerArray, AstarteLongIntegerArray,
-            AstarteStringArray,
-        };
-
-        match value {
-            AstarteType::Double(value) => AstarteData::Double(value),
-            AstarteType::Integer(value) => AstarteData::Integer(value),
-            AstarteType::Boolean(value) => AstarteData::Boolean(value),
-            AstarteType::LongInteger(value) => AstarteData::LongInteger(value),
-            AstarteType::String(value) => AstarteData::String(value),
-            AstarteType::BinaryBlob(value) => AstarteData::BinaryBlob(value),
-            AstarteType::DateTime(value) => AstarteData::DateTime(value.into()),
+        let astarte_data = match value {
+            AstarteType::Double(value) => ProtoData::Double(value),
+            AstarteType::Integer(value) => ProtoData::Integer(value),
+            AstarteType::Boolean(value) => ProtoData::Boolean(value),
+            AstarteType::LongInteger(value) => ProtoData::LongInteger(value),
+            AstarteType::String(value) => ProtoData::String(value),
+            AstarteType::BinaryBlob(value) => ProtoData::BinaryBlob(value),
+            AstarteType::DateTime(value) => ProtoData::DateTime(value.into()),
             AstarteType::DoubleArray(values) => {
-                AstarteData::DoubleArray(AstarteDoubleArray { values })
+                ProtoData::DoubleArray(astarte_message_hub_proto::AstarteDoubleArray { values })
             }
             AstarteType::IntegerArray(values) => {
-                AstarteData::IntegerArray(AstarteIntegerArray { values })
+                ProtoData::IntegerArray(astarte_message_hub_proto::AstarteIntegerArray { values })
             }
             AstarteType::BooleanArray(values) => {
-                AstarteData::BooleanArray(AstarteBooleanArray { values })
+                ProtoData::BooleanArray(astarte_message_hub_proto::AstarteBooleanArray { values })
             }
             AstarteType::LongIntegerArray(values) => {
-                AstarteData::LongIntegerArray(AstarteLongIntegerArray { values })
-            }
-            AstarteType::StringArray(values) => {
-                AstarteData::StringArray(AstarteStringArray { values })
-            }
-            AstarteType::BinaryBlobArray(values) => {
-                AstarteData::BinaryBlobArray(AstarteBinaryBlobArray { values })
-            }
-            AstarteType::DateTimeArray(values) => {
-                AstarteData::DateTimeArray(AstarteDateTimeArray {
-                    values: values
-                        .into_iter()
-                        .map(pbjson_types::Timestamp::from)
-                        .collect(),
+                ProtoData::LongIntegerArray(astarte_message_hub_proto::AstarteLongIntegerArray {
+                    values,
                 })
             }
+            AstarteType::StringArray(values) => {
+                ProtoData::StringArray(astarte_message_hub_proto::AstarteStringArray { values })
+            }
+            AstarteType::BinaryBlobArray(values) => {
+                ProtoData::BinaryBlobArray(astarte_message_hub_proto::AstarteBinaryBlobArray {
+                    values,
+                })
+            }
+            AstarteType::DateTimeArray(values) => {
+                let values = values
+                    .into_iter()
+                    .map(pbjson_types::Timestamp::from)
+                    .collect();
+
+                ProtoData::DateTimeArray(astarte_message_hub_proto::AstarteDateTimeArray { values })
+            }
+        };
+
+        Self {
+            astarte_data: Some(astarte_data),
         }
     }
 }
@@ -249,17 +220,11 @@ impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
             .event
             .ok_or(MessageHubProtoError::ExpectedField("event"))?;
 
-        match event {
-            Event::Message(msg) => msg.try_into().map_err(GrpcError::MessageHubProtoConversion),
-            Event::Error(err) => Err(GrpcError::Server(err)),
-        }
-    }
-}
+        let message = match event {
+            Event::Message(msg) => msg,
+            Event::Error(err) => return Err(GrpcError::Server(err)),
+        };
 
-impl TryFrom<astarte_message_hub_proto::AstarteMessage> for ReceivedEvent<GrpcPayload> {
-    type Error = MessageHubProtoError;
-
-    fn try_from(message: astarte_message_hub_proto::AstarteMessage) -> Result<Self, Self::Error> {
         let payload = message
             .payload
             .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
@@ -279,7 +244,7 @@ impl From<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
         let timestamp = value.timestamp.map(|t| t.into());
 
         let payload = Some(ProtoPayload::DatastreamIndividual(
-            AstarteDatastreamInidividual {
+            AstarteDatastreamIndividual {
                 data: Some(value.data.into()),
             },
         ));
@@ -369,7 +334,7 @@ impl TryFrom<ProtoPayload> for Value {
     type Error = MessageHubProtoError;
 
     fn try_from(value: ProtoPayload) -> Result<Self, Self::Error> {
-        use astarte_message_hub_proto::AstarteDatastreamInidividual;
+        use astarte_message_hub_proto::AstarteDatastreamIndividual;
         use astarte_message_hub_proto::AstartePropertyIndividual;
 
         match value {
@@ -378,7 +343,7 @@ impl TryFrom<ProtoPayload> for Value {
                 Ok(Value::Unset)
             }
             // Individual
-            ProtoPayload::DatastreamIndividual(AstarteDatastreamInidividual {
+            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                 data: Some(data),
             })
             | ProtoPayload::PropertyIndividual(AstartePropertyIndividual { data: Some(data) }) => {
@@ -387,7 +352,7 @@ impl TryFrom<ProtoPayload> for Value {
                 Ok(Value::Individual(value))
             }
             // Individual error case
-            ProtoPayload::DatastreamIndividual(AstarteDatastreamInidividual { data: None }) => {
+            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual { data: None }) => {
                 Err(MessageHubProtoError::ExpectedField("data"))
             }
             // Object
@@ -422,7 +387,7 @@ impl From<Value> for ProtoPayload {
     fn from(value: Value) -> Self {
         match value {
             Value::Individual(val) => {
-                ProtoPayload::DatastreamIndividual(AstarteDatastreamInidividual {
+                ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                     data: Some(val.into()),
                 })
             }
@@ -443,10 +408,11 @@ impl From<Value> for ProtoPayload {
 #[cfg(test)]
 pub(crate) mod test {
     use astarte_message_hub_proto::{
-        astarte_data::AstarteData, AstarteDatastreamObject, AstarteMessage,
-        AstartePropertyIndividual, InterfaceProperties,
+        AstarteData, AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual,
+        InterfaceProperties,
     };
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
+    use pretty_assertions::assert_eq;
 
     use crate::Timestamp;
 
@@ -477,213 +443,32 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn proto_astarte_double_into_astarte_device_sdk_type_success() {
-        let value = 15.5;
-        let expected_double_value = AstarteData::Double(value);
-        let astarte_type = expected_double_value.try_into().unwrap();
+    fn proto_conversions_success() {
+        let cases = [
+            AstarteType::Double(12.21),
+            AstarteType::Integer(12),
+            AstarteType::Boolean(false),
+            AstarteType::LongInteger(42),
+            AstarteType::String("hello".to_string()),
+            AstarteType::BinaryBlob(vec![1, 2, 3, 4]),
+            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteType::DoubleArray(vec![1.3, 2.6, 3.1, 4.0]),
+            AstarteType::IntegerArray(vec![1, 2, 3, 4]),
+            AstarteType::BooleanArray(vec![true, false, true, true]),
+            AstarteType::LongIntegerArray(vec![32, 11, 33, 1]),
+            AstarteType::StringArray(vec!["Hello".to_string(), " world!".to_string()]),
+            AstarteType::BinaryBlobArray(vec![vec![1, 2, 3, 4], vec![4, 4, 1, 4]]),
+            AstarteType::DateTimeArray(vec![
+                TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
+                TimeZone::timestamp_opt(&Utc, 1611580808, 0).unwrap(),
+            ]),
+        ];
 
-        if let AstarteType::Double(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
+        for exp in cases {
+            let proto = AstarteData::from(exp.clone());
+            let astarte_type = AstarteType::try_from(proto).unwrap();
 
-    #[test]
-    fn proto_astarte_integer_into_astarte_device_sdk_type_success() {
-        let value: i32 = 15;
-        let expected_integer_value = AstarteData::Integer(value);
-        let astarte_type: AstarteType = expected_integer_value.try_into().unwrap();
-
-        if let AstarteType::Integer(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_boolean_into_astarte_device_sdk_type_success() {
-        let value: bool = true;
-        let expected_boolean_value = AstarteData::Boolean(value);
-        let astarte_type: AstarteType = expected_boolean_value.try_into().unwrap();
-
-        if let AstarteType::Boolean(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_long_integer_into_astarte_device_sdk_type_success() {
-        let value: i64 = 154;
-        let expected_long_integer_value = AstarteData::LongInteger(value);
-        let astarte_type: AstarteType = expected_long_integer_value.try_into().unwrap();
-
-        if let AstarteType::LongInteger(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_string_into_astarte_device_sdk_type_success() {
-        let value: String = "test".to_owned();
-        let expected_string_value = AstarteData::String(value.clone());
-        let astarte_type: AstarteType = expected_string_value.try_into().unwrap();
-
-        if let AstarteType::String(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_binary_blob_into_astarte_device_sdk_type_success() {
-        let value: Vec<u8> = vec![10, 34];
-        let expected_binary_blob_value = AstarteData::BinaryBlob(value.clone());
-        let astarte_type: AstarteType = expected_binary_blob_value.try_into().unwrap();
-
-        if let AstarteType::BinaryBlob(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_date_time_into_astarte_device_sdk_type_success() {
-        let value: DateTime<Utc> = Utc::now();
-        let expected_date_time_value = AstarteData::DateTime(value.into());
-        let astarte_type: AstarteType = expected_date_time_value.try_into().unwrap();
-
-        if let AstarteType::DateTime(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_double_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<f64> = vec![15.5, 18.7];
-        use astarte_message_hub_proto::AstarteDoubleArray;
-        let expected_double_array_value = AstarteData::DoubleArray(AstarteDoubleArray {
-            values: value.clone(),
-        });
-        let astarte_type: AstarteType = expected_double_array_value.try_into().unwrap();
-
-        if let AstarteType::DoubleArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_integer_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<i32> = vec![15, 18];
-        use astarte_message_hub_proto::AstarteIntegerArray;
-        let expected_integer_array_value = AstarteData::IntegerArray(AstarteIntegerArray {
-            values: value.clone(),
-        });
-        let astarte_type: AstarteType = expected_integer_array_value.try_into().unwrap();
-
-        if let AstarteType::IntegerArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_boolean_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<bool> = vec![false, true];
-        use astarte_message_hub_proto::AstarteBooleanArray;
-        let expected_boolean_array_value = AstarteData::BooleanArray(AstarteBooleanArray {
-            values: value.clone(),
-        });
-        let astarte_type: AstarteType = expected_boolean_array_value.try_into().unwrap();
-
-        if let AstarteType::BooleanArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_long_integer_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<i64> = vec![1543, 18];
-        use astarte_message_hub_proto::AstarteLongIntegerArray;
-        let expected_long_integer_array_value =
-            AstarteData::LongIntegerArray(AstarteLongIntegerArray {
-                values: value.clone(),
-            });
-        let astarte_type: AstarteType = expected_long_integer_array_value.try_into().unwrap();
-
-        if let AstarteType::LongIntegerArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_string_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<String> = vec!["test1".to_owned(), "test2".to_owned()];
-        use astarte_message_hub_proto::AstarteStringArray;
-        let expected_string_array_value = AstarteData::StringArray(AstarteStringArray {
-            values: value.clone(),
-        });
-        let astarte_type: AstarteType = expected_string_array_value.try_into().unwrap();
-
-        if let AstarteType::StringArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_binary_blob_array_into_astarte_device_sdk_type_success() {
-        let value: Vec<Vec<u8>> = vec![vec![11, 201], vec![1, 241]];
-        use astarte_message_hub_proto::AstarteBinaryBlobArray;
-        let expected_binary_blob_array_value =
-            AstarteData::BinaryBlobArray(AstarteBinaryBlobArray {
-                values: value.clone(),
-            });
-        let astarte_type: AstarteType = expected_binary_blob_array_value.try_into().unwrap();
-
-        if let AstarteType::BinaryBlobArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
-        }
-    }
-
-    #[test]
-    fn proto_astarte_date_time_array_into_astarte_device_sdk_type_success() {
-        use astarte_message_hub_proto::AstarteDateTimeArray;
-        use pbjson_types::Timestamp;
-
-        let value: Vec<DateTime<Utc>> = vec![Utc::now(), Utc::now()];
-        let expected_date_time_array_value = AstarteData::DateTimeArray(AstarteDateTimeArray {
-            values: value
-                .clone()
-                .into_iter()
-                .map(|it| it.into())
-                .collect::<Vec<Timestamp>>(),
-        });
-        let astarte_type: AstarteType = expected_date_time_array_value.try_into().unwrap();
-
-        if let AstarteType::DateTimeArray(astarte_value) = astarte_type {
-            assert_eq!(value, astarte_value);
-        } else {
-            panic!();
+            assert_eq!(exp, astarte_type);
         }
     }
 
@@ -694,7 +479,10 @@ pub(crate) mod test {
         let interface_path = "test".to_string();
 
         let astarte_type: AstarteType = expected_data.try_into().unwrap();
-        let payload: ProtoPayload = ProtoPayload::DatastreamIndividual(astarte_type.into());
+        let payload: ProtoPayload =
+            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
+                data: Some(astarte_type.into()),
+            });
 
         let astarte_message = AstarteMessage {
             interface_name: interface_name.clone(),
@@ -757,13 +545,17 @@ pub(crate) mod test {
     fn get_astarte_data_from_payload(
         payload: ProtoPayload,
     ) -> Result<AstarteType, MessageHubProtoError> {
-        take_individual(payload)
+        let astarte_data = take_individual(payload)
             .expect("individual")
             .data
             .expect("data")
             .astarte_data
-            .expect("astarte_data")
-            .try_into()
+            .expect("astarte_data");
+
+        AstarteData {
+            astarte_data: Some(astarte_data),
+        }
+        .try_into()
     }
 
     #[test]
@@ -1115,7 +907,13 @@ pub(crate) mod test {
             let astarte_type: AstarteType = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
-                .and_then(|data| data.clone().try_into().ok())
+                .and_then(|data| {
+                    AstarteData {
+                        astarte_data: Some(data.clone()),
+                    }
+                    .try_into()
+                    .ok()
+                })
                 .unwrap();
 
             assert_eq!(v, astarte_type);
@@ -1152,7 +950,13 @@ pub(crate) mod test {
             let astarte_type: AstarteType = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
-                .and_then(|data| data.clone().try_into().ok())
+                .and_then(|data| {
+                    AstarteData {
+                        astarte_data: Some(data.clone()),
+                    }
+                    .try_into()
+                    .ok()
+                })
                 .unwrap();
 
             assert_eq!(v, astarte_type);
@@ -1165,7 +969,7 @@ pub(crate) mod test {
         let astarte_sdk_type_double = AstarteType::Double(expected_double_value);
 
         let payload: ProtoPayload =
-            ProtoPayload::DatastreamIndividual(AstarteDatastreamInidividual {
+            ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                 data: Some(astarte_sdk_type_double.into()),
             });
 
@@ -1174,7 +978,7 @@ pub(crate) mod test {
             .and_then(|data| data.astarte_data)
             .unwrap();
 
-        assert_eq!(AstarteData::Double(expected_double_value), double_value);
+        assert_eq!(ProtoData::Double(expected_double_value), double_value);
     }
 
     fn take_object(payload: ProtoPayload) -> Option<AstarteDatastreamObject> {
@@ -1184,7 +988,7 @@ pub(crate) mod test {
         }
     }
 
-    fn take_individual(payload: ProtoPayload) -> Option<AstarteDatastreamInidividual> {
+    fn take_individual(payload: ProtoPayload) -> Option<AstarteDatastreamIndividual> {
         match payload {
             ProtoPayload::DatastreamIndividual(i) => Some(i),
             _ => None,
@@ -1206,7 +1010,7 @@ pub(crate) mod test {
             .and_then(|data| data.astarte_data)
             .unwrap();
 
-        assert_eq!(AstarteData::Double(expected_data), double_data);
+        assert_eq!(ProtoData::Double(expected_data), double_data);
     }
 
     fn make_messagehub_property(
