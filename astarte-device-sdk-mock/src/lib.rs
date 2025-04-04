@@ -368,7 +368,7 @@ mod tests {
             Ok(DeviceEvent {
                 interface: Default::default(),
                 path: Default::default(),
-                data: astarte_device_sdk::Value::Unset,
+                data: astarte_device_sdk::Value::Property(None),
             })
         }
     }

@@ -120,7 +120,9 @@ pub struct AggregationError {
 }
 
 impl AggregationError {
-    pub(crate) fn new(
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn new(
         interface: impl Into<String>,
         path: impl Into<String>,
         exp: Aggregation,
@@ -163,7 +165,9 @@ impl InterfaceTypeError {
         }
     }
 
-    pub(crate) fn with_path(
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn with_path(
         name: impl Into<String>,
         path: impl Into<String>,
         exp: InterfaceTypeDef,

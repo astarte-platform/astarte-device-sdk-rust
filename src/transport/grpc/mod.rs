@@ -43,7 +43,7 @@ use sync_wrapper::SyncWrapper;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use self::convert::MessageHubProtoError;
+use self::convert::{try_from_individual, try_from_property, MessageHubProtoError};
 use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
@@ -56,7 +56,6 @@ use crate::error::{AggregationError, InterfaceTypeError};
 use crate::interface::{Aggregation, InterfaceTypeDef};
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
-use crate::Value;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
     interface::{
@@ -440,7 +439,8 @@ impl Receive for Grpc {
     async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError> {
         match self.next_message().await {
             Ok(Some(message)) => {
-                let event = message.try_into().map_err(RecvError::connection)?;
+                let event =
+                    ReceivedEvent::try_from(message).map_err(RecvError::grpc_connection_error)?;
 
                 Ok(Some(event))
             }
@@ -462,29 +462,27 @@ impl Receive for Grpc {
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError> {
-        let value: Value = payload.data.try_into().map_err(RecvError::connection)?;
-
-        match value {
-            Value::Individual(astarte_type) => {
-                trace!("received {}", astarte_type.display_type());
-
-                Ok(Some(astarte_type))
-            }
-
-            Value::Object(_hash_map) => {
-                let aggr_err = AggregationError::new(
-                    mapping.interface().interface_name().to_string(),
+        let ProtoPayload::PropertyIndividual(prop) = payload.data else {
+            return Err(TransportError::Recv(RecvError::InterfaceType(
+                InterfaceTypeError::with_path(
+                    mapping.interface().interface_name(),
                     mapping.path().to_string(),
-                    Aggregation::Individual,
-                    Aggregation::Object,
-                );
-                Err(RecvError::Aggregation(aggr_err).into())
-            }
-            Value::Unset => {
-                debug!("unset received");
-                Ok(None)
-            }
-        }
+                    InterfaceTypeDef::Properties,
+                    InterfaceTypeDef::Datastream,
+                ),
+            )));
+        };
+
+        let data = try_from_property(prop).map_err(|e| {
+            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(e))
+        })?;
+
+        trace!(
+            "deserialized {}",
+            data.as_ref().map(|p| p.display_type()).unwrap_or("unset")
+        );
+
+        Ok(data)
     }
 
     fn deserialize_individual(
@@ -492,40 +490,24 @@ impl Receive for Grpc {
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
-        let value: Value = payload.data.try_into().map_err(RecvError::connection)?;
+        let ProtoPayload::DatastreamIndividual(individual) = payload.data else {
+            return Err(TransportError::Recv(RecvError::Aggregation(
+                AggregationError::new(
+                    mapping.interface().interface_name().to_string(),
+                    mapping.path().to_string(),
+                    Aggregation::Object,
+                    Aggregation::Individual,
+                ),
+            )));
+        };
 
-        match value {
-            Value::Individual(astarte_type) => {
-                trace!("received {}", astarte_type.display_type());
+        let (data, timestamp) = try_from_individual(individual).map_err(|err| {
+            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(err))
+        })?;
 
-                // FIXME
-                Ok((astarte_type, None))
-            }
-            Value::Object(_hash_map) => {
-                debug!("object received");
+        trace!("deserialized {}", data.display_type());
 
-                Err(TransportError::Recv(RecvError::Aggregation(
-                    AggregationError::new(
-                        mapping.interface().interface_name(),
-                        mapping.path().to_string(),
-                        Aggregation::Individual,
-                        Aggregation::Object,
-                    ),
-                )))
-            }
-            Value::Unset => {
-                debug!("unset received");
-
-                Err(TransportError::Recv(RecvError::InterfaceType(
-                    InterfaceTypeError::with_path(
-                        mapping.interface().interface_name(),
-                        mapping.path().to_string(),
-                        InterfaceTypeDef::Datastream,
-                        InterfaceTypeDef::Properties,
-                    ),
-                )))
-            }
-        }
+        Ok((data, timestamp))
     }
 
     fn deserialize_object(
@@ -545,7 +527,9 @@ impl Receive for Grpc {
             )));
         };
 
-        let data = AstarteObject::try_from(data).map_err(RecvError::connection)?;
+        let data = AstarteObject::try_from(data).map_err(|err| {
+            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(err))
+        })?;
 
         trace!("object received");
 
@@ -697,10 +681,10 @@ mod test {
     use std::str::FromStr;
 
     use astarte_message_hub_proto::tonic::Request;
-    use astarte_message_hub_proto::AstarteMessage;
     use astarte_message_hub_proto::{
         pbjson_types, tonic, AstarteDatastreamObject, AstartePropertyIndividual,
     };
+    use astarte_message_hub_proto::{AstarteDatastreamIndividual, AstarteMessage};
     use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
     use chrono::Utc;
     use itertools::Itertools;
@@ -709,7 +693,7 @@ mod test {
     use crate::retention::memory::VolatileStore;
     use crate::test::{DEVICE_OBJECT, E2E_SERVER_DATASTREAM};
     use crate::transport::test::mock_validate_object;
-    use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY, DeviceEvent, Value};
+    use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY};
 
     use super::*;
 
@@ -847,6 +831,45 @@ mod test {
         });
 
         streaming_server_response
+    }
+
+    fn check_individual_message(
+        msg: &AstarteMessage,
+        interface: &str,
+        path: &str,
+        value: AstarteType,
+    ) -> bool {
+        let Some(astarte_message_hub_proto::astarte_message::Payload::DatastreamIndividual(
+            AstarteDatastreamIndividual {
+                data: Some(data), ..
+            },
+        )) = &msg.payload
+        else {
+            return false;
+        };
+
+        msg.interface_name == interface
+            && msg.path == path
+            && AstarteType::try_from(data.clone()).is_ok_and(|data| data == value)
+    }
+
+    fn check_object_message(
+        msg: &AstarteMessage,
+        interface: &str,
+        path: &str,
+        value: AstarteObject,
+    ) -> bool {
+        let Some(astarte_message_hub_proto::astarte_message::Payload::DatastreamObject(data)) =
+            &msg.payload
+        else {
+            return false;
+        };
+
+        let Ok(data) = AstarteObject::try_from(data.clone()) else {
+            return false;
+        };
+
+        msg.interface_name == interface && msg.path == path && data == value
     }
 
     #[tokio::test]
@@ -1070,12 +1093,12 @@ mod test {
             .times(1)
             .in_sequence(&mut seq)
             .with(predicate::function(move |r: &Request<AstarteMessage>| {
-                DeviceEvent::try_from(r.get_ref().clone()).is_ok_and(|e| {
-                    e.interface == interface_name_cl
-                        && e.path == PATH
-                        && matches!(e.data, Value::Individual(AstarteType::String(v))
-                            if v == STRING_VALUE)
-                })
+                check_individual_message(
+                    r.get_ref(),
+                    &interface_name_cl,
+                    PATH,
+                    AstarteType::String(STRING_VALUE.to_string()),
+                )
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
@@ -1132,12 +1155,12 @@ mod test {
             .times(1)
             .in_sequence(&mut seq)
             .with(predicate::function(move |r: &Request<AstarteMessage>| {
-                DeviceEvent::try_from(r.get_ref().clone()).is_ok_and(|e| {
-                    e.interface == interface_name_cl
-                        && e.path == PATH
-                        && matches!(e.data, Value::Object(o)
-                            if MockDeviceObject::mock_object() == o)
-                })
+                check_object_message(
+                    r.get_ref(),
+                    &interface_name_cl,
+                    PATH,
+                    MockDeviceObject::mock_object(),
+                )
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
