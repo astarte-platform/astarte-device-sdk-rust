@@ -32,7 +32,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-use crate::error::AggregateError;
+use crate::error::AggregationError;
 use crate::store::PropertyMapping;
 use crate::transport::TransportError;
 use crate::{
@@ -929,8 +929,8 @@ impl<S, C> DeviceReceiver<S, C> {
         C: Receive + Sync,
     {
         let Some(object) = interface.as_object_ref() else {
-            let aggr_err = AggregateError::for_interface(
-                interface.interface_name(),
+            let aggr_err = AggregationError::new(
+                interface.interface_name().to_string(),
                 path.to_string(),
                 InterfaceAggregation::Object,
                 InterfaceAggregation::Individual,

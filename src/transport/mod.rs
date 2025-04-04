@@ -216,7 +216,7 @@ pub trait Disconnect {
 #[cfg(test)]
 mod test {
     use crate::aggregate::AstarteObject;
-    use crate::error::AggregateError;
+    use crate::error::AggregationError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
         types::{AstarteType, TypeError},
@@ -231,8 +231,8 @@ mod test {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<ValidatedObject, crate::Error> {
         let object = interface.as_object_ref().ok_or_else(|| {
-            let aggr_err = AggregateError::for_interface(
-                interface.interface_name(),
+            let aggr_err = AggregationError::new(
+                interface.interface_name().to_string(),
                 path.to_string(),
                 crate::interface::Aggregation::Object,
                 interface.aggregation(),
@@ -245,7 +245,6 @@ mod test {
 
     pub(crate) fn mock_validate_individual<'a, D>(
         mapping_ref: MappingRef<'a, &'a Interface>,
-        path: &'a MappingPath<'a>,
         data: D,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<ValidatedIndividual, crate::Error>
@@ -254,7 +253,6 @@ mod test {
     {
         let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
 
-        ValidatedIndividual::validate(mapping_ref, path, individual, timestamp)
-            .map_err(|uve| uve.into())
+        ValidatedIndividual::validate(mapping_ref, individual, timestamp).map_err(|uve| uve.into())
     }
 }

@@ -26,7 +26,10 @@ use tokio::{
 };
 use tracing::{debug, error, trace};
 
-use crate::{aggregate::AstarteObject, interface::mapping::path::MappingError};
+use crate::{
+    aggregate::AstarteObject, error::InterfaceTypeError, interface::mapping::path::MappingError,
+    validate::UserValidationError,
+};
 use crate::{
     connection::ClientMessage,
     event::DeviceEvent,
@@ -43,7 +46,7 @@ use crate::{
     Error, Interface,
 };
 use crate::{
-    error::{AggregateError, DynError},
+    error::{AggregationError, DynError},
     store::PropertyMapping,
 };
 
@@ -79,7 +82,7 @@ pub enum RecvError {
 
     /// Invalid aggregation between the interface and the data.
     #[error(transparent)]
-    Aggregation(#[from] AggregateError),
+    Aggregation(#[from] AggregationError),
 
     /// Error when the Device is disconnected from Astarte or client.
     ///
@@ -253,7 +256,7 @@ pub trait ClientDisconnect {
 pub struct DeviceClient<S> {
     pub(crate) interfaces: Arc<RwLock<Interfaces>>,
     // We use flume instead of the mpsc channel for the DeviceEvents for the connection to che
-    // client since we need the Receiver end to be clonable. Flume provides an async mpmc
+    // client since we need the Receiver end to be cloneable. Flume provides an async mpmc
     // channel/queue that fits our needs and doesn't suffer from the "slow receiver" problem.
     // Since it doesn't block the sender till all the receivers have read the msg. Unlike the
     // Tokio broadcast channel (another mpmc channel implementation).
@@ -365,7 +368,7 @@ impl<S> DeviceClient<S> {
             return Ok(());
         }
 
-        let validated = ValidatedIndividual::validate(mapping, path, individual, timestamp)?;
+        let validated = ValidatedIndividual::validate(mapping, individual, timestamp)?;
 
         let msg = if mapping.interface().is_property() {
             ClientMessage::Property {
@@ -394,8 +397,8 @@ impl<S> DeviceClient<S> {
             })?;
 
         let interface = interface.as_object_ref().ok_or_else(|| {
-            let aggr_err = AggregateError::for_interface(
-                interface_name,
+            let aggr_err = AggregationError::new(
+                interface_name.to_string(),
                 path.to_string(),
                 InterfaceAggregation::Object,
                 interface.aggregation(),
@@ -428,12 +431,15 @@ impl<S> DeviceClient<S> {
                 mapping: path.to_string(),
             })?;
 
-        let mapping = mapping.as_prop().ok_or_else(|| Error::InterfaceType {
-            exp: InterfaceTypeDef::Properties,
-            got: interface.interface_type(),
+        let mapping = mapping.as_prop().ok_or_else(|| {
+            Error::Validation(UserValidationError::InterfaceType(InterfaceTypeError::new(
+                interface.interface_name(),
+                InterfaceTypeDef::Properties,
+                interface.interface_type(),
+            )))
         })?;
 
-        let validated = ValidatedUnset::validate(mapping, path)?;
+        let validated = ValidatedUnset::validate(mapping)?;
 
         debug!("unsetting property {interface_name}{path}");
 
