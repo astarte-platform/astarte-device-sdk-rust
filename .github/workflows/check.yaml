@@ -29,72 +29,54 @@ env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
 jobs:
   fmt:
     runs-on: ubuntu-24.04
-    name: stable / fmt
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
       - name: Check formatting
         run: cargo fmt --check --all
   clippy:
     runs-on: ubuntu-24.04
-    name: ${{ matrix.toolchain }} / clippy
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install ${{ matrix.toolchain }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          components: clippy
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+          sudo apt-get update
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo clippy
-        run: cargo clippy --locked --all-targets --all-features --workspace -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features --workspace
   doc:
     runs-on: ubuntu-24.04
-    name: nightly / doc
-    env:
-      RUSTDOCFLAGS: -Dwarnings
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install nightly
-        uses: dtolnay/rust-toolchain@nightly
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+          sudo apt-get update
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+        with:
+          toolchain: nightly
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
       - run: cargo docs-rs --locked
 
-  hack:
+  features:
     runs-on: ubuntu-24.04
-    name: ubuntu / stable / features
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+          sudo apt-get update
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo hack test
@@ -103,61 +85,53 @@ jobs:
         run: cargo hack --each-feature test --locked
   minimal-versions:
     runs-on: ubuntu-24.04
-    name: ubuntu / stable / minimal-versions
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install nightly for -Zminimal-versions
-        uses: dtolnay/rust-toolchain@nightly
-      - name: Install cargo hack
-        uses: taiki-e/install-action@cargo-hack
-      - name: Install cargo minimal-versions
-        uses: taiki-e/install-action@cargo-minimal-versions
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: rustup default stable
-        run: rustup default stable
+          sudo apt-get update
+          sudo apt-get -y install libsqlite3-dev
+      - name: install rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+      - name: install rust nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+        with:
+          toolchain: nightly
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: taiki-e/install-action@v2.49.43
+        with:
+          tool: cargo-hack,cargo-minimal-versions
+      - run: rustup default stable
       - name: Check minimal versions
         run: cargo minimal-versions check --workspace --ignore-private --detach-path-deps=skip-exact --direct
-        env:
-          RUSTFLAGS: -D warnings
   msrv:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
         msrv: [1.78]
-    name: ubuntu / ${{ matrix.msrv }}
+    name: msrv / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install ${{ matrix.msrv }}
-        uses: dtolnay/rust-toolchain@master
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
         with:
           toolchain: ${{ matrix.msrv }}
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Install cargo hack
-        uses: taiki-e/install-action@cargo-hack
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo +${{ matrix.msrv }} hack --no-dev-deps check --all-features --exclude astarte-device-sdk-mock --exclude e2e-test
+        run: cargo +${{ matrix.msrv }} hack --no-dev-deps check --all-features -p astarte-device-sdk
   # Run semver-check on release branch push or PR
   semver:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
-    name: stable / semver
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Check semver
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Check library API semver breakages
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           release-type: patch
@@ -170,9 +144,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.11.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - run: ./scripts/check-for-publish.sh

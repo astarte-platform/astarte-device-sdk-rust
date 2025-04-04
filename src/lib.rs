@@ -108,6 +108,7 @@ mod test {
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
+    #[cfg(feature = "message-hub")]
     pub(crate) const E2E_SERVER_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerAggregate.json"
     );
