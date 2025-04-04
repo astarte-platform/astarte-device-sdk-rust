@@ -26,7 +26,7 @@ use crate::{
     interface::mapping::path::MappingError,
     retention::{RetentionId, StoredRetentionExt},
     state::SharedState,
-    transport::{Connection, Publish},
+    transport::{mqtt::error::MqttError, Connection, Publish},
     Timestamp,
 };
 use crate::{error::DynError, transport::Disconnect};
@@ -73,7 +73,22 @@ pub enum RecvError {
         /// Path of the missing mapping.
         mapping: String,
     },
-
+    /// Received a message without timestamp, on an interface with `explicit_timestamp`
+    #[error("message received with missing explicit timestamp on {interface_name}{path}")]
+    MissingTimestamp {
+        /// The interface we received the data on.
+        interface_name: String,
+        /// The mapping path we received on.
+        path: String,
+    },
+    /// Received unset on property without `allow_unset`
+    #[error("unset received on property {interface_name}{path} without allow_unset")]
+    Unset {
+        /// The interface we received the data on.
+        interface_name: String,
+        /// The mapping path we received on.
+        path: String,
+    },
     /// Invalid aggregation between the interface and the data.
     #[error("invalid aggregation between interface and data")]
     Aggregation(#[from] AggregationError),
@@ -87,9 +102,15 @@ pub enum RecvError {
     Disconnected,
 }
 
+// Safe conversion for connection error
 impl RecvError {
-    pub(crate) fn connection(err: impl Into<DynError>) -> Self {
-        Self::Connection(err.into())
+    pub(crate) fn mqtt_connection_error(value: MqttError) -> Self {
+        RecvError::Connection(value.into())
+    }
+
+    #[cfg(feature = "message-hub")]
+    pub(crate) fn grpc_connection_error(value: crate::transport::grpc::GrpcError) -> Self {
+        RecvError::Connection(value.into())
     }
 }
 

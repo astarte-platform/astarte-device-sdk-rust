@@ -135,9 +135,9 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         loop {
             match client.recv().await {
-                Ok(data) => {
-                    if let Value::Individual(var) = data.data {
-                        let mut iter = data.path.splitn(3, '/').skip(1);
+                Ok(event) => {
+                    if let Value::Individual { data, timestamp: _ } = event.data {
+                        let mut iter = event.path.splitn(3, '/').skip(1);
                         let sensor_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
@@ -148,11 +148,11 @@ async fn main() -> eyre::Result<()> {
                                 println!(
                                     "Sensor number {} has been {}",
                                     sensor_id,
-                                    if var == true { "ENABLED" } else { "DISABLED" }
+                                    if data == true { "ENABLED" } else { "DISABLED" }
                                 );
                             }
                             Some("samplingPeriod") => {
-                                let value: i32 = var.try_into()?;
+                                let value: i32 = data.try_into()?;
                                 println!("Sampling period for sensor {} is {}", sensor_id, value);
                             }
                             _ => {}

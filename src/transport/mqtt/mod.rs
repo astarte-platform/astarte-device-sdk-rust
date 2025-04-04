@@ -692,7 +692,7 @@ where
             debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
             let publish_topic = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
+                .map_err(|err| RecvError::mqtt_connection_error(MqttError::Topic(err)))?;
 
             match publish_topic {
                 ParsedTopic::PurgeProperties => {
@@ -721,8 +721,9 @@ where
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError> {
-        payload::deserialize_property(mapping, &payload)
-            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
+        payload::deserialize_property(mapping, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
     }
 
     fn deserialize_individual(
@@ -730,8 +731,9 @@ where
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
-        payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
+        payload::deserialize_individual(mapping, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
     }
 
     fn deserialize_object(
@@ -740,8 +742,9 @@ where
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
-        payload::deserialize_object(object, path, &payload)
-            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
+        payload::deserialize_object(object, path, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
     }
 }
 
