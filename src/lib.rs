@@ -119,6 +119,19 @@ mod test {
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
     );
 
+    pub(crate) const DEVICE_PROPERTIES_NO_UNSET: &str = r#"{
+    "interface_name": "org.astarte-platform.rust.examples.individual-properties.DevicePropertyNoUnset",
+    "version_major": 0,
+    "version_minor": 1,
+    "type": "properties",
+    "ownership": "device",
+    "mappings": [{
+        "endpoint": "/%{sensor_id}/enable",
+        "type": "boolean",
+        "allow_unset": false
+    }]
+}"#;
+
     pub(crate) async fn mock_astarte_device<I>(
         client: AsyncClient,
         eventloop: MqttEventLoop,
