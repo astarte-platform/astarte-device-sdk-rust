@@ -525,8 +525,6 @@ impl TryFrom<BsonConverter> for AstarteType {
 mod test {
     use chrono::{DateTime, TimeZone, Utc};
 
-    use crate::Value;
-
     use super::*;
 
     #[test]
@@ -714,19 +712,6 @@ mod test {
         let value = AstarteType::Integer(5);
 
         f64::try_from(value).unwrap_err();
-    }
-
-    #[test]
-    fn test_conversion_from_astarte_integer_to_i64() {
-        let astarte_type_double = AstarteType::Integer(5);
-        let astarte_ind = Value::Individual(astarte_type_double);
-
-        if let Value::Individual(var) = astarte_ind {
-            let value: i64 = var.try_into().unwrap();
-            assert_eq!(5, value);
-        } else {
-            panic!();
-        }
     }
 
     #[test]

@@ -81,7 +81,7 @@ where
         ensure!(interface == data_interface);
         ensure!(path == data_path);
 
-        let value = data
+        let (value, _) = data
             .as_individual()
             .ok_or_eyre("received invalid data type")?;
 

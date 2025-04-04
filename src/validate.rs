@@ -104,11 +104,14 @@ impl ValidatedIndividual {
 
         let interface_type = interface.interface_type();
         if interface_type != InterfaceTypeDef::Datastream {
-            return Err(UserValidationError::InterfaceType(InterfaceTypeError::new(
-                interface.interface_name(),
-                InterfaceTypeDef::Datastream,
-                interface_type,
-            )));
+            return Err(UserValidationError::InterfaceType(
+                InterfaceTypeError::with_path(
+                    interface.interface_name(),
+                    path.to_string(),
+                    InterfaceTypeDef::Datastream,
+                    interface_type,
+                ),
+            ));
         }
 
         let aggregation = interface.aggregation();
@@ -246,11 +249,14 @@ impl ValidatedProperty {
 
         let interface_type = interface.interface_type();
         if interface_type != InterfaceTypeDef::Properties {
-            return Err(UserValidationError::InterfaceType(InterfaceTypeError::new(
-                interface.interface_name(),
-                InterfaceTypeDef::Properties,
-                interface_type,
-            )));
+            return Err(UserValidationError::InterfaceType(
+                InterfaceTypeError::with_path(
+                    interface.interface_name(),
+                    path.to_string(),
+                    InterfaceTypeDef::Properties,
+                    interface_type,
+                ),
+            ));
         }
 
         let aggregation = interface.aggregation();

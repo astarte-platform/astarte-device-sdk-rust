@@ -64,7 +64,7 @@ where
     ensure!(interface == interface_name);
     ensure!(path == data_path);
 
-    let obj = data
+    let (obj, _) = data
         .as_object()
         .ok_or_eyre("received value that is not an object")?;
 

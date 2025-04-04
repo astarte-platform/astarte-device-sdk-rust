@@ -89,10 +89,10 @@ where
         ensure!(path == data_path);
 
         let value = data
-            .as_individual()
+            .as_property()
             .ok_or_eyre("received invalid data type")?;
 
-        ensure!(*value == exp);
+        ensure!(*value == Some(exp.clone()));
 
         let prop = client
             .property(&data_interface, &data_path)
@@ -112,7 +112,7 @@ where
         ensure!(interface == data_interface);
         ensure!(path == data_path);
 
-        let Value::Unset = data else {
+        let Value::Property(None) = data else {
             bail!("prop was not unseted")
         };
 

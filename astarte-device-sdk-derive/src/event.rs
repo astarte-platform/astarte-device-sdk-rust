@@ -41,6 +41,7 @@ pub(crate) struct FromEventAttrs {
     rename_rule: Option<RenameRule>,
     // Use an option, so it can be merged if declared multiple times.
     aggregation: Option<Aggregation>,
+    interface_type: Option<InterfaceType>,
 }
 
 impl FromEventAttrs {
@@ -49,12 +50,14 @@ impl FromEventAttrs {
         let path = other.path.or(self.path);
         let rename_rule = other.rename_rule.or(self.rename_rule);
         let aggregation = other.aggregation.or(self.aggregation);
+        let interface_type = other.interface_type.or(self.interface_type);
 
         Self {
             interface,
             path,
             rename_rule,
             aggregation,
+            interface_type,
         }
     }
 }
@@ -88,6 +91,11 @@ impl Parse for FromEventAttrs {
             .map(Aggregation::try_from)
             .transpose()?;
 
+        let interface_type = attrs
+            .remove("interface_type")
+            .map(InterfaceType::try_from)
+            .transpose()?;
+
         if let Some((_, expr)) = attrs.iter().next() {
             return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
         }
@@ -97,14 +105,15 @@ impl Parse for FromEventAttrs {
             interface,
             path,
             aggregation,
+            interface_type,
         })
     }
 }
 
 #[derive(Debug, Default)]
 enum Aggregation {
-    Individual,
     #[default]
+    Individual,
     Object,
 }
 
@@ -123,13 +132,35 @@ impl TryFrom<Expr> for Aggregation {
     }
 }
 
+#[derive(Debug, Default)]
+enum InterfaceType {
+    #[default]
+    Datastream,
+    Properties,
+}
+
+impl TryFrom<Expr> for InterfaceType {
+    type Error = syn::Error;
+
+    fn try_from(value: Expr) -> Result<Self, Self::Error> {
+        parse_str_lit(&value).and_then(|val| match val.as_str() {
+            "properties" => Ok(InterfaceType::Properties),
+            "object" => Ok(InterfaceType::Datastream),
+            _ => Err(syn::Error::new(
+                value.span(),
+                "invalid interface type, should be: property or datastream",
+            )),
+        })
+    }
+}
+
 /// Parses the derive for the FromEvent trait
 pub(crate) struct FromEventDerive {
     interface: String,
     name: Ident,
     rename_rule: Option<RenameRule>,
     generics: Generics,
-    aggregation: FromEventAggregation,
+    inner: FromEventAggregation,
 }
 
 impl FromEventDerive {
@@ -145,9 +176,10 @@ impl FromEventDerive {
     }
 
     pub(crate) fn quote(&self) -> proc_macro2::TokenStream {
-        match &self.aggregation {
+        match &self.inner {
             FromEventAggregation::Individual { variants } => self.quote_indv(variants),
             FromEventAggregation::Object { fields, path } => self.quote_obj(path, fields),
+            FromEventAggregation::Property { variants } => self.quote_property(variants),
         }
     }
 
@@ -178,6 +210,8 @@ impl FromEventDerive {
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
+                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
+                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
 
@@ -196,11 +230,24 @@ impl FromEventDerive {
                         });
                     }
 
-                    let Value::Object(mut object) = event.data else {
-                        return Err(FromEventError::Individual {
-                            interface,
-                            base_path,
-                        });
+                    let mut object = match event.data {
+                        Value::Object{data, ..} => data,
+                        Value::Individual{..} => {
+                            return Err(FromEventError::Aggregation(AggregationError::new(
+                                interface,
+                                event.path,
+                                Aggregation::Object,
+                                Aggregation::Individual,
+                            )));
+                        },
+                        Value::Property(_) => {
+                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
+                                interface,
+                                event.path,
+                                InterfaceTypeDef::Datastream,
+                                InterfaceTypeDef::Properties,
+                            )));
+                        },
                     };
 
                     #(#fields_val)*
@@ -227,50 +274,149 @@ impl FromEventDerive {
             }
         });
 
+        for variant in variants {
+            if variant.attrs.allow_unset {
+                return syn::Error::new(
+                    variant.name.span(),
+                    r#"the attribute allow_unset is only usable with `interface_type = "property"` on the container"#,
+                )
+                .to_compile_error();
+            }
+        }
+
+        let variants = variants.iter().enumerate().map(|(i, v)| {
+            let variant = &v.name;
+
+            quote! {
+                #i => {
+                    let individual = match event.data {
+                        Value::Individual{data, ..} => data,
+                        Value::Object{..} => {
+                            return Err(FromEventError::Aggregation(AggregationError::new(
+                                event.interface,
+                                event.path,
+                                Aggregation::Individual,
+                                Aggregation::Object,
+                            )));
+                        },
+                        Value::Property(_) => {
+                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
+                                event.interface,
+                                event.path,
+                                InterfaceTypeDef::Datastream,
+                                InterfaceTypeDef::Properties,
+                            )));
+                        },
+                    };
+
+
+                    individual.try_into().map(#name::#variant).map_err(FromEventError::from)
+                }
+            }
+        });
+
+        quote! {
+            impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
+                type Err = astarte_device_sdk::event::FromEventError;
+
+                fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
+                    use astarte_device_sdk::Value;
+                    use astarte_device_sdk::AstarteType;
+                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
+                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
+                    use astarte_device_sdk::event::FromEventError;
+                    use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
+
+                    const INTERFACE: &str = #interface;
+
+                    if event.interface != INTERFACE {
+                        return Err(FromEventError::Interface(event.interface));
+                    }
+
+                    let endpoints = [ #(#endpoints),* ];
+
+                    let position = endpoints.iter()
+                        .position(|e| e.eq_mapping(&event.path))
+                        .ok_or_else(|| FromEventError::Path {
+                            interface: INTERFACE,
+                            base_path: event.path.clone(),
+                        })?;
+
+                    match position {
+                        #(#variants)*
+                        _ => unreachable!("BUG: endpoint found, but outside the range of the variants"),
+                    }
+                }
+            }
+        }
+    }
+
+    fn quote_property(&self, variants: &[IndividualMapping]) -> proc_macro2::TokenStream {
+        let (impl_generics, ty_generics, where_clause) = &self.generics.split_for_impl();
+
+        let name = &self.name;
+        let interface = self.interface.as_str();
+
+        // Use the same order between endpoints and variants, so we can find the correct endpoint
+        // position and then match the index with the corresponding variant.
+        let endpoints = variants.iter().map(|v| {
+            let endpoint = v.attrs.endpoint.as_str();
+
+            quote! {
+                Endpoint::<&str>::try_from(#endpoint)?
+            }
+        });
+
         let variants = variants.iter().enumerate().map(|(i, v)| {
             let variant = &v.name;
 
             if v.attrs.allow_unset {
                 quote! {
                     #i => {
-                        let individual = match event.data {
-                            Value::Individual(individual) => individual,
-                            Value::Unset => {
-                                return Ok(#name::#variant(None));
+                        match event.data {
+                            Value::Individual{..} | Value::Object{..} => {
+                                return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
+                                    event.interface,
+                                    event.path,
+                                    InterfaceTypeDef::Properties,
+                                    InterfaceTypeDef::Datastream,
+                                )));
                             },
-                            Value::Object(_) => {
-                                return Err(FromEventError::Object {
-                                    interface: INTERFACE,
-                                    endpoint: event.path,
-                                });
-                            }
-                        };
-
-                        individual.try_into()
-                            .map(|value| #name::#variant(Some(value)))
-                            .map_err(FromEventError::from)
+                            Value::Property(Some(prop)) => {
+                                prop.try_into()
+                                    .map(|value| #name::#variant(Some(value)))
+                                    .map_err(FromEventError::from)
+                            },
+                            Value::Property(None) => {
+                                Ok(#name::#variant(None))
+                            },
+                        }
                     }
                 }
             } else {
                 quote! {
                     #i => {
-                        let individual = match event.data {
-                            Value::Individual(individual) => individual,
-                            Value::Unset => {
+                        match event.data {
+                            Value::Individual{..} | Value::Object{..} => {
+                                return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
+                                    event.interface,
+                                    event.path,
+                                    InterfaceTypeDef::Properties,
+                                    InterfaceTypeDef::Datastream,
+                                )));
+                            },
+                            Value::Property(Some(prop)) => {
+                                prop.try_into()
+                                    .map(|value| #name::#variant(value))
+                                    .map_err(FromEventError::from)
+                            },
+                            Value::Property(None) => {
                                 return Err(FromEventError::Unset {
                                     interface: INTERFACE,
                                     endpoint: event.path,
                                 });
                             },
-                            Value::Object(_) => {
-                                return Err(FromEventError::Object {
-                                    interface: INTERFACE,
-                                    endpoint: event.path,
-                                });
-                            }
-                        };
-
-                        individual.try_into().map(#name::#variant).map_err(FromEventError::from)
+                        }
                     }
                 }
             }
@@ -283,6 +429,8 @@ impl FromEventDerive {
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
                     use astarte_device_sdk::AstarteType;
+                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
+                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
 
@@ -337,13 +485,15 @@ impl Parse for FromEventDerive {
             )
         })?;
 
-        let aggregation = match attrs.aggregation.unwrap_or_default() {
-            Aggregation::Individual => {
+        let aggregation = attrs.aggregation.unwrap_or_default();
+        let interface_type = attrs.interface_type.unwrap_or_default();
+        let inner = match (aggregation, interface_type) {
+            (Aggregation::Individual, InterfaceType::Datastream) => {
                 let variants = FromEventAggregation::parse_enum_variants(&ast)?;
 
                 FromEventAggregation::Individual { variants }
             }
-            Aggregation::Object => {
+            (Aggregation::Object, InterfaceType::Datastream) => {
                 let path = attrs.path.ok_or_else(|| {
                     syn::Error::new(
                         ast.span(),
@@ -355,6 +505,17 @@ impl Parse for FromEventDerive {
 
                 FromEventAggregation::Object { fields, path }
             }
+            (Aggregation::Individual, InterfaceType::Properties) => {
+                let variants = FromEventAggregation::parse_enum_variants(&ast)?;
+
+                FromEventAggregation::Property { variants }
+            }
+            (Aggregation::Object, InterfaceType::Properties) => {
+                return Err(syn::Error::new(
+                    ast.span(),
+                    "object properties are not supported",
+                ));
+            }
         };
 
         let generics = Self::add_trait_bound(ast.generics);
@@ -364,7 +525,7 @@ impl Parse for FromEventDerive {
             rename_rule: attrs.rename_rule,
             name: ast.ident,
             generics,
-            aggregation,
+            inner,
         })
     }
 }
@@ -372,6 +533,7 @@ impl Parse for FromEventDerive {
 enum FromEventAggregation {
     Individual { variants: Vec<IndividualMapping> },
     Object { fields: Vec<Ident>, path: String },
+    Property { variants: Vec<IndividualMapping> },
 }
 
 impl FromEventAggregation {
@@ -443,7 +605,7 @@ struct MappingAttr {
     endpoint: String,
     /// Allow [`Option`]al values for properties.
     ///
-    /// Defaults to false as in the interfaces definition.
+    /// Defaults to false as in the interfaces definition. Only available with `interface_type = "properties"`
     allow_unset: bool,
 }
 

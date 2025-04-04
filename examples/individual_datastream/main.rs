@@ -20,7 +20,8 @@
 
 use std::time::{Duration, SystemTime};
 
-use astarte_device_sdk::AstarteType;
+use astarte_device_sdk::{AstarteType, Value};
+use chrono::Utc;
 use eyre::OptionExt;
 use serde::Deserialize;
 
@@ -113,9 +114,10 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         loop {
             match client_cl.recv().await {
-                Ok(data) => {
-                    if let astarte_device_sdk::Value::Individual(var) = data.data {
-                        let mut iter = data.path.splitn(3, '/').skip(1);
+                Ok(event) => {
+                    if let Value::Individual{data, timestamp: _ } = event.data {
+                        let mut iter = event.path.splitn(3, '/').skip(1);
+
                         let led_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
@@ -123,14 +125,12 @@ async fn main() -> eyre::Result<()> {
 
                         match iter.next() {
                             Some("enable") => {
-                                println!(
-                            "Received new enable datastream for LED number {}. LED status is now {}",
-                            led_id,
-                            if var == true { "ON" } else { "OFF" }
-                        );
+                                 let status = if data == true { "ON" } else { "OFF" };
+
+                                println!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
                             }
                             Some("intensity") => {
-                                let value: f64 = var.try_into()?;
+                                let value: f64 = data.try_into()?;
                                 println!(
                             "Received new intensity datastream for LED number {}. LED intensity is now {}",
                             led_id, value
