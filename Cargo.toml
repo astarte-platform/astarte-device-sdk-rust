@@ -136,6 +136,7 @@ astarte-device-sdk = { path = "./", version = "=0.9.6" }
 astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
+async-channel = "2.0.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
 bson = "2.7.0"
@@ -170,7 +171,6 @@ rustls-webpki = { version = "0.102.8", default-features = false }
 serde = "1.0.184"
 serde_json = "1.0.85"
 syn = "2.0.87"
-async-channel = "2.0.0"
 sync_wrapper = "1.0.0"
 tempfile = "3.6.0"
 thiserror = "2.0.8"
@@ -194,4 +194,9 @@ required-features = ["message-hub", "derive"]
 [[example]]
 name = "object_datastream"
 path = "examples/object_datastream/main.rs"
+required-features = ["derive"]
+
+[[example]]
+name = "retention"
+path = "examples/retention/main.rs"
 required-features = ["derive"]
