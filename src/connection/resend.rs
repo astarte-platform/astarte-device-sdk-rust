@@ -114,7 +114,9 @@ where
             resend.abort();
 
             match resend.await {
-                Ok(()) => todo!(),
+                Ok(()) => {
+                    trace!("resend task joined")
+                }
                 Err(err) if err.is_cancelled() => {
                     debug!("resend task was cancelled");
                 }
