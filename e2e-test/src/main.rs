@@ -41,6 +41,7 @@ pub(crate) mod cli;
 pub(crate) mod data;
 pub(crate) mod device;
 pub(crate) mod server;
+pub(crate) mod tls;
 pub(crate) mod utils;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
@@ -60,7 +61,9 @@ async fn main() -> eyre::Result<()> {
     let config = match cli.command {
         Command::Run(run) => Config::new(cli.url, run),
         Command::Healthy { wait: true } => {
-            let client = reqwest::Client::builder().build()?;
+            let client = reqwest::Client::builder()
+                .use_preconfigured_tls(crate::tls::client_config())
+                .build()?;
 
             retry(20, || async {
                 ApiClient::cluster_healthy(&client, &cli.url.api_url()?).await
@@ -72,7 +75,9 @@ async fn main() -> eyre::Result<()> {
             return Ok(());
         }
         Command::Healthy { wait: false } => {
-            let client = reqwest::Client::builder().build()?;
+            let client = reqwest::Client::builder()
+                .use_preconfigured_tls(crate::tls::client_config())
+                .build()?;
 
             ApiClient::cluster_healthy(&client, &cli.url.api_url()?).await?;
 
