@@ -42,12 +42,26 @@ where
     where
         C: Receive + Sync,
     {
+        // Solves https://github.com/rust-lang/rust/issues/110486
+        self.handle_event_inner(interface, path, payload).await
+    }
+
+    async fn handle_event_inner(
+        &self,
+        interface: &str,
+        path: &str,
+        payload: C::Payload,
+    ) -> Result<Value, TransportError>
+    where
+        C: Receive + Sync,
+    {
         let path = MappingPath::try_from(path)
             .map_err(|err| TransportError::Recv(RecvError::InvalidEndpoint(err)))?;
 
         let interfaces = self.state.interfaces.read().await;
         let Some(interface) = interfaces.get(interface) else {
-            warn!("publish on missing interface {interface} ({path})");
+            warn!("publish on missing interface");
+
             return Err(TransportError::Recv(RecvError::InterfaceNotFound {
                 name: interface.to_string(),
             }));
@@ -68,7 +82,7 @@ where
             }
         };
 
-        debug!(?data, "received event");
+        debug!("event received");
 
         Ok(data)
     }
@@ -204,5 +218,163 @@ where
         )?;
 
         Ok(Value::Object { data, timestamp })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, Utc};
+    use mockall::Sequence;
+    use pretty_assertions::assert_eq;
+
+    use crate::aggregate::AstarteObject;
+    use crate::connection::tests::mock_connection;
+    use crate::test::{
+        DEVICE_OBJECT, DEVICE_OBJECT_NAME, E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME,
+    };
+    use crate::AstarteType;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn handle_individual() {
+        let (mut connection, _rx) = mock_connection(&[E2E_DEVICE_DATASTREAM]);
+
+        let timestamp = Utc::now();
+        let value = Box::new((42, timestamp));
+        let endpoint = "/integer_endpoint";
+
+        let mut seq = Sequence::new();
+
+        connection
+            .connection
+            .expect_deserialize_individual()
+            .once()
+            .in_sequence(&mut seq)
+            .withf({
+                let value = *value.as_ref();
+
+                move |mapping, payload| {
+                    mapping.interface().interface_name() == E2E_DEVICE_DATASTREAM_NAME
+                        && mapping.path() == endpoint
+                        && *payload.downcast_ref::<(i32, DateTime<Utc>)>().unwrap() == value
+                }
+            })
+            .returning(|_mapping, payload| {
+                let (value, timestamp) = *payload.downcast::<(i32, DateTime<Utc>)>().unwrap();
+
+                Ok((value.into(), Some(timestamp)))
+            });
+
+        let event = connection
+            .handle_event(E2E_DEVICE_DATASTREAM_NAME, endpoint, value)
+            .await
+            .unwrap();
+
+        let exp = Value::Individual {
+            data: AstarteType::Integer(42),
+            timestamp,
+        };
+
+        assert_eq!(event, exp)
+    }
+
+    #[tokio::test]
+    async fn handle_event_missing_interface() {
+        let (connection, _rx) = mock_connection(&[]);
+
+        let timestamp = Utc::now();
+        let value = Box::new((42, timestamp));
+        let endpoint = "/integer_endpoint";
+
+        let event = connection
+            .handle_event(E2E_DEVICE_DATASTREAM_NAME, endpoint, value)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            event,
+            TransportError::Recv(RecvError::InterfaceNotFound { name }) if name == E2E_DEVICE_DATASTREAM_NAME
+        ))
+    }
+
+    #[tokio::test]
+    async fn handle_event_missing_mapping() {
+        let (connection, _rx) = mock_connection(&[E2E_DEVICE_DATASTREAM]);
+
+        let timestamp = Utc::now();
+        let value = Box::new((42, timestamp));
+        let endpoint = "/not_found";
+
+        let event = connection
+            .handle_event(E2E_DEVICE_DATASTREAM_NAME, endpoint, value)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &event,
+                TransportError::Recv(RecvError::MappingNotFound { interface, mapping })
+                    if interface == E2E_DEVICE_DATASTREAM_NAME && mapping == endpoint
+            ),
+            "{event:?}"
+        )
+    }
+
+    #[tokio::test]
+    async fn handle_object() {
+        let (mut connection, _rx) = mock_connection(&[DEVICE_OBJECT]);
+
+        let timestamp = Utc::now();
+        let obj = AstarteObject::from_iter(
+            [
+                ("endpoint1", AstarteType::Double(42.)),
+                ("endpoint2", AstarteType::String("value".to_string())),
+                ("endpoint3", AstarteType::BooleanArray(vec![true, false])),
+            ]
+            .map(|(n, v)| (n.to_string(), v)),
+        );
+        let value = Box::new((obj.clone(), timestamp));
+        let endpoint = "/sensor1";
+
+        let mut seq = Sequence::new();
+
+        connection
+            .connection
+            .expect_deserialize_object()
+            .once()
+            .in_sequence(&mut seq)
+            .withf({
+                let value = value.as_ref().clone();
+
+                move |_interface, path, payload| {
+                    // TODO: add in next PR
+                    // interface.interface_name() == E2E_DEVICE_DATASTREAM_NAME &&
+                    path.as_str() == endpoint
+                        && *payload
+                            .downcast_ref::<(AstarteObject, DateTime<Utc>)>()
+                            .unwrap()
+                            == value
+                }
+            })
+            .returning(|_, _mapping, payload| {
+                let (value, timestamp) = *payload
+                    .downcast::<(AstarteObject, DateTime<Utc>)>()
+                    .unwrap();
+
+                Ok((value, Some(timestamp)))
+            });
+
+        let event = connection
+            .handle_event(DEVICE_OBJECT_NAME, endpoint, value)
+            .await
+            .unwrap();
+
+        let exp = Value::Object {
+            data: obj,
+            timestamp,
+        };
+
+        assert_eq!(event, exp)
     }
 }

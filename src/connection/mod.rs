@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::error::Report;
 use crate::retry::ExponentialIter;
@@ -131,10 +131,18 @@ where
 
                 Ok(Utc::now())
             }
-            (None, true) => Err(RecvError::MissingTimestamp {
-                interface_name: interface_name.to_string(),
-                path: path.to_string(),
-            }),
+            (None, true) => {
+                error!("missing timestamp on interface with `explicit_timestamp`");
+
+                if cfg!(debug_assertions) {
+                    Err(RecvError::MissingTimestamp {
+                        interface_name: interface_name.to_string(),
+                        path: path.to_string(),
+                    })
+                } else {
+                    Ok(Utc::now())
+                }
+            }
         }
     }
 
@@ -225,7 +233,6 @@ mod tests {
 
     use super::*;
 
-    #[expect(dead_code)]
     pub(crate) fn mock_connection(
         interfaces: &[&str],
     ) -> (

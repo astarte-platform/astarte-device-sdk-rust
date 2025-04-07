@@ -103,6 +103,8 @@ mod test {
 
     // Interfaces
     pub(crate) const DEVICE_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
+    pub(crate) const DEVICE_OBJECT_NAME: &str =
+        "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream";
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
     pub(crate) const SERVER_INDIVIDUAL: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
@@ -111,6 +113,9 @@ mod test {
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
+    pub(crate) const E2E_DEVICE_DATASTREAM_NAME: &str =
+        "org.astarte-platform.rust.e2etest.DeviceDatastream";
+
     #[cfg(feature = "message-hub")]
     pub(crate) const E2E_SERVER_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerAggregate.json"
@@ -118,9 +123,38 @@ mod test {
     pub(crate) const E2E_DEVICE_AGGREGATE: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
     );
+    pub(crate) const E2E_DEVICE_AGGREGATE_NAME: &str =
+        "org.astarte-platform.rust.e2etest.DeviceAggregate";
     pub(crate) const E2E_DEVICE_PROPERTY: &str = include_str!(
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
     );
+    pub(crate) const E2E_DEVICE_PROPERTY_NAME: &str =
+        "org.astarte-platform.rust.e2etest.DeviceProperty";
+
+    pub(crate) mod for_update {
+        pub(crate) const E2E_DEVICE_DATASTREAM_NAME: &str =
+            "org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream";
+        pub(crate) const E2E_DEVICE_DATASTREAM_0_1: &str = include_str!(
+            "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream.json"
+        );
+        pub(crate) const E2E_DEVICE_DATASTREAM_1_0: &str = include_str!(
+            "../e2e-test/interfaces/update/org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream.json"
+        );
+    }
+
+    // Interfaces with retention
+    pub(crate) const VOLATILE_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream.json");
+    pub(crate) const VOLATILE_DEVICE_DATASTREAM_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream";
+    pub(crate) const STORED_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json");
+    pub(crate) const STORED_DEVICE_DATASTREAM_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream";
+    pub(crate) const VOLATILE_DEVICE_OBJECT: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject.json");
+    pub(crate) const VOLATILE_DEVICE_OBJECT_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject";
+    pub(crate) const STORED_DEVICE_OBJECT: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject.json");
+    pub(crate) const STORED_DEVICE_OBJECT_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject";
 
     pub(crate) const DEVICE_PROPERTIES_NO_UNSET: &str = r#"{
     "interface_name": "org.astarte-platform.rust.examples.individual-properties.DevicePropertyNoUnset",
