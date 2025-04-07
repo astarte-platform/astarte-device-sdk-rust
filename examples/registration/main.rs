@@ -18,6 +18,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 use serde::{Deserialize, Serialize};
+use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
@@ -28,17 +30,17 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
 
     // Load configuration
     let file = std::fs::read_to_string("./examples/registration/configuration.json").unwrap();
     let cfg: Config = serde_json::from_str(&file).unwrap();
 
-    println!(
-        "Attempting to register the device with the ID: {}",
-        cfg.device_id
-    );
+    info!(%cfg.device_id, "attempting to register the device");
 
     let credentials_secret = astarte_device_sdk::transport::mqtt::registration::register_device(
         &cfg.pairing_token,
@@ -49,5 +51,10 @@ async fn main() {
     .await
     .unwrap();
 
-    println!("Device registered, received credentials secret is: {credentials_secret}");
+    info!(
+        credentials_secret,
+        "device registered, received credentials secret"
+    );
+
+    Ok(())
 }

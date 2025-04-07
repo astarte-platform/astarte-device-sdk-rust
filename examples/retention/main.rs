@@ -16,11 +16,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env::VarError, error::Error, time::Duration};
+use std::{env::VarError, time::Duration};
 
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
-
-type DynError = Box<dyn Error + Send + Sync + 'static>;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const INTERFACE_STORED: &str = include_str!(
     "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json"
@@ -47,8 +46,11 @@ fn get_env(name: &'static str) -> Result<String, EnvError> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
 
     let realm = get_env("ASTARTE_REALM")?;
     let device_id = get_env("ASTARTE_DEVICE_ID")?;
