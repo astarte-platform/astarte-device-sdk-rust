@@ -250,7 +250,7 @@ impl MqttConnection {
                     break Ok(true);
                 }
                 State::Disconnected(_) => {
-                    debug!("error occured");
+                    debug!("error occurred");
 
                     break Ok(false);
                 }

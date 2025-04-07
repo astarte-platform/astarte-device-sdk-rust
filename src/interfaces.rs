@@ -265,7 +265,7 @@ impl FromIterator<Interface> for Interfaces {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Validated {
     interface: Interface,
     major_change: bool,
@@ -291,7 +291,7 @@ impl Deref for Validated {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
 impl ValidatedCollection {
@@ -424,6 +424,23 @@ pub(crate) mod tests {
             ]
         }
         "#;
+
+    pub(crate) fn mock_validated_interface(interface: Interface, major_change: bool) -> Validated {
+        Validated {
+            interface,
+            major_change,
+        }
+    }
+
+    pub(crate) fn mock_validated_collection(interfaces: &[Validated]) -> ValidatedCollection {
+        ValidatedCollection(
+            interfaces
+                .iter()
+                .cloned()
+                .map(|i| (i.interface.interface_name().to_string(), i))
+                .collect(),
+        )
+    }
 
     pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
         Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))

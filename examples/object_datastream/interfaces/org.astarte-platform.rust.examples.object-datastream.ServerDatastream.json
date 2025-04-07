@@ -1,0 +1,26 @@
+{
+  "interface_name": "org.astarte-platform.rust.examples.object-datastream.ServerDatastream",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "aggregation": "object",
+  "ownership": "server",
+  "description": "Generic aggregated object data.",
+  "mappings": [
+    {
+      "endpoint": "/%{sensor_id}/endpoint1",
+      "type": "double",
+      "explicit_timestamp": true
+    },
+    {
+      "endpoint": "/%{sensor_id}/endpoint2",
+      "type": "string",
+      "explicit_timestamp": true
+    },
+    {
+      "endpoint": "/%{sensor_id}/endpoint3",
+      "type": "booleanarray",
+      "explicit_timestamp": true
+    }
+  ]
+}
