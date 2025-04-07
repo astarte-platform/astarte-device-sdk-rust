@@ -81,7 +81,10 @@ impl ApiClient {
         value.set_sensitive(true);
         let headers = HeaderMap::from_iter([(http::header::AUTHORIZATION, value)]);
 
-        let client = ClientBuilder::new().default_headers(headers).build()?;
+        let client = ClientBuilder::new()
+            .default_headers(headers)
+            .use_preconfigured_tls(crate::tls::client_config())
+            .build()?;
 
         Ok(Self {
             api_url,

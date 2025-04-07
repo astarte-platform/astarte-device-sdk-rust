@@ -94,7 +94,10 @@ impl Channel {
         .replace("http", "ws")
         .parse()?;
 
-        let client = phoenix_chan::Client::builder(uri)?.connect().await?;
+        let client = phoenix_chan::Client::builder(uri)?
+            .tls_config(Arc::new(crate::tls::client_config()))
+            .connect()
+            .await?;
         let client = Arc::new(client);
 
         let room = format!("rooms:{}:e2e_test_{}", realm, device_id);
