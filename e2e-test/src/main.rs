@@ -117,7 +117,7 @@ async fn main() -> eyre::Result<()> {
     )
     .await?;
 
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store_dir(&config.run.store_dir)
         .await?
         .interface_directory(INTERFACE_DIR)?
@@ -147,6 +147,7 @@ async fn main() -> eyre::Result<()> {
         device::individual::check(&mut channel, &client).await?;
         device::property::check(&mut channel, &client).await?;
         device::object::check(&mut channel, &client).await?;
+        device::update::check(&api, &mut channel, &mut client).await?;
 
         // Server
         server::individual::check(&api, &client).await?;

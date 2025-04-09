@@ -129,7 +129,8 @@ impl WriteConnection {
 
             let changed = statement.execute((sent, timestamp, id.counter))?;
 
-            debug_assert_eq!(changed, 1);
+            // If we remove an interface before the ACK is received the publish will also be deleted
+            debug_assert!((0..=1).contains(&changed));
 
             Ok(())
         })
@@ -146,7 +147,8 @@ impl WriteConnection {
 
             let changed = statement.execute((timestamp, id.counter))?;
 
-            debug_assert_eq!(changed, 1);
+            // If remove an interface before the ACK is received the publish will also be deleted
+            debug_assert!((0..=1).contains(&changed));
 
             Ok(())
         })

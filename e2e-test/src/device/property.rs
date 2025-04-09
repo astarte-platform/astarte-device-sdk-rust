@@ -69,9 +69,10 @@ impl InterfaceData for DevicePropertyOverflow {
     }
 }
 
-async fn validate_property<T>(
+pub(crate) async fn validate_property<T>(
     channel: &mut Channel,
     client: &DeviceClient<SqliteStore>,
+    unset: bool,
 ) -> eyre::Result<()>
 where
     T: InterfaceData,
@@ -119,18 +120,20 @@ where
         ensure!(prop == data);
 
         // Unset
-        client.unset(&interface_name, &data_path).await?;
+        if unset {
+            client.unset(&interface_name, &data_path).await?;
 
-        let IncomingData {
-            interface, path, ..
-        } = channel.next_data_event().await?;
+            let IncomingData {
+                interface, path, ..
+            } = channel.next_data_event().await?;
 
-        ensure!(interface == interface_name);
-        ensure!(path == data_path);
+            ensure!(interface == interface_name);
+            ensure!(path == data_path);
 
-        let prop = client.property(&interface, &path).await?;
+            let prop = client.property(&interface, &path).await?;
 
-        ensure!(prop.is_none());
+            ensure!(prop.is_none());
+        }
 
         info!(interface, path, "validated")
     }
@@ -143,8 +146,8 @@ pub(crate) async fn check(
     channel: &mut Channel,
     client: &DeviceClient<SqliteStore>,
 ) -> eyre::Result<()> {
-    validate_property::<DeviceProperty>(channel, client).await?;
-    validate_property::<DevicePropertyOverflow>(channel, client).await?;
+    validate_property::<DeviceProperty>(channel, client, true).await?;
+    validate_property::<DevicePropertyOverflow>(channel, client, true).await?;
 
     Ok(())
 }

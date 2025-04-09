@@ -32,7 +32,7 @@ astartectl realm-management interfaces sync -y \
     -r test \
     -k "$KEY" \
     e2e-test/interfaces/*.json \
-    e2e-test/interfaces/additional/*.json
+    e2e-test/interfaces/**/*.json
 
 export E2E_IGNORE_SSL=true
 

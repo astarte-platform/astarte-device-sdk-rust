@@ -55,7 +55,7 @@ jobs:
       - name: Install interface
         run: |
           astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/additional/*.json --non-interactive
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/**/*.json --non-interactive
           astartectl realm-management interfaces ls
       - name: Register device
         run: |
