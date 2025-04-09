@@ -22,3 +22,4 @@ pub(crate) mod individual;
 pub(crate) mod interfaces;
 pub(crate) mod object;
 pub(crate) mod property;
+pub(crate) mod update;

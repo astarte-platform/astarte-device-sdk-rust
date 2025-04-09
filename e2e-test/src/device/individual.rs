@@ -63,7 +63,33 @@ impl InterfaceData for DeviceDatastreamOverflow {
     }
 }
 
-async fn validate_individual<T>(
+/// Test retention and reliability combinations
+#[derive(Debug)]
+struct CustomDeviceDatastream {}
+
+impl InterfaceData for CustomDeviceDatastream {
+    fn interface() -> String {
+        "org.astarte-platform.rust.e2etest.CustomDeviceDatastream".to_string()
+    }
+
+    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+        let data = HashMap::from_iter(
+            [
+                ("/volatileUnreliable", AstarteType::LongInteger(42)),
+                ("/volatileGuaranteed", AstarteType::Boolean(false)),
+                ("/volatileUnique", AstarteType::Double(35.2)),
+                ("/storedUnreliable", AstarteType::LongInteger(42)),
+                ("/storedGuaranteed", AstarteType::Boolean(false)),
+                ("/storedUnique", AstarteType::Double(35.2)),
+            ]
+            .map(|(k, v)| (k.to_string(), v)),
+        );
+
+        Ok(data)
+    }
+}
+
+pub(crate) async fn validate_individual<T>(
     channel: &mut Channel,
     client: &DeviceClient<SqliteStore>,
 ) -> eyre::Result<()>
@@ -101,6 +127,7 @@ pub(crate) async fn check(
 ) -> eyre::Result<()> {
     validate_individual::<DeviceDatastream>(channel, client).await?;
     validate_individual::<DeviceDatastreamOverflow>(channel, client).await?;
+    validate_individual::<CustomDeviceDatastream>(channel, client).await?;
 
     Ok(())
 }
