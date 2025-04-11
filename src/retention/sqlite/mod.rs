@@ -228,19 +228,6 @@ impl StoredRetention for SqliteStore {
         Ok(())
     }
 
-    async fn delete_interface_many<I>(&self, interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
-        self.writer
-            .lock()
-            .await
-            .delete_interface_many(interfaces)
-            .map_err(RetentionError::delete_interface_many)?;
-
-        Ok(())
-    }
-
     async fn unsent_publishes(
         &self,
         limit: usize,

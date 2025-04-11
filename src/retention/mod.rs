@@ -24,10 +24,7 @@ use std::{
     fmt::Display,
     future::Future,
     num::TryFromIntError,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -172,10 +169,6 @@ impl RetentionError {
         }
     }
 
-    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
-        Self::DeleteInterfaceMany(backtrace.into())
-    }
-
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
         Self::FetchInterfaces(backtrace.into())
     }
@@ -271,14 +264,6 @@ pub trait StoredRetention: Clone + Send + Sync {
         &self,
         interface: &str,
     ) -> impl Future<Output = Result<(), RetentionError>> + Send;
-
-    /// Deletes all the stored publishes for all the interfaces.
-    fn delete_interface_many<I>(
-        &self,
-        interfaces: &[I],
-    ) -> impl Future<Output = Result<(), RetentionError>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
 
     /// Resend all the publishes that were not sent.
     ///
@@ -410,13 +395,6 @@ impl StoredRetention for Missing {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
-        unreachable!("the type is Un-constructable");
-    }
-
     async fn unsent_publishes(
         &self,
         _limit: usize,
@@ -517,16 +495,16 @@ impl TryFrom<TimestampMillis> for Duration {
 }
 
 /// Context to create a unique [`Id`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context {
-    counter: Arc<AtomicU32>,
+    counter: AtomicU32,
 }
 
 impl Context {
     /// Create a new context
     pub fn new() -> Self {
         Self {
-            counter: Arc::new(AtomicU32::new(0)),
+            counter: AtomicU32::new(0),
         }
     }
 
@@ -551,19 +529,20 @@ impl Default for Context {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     use super::*;
 
     #[test]
     fn id_should_be_unique() {
         const NUM: usize = 5;
-        let ctx = Context::new();
+        let ctx = Arc::new(Context::new());
 
         let (tx, rx) = std::sync::mpsc::sync_channel::<Id>(NUM);
 
         for _ in 0..NUM {
             std::thread::spawn({
-                let ctx = ctx.clone();
+                let ctx = Arc::clone(&ctx);
                 let tx = tx.clone();
 
                 move || {

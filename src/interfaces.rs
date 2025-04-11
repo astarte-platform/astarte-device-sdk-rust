@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -267,7 +265,7 @@ impl FromIterator<Interface> for Interfaces {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Validated {
     interface: Interface,
     major_change: bool,
@@ -293,7 +291,7 @@ impl Deref for Validated {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
 impl ValidatedCollection {
@@ -426,6 +424,23 @@ pub(crate) mod tests {
             ]
         }
         "#;
+
+    pub(crate) fn mock_validated_interface(interface: Interface, major_change: bool) -> Validated {
+        Validated {
+            interface,
+            major_change,
+        }
+    }
+
+    pub(crate) fn mock_validated_collection(interfaces: &[Validated]) -> ValidatedCollection {
+        ValidatedCollection(
+            interfaces
+                .iter()
+                .cloned()
+                .map(|i| (i.interface.interface_name().to_string(), i))
+                .collect(),
+        )
+    }
 
     pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
         Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))

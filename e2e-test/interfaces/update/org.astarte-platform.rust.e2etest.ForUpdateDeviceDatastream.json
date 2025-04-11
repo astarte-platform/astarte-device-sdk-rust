@@ -1,0 +1,22 @@
+{
+  "interface_name": "org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream",
+  "version_major": 1,
+  "version_minor": 0,
+  "type": "datastream",
+  "ownership": "device",
+  "mappings": [
+    {
+      "endpoint": "/%{sensor_id}/stored",
+      "type": "longinteger",
+      "retention": "stored",
+      "reliability": "guaranteed",
+      "explicit_timestamp": true
+    },
+    {
+      "endpoint": "/%{sensor_id}/volatile",
+      "type": "longinteger",
+      "retention": "volatile",
+      "explicit_timestamp": true
+    }
+  ]
+}
