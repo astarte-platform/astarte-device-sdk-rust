@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,35 +21,23 @@
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExponentialIter {
-    max: u64,
-    delay: u64,
-    exp: u32,
-    base: u64,
+    n: u32,
+    max: u32,
 }
 
 impl ExponentialIter {
     pub(crate) fn next(&mut self) -> u64 {
-        if self.delay >= self.max {
-            return self.max;
-        }
+        let v = ((self.n > 0) as u64).wrapping_shl(self.n.saturating_sub(1));
 
-        // Calculate the delay base^exp capped at max
-        self.delay = self.base.saturating_pow(self.exp).min(self.max);
-        // Increase the delay exponentially
-        self.exp += 1;
+        self.n = self.n.saturating_add(1).min(self.max);
 
-        self.delay
+        v
     }
 }
 
 impl Default for ExponentialIter {
     fn default() -> Self {
-        Self {
-            max: 360,
-            delay: 0,
-            exp: 0,
-            base: 2,
-        }
+        Self { n: 0, max: 9 }
     }
 }
 
@@ -63,12 +51,14 @@ impl Iterator for ExponentialIter {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::ExponentialIter;
 
     #[test]
     fn iter_delays() {
-        let expected = [1, 2, 4, 8, 16];
-        let delay: Vec<u64> = ExponentialIter::default().take(5).collect();
+        let expected = [0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 256, 256, 256];
+        let delay: Vec<u64> = ExponentialIter::default().take(13).collect();
 
         assert_eq!(delay, expected);
     }
