@@ -27,11 +27,14 @@ use itertools::Itertools;
 use tracing::{debug, trace};
 
 use crate::{
+    error::InterfaceTypeError,
     interface::{
         error::InterfaceError,
         mapping::path::MappingPath,
         reference::{MappingRef, PropertyRef},
+        InterfaceTypeDef,
     },
+    validate::UserValidationError,
     Error, Interface,
 };
 
@@ -162,9 +165,12 @@ impl Interfaces {
                 name: interface_name.to_string(),
             })
             .and_then(|interface| {
-                interface.as_prop_ref().ok_or_else(|| Error::InterfaceType {
-                    exp: crate::interface::InterfaceTypeDef::Properties,
-                    got: interface.interface_type(),
+                interface.as_prop_ref().ok_or_else(|| {
+                    Error::Validation(UserValidationError::InterfaceType(InterfaceTypeError::new(
+                        interface_name,
+                        InterfaceTypeDef::Properties,
+                        interface.interface_type(),
+                    )))
                 })
             })
             .and_then(|interface| {

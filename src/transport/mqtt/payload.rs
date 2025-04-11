@@ -208,7 +208,8 @@ pub(super) fn deserialize_object(
 
 #[cfg(test)]
 mod test {
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
+    use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
     use chrono::TimeZone;
@@ -276,7 +277,12 @@ mod test {
             let path = mapping(endpoint.as_str());
             let mapping = interface.as_mapping_ref(&path).unwrap();
 
-            let validated = mock_validate_individual(mapping, &path, ty.clone(), None).unwrap();
+            let validated = mock_validate_individual(
+                mapping,
+                ty.clone(),
+                Some(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            )
+            .unwrap();
             let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
             let (res, _) = deserialize_individual(&mapping, &buf)
@@ -326,7 +332,13 @@ mod test {
 
         let path = mapping(base_path);
 
-        let validated = mock_validate_object(&interface, &path, data.clone(), None).unwrap();
+        let validated = mock_validate_object(
+            &interface,
+            &path,
+            data.clone(),
+            Some(TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap()),
+        )
+        .unwrap();
         let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
         let (mut res, _) =
@@ -361,11 +373,19 @@ mod test {
         let mapping = interface.as_mapping_ref(&path).unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
-        let validated =
-            ValidatedIndividual::validate(mapping, &path, og_value.clone(), None).unwrap();
+        let validated = ValidatedIndividual::validate(
+            mapping,
+            og_value.clone(),
+            Some(DateTime::from_timestamp_millis(42).unwrap()),
+        )
+        .unwrap();
         let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
-        let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
+        let expected = [
+            48, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 2, 116, 0, 25, 0, 0, 0, 49, 57, 55,
+            48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 46, 48, 52, 50, 90, 0,
+            0,
+        ];
 
         assert_eq!(buf, expected);
 

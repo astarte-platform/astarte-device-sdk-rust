@@ -404,7 +404,7 @@ pub trait ConnectionConfig<S> {
         S: PropertyStore;
 
     /// This method allows the connection config to modify the retention capacity.
-    /// The default implmenetation returns a [`None`] to avoid editing the default
+    /// The default implementation returns a [`None`] to avoid editing the default
     /// retention config.
     // NOTE: Used by the GrpcConfig to disable retention of messages.
     fn volatile_capacity_override() -> Option<usize> {
