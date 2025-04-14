@@ -80,30 +80,28 @@ pub(crate) fn map_property_to_astarte_type(
 
 /// Map a list of properties, unset properties will be ignored
 pub(crate) fn map_set_stored_properties(
-    mut message_hub_properties: astarte_message_hub_proto::StoredProperties,
+    message_hub_properties: astarte_message_hub_proto::StoredProperties,
 ) -> Result<Vec<StoredProp>, MessageHubProtoError> {
     message_hub_properties
-        .interface_properties
-        .iter_mut()
-        .flat_map(|(name, prop_data)| {
-            prop_data.properties.iter().filter_map(|p| {
-                let path = p.path.clone();
-                let value: AstarteType =
-                    match map_property_to_astarte_type(p.clone()).transpose()? {
-                        Ok(s) => s,
-                        Err(e) => return Some(Err(e)),
-                    };
+        .properties
+        .into_iter()
+        .filter_map(|prop| {
+            let ownership = prop.ownership().into();
 
-                let res = StoredProp {
-                    interface: name.clone(),
-                    path,
-                    value,
-                    interface_major: prop_data.version_major,
-                    ownership: prop_data.ownership().into(),
-                };
+            let value = match map_property_to_astarte_type(prop.clone()).transpose()? {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
 
-                Some(Ok(res))
-            })
+            let res = StoredProp {
+                interface: prop.interface_name,
+                path: prop.path,
+                value,
+                interface_major: prop.version_major,
+                ownership,
+            };
+
+            Some(Ok(res))
         })
         .try_collect()
 }
@@ -406,8 +404,7 @@ pub(crate) mod test {
     use std::collections::HashMap;
 
     use astarte_message_hub_proto::{
-        AstarteData, AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual,
-        InterfaceProperties,
+        AstarteData, AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual, Property,
     };
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -423,16 +420,6 @@ pub(crate) mod test {
             interface_name,
             path,
             payload: Some(payload),
-        }
-    }
-
-    pub(crate) fn new_property(
-        path: String,
-        data: Option<AstarteType>,
-    ) -> astarte_message_hub_proto::Property {
-        astarte_message_hub_proto::Property {
-            path,
-            data: data.map(|s| s.into()),
         }
     }
 
@@ -1014,31 +1001,32 @@ pub(crate) mod test {
         assert_eq!(ProtoData::Double(expected_data), double_data);
     }
 
-    fn make_messagehub_property(
-        path: &str,
-        value: Option<AstarteType>,
-    ) -> astarte_message_hub_proto::Property {
-        astarte_message_hub_proto::Property {
-            path: path.to_owned(),
-            data: value.map(|v| v.into()),
-        }
-    }
-
     #[test]
     fn map_property_to_astarte_type_ok() {
-        let value: AstarteType = AstarteType::String("test".to_owned());
-
-        let prop = make_messagehub_property("/path11", Some(value.clone()));
+        let prop = Property {
+            interface_name: "com.test.interface".to_owned(),
+            path: "/path11".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Device.into(),
+            data: Some(AstarteData {
+                astarte_data: Some(ProtoData::String("test".to_owned())),
+            }),
+        };
 
         let astarte_type = map_property_to_astarte_type(prop).unwrap().unwrap();
 
-        assert_eq!(value, astarte_type);
+        assert_eq!(AstarteType::String("test".to_string()), astarte_type);
     }
 
     #[test]
     fn map_property_to_astarte_type_none() {
-        let prop = make_messagehub_property("/path11", None);
-
+        let prop = Property {
+            interface_name: "com.test.interface".to_owned(),
+            path: "/path11".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Device.into(),
+            data: None,
+        };
         let astarte_type_err = map_property_to_astarte_type(prop);
 
         assert!(matches!(astarte_type_err, Ok(None)));
@@ -1049,46 +1037,46 @@ pub(crate) mod test {
         const INTERFACE_1: &str = "com.test.interface1";
         const INTERFACE_2: &str = "com.test.interface2";
 
-        let interface_properties_map = vec![
-            (
-                INTERFACE_1.to_owned(),
-                InterfaceProperties {
-                    ownership: astarte_message_hub_proto::Ownership::Device.into(),
-                    version_major: 0,
-                    properties: vec![
-                        make_messagehub_property(
-                            "/path11",
-                            Some(AstarteType::String("test".to_owned())),
-                        ),
-                        make_messagehub_property("/path12", Some(AstarteType::Integer(0))),
-                    ],
-                },
-            ),
-            (
-                INTERFACE_2.to_owned(),
-                InterfaceProperties {
-                    ownership: astarte_message_hub_proto::Ownership::Server.into(),
-                    version_major: 0,
-                    properties: vec![
-                        make_messagehub_property(
-                            "/path21",
-                            Some(AstarteType::BinaryBlob(vec![0, 54, 0, 23])),
-                        ),
-                        make_messagehub_property(
-                            "/path22",
-                            Some(AstarteType::Double(std::f64::consts::PI)),
-                        ),
-                    ],
-                },
-            ),
-        ]
-        .into_iter()
-        .collect();
+        let prop11 = Property {
+            interface_name: INTERFACE_1.to_owned(),
+            path: "/path11".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Device.into(),
+            data: Some(AstarteData {
+                astarte_data: Some(ProtoData::String("test".to_owned())),
+            }),
+        };
+        let prop12 = Property {
+            interface_name: INTERFACE_1.to_owned(),
+            path: "/path12".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Device.into(),
+            data: Some(AstarteData {
+                astarte_data: Some(ProtoData::Integer(0)),
+            }),
+        };
+        let prop21 = Property {
+            interface_name: INTERFACE_2.to_owned(),
+            path: "/path21".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Server.into(),
+            data: Some(AstarteData {
+                astarte_data: Some(ProtoData::BinaryBlob(vec![0, 54, 0, 23])),
+            }),
+        };
+        let prop22 = Property {
+            interface_name: INTERFACE_2.to_owned(),
+            path: "/path22".to_owned(),
+            version_major: 0,
+            ownership: astarte_message_hub_proto::Ownership::Server.into(),
+            data: Some(AstarteData {
+                astarte_data: Some(ProtoData::Double(std::f64::consts::PI)),
+            }),
+        };
 
-        let message_hub_stored_properties: astarte_message_hub_proto::StoredProperties =
-            astarte_message_hub_proto::StoredProperties {
-                interface_properties: interface_properties_map,
-            };
+        let message_hub_stored_properties = astarte_message_hub_proto::StoredProperties {
+            properties: vec![prop11, prop12, prop21, prop22],
+        };
 
         let inner_vec = map_set_stored_properties(message_hub_stored_properties).unwrap();
 
