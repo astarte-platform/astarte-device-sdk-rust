@@ -570,11 +570,7 @@ pub struct Mqtt<S> {
 }
 
 impl<S> Mqtt<S> {
-    /// Initializes values for this struct
-    ///
-    /// This method should only be used for testing purposes since it does not fully
-    /// connect to the mqtt broker as described by the astarte protocol.
-    /// This struct should be constructed with the [`Mqtt::connected`] associated function.
+    /// Creates a new MQTT connection struct.
     fn new(
         client_id: ClientId,
         connection: MqttConnection,
@@ -752,13 +748,11 @@ impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
 {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
         self.connection
-            .connect(self.client_id.as_ref(), interfaces, &self.store)
+            .reconnect(self.client_id.as_ref(), interfaces, &self.store)
             .await
-            .map_err(MqttError::Poll)?;
-
-        Ok(())
+            .map_err(|err| Error::Mqtt(MqttError::Poll(err)))
     }
 }
 

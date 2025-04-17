@@ -48,38 +48,48 @@ impl SharedState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Status {
+    Connected,
+    Disconnected,
+    Closed,
+}
+
 /// Shared state of the connection
 #[derive(Debug)]
 pub(crate) struct ConnectionStatus {
-    /// Flag if we are connected
-    connected: AtomicBool,
     /// Flag if the connection was closed gracefully
     closed: AtomicBool,
+    /// Flag if we are connected
+    connected: AtomicBool,
 }
 
 impl ConnectionStatus {
     pub(crate) fn new() -> Self {
-        // Assumes we are connected
         Self {
+            // Assume we are connected
             connected: AtomicBool::new(true),
             closed: AtomicBool::new(false),
         }
     }
 
-    pub(crate) fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Acquire)
-    }
-
+    /// Set the state of the connection.
     pub(crate) fn set_connected(&self, connected: bool) {
         self.connected.store(connected, Ordering::Release);
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
-    }
-
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn connection(&self) -> Status {
+        if self.closed.load(Ordering::Acquire) {
+            Status::Closed
+        } else if self.connected.load(Ordering::Acquire) {
+            Status::Connected
+        } else {
+            Status::Disconnected
+        }
     }
 }
 

@@ -26,7 +26,6 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::time::Duration;
 
 use astarte_message_hub_proto::prost::{DecodeError, Message};
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
@@ -40,7 +39,7 @@ use astarte_message_hub_proto::{
 };
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
-use tracing::{debug, error, trace, warn};
+use tracing::{error, trace, warn};
 use uuid::Uuid;
 
 use self::convert::{try_from_individual, try_from_property, MessageHubProtoError};
@@ -52,7 +51,7 @@ use super::{
 use crate::aggregate::AstarteObject;
 use crate::builder::BuildConfig;
 use crate::client::RecvError;
-use crate::error::{AggregationError, InterfaceTypeError};
+use crate::error::{AggregationError, InterfaceTypeError, Report};
 use crate::interface::{Aggregation, InterfaceTypeDef};
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
@@ -64,7 +63,6 @@ use crate::{
     },
     interfaces::{self, Interfaces},
     retention::StoredRetention,
-    retry::ExponentialIter,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -539,30 +537,22 @@ impl Receive for Grpc {
 }
 
 impl Reconnect for Grpc {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
         // try reattaching
         let data = NodeData::try_from(interfaces)?;
 
-        let mut exp_back = ExponentialIter::default();
+        match Grpc::attach(&mut self.client, data.clone()).await {
+            Ok(stream) => {
+                self.stream = SyncWrapper::new(stream);
 
-        let stream = loop {
-            match Grpc::attach(&mut self.client, data.clone()).await {
-                Ok(stream) => break stream,
-                Err(err) => {
-                    error!("Grpc error while trying to reconnect {err}");
+                Ok(true)
+            }
+            Err(err) => {
+                error!(error = %Report::new(err), "error while trying to reconnect");
 
-                    let timeout = exp_back.next();
-
-                    debug!("waiting {timeout} seconds before retrying");
-
-                    tokio::time::sleep(Duration::from_secs(timeout)).await;
-                }
-            };
-        };
-
-        self.stream = SyncWrapper::new(stream);
-
-        Ok(())
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -688,6 +678,7 @@ mod test {
     use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
     use chrono::Utc;
     use itertools::Itertools;
+    use pretty_assertions::assert_eq;
     use uuid::uuid;
 
     use crate::retention::memory::VolatileStore;
@@ -944,19 +935,13 @@ mod test {
                 .await
                 .unwrap();
         // poll the next message (error)
-        assert!(matches!(connection.next_event().await, Ok(None)));
+        assert_eq!(connection.next_event().await.unwrap(), None);
         // reconnect (second attach)
-        assert!(matches!(
-            connection.reconnect(&Interfaces::new()).await,
-            Ok(())
-        ));
+        assert!(connection.reconnect(&Interfaces::new()).await.unwrap());
         // poll the next message (second error)
-        assert!(matches!(connection.next_event().await, Ok(None)));
+        assert_eq!(connection.next_event().await.unwrap(), None);
         // after the second error we reconnect with no messages
-        assert!(matches!(
-            connection.reconnect(&Interfaces::new()).await,
-            Ok(())
-        ));
+        assert!(connection.reconnect(&Interfaces::new()).await.unwrap());
 
         // manually calling detach
         client.disconnect().await.unwrap();

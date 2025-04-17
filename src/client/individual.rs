@@ -23,7 +23,7 @@ use tracing::{debug, trace, warn};
 use crate::client::ValidatedIndividual;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::Retention;
-use crate::state::SharedState;
+use crate::state::{SharedState, Status};
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
 use crate::{AstarteType, Error};
@@ -51,16 +51,24 @@ where
 
         debug!("sending individual type {}", validated.data.display_type());
 
-        if !self.state.status.is_connected() {
-            trace!("publish individual while connection is offline");
+        match self.state.status.connection() {
+            Status::Connected => {
+                trace!("publish individual while connection is online");
+            }
+            Status::Disconnected => {
+                trace!("publish individual while connection is offline");
 
-            return Self::offline_send_individual(
-                &self.state,
-                &self.store,
-                &mut self.sender,
-                validated,
-            )
-            .await;
+                return Self::offline_send_individual(
+                    &self.state,
+                    &self.store,
+                    &mut self.sender,
+                    validated,
+                )
+                .await;
+            }
+            Status::Closed => {
+                return Err(Error::Disconnected);
+            }
         }
 
         match mapping.retention() {

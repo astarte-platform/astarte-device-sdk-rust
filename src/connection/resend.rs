@@ -16,15 +16,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use tracing::{debug, trace};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tracing::{debug, error, trace};
 
 use crate::builder::DEFAULT_CHANNEL_SIZE;
-use crate::retention::memory::{ItemValue, VolatileStore};
+use crate::error::Report;
+use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
-use crate::state::ConnectionStatus;
+use crate::retry::ExponentialIter;
+use crate::state::SharedState;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::StoreCapabilities;
-use crate::transport::{Connection, Publish};
+use crate::transport::{Connection, Publish, Receive, Reconnect};
 use crate::Error;
 
 use super::DeviceConnection;
@@ -36,33 +41,98 @@ where
     /// This function is called once at the start to send all the stored packet.
     pub(super) async fn init_stored_retention(&mut self) -> Result<(), Error>
     where
-        C::Sender: Publish,
+        C::Sender: Publish + 'static,
     {
         let Some(retention) = self.store.get_retention() else {
             return Ok(());
         };
 
-        let interfaces = self.state.interfaces.read().await;
+        {
+            let interfaces = self.state.interfaces.read().await;
 
-        retention.cleanup_introspection(&interfaces).await?;
+            retention.cleanup_introspection(&interfaces).await?;
+        }
 
         retention.reset_all_publishes().await?;
 
-        Self::resend_stored_publishes(&mut self.store, &mut self.sender, &self.state.status)
-            .await?;
+        self.resend_retention(false).await;
 
         Ok(())
     }
 
-    pub(super) async fn resend_volatile_publishes(
-        volatile_store: &VolatileStore,
+    /// Reconnect the connection and resends all retention publishes
+    pub(crate) async fn reconnect_and_resend(&mut self) -> Result<(), Error>
+    where
+        C: Reconnect + Receive,
+        C::Sender: Publish + 'static,
+    {
+        self.cancel_prev_resend().await;
+
+        self.reconnect().await?;
+
+        self.resend_retention(true).await;
+
+        Ok(())
+    }
+
+    /// Send all the publishes from another task to not block the event loop.
+    async fn resend_retention(&mut self, volatile: bool)
+    where
+        C::Sender: Publish + 'static,
+    {
+        let state = Arc::clone(&self.state);
+        let mut sender = self.sender.clone();
+        let mut store = self.store.clone();
+
+        // The queue of unpublish packets could grow indefinitely, but the should all be sent at the
+        // end.
+        //
+        // NOTE: This is only needed because the MQTT library uses a managed channel to send the to
+        //       the event loop while polling, and it's not possible to send the data directly
+        //       without also receiving. This is a big limitation of the current library.
+        self.resend = Some(tokio::task::spawn(async move {
+            let _interfaces = state.interfaces.read().await;
+
+            // We exit on errors so the connection task should exit with the error.
+            if volatile {
+                if let Err(err) = Self::resend_volatile_publishes(&mut sender, &state).await {
+                    error!(error = %Report::new(&err), "error sending volatile retention");
+                }
+            }
+
+            if let Err(err) = Self::resend_stored_publishes(&mut store, &mut sender).await {
+                error!(error = %Report::new(&err), "error sending stored retention");
+            }
+        }));
+    }
+
+    /// Check if there is a previous task for the resend of stored publishes and cancels it.
+    async fn cancel_prev_resend(&mut self) {
+        if let Some(resend) = self.resend.take() {
+            debug!("cancel previous resend");
+
+            resend.abort();
+
+            match resend.await {
+                Ok(()) => todo!(),
+                Err(err) if err.is_cancelled() => {
+                    debug!("resend task was cancelled");
+                }
+                Err(err) => {
+                    error!(error = %Report::new(err), "resend task paniched");
+                }
+            }
+        }
+    }
+
+    async fn resend_volatile_publishes(
         sender: &mut C::Sender,
-        status: &ConnectionStatus,
+        state: &SharedState,
     ) -> Result<(), Error>
     where
         C::Sender: Publish,
     {
-        while let Some(item) = volatile_store.pop_next().await {
+        while let Some(item) = state.volatile_store.pop_next().await {
             match item {
                 ItemValue::Individual(individual) => {
                     sender.send_individual(individual).await?;
@@ -71,22 +141,14 @@ where
                     sender.send_object(object).await?;
                 }
             }
-
-            // Let's check if we are still connected after the await
-            if !status.is_connected() {
-                debug!("disconnected");
-
-                break;
-            }
         }
 
         Ok(())
     }
 
-    pub(super) async fn resend_stored_publishes(
+    async fn resend_stored_publishes(
         store: &mut StoreWrapper<C::Store>,
         sender: &mut C::Sender,
-        status: &ConnectionStatus,
     ) -> Result<(), Error>
     where
         C::Sender: Publish,
@@ -107,13 +169,6 @@ where
 
             for (id, info) in buf.drain(..) {
                 sender.resend_stored(RetentionId::Stored(id), info).await?;
-
-                // Let's check if we are still connected after the await
-                if !status.is_connected() {
-                    debug!("disconnected");
-
-                    break;
-                }
             }
 
             if count == 0 || count < DEFAULT_CHANNEL_SIZE {
@@ -124,6 +179,28 @@ where
 
             buf.clear();
         }
+
+        Ok(())
+    }
+
+    async fn reconnect(&mut self) -> Result<(), Error>
+    where
+        C: Reconnect,
+    {
+        let interfaces = self.state.interfaces.read().await;
+        debug!("reconnecting");
+        let mut exp = ExponentialIter::default();
+
+        while !self.connection.reconnect(&interfaces).await? {
+            let timeout = exp.next();
+
+            debug!("waiting {timeout} seconds before retrying");
+
+            tokio::time::sleep(Duration::from_secs(timeout)).await;
+        }
+
+        // Now we are reconnected
+        self.state.status.set_connected(true);
 
         Ok(())
     }

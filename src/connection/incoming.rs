@@ -23,8 +23,8 @@ use crate::error::{AggregationError, InterfaceTypeError};
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::{Aggregation, InterfaceTypeDef};
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
-use crate::transport::{Connection, Receive, ReceivedEvent, TransportError};
-use crate::{DeviceEvent, Error, Interface, Value};
+use crate::transport::{Connection, Receive, TransportError};
+use crate::{Error, Interface, Value};
 
 use super::DeviceConnection;
 
@@ -33,7 +33,7 @@ where
     C: Connection,
 {
     #[instrument(skip(self, payload))]
-    async fn handle_event(
+    pub(crate) async fn handle_event(
         &self,
         interface: &str,
         path: &str,
@@ -204,33 +204,5 @@ where
         )?;
 
         Ok(Value::Object { data, timestamp })
-    }
-
-    pub(super) async fn handle_connection_event(
-        &self,
-        event: ReceivedEvent<C::Payload>,
-    ) -> Result<(), Error>
-    where
-        C: Receive + Sync,
-    {
-        let data = match self
-            .handle_event(&event.interface, &event.path, event.payload)
-            .await
-        {
-            Ok(aggregation) => Ok(DeviceEvent {
-                interface: event.interface,
-                path: event.path,
-                data: aggregation,
-            }),
-            Err(TransportError::Recv(recv_err)) => Err(recv_err),
-            Err(TransportError::Transport(err)) => {
-                return Err(err);
-            }
-        };
-
-        self.tx
-            .send_async(data)
-            .await
-            .map_err(|_| Error::Disconnected)
     }
 }

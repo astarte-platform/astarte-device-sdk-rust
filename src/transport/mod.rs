@@ -62,7 +62,7 @@ pub(crate) enum TransportError {
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
 /// specific [`Connection::deserialize_individual`] or [`Connection::serialize_individual`]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReceivedEvent<P> {
     pub(crate) interface: String,
     pub(crate) path: String,
@@ -185,10 +185,13 @@ pub(crate) trait Receive {
 pub(crate) trait Reconnect {
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
     /// [`Receive::next_event`] returns [`None`].
+    ///
+    /// It tries to reconnect once, if it succeed it will return true, otherwise it will return
+    /// false.
     fn reconnect(
         &mut self,
         interfaces: &Interfaces,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<bool, crate::Error>> + Send;
 }
 
 pub(crate) trait Register {

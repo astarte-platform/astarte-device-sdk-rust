@@ -18,6 +18,7 @@
 
 use std::time::Duration;
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::IntoAstarteObject;
@@ -84,10 +85,11 @@ async fn main() -> eyre::Result<()> {
 
             println!("Sending {data:?}");
             client
-                .send_object(
+                .send_object_with_timestamp(
                     "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
                     "/23",
                     data.try_into().unwrap(),
+                    Utc::now(),
                 )
                 .await?;
 

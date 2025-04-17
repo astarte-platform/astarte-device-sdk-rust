@@ -301,7 +301,7 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 ///
 /// ### Example
 ///
-/// To derive the trait it for an individual.
+/// To derive the trait for an individual.
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
