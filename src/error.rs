@@ -90,7 +90,7 @@ pub enum Error {
     /// Error when the Device is disconnected from Astarte or client.
     ///
     /// This is an unrecoverable error for the SDK.
-    #[error("disconnected from astarte")]
+    #[error("disconnected from Astarte")]
     Disconnected,
     /// Retention operation failed.
     #[error("retention operation failed")]

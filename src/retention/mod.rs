@@ -293,7 +293,7 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// Marks all publishes as unset and cleans up expired publishes.
     fn reset_all_publishes(&self) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
-    /// Marks all publishes as unset and cleans up expired publishes.
+    /// Retrieves all the interfaces with data stored in the retention.
     fn fetch_all_interfaces(
         &self,
     ) -> impl Future<Output = Result<HashSet<StoredInterface>, RetentionError>> + Send;

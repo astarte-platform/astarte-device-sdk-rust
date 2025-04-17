@@ -23,6 +23,7 @@ use tracing::{debug, error, trace};
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::reference::PropertyRef;
 use crate::interface::Ownership;
+use crate::state::Status;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
@@ -70,13 +71,21 @@ where
             mapping.interface().version_major()
         );
 
-        if self.state.status.is_connected() {
-            self.sender.send_property(validated).await?;
+        match self.state.status.connection() {
+            Status::Connected => {
+                self.sender.send_property(validated).await?;
 
-            trace!(
-                "property sent {interface_name}{path}:{}",
-                mapping.interface().version_major()
-            );
+                trace!(
+                    "property sent {interface_name}{path}:{}",
+                    mapping.interface().version_major()
+                );
+            }
+            Status::Disconnected => {
+                trace!("property not sent since offline")
+            }
+            Status::Closed => {
+                return Err(Error::Disconnected);
+            }
         }
 
         Ok(())
@@ -147,14 +156,20 @@ where
         let property_mapping = (&validated).into();
         self.store.unset_prop(&property_mapping).await?;
 
-        if self.state.status.is_connected() {
-            self.sender.unset(validated.clone()).await?;
+        match self.state.status.connection() {
+            Status::Connected => {
+                self.sender.unset(validated.clone()).await?;
 
-            debug!("deleting property {interface_name}{path} from store",);
+                debug!("deleting property {interface_name}{path} from store");
 
-            // TODO: this should be done when the package has been acknowledged, but it's hard
-            //       for the MQTT implementation at the moment so we delete it here to cleanup
-            self.store.delete_prop(&property_mapping).await?;
+                self.store.delete_prop(&property_mapping).await?;
+            }
+            Status::Disconnected => {
+                trace!("not deleting property from store, since disconnected");
+            }
+            Status::Closed => {
+                return Err(Error::Disconnected);
+            }
         }
 
         Ok(())
