@@ -25,7 +25,7 @@ use crate::client::ValidatedObject;
 use crate::error::AggregationError;
 use crate::interface::mapping::path::MappingPath;
 use crate::interface::{Aggregation, Retention};
-use crate::state::SharedState;
+use crate::state::{SharedState, Status};
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
 use crate::Error;
@@ -66,16 +66,24 @@ where
 
         debug!("sending object {}{}", interface_name, path);
 
-        if !self.state.status.is_connected() {
-            trace!("publish object while connection is offline");
+        match self.state.status.connection() {
+            Status::Connected => {
+                trace!("publish object while connection is connected");
+            }
+            Status::Disconnected => {
+                trace!("publish object while connection is offline");
 
-            return Self::offline_send_object(
-                &self.state,
-                &self.store,
-                &mut self.sender,
-                validated,
-            )
-            .await;
+                return Self::offline_send_object(
+                    &self.state,
+                    &self.store,
+                    &mut self.sender,
+                    validated,
+                )
+                .await;
+            }
+            Status::Closed => {
+                return Err(Error::Disconnected);
+            }
         }
 
         match validated.retention {

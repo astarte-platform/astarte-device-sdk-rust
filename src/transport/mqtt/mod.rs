@@ -752,13 +752,11 @@ impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
 {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
         self.connection
-            .connect(self.client_id.as_ref(), interfaces, &self.store)
+            .reconnect(self.client_id.as_ref(), interfaces, &self.store)
             .await
-            .map_err(MqttError::Poll)?;
-
-        Ok(())
+            .map_err(|err| Error::Mqtt(MqttError::Poll(err)))
     }
 }
 

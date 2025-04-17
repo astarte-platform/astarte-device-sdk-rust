@@ -22,16 +22,18 @@ use std::future::Future;
 use std::sync::Arc;
 
 use chrono::Utc;
-use tracing::{debug, info, warn};
+use tokio::task::JoinHandle;
+use tracing::{debug, info, trace, warn};
 
-use crate::state::SharedState;
+use crate::error::Report;
+use crate::state::{SharedState, Status};
 use crate::transport::TransportError;
 use crate::Timestamp;
 use crate::{
     client::RecvError,
     event::DeviceEvent,
     store::wrapper::StoreWrapper,
-    transport::{Connection, Disconnect, Publish, Receive, Reconnect, Register},
+    transport::{Connection, Publish, Receive, Reconnect},
     Error,
 };
 
@@ -84,6 +86,7 @@ where
     connection: C,
     sender: C::Sender,
     state: Arc<SharedState>,
+    resend: Option<JoinHandle<()>>,
 }
 
 impl<C> DeviceConnection<C>
@@ -103,6 +106,7 @@ where
             state,
             connection,
             sender,
+            resend: None,
         }
     }
 
@@ -130,19 +134,61 @@ where
             }),
         }
     }
+
+    /// Keeps polling connection events
+    pub(super) async fn poll(&mut self) -> Result<Status, TransportError>
+    where
+        C: Receive + Reconnect,
+        C::Sender: Publish + 'static,
+    {
+        let Some(event) = self.connection.next_event().await? else {
+            trace!("disconnected");
+
+            self.state.status.set_connected(false);
+
+            // This will check if the connection was closed
+            return Ok(self.state.status.connection());
+        };
+
+        let event = self
+            .handle_event(&event.interface, &event.path, event.payload)
+            .await
+            .map(|data| DeviceEvent {
+                interface: event.interface,
+                path: event.path,
+                data,
+            })?;
+
+        self.tx.send(Ok(event)).map_err(|err| {
+            debug!(error = %Report::new(err), "disconnected");
+
+            TransportError::Transport(Error::Disconnected)
+        })?;
+
+        Ok(self.state.status.connection())
+    }
 }
 
 impl<C> EventLoop for DeviceConnection<C>
 where
-    C: Connection + Reconnect + Receive + Send + Sync + 'static,
-    C::Sender: Send + Register + Publish + Disconnect + 'static,
+    C: Connection + Reconnect + Receive + 'static,
+    C::Sender: Publish + 'static,
 {
     async fn handle_events(mut self) -> Result<(), crate::Error> {
         self.init_stored_retention().await?;
 
+        // We are connected and all the stored packet have been sent
+        self.state.status.set_connected(true);
+
         loop {
-            let opt = match self.connection.next_event().await {
-                Ok(opt) => opt,
+            match self.poll().await {
+                Ok(Status::Connected) => {}
+                Ok(Status::Disconnected) => {
+                    self.reconnect_and_resend().await?;
+                }
+                Ok(Status::Closed) => {
+                    break;
+                }
                 Err(TransportError::Transport(err)) => {
                     return Err(err);
                 }
@@ -152,45 +198,8 @@ where
                         .send_async(Err(recv_err))
                         .await
                         .map_err(|_| Error::Disconnected)?;
-
-                    continue;
                 }
-            };
-
-            let Some(event_data) = opt else {
-                if self.state.status.is_closed() {
-                    debug!("connection closed");
-
-                    break;
-                }
-
-                debug!("reconnecting");
-
-                self.state.status.set_connected(false);
-
-                let interfaces = self.state.interfaces.read().await;
-
-                self.connection.reconnect(&interfaces).await?;
-
-                Self::resend_volatile_publishes(
-                    &self.state.volatile_store,
-                    &mut self.sender,
-                    &self.state.status,
-                )
-                .await?;
-                Self::resend_stored_publishes(
-                    &mut self.store,
-                    &mut self.sender,
-                    &self.state.status,
-                )
-                .await?;
-
-                self.state.status.set_connected(true);
-
-                continue;
-            };
-
-            self.handle_connection_event(event_data).await?
+            }
         }
 
         info!("connection closed successfully");
