@@ -25,7 +25,6 @@ use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
-use crate::retry::ExponentialIter;
 use crate::state::SharedState;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::StoreCapabilities;
@@ -115,7 +114,7 @@ where
 
             match resend.await {
                 Ok(()) => {
-                    trace!("resend task joined")
+                    trace!("task already exited")
                 }
                 Err(err) if err.is_cancelled() => {
                     debug!("resend task was cancelled");
@@ -191,10 +190,18 @@ where
     {
         let interfaces = self.state.interfaces.read().await;
         debug!("reconnecting");
-        let mut exp = ExponentialIter::default();
+
+        // Wait for the first reconnection to prevent an immediate retry when the reconnection is
+        // actually successful immediately (not entering the while loop). An example is not
+        // installing the interfaces on Astarte.
+        let timeout = self.backoff.next();
+
+        debug!("waiting {timeout} seconds before retrying");
+
+        tokio::time::sleep(Duration::from_secs(timeout)).await;
 
         while !self.connection.reconnect(&interfaces).await? {
-            let timeout = exp.next();
+            let timeout = self.backoff.next();
 
             debug!("waiting {timeout} seconds before retrying");
 
