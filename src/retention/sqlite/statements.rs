@@ -129,7 +129,8 @@ impl WriteConnection {
 
             let changed = statement.execute((sent, timestamp, id.counter))?;
 
-            debug_assert_eq!(changed, 1);
+            // If we remove an interface before the ACK is received the publish will also be deleted
+            debug_assert!((0..=1).contains(&changed));
 
             Ok(())
         })
@@ -146,7 +147,8 @@ impl WriteConnection {
 
             let changed = statement.execute((timestamp, id.counter))?;
 
-            debug_assert_eq!(changed, 1);
+            // If remove an interface before the ACK is received the publish will also be deleted
+            debug_assert!((0..=1).contains(&changed));
 
             Ok(())
         })
@@ -157,24 +159,6 @@ impl WriteConnection {
 
         wrap_sync_call(move || {
             Self::delete_interface_transaction(&transaction, interface)?;
-
-            transaction.commit().map_err(SqliteError::Transaction)?;
-
-            Ok(())
-        })
-    }
-
-    pub(super) fn delete_interface_many<I>(&mut self, interfaces: I) -> Result<(), SqliteError>
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-    {
-        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
-
-        wrap_sync_call(move || {
-            for intf in interfaces {
-                Self::delete_interface_transaction(&transaction, intf.as_ref())?;
-            }
 
             transaction.commit().map_err(SqliteError::Transaction)?;
 
@@ -725,52 +709,6 @@ pub(crate) mod tests {
 
         let mapping = store
             .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
-            .unwrap();
-
-        assert_eq!(mapping, None);
-    }
-
-    #[tokio::test]
-    async fn should_delete_interface_many() {
-        let dir = tempfile::tempdir().unwrap();
-
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
-
-        let interface = "com.Foo";
-        let path = "/bar";
-
-        let mapping = RetentionMapping {
-            interface: interface.into(),
-            path: path.into(),
-            version_major: 1,
-            reliability: Reliability::Guaranteed,
-            expiry: None,
-        };
-        store_mapping(&store, &mapping).await;
-
-        let id = Id {
-            timestamp: TimestampMillis(1),
-            counter: 1,
-        };
-        let exp = RetentionPublish {
-            id,
-            interface: interface.into(),
-            path: path.into(),
-            expiry_time: None,
-            sent: false,
-            payload: [].as_slice().into(),
-        };
-
-        store_publish(&store, &exp).await;
-
-        store.delete_interface_many(&[interface]).await.unwrap();
-
-        let publish = fetch_publish(&store, &id);
-
-        assert_eq!(publish, None);
-
-        let mapping = store
-            .with_reader(|reader| read_mapping(reader, interface, path))
             .unwrap();
 
         assert_eq!(mapping, None);

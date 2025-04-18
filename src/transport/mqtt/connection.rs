@@ -199,54 +199,70 @@ impl MqttConnection {
     {
         let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
 
-        mqtt_connection
-            .connect(client_id, interfaces, store)
-            .await?;
+        let mut exp_back = ExponentialIter::default();
+
+        while !mqtt_connection
+            .reconnect(client_id, interfaces, store)
+            .await?
+        {
+            let timeout = exp_back.next();
+
+            debug!("waiting {timeout} seconds before retrying");
+
+            tokio::time::sleep(Duration::from_secs(timeout)).await;
+        }
+
+        disable_clean_session(mqtt_connection.connection.eventloop_mut());
 
         Ok(mqtt_connection)
     }
 
-    /// Connect to astarte, wait till the state is [`Connected`].
-    pub(crate) async fn connect<S>(
+    /// Reconnect to astarte, wait till the state is [`Connected`].
+    pub(crate) async fn reconnect<S>(
         &mut self,
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
-    ) -> Result<(), PollError>
+    ) -> Result<bool, PollError>
     where
         S: PropertyStore,
     {
-        let mut exp_back = ExponentialIter::default();
+        if self.state.is_connected() {
+            debug!("already connected");
 
-        // Wait till we are in the Init state, so we do not need to handle the incoming publishes,
-        // but all the initialization packets are being queued.
-        while !self.state.is_connected() {
+            return Ok(true);
+        }
+
+        loop {
             let opt_publish = self
                 .state
                 .poll(&mut self.connection, client_id, interfaces, store)
                 .await?;
 
             if let Some(publish) = opt_publish {
-                debug!("received a publish");
+                debug!("publish received");
 
                 disable_clean_session(self.connection.eventloop_mut());
 
                 self.buff.push_back(publish);
             }
 
-            // Check if an error occurred
-            if self.state.is_disconnected() {
-                let timeout = exp_back.next();
+            match &self.state {
+                State::Connected(_) => {
+                    debug!("reconnected");
 
-                debug!("waiting {timeout} seconds before retrying");
+                    break Ok(true);
+                }
+                State::Disconnected(_) => {
+                    debug!("error occured");
 
-                tokio::time::sleep(Duration::from_secs(timeout)).await;
+                    break Ok(false);
+                }
+                state => {
+                    trace!(?state, "polling next event");
+                }
             }
         }
-
-        disable_clean_session(self.connection.eventloop_mut());
-
-        Ok(())
     }
 }
 
@@ -343,14 +359,6 @@ impl State {
     #[must_use]
     fn is_connected(&self) -> bool {
         matches!(self, Self::Connected(..))
-    }
-
-    /// Returns `true` if the state is [`Disconnected`].
-    ///
-    /// [`Disconnected`]: State::Disconnected
-    #[must_use]
-    pub(crate) fn is_disconnected(&self) -> bool {
-        matches!(self, Self::Disconnected(..))
     }
 }
 
@@ -866,7 +874,7 @@ mod tests {
 
     use crate::{
         store::{memory::MemoryStore, StoredProp},
-        test::{DEVICE_PROPERTIES, INDIVIDUAL_SERVER_DATASTREAM, OBJECT_DEVICE_DATASTREAM},
+        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
         AstarteType, Interface,
     };
@@ -988,8 +996,8 @@ mod tests {
 
         let interfaces = [
             Interface::from_str(DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(OBJECT_DEVICE_DATASTREAM).unwrap(),
-            Interface::from_str(INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+            Interface::from_str(DEVICE_OBJECT).unwrap(),
+            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
         ];
 
         let interfaces = Interfaces::from_iter(interfaces);

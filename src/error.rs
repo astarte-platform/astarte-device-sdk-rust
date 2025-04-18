@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -90,7 +90,7 @@ pub enum Error {
     /// Error when the Device is disconnected from Astarte or client.
     ///
     /// This is an unrecoverable error for the SDK.
-    #[error("disconnected from astarte")]
+    #[error("disconnected from Astarte")]
     Disconnected,
     /// Retention operation failed.
     #[error("retention operation failed")]
@@ -120,10 +120,17 @@ pub struct AggregationError {
 }
 
 impl AggregationError {
-    pub(crate) fn new(interface: String, path: String, exp: Aggregation, got: Aggregation) -> Self {
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn new(
+        interface: impl Into<String>,
+        path: impl Into<String>,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Self {
         Self {
-            interface,
-            path,
+            interface: interface.into(),
+            path: path.into(),
             exp,
             got,
         }
@@ -132,10 +139,12 @@ impl AggregationError {
 
 /// Invalid interface type when sending or receiving.
 #[derive(Debug, thiserror::Error)]
-#[error("invalid interface type for {name}, expected {exp} but got {got}")]
+#[error("invalid interface type for {name}{}, expected {exp} but got {got}", path.as_deref().unwrap_or_default())]
 pub struct InterfaceTypeError {
     /// Name of the interface.
     name: String,
+    /// Optional path
+    path: Option<String>,
     /// Expected interface type.
     exp: InterfaceTypeDef,
     /// Actual interface type.
@@ -150,6 +159,23 @@ impl InterfaceTypeError {
     ) -> Self {
         Self {
             name: name.into(),
+            path: None,
+            exp,
+            got,
+        }
+    }
+
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn with_path(
+        name: impl Into<String>,
+        path: impl Into<String>,
+        exp: InterfaceTypeDef,
+        got: InterfaceTypeDef,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            path: Some(path.into()),
             exp,
             got,
         }

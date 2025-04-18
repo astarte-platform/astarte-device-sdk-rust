@@ -148,110 +148,11 @@ impl Serialize for AstarteObject {
     }
 }
 
-/// Data for an [`Astarte data event`](crate::DeviceEvent).
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// Individual data, can be both from a datastream or property.
-    Individual(AstarteType),
-    /// Object data, also called aggregate. Can only be from a datastream.
-    Object(AstarteObject),
-    /// Unset of a property
-    Unset,
-}
-
-impl Value {
-    /// Returns `true` if the aggregation is [`Individual`].
-    ///
-    /// [`Individual`]: Value::Individual
-    #[must_use]
-    pub fn is_individual(&self) -> bool {
-        matches!(self, Self::Individual(..))
-    }
-
-    /// Get a reference to the [`AstarteType`] if the aggregate is
-    /// [`Individual`](Value::Individual).
-    pub fn as_individual(&self) -> Option<&AstarteType> {
-        if let Self::Individual(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    /// Take out of the enum an [`AstarteType`] if the aggregate is
-    /// [`Individual`](Value::Individual).
-    pub fn take_individual(self) -> Option<AstarteType> {
-        if let Self::Individual(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    /// Returns `true` if the aggregation is [`Object`].
-    ///
-    /// [`Object`]: Value::Object
-    #[must_use]
-    pub fn is_object(&self) -> bool {
-        matches!(self, Self::Object(..))
-    }
-
-    /// Get a reference to the [`AstarteObject`] if the aggregate is [`Object`](Value::Object).
-    pub fn as_object(&self) -> Option<&AstarteObject> {
-        if let Self::Object(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    /// Take out of the enum an [`AstarteObject`] if the aggregate is [`Object`](Value::Object).
-    pub fn take_object(self) -> Option<AstarteObject> {
-        if let Self::Object(v) = self {
-            Some(v)
-        } else {
-            None
-        }
-    }
-
-    /// Returns `true` if the aggregation is [`Unset`].
-    ///
-    /// [`Unset`]: Value::Unset
-    #[must_use]
-    pub fn is_unset(&self) -> bool {
-        matches!(self, Self::Unset)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn should_increase_coverage() {
-        let individual = AstarteType::Integer(42);
-        let val = Value::Individual(AstarteType::Integer(42));
-        assert!(val.is_individual());
-        assert_eq!(val.as_individual(), Some(&individual));
-        assert_eq!(val.as_object(), None);
-        assert_eq!(val.take_individual(), Some(individual));
-
-        let val = Value::Individual(AstarteType::Integer(42));
-        assert_eq!(val.take_object(), None);
-
-        let val = Value::Object(AstarteObject::new());
-        assert!(val.is_object());
-        assert_eq!(val.as_individual(), None);
-        assert_eq!(val.as_object(), Some(&AstarteObject::new()));
-        assert_eq!(val.take_object(), Some(AstarteObject::new()));
-
-        let val = Value::Object(AstarteObject::new());
-        assert_eq!(val.take_individual(), None);
-
-        assert!(Value::Unset.is_unset());
-    }
 
     #[test]
     fn create_with_capacity() {
