@@ -71,6 +71,7 @@ use crate::{
     retention::{
         memory::VolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
+    session::{IntrospectionInterface, StoredSession},
     state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -243,6 +244,24 @@ impl<S> MqttClient<S> {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn extend_interfaces_await_pub(
+        &self,
+        res: Result<Token<AckOfPub>, MqttError>,
+    ) -> Result<(), MqttError> {
+        let Ok(token) = res else {
+            error!("error while subscribing to interfaces");
+            return res.map(drop);
+        };
+
+        let ack_result = token.await;
+        let Ok(_) = ack_result else {
+            error!("error in ack reception while subscribing to interfaces");
+            return ack_result.map(drop).map_err(MqttError::PubAckToken);
+        };
 
         Ok(())
     }
@@ -419,7 +438,7 @@ where
 
 impl<S> Register for MqttClient<S>
 where
-    S: Send + Sync,
+    S: StoreCapabilities + Send + Sync,
 {
     async fn add_interface(
         &mut self,
@@ -435,7 +454,14 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            let interface: IntrospectionInterface<&str> = added.interface().into();
+            session.add_interfaces(&[interface]).await?;
+        }
 
         Ok(())
     }
@@ -451,7 +477,14 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            let interface: IntrospectionInterface<&str> = removed.into();
+            session.remove_interfaces(&[interface]).await?;
+        }
 
         if removed.ownership().is_server() {
             self.unsubscribe(removed.interface_name()).await?;
@@ -490,13 +523,21 @@ where
             .client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map(drop)
-            .map_err(|err| MqttError::publish("send introspection", err).into());
+            .map_err(|err| MqttError::publish("send introspection", err));
 
-        // Cleanup the already subscribed interfaces
-        if res.is_err() {
-            error!("error while subscribing to interfaces");
+        let res = self
+            .extend_interfaces_await_pub(res)
+            .await
+            .map_err(Into::into);
 
+        if res.is_ok() {
+            if let Some(session) = self.store.get_session() {
+                let added: Vec<IntrospectionInterface<&str>> =
+                    added.iter_interfaces().map(|i| i.into()).collect();
+
+                session.add_interfaces(&added).await?;
+            }
+        } else {
             for srv_interface in server_interfaces {
                 if let Err(err) = self.unsubscribe(srv_interface).await {
                     error!(
@@ -522,7 +563,16 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            let removed: Vec<IntrospectionInterface<&str>> =
+                removed.values().map(|&i| i.into()).collect();
+
+            session.remove_interfaces(&removed).await?;
+        }
 
         for iface in removed.values() {
             if iface.ownership().is_server() {
@@ -769,6 +819,7 @@ where
 /// Wrapper structs that holds data used when connecting/reconnecting
 pub(crate) struct SessionData {
     interfaces: String,
+    interfaces_stored: Vec<IntrospectionInterface>,
     server_interfaces: Vec<String>,
     device_properties: Vec<OptStoredProp>,
 }
@@ -799,10 +850,13 @@ impl SessionData {
 
         let server_interfaces = Self::filter_server_interfaces(interfaces);
 
+        let interfaces_store: Vec<IntrospectionInterface> = interfaces.into();
+
         Ok(Self {
             interfaces: interfaces.get_introspection_string(),
             server_interfaces,
             device_properties,
+            interfaces_stored: interfaces_store,
         })
     }
 }
@@ -892,7 +946,7 @@ pub(crate) mod test {
     use properties::extract_set_properties;
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
-        Resolver,
+        Resolver, UnsubAck,
     };
     use tempfile::TempDir;
     use test::{
@@ -902,7 +956,12 @@ pub(crate) mod test {
 
     use crate::{
         builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
-        store::memory::MemoryStore,
+        session::SessionError,
+        store::{memory::MemoryStore, mock::MockStore},
+        test::{
+            DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL,
+            SERVER_INDIVIDUAL_NAME, SERVER_PROPERTIES,
+        },
     };
 
     use self::{
@@ -976,9 +1035,9 @@ pub(crate) mod test {
         let mut client = AsyncClient::default();
 
         let to_add = [
-            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
-            Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap(),
+            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(DEVICE_OBJECT).unwrap(),
+            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
         ];
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -1041,8 +1100,8 @@ pub(crate) mod test {
 
         // no server owned interfaces are present
         let to_add = [
-            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
+            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(DEVICE_OBJECT).unwrap(),
         ];
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -1094,7 +1153,7 @@ pub(crate) mod test {
         let eventl = EventLoop::default();
         let mut client = AsyncClient::default();
 
-        let to_add = [Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()];
+        let to_add = [Interface::from_str(SERVER_PROPERTIES).unwrap()];
 
         let introspection = Introspection::new(to_add.iter()).to_string();
 
@@ -1261,13 +1320,6 @@ pub(crate) mod test {
                     })
                 });
 
-            // First clean for the good connection
-            ev_loop
-                .expect_clean()
-                .once()
-                .in_sequence(&mut seq)
-                .return_const(());
-
             ev_loop
                 .expect_poll()
                 .once()
@@ -1330,5 +1382,573 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_reconnect_fast_handshake() {
+        let _m = NEW_LOCK.lock().await;
+
+        let dir = TempDir::new().unwrap();
+
+        let ctx = AsyncClient::new_context();
+        ctx.expect().once().returning(|_, _| {
+            let mut client = AsyncClient::default();
+            let mut ev_loop = EventLoop::default();
+
+            let mut seq = mockall::Sequence::new();
+
+            ev_loop
+                .expect_set_network_options()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|_| EventLoop::default());
+
+            client
+                .expect_clone()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|| {
+                    let mut client = AsyncClient::default();
+
+                    let mut seq = mockall::Sequence::new();
+
+                    client
+                        .expect_clone()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .returning(AsyncClient::default);
+
+                    client
+                });
+
+            ev_loop
+                .expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|| {
+                    Box::pin(async {
+                        Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
+                            rustls::Error::AlertReceived(
+                                rustls::AlertDescription::CertificateExpired,
+                            ),
+                        )))
+                    })
+                });
+
+            ev_loop
+                .expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|| {
+                    Box::pin(async {
+                        tokio::task::yield_now().await;
+
+                        Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
+                            session_present: true,
+                            code: ConnectReturnCode::Success,
+                        })))
+                    })
+                });
+
+            // This guaranties we can keep polling while we are waiting for the ACKs.
+            ev_loop.expect_poll().returning(|| {
+                Box::pin(async {
+                    tokio::task::yield_now().await;
+
+                    Ok(MqttEvent::Outgoing(rumqttc::Outgoing::Publish(0)))
+                })
+            });
+
+            (client, ev_loop)
+        });
+
+        let mut server = Server::new_async().await;
+
+        let mock_url = mock_get_broker_url(&mut server).create_async().await;
+        let mock_cert = mock_create_certificate(&mut server)
+            .expect(2)
+            .create_async()
+            .await;
+
+        let builder = DeviceBuilder::new()
+            .interface_str(crate::test::DEVICE_OBJECT)
+            .unwrap()
+            .store_dir(dir.path())
+            .await
+            .unwrap();
+
+        let config = MqttConfig::new(
+            "realm",
+            "device_id",
+            Credential::secret("secret"),
+            server.url(),
+        );
+
+        // add the interfaces to the store so that a fast handshake will be performed
+        let introspection_interfaces: Vec<IntrospectionInterface<&str>> =
+            From::from(&builder.interfaces);
+        builder
+            .store
+            .add_interfaces(&introspection_interfaces)
+            .await
+            .unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            config.connect(BuildConfig {
+                store: builder.store,
+                channel_size: builder.channel_size,
+                writable_dir: builder.writable_dir,
+                state: Arc::new(SharedState::new(
+                    builder.interfaces,
+                    VolatileStore::with_capacity(builder.volatile_retention),
+                )),
+            }),
+        )
+        .await
+        .expect("timeout expired")
+        .unwrap();
+
+        mock_url.assert_async().await;
+        mock_cert.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_add_interface() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let introspection = Introspection::new([to_add.clone()].iter()).to_string();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate(to_add).unwrap().unwrap();
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::eq( QoS::ExactlyOnce)
+            )
+            .in_sequence(&mut seq)
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(introspection),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [to_add.interface().into()];
+        store
+            .expect_add_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |actual| actual == expected)
+            .returning(|_| Ok(()));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client.add_interface(&interfaces, &to_add).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn add_interface_error() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let introspection = Introspection::new([to_add.clone()].iter()).to_string();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate(to_add).unwrap().unwrap();
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::eq( QoS::ExactlyOnce)
+            )
+            .in_sequence(&mut seq)
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(introspection),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [to_add.interface().into()];
+        store
+            .expect_add_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |actual| actual == expected)
+            .returning(|_| Err(SessionError::add_interfaces("mock error add interfaces")));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        let result = client.add_interface(&interfaces, &to_add).await;
+
+        assert!(matches!(
+            result,
+            Err(Error::Session(SessionError::AddInterfaces(..)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_remove_interface() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_remove = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.add(interfaces.validate(to_remove.clone()).unwrap().unwrap());
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [(&to_remove).into()];
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |actual| actual == expected)
+            .returning(|_| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+            )
+            .in_sequence(&mut seq)
+            .returning(|_| notify_success(UnsubAck::new(0)));
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client
+            .remove_interface(&interfaces, &to_remove)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn remove_interface_error() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_remove = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.add(interfaces.validate(to_remove.clone()).unwrap().unwrap());
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [(&to_remove).into()];
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |actual| actual == expected)
+            .returning(|_| Err(SessionError::remove_interfaces("remove interface error")));
+
+        // NOTE when a store error is thrown in the remove interface operation
+        // no unsusbscribe is performed
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        let result = client.remove_interface(&interfaces, &to_remove).await;
+
+        assert!(matches!(
+            result,
+            Err(crate::Error::Session(SessionError::RemoveInterfaces(..)))
+        ))
+    }
+
+    #[tokio::test]
+    async fn should_remove_interfaces() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let device_properties = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+        let server_properties = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let to_remove: HashMap<&str, &Interface> = [
+            (DEVICE_PROPERTIES_NAME, &device_properties),
+            (SERVER_INDIVIDUAL_NAME, &server_properties),
+        ]
+        .into_iter()
+        .collect();
+
+        let remaining = Interface::from_str(DEVICE_OBJECT).unwrap();
+
+        let introspection = Introspection::new([remaining.clone()].iter()).to_string();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.extend(
+            interfaces
+                .validate_many(
+                    to_remove
+                        .values()
+                        .copied()
+                        .chain(std::iter::once(&remaining))
+                        .cloned(),
+                )
+                .unwrap(),
+        );
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(introspection),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: Vec<IntrospectionInterface> = to_remove.values().map(|&i| i.into()).collect();
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |actual| actual == expected)
+            .returning(|_| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+            )
+            .in_sequence(&mut seq)
+            .returning(|_| notify_success(UnsubAck::new(0)));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client
+            .remove_interfaces(&interfaces, &to_remove)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn should_extend_interfaces_store_introspection() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = [
+            Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
+            Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap(),
+        ];
+
+        let mut introspection = Introspection::new(to_add.iter())
+            .to_string()
+            .split(';')
+            .map(ToOwned::to_owned)
+            .collect_vec();
+
+        introspection.sort_unstable();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate_many(to_add).unwrap();
+
+        let mut mock_store = MockStore::new();
+        // enable session
+        mock_store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        mock_store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::eq( QoS::ExactlyOnce)
+            )
+            .in_sequence(&mut seq)
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
+
+        let expected: Vec<IntrospectionInterface> = to_add
+            .iter()
+            .map(|(_name, i)| i.interface().into())
+            .collect();
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |publish, _, _, payload| {
+                let mut intro = payload.split(';').collect_vec();
+
+                intro.sort_unstable();
+
+                publish == "realm/device_id" && intro == introspection
+            })
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        mock_store
+            .expect_add_interfaces()
+            .once()
+            .withf(move |actual| actual == expected)
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(()));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, mock_store).await;
+
+        client
+            .extend_interfaces(&interfaces, &to_add)
+            .await
+            .unwrap()
     }
 }

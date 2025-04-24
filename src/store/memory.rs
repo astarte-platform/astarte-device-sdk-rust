@@ -18,7 +18,7 @@
 
 //! In memory store for the properties.
 
-use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use tokio::sync::RwLock;
 use tracing::error;
@@ -26,7 +26,7 @@ use tracing::error;
 use super::{
     OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
 };
-use crate::{interface::Ownership, retention::Missing, types::AstarteType};
+use crate::{interface::Ownership, store::MissingCapability, types::AstarteType};
 
 /// Error from the memory store.
 ///
@@ -54,9 +54,14 @@ impl MemoryStore {
 }
 
 impl StoreCapabilities for MemoryStore {
-    type Retention = Missing;
+    type Retention = MissingCapability;
+    type Session = MissingCapability;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
+        None
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
         None
     }
 }

@@ -18,7 +18,7 @@
 
 //! Errors returned by the MQTT connection
 
-use rumqttc::ClientError;
+use rumqttc::{ClientError, TokenError};
 
 use super::connection::PollError;
 use super::{PairingError, PayloadError};
@@ -67,6 +67,9 @@ pub enum MqttError {
     /// Couldn't send the disconnect
     #[error("couldn't send the disconnect")]
     Disconnect(#[source] ClientError),
+    /// Token error while waiting for ack
+    #[error("token error while waiting for ack")]
+    PubAckToken(#[source] TokenError),
 }
 
 impl MqttError {

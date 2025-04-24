@@ -31,7 +31,7 @@ use astarte_message_hub_proto::PropertyFilter;
 use tokio::sync::Mutex;
 
 use crate::{
-    retention::Missing,
+    store::MissingCapability,
     store::{
         OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities,
         StoredProp,
@@ -96,9 +96,14 @@ impl From<tonic::Status> for GrpcStoreError {
 }
 
 impl StoreCapabilities for GrpcStore {
-    type Retention = Missing;
+    type Retention = MissingCapability;
+    type Session = MissingCapability;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
+        None
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
         None
     }
 }

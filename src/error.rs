@@ -24,6 +24,7 @@ use crate::interface::{Aggregation, InterfaceTypeDef, Ownership};
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
+use crate::session::SessionError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
@@ -95,6 +96,9 @@ pub enum Error {
     /// Retention operation failed.
     #[error("retention operation failed")]
     Retention(#[from] RetentionError),
+    /// Persistent session operation failed
+    #[error("persistent session operation failed")]
+    Session(#[from] SessionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
     #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]

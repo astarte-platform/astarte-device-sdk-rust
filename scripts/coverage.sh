@@ -138,6 +138,7 @@ filter_lcov() {
             --dark-mode \
             --missed \
             --ignore-errors category \
+            --ignore-errors inconsistent \
             --output-directory "$COVERAGE_OUT_DIR/$1/genhtml" \
             "$COVERAGE_OUT_DIR/$1/lcov.info"
 

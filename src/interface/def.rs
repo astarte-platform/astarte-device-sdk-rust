@@ -564,7 +564,7 @@ mod doc {
 
     struct DocVisitor;
 
-    impl<'de> Visitor<'de> for DocVisitor {
+    impl Visitor<'_> for DocVisitor {
         type Value = ();
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
