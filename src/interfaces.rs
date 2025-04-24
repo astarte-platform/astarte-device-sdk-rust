@@ -252,6 +252,10 @@ impl Interfaces {
             .values()
             .filter(|i| !removed.contains_key(i.interface_name()))
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.interfaces.len()
+    }
 }
 
 impl FromIterator<Interface> for Interfaces {
@@ -295,7 +299,6 @@ impl Deref for Validated {
 pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
 impl ValidatedCollection {
-    #[cfg(feature = "message-hub")]
     pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
         self.0.values().map(|v| &v.interface)
     }

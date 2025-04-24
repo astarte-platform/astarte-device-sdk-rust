@@ -35,6 +35,7 @@ use crate::{
     error::{DynError, Report},
     interface::{Reliability, Retention},
     interfaces::Interfaces,
+    store::MissingCapability,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -119,19 +120,19 @@ pub enum RetentionError {
 }
 
 impl RetentionError {
-    pub(crate) fn store(info: &PublishInfo<'_>, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn store(info: &PublishInfo<'_>, backtrace: impl Into<DynError>) -> Self {
         Self::Store {
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
             interface: info.interface.to_string(),
             path: info.path.to_string(),
             major_version: info.version_major,
         }
     }
 
-    pub(crate) fn received(id: Id, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn received(id: Id, backtrace: impl Into<DynError>) -> Self {
         Self::Received {
             id,
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
         }
     }
 
@@ -368,13 +369,7 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
 
 impl<T: StoredRetention> StoredRetentionExt for T {}
 
-/// Un-constructable type for a default retention.
-///
-/// This should be the never type [`!`] in the future.
-#[derive(Clone, Copy)]
-pub enum Missing {}
-
-impl StoredRetention for Missing {
+impl StoredRetention for MissingCapability {
     async fn store_publish(
         &self,
         _id: &Id,

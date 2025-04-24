@@ -27,6 +27,7 @@ use crate::{
         Ownership,
     },
     retention::StoredRetention,
+    session::StoredSession,
     types::AstarteType,
     validate::ValidatedUnset,
     Interface,
@@ -48,10 +49,24 @@ pub trait StoreCapabilities: PropertyStore {
     ///
     /// This should be self, it's used as an associated type to not introduce dynamic dispatch.
     type Retention: StoredRetention;
+    /// Type used for the [`StoredSession`].
+    ///
+    /// This should be self, it's used as an associated type to not introduce dynamic dispatch.
+    type Session: StoredSession;
 
     /// Returns the retention if the store supports it.
     fn get_retention(&self) -> Option<&Self::Retention>;
+
+    /// Returns the introspection store if supported.
+    fn get_session(&self) -> Option<&Self::Session>;
 }
+
+/// Un-constructable type for a default capability.
+///
+/// This should be the never type [`!`] in the future.
+/// Useful for types which do not have a capability but must implement [`StoreCapabilities`]
+#[derive(Clone, Copy)]
+pub enum MissingCapability {}
 
 /// Data passed to the store that identifies a property
 pub struct PropertyMapping<'a> {

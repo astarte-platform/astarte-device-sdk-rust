@@ -67,9 +67,9 @@ pub(crate) struct ConnectionStatus {
 impl ConnectionStatus {
     pub(crate) fn new() -> Self {
         Self {
+            closed: AtomicBool::new(false),
             // Assume we are connected
             connected: AtomicBool::new(true),
-            closed: AtomicBool::new(false),
         }
     }
 

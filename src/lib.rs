@@ -46,6 +46,7 @@ pub mod prelude;
 pub mod properties;
 pub mod retention;
 mod retry;
+pub mod session;
 pub(crate) mod state;
 pub mod store;
 pub mod transport;

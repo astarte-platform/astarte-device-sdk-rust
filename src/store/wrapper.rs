@@ -42,9 +42,14 @@ where
     S: StoreCapabilities,
 {
     type Retention = S::Retention;
+    type Session = S::Session;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
         self.store.get_retention()
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
+        self.store.get_session()
     }
 }
 
