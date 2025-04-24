@@ -43,11 +43,7 @@
 //!
 //! Incoming messages must be processed as they arrive. If an error occurs during this process, it should be propagated up to the client with appropriate error-handling mechanisms.
 
-use std::{
-    collections::VecDeque,
-    fmt::{Debug, Display},
-    time::Duration,
-};
+use std::{collections::VecDeque, fmt::Display, time::Duration};
 
 use rumqttc::{
     mqttbytes, ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError,
@@ -61,8 +57,12 @@ use crate::{
     error::Report,
     interfaces::Interfaces,
     properties::{encode_set_properties, PropertiesError},
+    retention::StoredRetention,
     retry::ExponentialIter,
-    store::{error::StoreError, wrapper::StoreWrapper, OptStoredProp, PropertyStore},
+    session::{IntrospectionInterface, SessionError, StoredSession},
+    store::{
+        error::StoreError, wrapper::StoreWrapper, OptStoredProp, PropertyStore, StoreCapabilities,
+    },
     transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
 };
 
@@ -111,6 +111,9 @@ pub enum PollError {
     /// Couldn't complete a store operation
     #[error("store operation failed")]
     Store(#[from] StoreError),
+    /// Couldn't read the introspection from the store
+    #[error("Store introspection operation failed")]
+    IntrospectionStore(#[from] SessionError),
 }
 
 impl InitError {
@@ -143,6 +146,7 @@ impl MqttConnection {
             client,
             eventloop: SyncWrapper::new(eventloop),
             provider,
+            session_sync: false,
         };
 
         Self {
@@ -195,7 +199,8 @@ impl MqttConnection {
         store: &StoreWrapper<S>,
     ) -> Result<Self, PollError>
     where
-        S: PropertyStore,
+        S: PropertyStore + StoreCapabilities,
+        S::Retention: StoredRetention,
     {
         let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
 
@@ -223,7 +228,7 @@ impl MqttConnection {
         store: &StoreWrapper<S>,
     ) -> Result<bool, PollError>
     where
-        S: PropertyStore,
+        S: PropertyStore + StoreCapabilities,
     {
         if self.state.is_connected() {
             debug!("already connected");
@@ -262,14 +267,6 @@ impl MqttConnection {
     }
 }
 
-#[cfg(not(test))]
-fn disable_clean_session(eventloop: &mut EventLoop) {
-    eventloop.mqtt_options.set_clean_session(false);
-}
-
-#[cfg(test)]
-fn disable_clean_session(_eventloop: &mut EventLoop) {}
-
 /// Struct to hold the connection and client to be passed to the state.
 ///
 /// We pass a mutable reference to the connection from outside the state so we can freely move from
@@ -283,11 +280,35 @@ struct Connection {
     //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
     eventloop: SyncWrapper<EventLoop>,
     provider: TransportProvider,
+    // Wether the stored introspection matches the current one
+    session_sync: bool,
 }
 
 impl Connection {
     fn eventloop_mut(&mut self) -> &mut EventLoop {
         self.eventloop.get_mut()
+    }
+
+    async fn update_session_status<S>(&mut self, interfaces: &Interfaces, store: &StoreWrapper<S>)
+    where
+        S: StoreCapabilities,
+    {
+        let Some(introspection) = store.get_session() else {
+            return;
+        };
+
+        let stored = match introspection.load_introspection().await {
+            Ok(s) => s,
+            Err(err) => {
+                warn!(
+                    "Error while retrieving the introspection from the store: {}",
+                    err
+                );
+                return;
+            }
+        };
+
+        self.session_sync = interfaces.matches(&stored);
     }
 }
 
@@ -320,12 +341,16 @@ impl State {
         store: &StoreWrapper<S>,
     ) -> Result<Option<Publish>, PollError>
     where
-        S: PropertyStore,
+        S: PropertyStore + StoreCapabilities,
     {
         trace!("state {}", self);
 
         let next = match self {
-            State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await?,
+            State::Disconnected(disconnected) => {
+                conn.update_session_status(interfaces, store).await;
+
+                disconnected.reconnect(conn, client_id).await?
+            }
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
             State::Handshake(handshake) => {
                 let session_data = SessionData::try_from_props(interfaces, store).await?;
@@ -335,6 +360,18 @@ impl State {
             State::WaitAcks(init) => init.wait_connection(conn).await?,
             State::Connected(connected) => connected.poll(conn).await,
         };
+
+        if matches!(next, Next::State(State::Connected(..))) {
+            if let Some(introspection) = store.get_session() {
+                info!("Connected, storing new introspection");
+
+                introspection.clear_introspection().await?;
+                let _ = introspection
+                    .add_interfaces(&Into::<Vec<IntrospectionInterface>>::into(interfaces))
+                    .await
+                    .inspect_err(|e| warn!("Error while storing the updated introspection {}", e));
+            }
+        }
 
         let res = match next {
             Next::Same => None,
@@ -399,6 +436,9 @@ impl Disconnected {
 
         debug!("created a new transport, reconnecting");
 
+        if conn.session_sync {
+            Self::disable_clean_session(conn.eventloop_mut());
+        }
         let eventloop = conn.eventloop_mut();
         eventloop.clean();
         Self::set_transport(eventloop, transport);
@@ -413,6 +453,14 @@ impl Disconnected {
 
     #[cfg(test)]
     fn set_transport(_eventloop: &mut EventLoop, _transport: Transport) {}
+
+    #[cfg(not(test))]
+    fn disable_clean_session(eventloop: &mut EventLoop) {
+        eventloop.mqtt_options.set_clean_session(false);
+    }
+
+    #[cfg(test)]
+    fn disable_clean_session(_eventloop: &mut EventLoop) {}
 }
 
 impl From<Disconnected> for State {
@@ -435,11 +483,6 @@ impl Connecting {
         match event {
             Event::Incoming(Packet::ConnAck(connack)) => {
                 trace!("connack received");
-
-                // We are now connected with Astarte at least once  and don't need to clean the
-                // session again. At most we will resend the introspection and subscribes multiple
-                // times on reconnecting.
-                disable_clean_session(conn.eventloop_mut());
 
                 Next::state(Handshake {
                     session_present: connack.session_present,
@@ -488,17 +531,50 @@ impl Handshake {
         session_data: SessionData,
     ) -> Next
     where
-        S: PropertyStore,
+        S: PropertyStore + StoreCapabilities,
     {
         let client = conn.client.clone();
-
-        let client_id_cl: ClientId = client_id.into();
-
+        let client_id: ClientId = client_id.into();
         let store = store.clone();
-        let handle: JoinHandle<Result<(), InitError>> = tokio::spawn(async move {
-            let client_id = client_id_cl.as_ref();
+
+        let handle = if self.session_present && conn.session_sync {
+            info!(
+                "Already synchronized skipping handshake (introspection synchronized: {})",
+                conn.session_sync
+            );
+
+            Self::prop_handshake(client, client_id, store, session_data, self.session_present)
+        } else {
+            info!(
+                "The device is not synchronized (session_present: {}, matching introspection: {}), redoing handshake",
+                self.session_present, conn.session_sync,
+            );
+
+            Self::full_handshake(client, client_id, store, session_data, self.session_present)
+        };
+
+        Next::state(WaitAcks { handle })
+    }
+
+    fn full_handshake<S>(
+        client: AsyncClient,
+        client_id: ClientId,
+        store: StoreWrapper<S>,
+        session_data: SessionData,
+        session_present: bool,
+    ) -> JoinHandle<Result<(), InitError>>
+    where
+        S: PropertyStore,
+    {
+        tokio::spawn(async move {
+            let client_id = client_id.as_ref();
             Self::subscribe_server_interfaces(&client, client_id, &session_data.server_interfaces)
                 .await?;
+
+            // NOTE the protocol definition specifies that the introspection should be sent only when
+            // https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#connection-and-disconnection
+            // session_present is false but we don't know if new interfaces got added while disconnected
+            // so we send it every time
             client
                 .send_introspection(client_id, session_data.interfaces)
                 .await
@@ -506,8 +582,9 @@ impl Handshake {
                 .await
                 .map_err(InitError::ack("subscribe server interface"))?;
 
-            debug!("session present {}", self.session_present);
-            if !self.session_present {
+            debug!("session present {}", session_present);
+
+            if !session_present {
                 Self::send_empty_cache(&client, client_id).await?;
 
                 Self::purge_device_properties(&client, client_id, &session_data.device_properties)
@@ -523,9 +600,37 @@ impl Handshake {
             }
 
             Ok(())
-        });
+        })
+    }
 
-        Next::state(WaitAcks { handle })
+    fn prop_handshake<S>(
+        client: AsyncClient,
+        client_id: ClientId,
+        store: StoreWrapper<S>,
+        session_data: SessionData,
+        session_present: bool,
+    ) -> JoinHandle<Result<(), InitError>>
+    where
+        S: PropertyStore,
+    {
+        // FIXME we should probably purge the properties
+        // NOTE send device properties even if synchronized because they could
+        // have been updated while disconnected
+        tokio::spawn(async move {
+            let client_id = client_id.as_ref();
+
+            if !session_present {
+                Self::send_device_properties(
+                    &client,
+                    client_id,
+                    &store,
+                    &session_data.device_properties,
+                )
+                .await?;
+            }
+
+            Ok(())
+        })
     }
 
     /// Subscribes to the passed list of interfaces
