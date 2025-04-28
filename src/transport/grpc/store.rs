@@ -27,6 +27,7 @@
 use std::sync::Arc;
 
 use astarte_message_hub_proto::tonic;
+use astarte_message_hub_proto::PropertyFilter;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -64,7 +65,7 @@ impl GrpcStore {
         self.client
             .lock()
             .await
-            .get_all_properties(astarte_message_hub_proto::StoredPropertiesFilter {
+            .get_all_properties(PropertyFilter {
                 ownership: ownership.map(|o| o.into()),
             })
             .await
@@ -129,7 +130,10 @@ impl PropertyStore for GrpcStore {
             .map_err(GrpcStoreError::from)
             .map(tonic::Response::into_inner)?;
 
-        Ok(convert::map_property_to_astarte_type(property)?)
+        property
+            .data
+            .map(|data| AstarteType::try_from(data).map_err(GrpcStoreError::from))
+            .transpose()
     }
 
     async fn unset_prop(&self, _property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
@@ -168,8 +172,8 @@ impl PropertyStore for GrpcStore {
         self.client
             .lock()
             .await
-            .get_properties(astarte_message_hub_proto::InterfacesName {
-                names: vec![interface.name().to_owned()],
+            .get_properties(astarte_message_hub_proto::InterfaceName {
+                name: interface.name().to_owned(),
             })
             .await
             .map(tonic::Response::into_inner)
@@ -190,22 +194,19 @@ impl PropertyStore for GrpcStore {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
     use std::str::FromStr;
 
     use astarte_message_hub_proto::tonic;
+    use astarte_message_hub_proto::PropertyFilter;
     use astarte_message_hub_proto::PropertyIdentifier;
-    use astarte_message_hub_proto::StoredPropertiesFilter;
     use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
 
-    use super::super::test::InterfaceRequestUtils;
     use super::GrpcStore;
     use super::MsgHubClient;
     use super::PropertyStore;
     use crate::interface::Ownership;
     use crate::store::PropertyMapping;
     use crate::store::StoredProp;
-    use crate::transport::grpc::convert::test::new_property;
     use crate::AstarteType;
     use crate::Interface;
 
@@ -228,7 +229,11 @@ mod test {
                         .interface_name()
                     && i.path == PATH
             }))
-            .returning(|_i| Ok(tonic::Response::new(new_property(PATH.to_string(), None))));
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::AstartePropertyIndividual { data: None },
+                ))
+            });
         // server
         mock_store_client
             .expect_get_property::<astarte_message_hub_proto::PropertyIdentifier>()
@@ -241,66 +246,67 @@ mod test {
                         .interface_name()
                     && r.path == PATH
             }))
-            .returning(|_i| Ok(tonic::Response::new(new_property(PATH.to_string(), None))));
-        // device
+            .returning(|_i| {
+                Ok(tonic::Response::new(
+                    astarte_message_hub_proto::AstartePropertyIndividual { data: None },
+                ))
+            }); // device
         mock_store_client
-            .expect_get_all_properties::<astarte_message_hub_proto::StoredPropertiesFilter>()
+            .expect_get_all_properties::<PropertyFilter>()
             .times(1)
             .in_sequence(&mut seq)
-            .with(predicate::function(|r: &StoredPropertiesFilter| {
+            .with(predicate::function(|r: &PropertyFilter| {
                 r.ownership == Some(astarte_message_hub_proto::Ownership::Device as i32)
             }))
             .returning(|_i| {
                 Ok(tonic::Response::new(
                     astarte_message_hub_proto::StoredProperties {
-                        interface_properties: HashMap::new(),
+                        properties: Vec::new(),
                     },
                 ))
             });
         // server
         mock_store_client
-            .expect_get_all_properties::<astarte_message_hub_proto::StoredPropertiesFilter>()
+            .expect_get_all_properties::<PropertyFilter>()
             .times(1)
             .in_sequence(&mut seq)
-            .with(predicate::function(|r: &StoredPropertiesFilter| {
+            .with(predicate::function(|r: &PropertyFilter| {
                 r.ownership == Some(astarte_message_hub_proto::Ownership::Server as i32)
             }))
             .returning(|_i| {
                 Ok(tonic::Response::new(
                     astarte_message_hub_proto::StoredProperties {
-                        interface_properties: HashMap::new(),
+                        properties: Vec::new(),
                     },
                 ))
             });
         // device
         mock_store_client
-            .expect_get_properties::<astarte_message_hub_proto::InterfacesName>()
+            .expect_get_properties::<astarte_message_hub_proto::InterfaceName>()
             .times(1)
             .in_sequence(&mut seq)
-            .withf(move |r| {
-                r.match_interfaces(&[Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap()])
-                    .unwrap()
-            })
+            .with(predicate::eq(astarte_message_hub_proto::InterfaceName {
+                name: device_interface.interface_name().to_owned(),
+            }))
             .returning(|_i| {
                 Ok(tonic::Response::new(
                     astarte_message_hub_proto::StoredProperties {
-                        interface_properties: HashMap::new(),
+                        properties: Vec::new(),
                     },
                 ))
             });
         // server
         mock_store_client
-            .expect_get_properties::<astarte_message_hub_proto::InterfacesName>()
+            .expect_get_properties::<astarte_message_hub_proto::InterfaceName>()
             .times(1)
             .in_sequence(&mut seq)
-            .withf(move |r| {
-                r.match_interfaces(&[Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()])
-                    .unwrap()
-            })
+            .with(predicate::eq(astarte_message_hub_proto::InterfaceName {
+                name: server_interface.interface_name().to_owned(),
+            }))
             .returning(|_i| {
                 Ok(tonic::Response::new(
                     astarte_message_hub_proto::StoredProperties {
-                        interface_properties: HashMap::new(),
+                        properties: Vec::new(),
                     },
                 ))
             });
