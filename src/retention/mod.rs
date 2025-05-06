@@ -209,7 +209,11 @@ impl<'a> PublishInfo<'a> {
         }
     }
 
-    fn from_individual(sent: bool, individual: &'a ValidatedIndividual, value: &'a [u8]) -> Self {
+    pub(crate) fn from_individual(
+        sent: bool,
+        individual: &'a ValidatedIndividual,
+        value: &'a [u8],
+    ) -> Self {
         Self::from_ref(
             &individual.interface,
             &individual.path,
