@@ -20,7 +20,7 @@
 //!
 //! Properties are useful, for example, when dealing with settings, states or policies/rules.
 
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, str::FromStr};
 
 use serde::Serialize;
 
@@ -170,5 +170,15 @@ impl Serialize for Properties {
         S: serde::Serializer,
     {
         InterfaceJson::from(self).serialize(serializer)
+    }
+}
+
+impl FromStr for Properties {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let interface: InterfaceJson<Cow<str>> = serde_json::from_str(s)?;
+
+        Self::try_from(interface)
     }
 }

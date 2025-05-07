@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,18 +18,18 @@
 
 //! Handles the sending of properties
 
+use astarte_interfaces::schema::Ownership;
+use astarte_interfaces::{InterfaceMapping, MappingPath, Properties, Schema};
 use tracing::{debug, error, trace};
 
-use crate::interface::mapping::path::MappingPath;
-use crate::interface::reference::PropertyRef;
-use crate::interface::Ownership;
+use crate::interfaces::MappingRef;
 use crate::state::Status;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
 use crate::{AstarteType, Error};
 
-use super::{DeviceClient, MappingRef, Publish};
+use super::{DeviceClient, Publish};
 
 impl<C> DeviceClient<C>
 where
@@ -45,7 +45,7 @@ where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface_name, path)?;
+        let mapping = interfaces.get_property(interface_name, path)?;
 
         let validated = ValidatedProperty::validate(mapping, data)?;
 
@@ -95,11 +95,11 @@ where
     /// Useful to prevent sending a property twice with the same value.
     async fn is_prop_stored(
         &self,
-        mapping: &MappingRef<'_, PropertyRef<'_>>,
+        mapping: &MappingRef<'_, Properties>,
         new: &ValidatedProperty,
     ) -> Result<bool, Error> {
         // Check if this property is already in db
-        let stored = self.try_load_prop(mapping, mapping.path()).await?;
+        let stored = self.try_load_prop(mapping).await?;
 
         Ok(stored.is_some_and(|val| val == new.data))
     }
@@ -107,17 +107,12 @@ where
     /// Get a property or deletes it if a version or type miss-match happens.
     pub(crate) async fn try_load_prop(
         &self,
-        mapping: &MappingRef<'_, PropertyRef<'_>>,
-        path: &MappingPath<'_>,
+        mapping: &MappingRef<'_, Properties>,
     ) -> Result<Option<AstarteType>, Error> {
-        let interface = mapping.interface();
-        let path = path.as_str();
-        let interface_data = PropertyMapping::with_property_path(interface, path);
+        let property_mapping = PropertyMapping::from(mapping);
+        let mapping = mapping.mapping();
 
-        let value = self
-            .store
-            .load_prop(&interface_data, mapping.interface().version_major())
-            .await?;
+        let value = self.store.load_prop(&property_mapping).await?;
 
         let value = match value {
             Some(value) if value != mapping.mapping_type() => {
@@ -126,7 +121,7 @@ where
                     "stored property type mismatch, expected {}",
                     mapping.mapping_type(),
                 );
-                self.store.delete_prop(&interface_data).await?;
+                self.store.delete_prop(&property_mapping).await?;
 
                 None
             }
@@ -147,13 +142,13 @@ where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface_name, path)?;
+        let mapping = interfaces.get_property(interface_name, path)?;
 
         let validated = ValidatedUnset::validate(mapping)?;
 
         debug!("unsetting property {interface_name}{path}");
 
-        let property_mapping = (&validated).into();
+        let property_mapping = PropertyMapping::from(&mapping);
         self.store.unset_prop(&property_mapping).await?;
 
         match self.state.status.connection() {
@@ -178,11 +173,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use mockall::{predicate, Sequence};
 
     use crate::client::tests::mock_client;
-    use crate::interface::Ownership;
-    use crate::store::{PropertyInterface, PropertyMapping, PropertyStore, StoredProp};
+    use crate::store::{PropertyMapping, PropertyStore, StoredProp};
     use crate::test::{E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME};
     use crate::validate::{ValidatedProperty, ValidatedUnset};
     use crate::{AstarteType, Client};
@@ -217,15 +213,15 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
@@ -247,18 +243,19 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
+
         assert_eq!(prop, value);
     }
 
@@ -290,18 +287,19 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
+
         assert_eq!(prop, value);
     }
 
@@ -332,15 +330,15 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap();
 
@@ -390,15 +388,15 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
@@ -419,15 +417,15 @@ mod tests {
             .await
             .unwrap();
 
+        let interfaces = client.state.interfaces.read().await;
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    path,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap();
 

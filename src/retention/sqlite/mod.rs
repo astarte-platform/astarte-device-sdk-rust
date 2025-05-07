@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,12 +20,13 @@
 
 use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duration};
 
+use astarte_interfaces::schema::Reliability;
 use rusqlite::{
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
     ToSql,
 };
 
-use crate::{interface::Reliability, store::SqliteStore};
+use crate::store::SqliteStore;
 
 use super::{
     duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
@@ -52,7 +53,7 @@ pub(crate) struct RetentionMapping<'a> {
     pub(crate) interface: Cow<'a, str>,
     pub(crate) path: Cow<'a, str>,
     pub(crate) version_major: i32,
-    pub(crate) reliability: Reliability,
+    pub(crate) reliability: RetentionReliability,
     pub(crate) expiry: Option<Duration>,
 }
 
@@ -72,7 +73,7 @@ impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
             interface: Cow::Borrowed(&value.interface),
             path: Cow::Borrowed(&value.path),
             version_major: value.version_major,
-            reliability: value.reliability,
+            reliability: RetentionReliability(value.reliability),
             expiry: value.expiry,
         }
     }
@@ -113,9 +114,25 @@ impl<'a> RetentionPublish<'a> {
     }
 }
 
-impl ToSql for Reliability {
+/// New type to impl traits on [`Reliability`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct RetentionReliability(Reliability);
+
+impl From<RetentionReliability> for Reliability {
+    fn from(value: RetentionReliability) -> Self {
+        value.0
+    }
+}
+
+impl From<Reliability> for RetentionReliability {
+    fn from(value: Reliability) -> Self {
+        RetentionReliability(value)
+    }
+}
+
+impl ToSql for RetentionReliability {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let value: u8 = match self {
+        let value: u8 = match self.0 {
             Reliability::Unreliable => 0,
             Reliability::Guaranteed => 1,
             Reliability::Unique => 2,
@@ -125,12 +142,12 @@ impl ToSql for Reliability {
     }
 }
 
-impl FromSql for Reliability {
+impl FromSql for RetentionReliability {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_i64()? {
-            0 => Ok(Reliability::Unreliable),
-            1 => Ok(Reliability::Guaranteed),
-            2 => Ok(Reliability::Unique),
+            0 => Ok(RetentionReliability(Reliability::Unreliable)),
+            1 => Ok(RetentionReliability(Reliability::Guaranteed)),
+            2 => Ok(RetentionReliability(Reliability::Unique)),
             err => Err(FromSqlError::OutOfRange(err)),
         }
     }
@@ -273,6 +290,7 @@ impl StoredRetention for SqliteStore {
 
 #[cfg(test)]
 mod tests {
+    use astarte_interfaces::interface::Retention;
     use statements::tests::{fetch_mapping, fetch_publish};
 
     use crate::retention::Context;
@@ -293,7 +311,7 @@ mod tests {
             path,
             1,
             Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
+            Retention::Stored { expiry: None },
             false,
             &[],
         );
@@ -302,7 +320,7 @@ mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Unique,
+            reliability: Reliability::Unique.into(),
             expiry: None,
         };
 
@@ -342,7 +360,7 @@ mod tests {
             path,
             1,
             Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
+            Retention::Stored { expiry: None },
             false,
             &[],
         );
@@ -351,7 +369,7 @@ mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Unique,
+            reliability: Reliability::Unique.into(),
             expiry: None,
         };
 
@@ -384,7 +402,7 @@ mod tests {
             path,
             1,
             Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
+            Retention::Stored { expiry: None },
             false,
             &[],
         );
@@ -418,7 +436,7 @@ mod tests {
             path,
             1,
             Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
+            Retention::Stored { expiry: None },
             false,
             &[],
         );
