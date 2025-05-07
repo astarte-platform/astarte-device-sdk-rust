@@ -21,7 +21,7 @@
 //! In case aggregation is individual, each mapping is treated as an independent value and is
 //! managed individually.
 
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -171,5 +171,15 @@ impl Serialize for DatastreamIndividual {
         S: serde::Serializer,
     {
         InterfaceJson::<Cow<str>>::from(self).serialize(serializer)
+    }
+}
+
+impl FromStr for DatastreamIndividual {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let interface: InterfaceJson<Cow<str>> = serde_json::from_str(s)?;
+
+        Self::try_from(interface)
     }
 }

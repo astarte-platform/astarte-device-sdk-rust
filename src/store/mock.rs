@@ -16,6 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_interfaces::Properties;
 use mockall::mock;
 
 use crate::{
@@ -24,8 +25,8 @@ use crate::{
 };
 
 use super::{
-    error::StoreError, MissingCapability, PropertyInterface, PropertyMapping, PropertyStore,
-    StoreCapabilities, StoredProp,
+    error::StoreError, MissingCapability, PropertyMapping, PropertyStore, StoreCapabilities,
+    StoredProp,
 };
 
 /// trait that should be mocked to control which capabilities
@@ -61,7 +62,6 @@ mock! {
         async fn load_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
-            interface_major: i32,
         ) -> Result<Option<AstarteType>, StoreError>;
 
         async fn unset_prop<'a>(
@@ -82,14 +82,14 @@ mock! {
 
         async fn server_props(&self) -> Result<Vec<StoredProp>, StoreError>;
 
-        async fn interface_props<'a>(
+        async fn interface_props(
             &self,
-            interface: &PropertyInterface<'a>,
+            interface: &Properties,
         ) -> Result<Vec<StoredProp>, StoreError>;
 
-        async fn delete_interface<'a>(
+        async fn delete_interface(
             &self,
-            interface: &PropertyInterface<'a>,
+            interface: &Properties,
         ) -> Result<(), StoreError>;
 
         async fn device_props_with_unset(

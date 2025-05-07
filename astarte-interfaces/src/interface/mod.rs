@@ -232,7 +232,7 @@ impl Interface {
         }
     }
 
-    /// Return a reference to a [`Property`].
+    /// Return a reference to a [`Properties`].
     #[must_use]
     pub fn as_properties(&self) -> Option<&Properties> {
         if let InterfaceTypeAggregation::Properties(v) = &self.inner {
@@ -244,7 +244,7 @@ impl Interface {
 
     /// Returns `true` if the interface type is [`DatastreamIndividual`].
     ///
-    /// [`DatastreamIndividual`]: InterfaceType::DatastreamIndividual
+    /// [`DatastreamIndividual`]: InterfaceTypeAggregation::DatastreamIndividual
     #[must_use]
     pub fn is_datastream_individual(&self) -> bool {
         matches!(
@@ -255,7 +255,7 @@ impl Interface {
 
     /// Returns `true` if the interface type is [`DatastreamObject`].
     ///
-    /// [`DatastreamObject`]: InterfaceType::DatastreamObject
+    /// [`DatastreamObject`]: InterfaceTypeAggregation::DatastreamObject
     #[must_use]
     pub fn is_datastream_object(&self) -> bool {
         matches!(self.inner, InterfaceTypeAggregation::DatastreamObject(..))
@@ -263,7 +263,7 @@ impl Interface {
 
     /// Returns `true` if the interface type is [`Properties`].
     ///
-    /// [`Properties`]: InterfaceType::Properties
+    /// [`Properties`]: InterfaceTypeAggregation::Properties
     #[must_use]
     pub fn is_properties(&self) -> bool {
         matches!(self.inner, InterfaceTypeAggregation::Properties(..))

@@ -25,7 +25,7 @@ use crate::schema::{Mapping, MappingType};
 
 use super::{endpoint::Endpoint, InterfaceMapping, MappingError};
 
-/// Mapping of a [`Properties`](super::Properties) interface.
+/// Mapping of a [`Properties`](crate::Properties) interface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PropertiesMapping {
     pub(crate) endpoint: Endpoint<String>,

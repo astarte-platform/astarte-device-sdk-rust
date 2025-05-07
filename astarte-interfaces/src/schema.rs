@@ -17,7 +17,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Astarte Interface definition, this module contains the structs for the actual JSON
-//! representation definition of the [`Interface`] and mapping.
+//! representation definition of the [`Interface`](crate::Interface) and mapping.
 //!
 //! For more information see:
 //! [Interface Schema - Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html)
@@ -159,13 +159,14 @@ where
 ///
 /// It includes all the fields available for a mapping, but it it is validated when built with the
 /// [`TryFrom`]. It uniforms the different types of mappings like
-/// [`DatastreamIndividualMapping`](super::mapping::DatastreamIndividualMapping),
-/// [`DatastreamObject`] mappings and [`PropertiesMapping`](super::mapping::PropertiesMapping) in a
-/// single struct.
+/// [`DatastreamIndividualMapping`](crate::mapping::datastream::individual::DatastreamIndividualMapping),
+/// [`DatastreamObjectMapping`](crate::mapping::datastream::object::DatastreamObjectMapping)
+/// mappings and [`PropertiesMapping`](super::mapping::properties::PropertiesMapping) in a single
+/// struct.
 ///
 /// Since it's a 1:1 representation of the JSON it is used for serialization and deserialization,
 /// and then is converted to the internal representation of the mapping with the [`TryFrom`] and
-/// [`From`] traits of the [`Interface`]'s' mappings.
+/// [`From`] traits of the [`Interface`](crate::Interface)'s mappings.
 //
 /// You can find the specification here [Mapping Schema -
 /// Astarte](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#mapping)
@@ -305,7 +306,7 @@ where
 
     /// Returns the database retention of the data stream.
     ///
-    /// See the [`DatabaseRetention`] for more information.
+    /// See the [`DatabaseRetention`](InterfaceDatabaseRetention) for more information.
     pub fn database_retention_with_ttl(&self) -> Result<InterfaceDatabaseRetention, SchemaError> {
         match self.database_retention_policy.unwrap_or_default() {
             DatabaseRetentionPolicy::NoTtl => {
@@ -418,8 +419,6 @@ impl Display for Aggregation {
 }
 
 /// Defines the type of the mapping.
-///
-/// See the [`AstarteType`](crate::AstarteType) for more information.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {
