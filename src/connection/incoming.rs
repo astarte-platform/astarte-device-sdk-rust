@@ -348,10 +348,9 @@ mod tests {
             .withf({
                 let value = value.as_ref().clone();
 
-                move |_interface, path, payload| {
-                    // TODO: add in next PR
-                    // interface.interface_name() == E2E_SERVER_DATASTREAM_NAME &&
-                    path.as_str() == endpoint
+                move |interface, path, payload| {
+                    interface.name() == SERVER_OBJECT_NAME
+                        && path.as_str() == endpoint
                         && *payload
                             .downcast_ref::<(AstarteObject, DateTime<Utc>)>()
                             .unwrap()
