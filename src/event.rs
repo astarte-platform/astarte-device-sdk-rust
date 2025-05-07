@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,8 +18,12 @@
 
 //! Event returned form the loop.
 
+use astarte_interfaces::mapping::endpoint::EndpointError;
+use astarte_interfaces::mapping::path::MappingPathError;
+
 use crate::aggregate::AstarteObject;
 use crate::error::{AggregationError, InterfaceTypeError};
+use crate::types::TypeError;
 use crate::{AstarteType, Timestamp};
 
 /// Astarte device event data structure.
@@ -77,10 +81,13 @@ pub enum FromEventError {
     },
     /// couldn't convert from [`AstarteType`]
     #[error("couldn't convert from AstarteType")]
-    Conversion(#[from] crate::types::TypeError),
-    /// couldn't parse the [`crate::interface::mapping::endpoint::Endpoint`]
+    Conversion(#[from] TypeError),
+    /// couldn't parse the [`crate::astarte_interfaces::mapping::endpoint::Endpoint`]
     #[error("couldn't parse the endpoint")]
-    Endpoint(#[from] crate::interface::mapping::endpoint::EndpointError),
+    Endpoint(#[from] EndpointError),
+    /// couldn't parse the [`crate::astarte_interfaces::MappingPath`]
+    #[error("couldn't parse the mapping path")]
+    MappingPath(#[from] MappingPathError),
 }
 
 /// Converts a struct form an [`DeviceEvent`].
@@ -88,11 +95,12 @@ pub enum FromEventError {
 /// # Example
 ///
 /// ```rust
-/// use astarte_device_sdk::{Value, DeviceEvent};
+/// use astarte_device_sdk::astarte_interfaces::MappingPath;
+/// use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
+/// use astarte_device_sdk::astarte_interfaces::schema::Aggregation;
 /// use astarte_device_sdk::error::AggregationError;
 /// use astarte_device_sdk::event::{FromEvent, FromEventError};
-/// use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
-/// use astarte_device_sdk::interface::def::Aggregation;
+/// use astarte_device_sdk::{Value, DeviceEvent};
 ///
 /// use std::convert::TryFrom;
 ///
@@ -111,7 +119,9 @@ pub enum FromEventError {
 ///             return Err(FromEventError::Interface(event.interface.clone()));
 ///         }
 ///
-///         if base_path.eq_mapping(&event.path) {
+///         let path = MappingPath::try_from(event.path.as_str())?;
+///
+///         if base_path.eq_mapping(&path) {
 ///             return Err(FromEventError::Path {
 ///                 interface: "com.example.Sensor",
 ///                 base_path: event.path.clone(),

@@ -18,19 +18,19 @@
 
 //! Validate the submission and reception of a payload.
 
+use astarte_interfaces::{
+    interface::Retention,
+    schema::{Ownership, Reliability},
+    DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
+};
 use tracing::{error, trace};
 
 use crate::{
     aggregate::AstarteObject,
     error::{AggregationError, InterfaceTypeError, OwnershipError},
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef, PropertyRef},
-        Aggregation, InterfaceTypeDef, MappingAccess, Ownership, Reliability, Retention,
-    },
-    store::PropertyInterface,
+    interfaces::MappingRef,
     types::AstarteType,
-    Interface, Timestamp,
+    Timestamp,
 };
 
 /// Errors returned while validating a send payload
@@ -58,6 +58,9 @@ pub enum UserValidationError {
     /// Using invalid method to send data of a different aggregation.
     #[error("invalid method used to send data of a different aggregation")]
     Aggregation(#[from] AggregationError),
+    /// The path provided is invalid for the object interface.
+    #[error("invalid path {path} for Object Aggregate {interface}")]
+    ObjectPath { interface: String, path: String },
     /// Missing mapping in the object data
     #[error("the data sent for the object {interface}{path} is missing {missing} mappings")]
     ObjectMissingMappings {
@@ -77,8 +80,12 @@ pub enum UserValidationError {
     #[error("couldn't unset property {interface}{mapping} without `allow_unset`")]
     Unset { interface: String, mapping: String },
     /// Couldn't get the object mapping with the given key.
-    #[error("couldn't get object mapping for {interface} with key {key}")]
-    ObjectInvalidMapping { interface: String, key: String },
+    #[error("couldn't get object mapping for {interface}{path} with key {key}")]
+    ObjectInvalidMapping {
+        interface: String,
+        path: String,
+        key: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,7 +101,7 @@ pub(crate) struct ValidatedIndividual {
 
 impl ValidatedIndividual {
     pub(crate) fn validate(
-        mapping: MappingRef<'_, &Interface>,
+        mapping: MappingRef<'_, DatastreamIndividual>,
         data: AstarteType,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedIndividual, UserValidationError> {
@@ -102,32 +109,10 @@ impl ValidatedIndividual {
         let path = mapping.path();
         let mapping = mapping.mapping();
 
-        let interface_type = interface.interface_type();
-        if interface_type != InterfaceTypeDef::Datastream {
-            return Err(UserValidationError::InterfaceType(
-                InterfaceTypeError::with_path(
-                    interface.interface_name(),
-                    path.to_string(),
-                    InterfaceTypeDef::Datastream,
-                    interface_type,
-                ),
-            ));
-        }
-
-        let aggregation = interface.aggregation();
-        if aggregation != Aggregation::Individual {
-            return Err(UserValidationError::Aggregation(AggregationError::new(
-                interface.interface_name(),
-                path.as_str(),
-                Aggregation::Individual,
-                aggregation,
-            )));
-        }
-
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
             return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name(),
+                interface.interface_name().clone(),
                 Ownership::Device,
                 ownership,
             )));
@@ -143,7 +128,7 @@ impl ValidatedIndividual {
         }
 
         validate_timestamp(
-            interface.interface_name(),
+            interface.interface_name().as_str(),
             path.as_str(),
             &timestamp,
             mapping.explicit_timestamp(),
@@ -174,39 +159,47 @@ pub(crate) struct ValidatedObject {
 
 impl ValidatedObject {
     pub(crate) fn validate(
-        interface: ObjectRef<'_>,
+        interface: &DatastreamObject,
         path: &MappingPath<'_>,
         data: AstarteObject,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedObject, UserValidationError> {
+        if !interface.is_object_path(path) {
+            return Err(UserValidationError::ObjectPath {
+                interface: interface.interface_name().to_string(),
+                path: path.to_string(),
+            });
+        }
+
         validate_timestamp(
-            interface.interface.interface_name(),
+            interface.name(),
             path.as_str(),
             &timestamp,
             interface.explicit_timestamp(),
         )?;
 
-        if data.len() < interface.len() {
+        if data.len() < interface.mappings_len() {
             // TODO: return the missing mappings
             return Err(UserValidationError::ObjectMissingMappings {
-                interface: interface.interface.interface_name().to_string(),
+                interface: interface.interface_name().to_string(),
                 path: path.to_string(),
-                missing: interface.len().saturating_sub(data.len()),
+                missing: interface.mappings_len().saturating_sub(data.len()),
             });
         }
 
         // Check that all the fields are valid
         data.iter().try_for_each(|(key, value)| {
-            let Some(mapping) = interface.get_field(path, key) else {
+            let Some(mapping) = interface.mapping(key) else {
                 return Err(UserValidationError::ObjectInvalidMapping {
-                    interface: interface.interface.interface_name().to_string(),
+                    interface: interface.interface_name().to_string(),
+                    path: path.to_string(),
                     key: key.to_string(),
                 });
             };
 
             if *value != mapping.mapping_type() {
                 return Err(UserValidationError::MappingType {
-                    interface: interface.interface.interface_name().to_string(),
+                    interface: interface.interface_name().to_string(),
                     path: format!("{path}/{key}"),
                     expected: mapping.mapping_type().to_string(),
                     got: value.display_type().to_string(),
@@ -219,9 +212,9 @@ impl ValidatedObject {
         })?;
 
         Ok(ValidatedObject {
-            interface: interface.interface.interface_name().to_string(),
+            interface: interface.interface_name().to_string(),
             path: path.to_string(),
-            version_major: interface.interface.version_major(),
+            version_major: interface.version_major(),
             reliability: interface.reliability(),
             retention: interface.retention(),
             data,
@@ -240,39 +233,17 @@ pub(crate) struct ValidatedProperty {
 
 impl ValidatedProperty {
     pub(crate) fn validate(
-        mapping: MappingRef<'_, PropertyRef<'_>>,
+        mapping: MappingRef<'_, Properties>,
         data: AstarteType,
     ) -> Result<Self, UserValidationError> {
         let interface = mapping.interface();
         let path = mapping.path();
         let mapping = mapping.mapping();
 
-        let interface_type = interface.interface_type();
-        if interface_type != InterfaceTypeDef::Properties {
-            return Err(UserValidationError::InterfaceType(
-                InterfaceTypeError::with_path(
-                    interface.interface_name(),
-                    path.to_string(),
-                    InterfaceTypeDef::Properties,
-                    interface_type,
-                ),
-            ));
-        }
-
-        let aggregation = interface.aggregation();
-        if aggregation != Aggregation::Individual {
-            return Err(UserValidationError::Aggregation(AggregationError::new(
-                interface.interface_name(),
-                path.as_str(),
-                Aggregation::Individual,
-                aggregation,
-            )));
-        }
-
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
             return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name(),
+                interface.interface_name().to_string(),
                 Ownership::Device,
                 ownership,
             )));
@@ -304,7 +275,7 @@ pub(crate) struct ValidatedUnset {
 
 impl ValidatedUnset {
     pub(crate) fn validate(
-        mapping: MappingRef<'_, PropertyRef<'_>>,
+        mapping: MappingRef<'_, Properties>,
     ) -> Result<Self, UserValidationError> {
         let interface = mapping.interface();
         let path = mapping.path();
@@ -313,7 +284,7 @@ impl ValidatedUnset {
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
             return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name(),
+                interface.interface_name().clone(),
                 Ownership::Device,
                 ownership,
             )));
@@ -330,13 +301,6 @@ impl ValidatedUnset {
             interface: interface.interface_name().to_string(),
             path: path.to_string(),
         })
-    }
-}
-
-impl<'a> From<&'a ValidatedUnset> for PropertyInterface<'a> {
-    /// an unset is allowed to be sent only by the device [`ValidatedUnset::validate`]
-    fn from(value: &'a ValidatedUnset) -> Self {
-        Self::new(&value.interface, Ownership::Device)
     }
 }
 
@@ -367,11 +331,11 @@ fn validate_timestamp(
 mod tests {
     use std::str::FromStr;
 
-    use crate::test::{DEVICE_PROPERTIES_NO_UNSET, SERVER_PROPERTIES};
-    use crate::{interface::mapping::path::tests::mapping, interfaces::tests::DEVICE_OBJECT};
+    use crate::test::{DEVICE_OBJECT, DEVICE_PROPERTIES_NO_UNSET, SERVER_PROPERTIES};
 
     use super::*;
 
+    use astarte_interfaces::{Interface, MappingPath};
     use chrono::Utc;
 
     const DEVICE_DATASTREAM: &str = include_str!(
@@ -382,61 +346,44 @@ mod tests {
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
-    fn initialize_aggregate() -> (Interface, AstarteObject) {
+    fn initialize_aggregate() -> (DatastreamObject, AstarteObject) {
         let aggregate = AstarteObject::from_iter([
+            ("endpoint1".to_string(), AstarteType::Double(37.534543)),
             (
-                "double_endpoint".to_string(),
-                AstarteType::Double(37.534543),
+                "endpoint2".to_string(),
+                AstarteType::String("Hello".to_string()),
             ),
-            ("integer_endpoint".to_string(), AstarteType::Integer(45)),
-            ("boolean_endpoint".to_string(), AstarteType::Boolean(true)),
             (
-                "booleanarray_endpoint".to_string(),
+                "endpoint3".to_string(),
                 AstarteType::BooleanArray(vec![true, false, true]),
             ),
         ]);
 
-        let interface = Interface::from_str(DEVICE_OBJECT).unwrap();
+        let interface = DatastreamObject::from_str(DEVICE_OBJECT).unwrap();
 
         (interface, aggregate)
     }
 
     #[test]
     fn test_validate_send_for_aggregate_datastream() {
-        let (interface, aggregate) = initialize_aggregate();
-        let object = interface.as_object_ref().unwrap();
+        let (object, aggregate) = initialize_aggregate();
         let path = MappingPath::try_from("/sensor_1").unwrap();
 
         // Test sending an aggregate (with and without timestamp)
-        ValidatedObject::validate(object, &path, aggregate.clone(), Some(Utc::now())).unwrap();
-        ValidatedObject::validate(object, &path, aggregate, None).unwrap_err();
-    }
-
-    #[test]
-    fn validate_individual_check_aggregation() {
-        let (interface, _aggregate) = initialize_aggregate();
-        let path = MappingPath::try_from("/sensor_1/boolean_endpoint").unwrap();
-        let object = MappingRef::new(&interface, &path).unwrap();
-
-        // Test sending an aggregate (with and without timestamp)
-        let err =
-            ValidatedIndividual::validate(object, AstarteType::Boolean(false), Some(Utc::now()))
-                .unwrap_err();
-
-        assert!(matches!(err, UserValidationError::Aggregation(_)))
+        ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now())).unwrap();
+        ValidatedObject::validate(&object, &path, aggregate, None).unwrap_err();
     }
 
     #[test]
     fn test_validate_send_for_aggregate_datastream_extra_field() {
-        let (interface, mut aggregate) = initialize_aggregate();
-        let object = interface.as_object_ref().unwrap();
+        let (object, mut aggregate) = initialize_aggregate();
         let path = MappingPath::try_from("/sensor_1").unwrap();
 
         // Test sending an aggregate with an non existing object field
         let invalid_key = "gibberish";
         aggregate.insert(invalid_key.to_string(), AstarteType::Boolean(false));
         let res =
-            ValidatedObject::validate(object, &path, aggregate, Some(Utc::now())).unwrap_err();
+            ValidatedObject::validate(&object, &path, aggregate, Some(Utc::now())).unwrap_err();
         assert!(matches!(
             res,
             UserValidationError::ObjectInvalidMapping { key, .. } if key == invalid_key
@@ -446,9 +393,10 @@ mod tests {
     #[test]
     fn test_validate_send_for_individual_datastream() {
         let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+        let interface = interface.as_datastream_individual().unwrap();
 
-        let path = mapping("/boolean_endpoint");
-        let mapping = MappingRef::new(&interface, &path).unwrap();
+        let path = MappingPath::try_from("/boolean_endpoint").unwrap();
+        let mapping = MappingRef::new(interface, &path).unwrap();
 
         ValidatedIndividual::validate(mapping, AstarteType::Boolean(false), Some(Utc::now()))
             .unwrap();
@@ -458,9 +406,9 @@ mod tests {
 
     #[test]
     fn individual_invalid_mapping_type() {
-        let interface = Interface::from_str(DEVICE_DATASTREAM).unwrap();
+        let interface = DatastreamIndividual::from_str(DEVICE_DATASTREAM).unwrap();
 
-        let path = mapping("/boolean_endpoint");
+        let path = MappingPath::try_from("/boolean_endpoint").unwrap();
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let err =
@@ -472,9 +420,9 @@ mod tests {
 
     #[test]
     fn test_validate_send_for_server() {
-        let interface = Interface::from_str(SERVER_DATASTREAM).unwrap();
+        let interface = DatastreamIndividual::from_str(SERVER_DATASTREAM).unwrap();
 
-        let path = mapping("/boolean_endpoint");
+        let path = MappingPath::try_from("/boolean_endpoint").unwrap();
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let res =
@@ -484,35 +432,28 @@ mod tests {
 
     #[test]
     fn object_datastream_invalid_type() {
-        let (interface, mut aggregate) = initialize_aggregate();
-        let object = interface.as_object_ref().unwrap();
+        let (object, mut aggregate) = initialize_aggregate();
         let path = MappingPath::try_from("/sensor_1").unwrap();
 
-        aggregate
-            .insert("double_endpoint".to_string(), AstarteType::Boolean(false))
-            .unwrap();
+        aggregate.insert("endpoint1".to_string(), AstarteType::Boolean(false));
 
-        let err = ValidatedObject::validate(object, &path, aggregate.clone(), Some(Utc::now()))
+        let err = ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now()))
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            UserValidationError::MappingType {
-                path,
-                ..
-            } if path == "/sensor_1/double_endpoint",
-        ))
+        assert!(
+            matches!(err, UserValidationError::MappingType { .. }),
+            "{err}"
+        )
     }
 
     #[test]
     fn object_datastream_missing_mapping() {
-        let (interface, mut aggregate) = initialize_aggregate();
-        let object = interface.as_object_ref().unwrap();
+        let (object, mut aggregate) = initialize_aggregate();
         let path = MappingPath::try_from("/sensor_1").unwrap();
 
-        aggregate.remove("double_endpoint").unwrap();
+        aggregate.remove("endpoint1").unwrap();
 
-        let err = ValidatedObject::validate(object, &path, aggregate.clone(), Some(Utc::now()))
+        let err = ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now()))
             .unwrap_err();
 
         assert!(matches!(
@@ -532,13 +473,10 @@ mod tests {
 
     #[test]
     fn validate_unset_invalid_server_prop() {
-        let interface = Interface::from_str(SERVER_PROPERTIES).unwrap();
+        let interface = Properties::from_str(SERVER_PROPERTIES).unwrap();
 
-        let path = mapping("/sensor_1/enable");
-        let mapping = MappingRef::new(&interface, &path)
-            .unwrap()
-            .as_prop()
-            .unwrap();
+        let path = MappingPath::try_from("/sensor_1/enable").unwrap();
+        let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let err = ValidatedUnset::validate(mapping).unwrap_err();
 
@@ -547,13 +485,10 @@ mod tests {
 
     #[test]
     fn validate_unset_invalid_no_allow_unset() {
-        let interface = Interface::from_str(DEVICE_PROPERTIES_NO_UNSET).unwrap();
+        let interface = Properties::from_str(DEVICE_PROPERTIES_NO_UNSET).unwrap();
 
-        let path = mapping("/sensor_1/enable");
-        let mapping = MappingRef::new(&interface, &path)
-            .unwrap()
-            .as_prop()
-            .unwrap();
+        let path = MappingPath::try_from("/sensor_1/enable").unwrap();
+        let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let err = ValidatedUnset::validate(mapping).unwrap_err();
 

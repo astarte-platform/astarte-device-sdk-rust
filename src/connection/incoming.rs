@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,15 +16,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_interfaces::interface::InterfaceTypeAggregation;
+use astarte_interfaces::{DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema};
 use tracing::{debug, error, instrument, warn};
 
 use crate::client::RecvError;
-use crate::error::{AggregationError, InterfaceTypeError};
-use crate::interface::mapping::path::MappingPath;
-use crate::interface::{Aggregation, InterfaceTypeDef};
+use crate::interfaces::MappingRef;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
 use crate::transport::{Connection, Receive, TransportError};
-use crate::{Error, Interface, Value};
+use crate::{Error, Value};
 
 use super::DeviceConnection;
 
@@ -64,18 +64,17 @@ where
             }));
         }
 
-        let data = match (interface.aggregation(), interface.interface_type()) {
-            (Aggregation::Individual, InterfaceTypeDef::Properties) => {
-                self.handle_property(interface, &path, payload).await?
+        let data = match interface.inner() {
+            InterfaceTypeAggregation::DatastreamIndividual(datastream_individual) => {
+                self.handle_individual(datastream_individual, &path, payload)
+                    .await?
             }
-            (Aggregation::Individual, InterfaceTypeDef::Datastream) => {
-                self.handle_individual(interface, &path, payload).await?
+            InterfaceTypeAggregation::DatastreamObject(datastream_object) => {
+                self.handle_object(datastream_object, &path, payload)
+                    .await?
             }
-            (Aggregation::Object, InterfaceTypeDef::Datastream) => {
-                self.handle_object(interface, &path, payload).await?
-            }
-            (aggregation, itf_type) => {
-                unreachable!("the interface should not be {aggregation} {itf_type}")
+            InterfaceTypeAggregation::Properties(properties) => {
+                self.handle_property(properties, &path, payload).await?
             }
         };
 
@@ -87,33 +86,23 @@ where
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
     async fn handle_property(
         &self,
-        interface: &Interface,
+        interface: &Properties,
         path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<Value, TransportError>
     where
         C: Receive + Sync,
     {
-        let Some(mapping) = interface.as_mapping_ref(path) else {
-            return Err(TransportError::Recv(RecvError::MappingNotFound {
+        let mapping = MappingRef::new(interface, path).ok_or_else(|| {
+            TransportError::Recv(RecvError::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
-            }));
-        };
-
-        // TODO: remove this in a feature PR by passing a property interface
-        let prop = mapping.as_prop().ok_or_else(|| {
-            TransportError::Recv(RecvError::InterfaceType(InterfaceTypeError::with_path(
-                interface.interface_name(),
-                path.to_string(),
-                InterfaceTypeDef::Properties,
-                InterfaceTypeDef::Datastream,
-            )))
+            })
         })?;
 
         match self.connection.deserialize_property(&mapping, payload)? {
             Some(value) => {
-                let prop = StoredProp::from_mapping(&prop, &value);
+                let prop = StoredProp::from_mapping(&mapping, &value);
 
                 self.store
                     .store_prop(prop)
@@ -129,19 +118,16 @@ where
                 Ok(Value::Property(Some(value)))
             }
             None => {
-                if !prop.allow_unset() {
+                if !mapping.mapping().allow_unset() {
                     return Err(TransportError::Recv(RecvError::Unset {
-                        interface_name: prop.interface().interface_name().to_string(),
-                        path: prop.path().to_string(),
+                        interface_name: interface.interface_name().to_string(),
+                        path: path.to_string(),
                     }));
                 }
 
                 // Unset can only be received for a property
                 self.store
-                    .delete_prop(&PropertyMapping::new_unchecked(
-                        interface.into(),
-                        path.as_str(),
-                    ))
+                    .delete_prop(&PropertyMapping::from(&mapping))
                     .await
                     .map_err(|err| TransportError::Transport(Error::Store(err)))?;
 
@@ -159,26 +145,26 @@ where
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
     async fn handle_individual(
         &self,
-        interface: &Interface,
+        interface: &DatastreamIndividual,
         path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<Value, TransportError>
     where
         C: Receive + Sync,
     {
-        let Some(mapping) = interface.as_mapping_ref(path) else {
-            return Err(TransportError::Recv(RecvError::MappingNotFound {
+        let mapping = MappingRef::new(interface, path).ok_or_else(|| {
+            TransportError::Recv(RecvError::MappingNotFound {
                 interface: interface.interface_name().to_string(),
                 mapping: path.to_string(),
-            }));
-        };
+            })
+        })?;
 
         let (data, timestamp) = self.connection.deserialize_individual(&mapping, payload)?;
 
         let timestamp = Self::validate_timestamp(
-            interface.interface_name(),
+            interface.interface_name().as_str(),
             path.as_str(),
-            mapping.explicit_timestamp(),
+            mapping.mapping().explicit_timestamp(),
             timestamp,
         )?;
 
@@ -188,29 +174,28 @@ where
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
     async fn handle_object(
         &self,
-        interface: &Interface,
+        interface: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: C::Payload,
     ) -> Result<Value, TransportError>
     where
         C: Receive + Sync,
     {
-        let Some(object) = interface.as_object_ref() else {
-            let aggr_err = AggregationError::new(
-                interface.interface_name(),
-                path.as_str(),
-                Aggregation::Object,
-                Aggregation::Individual,
-            );
-            return Err(TransportError::Recv(RecvError::Aggregation(aggr_err)));
-        };
+        if !interface.is_object_path(path) {
+            return Err(TransportError::Recv(RecvError::MappingNotFound {
+                interface: interface.interface_name().to_string(),
+                mapping: path.to_string(),
+            }));
+        }
 
-        let (data, timestamp) = self.connection.deserialize_object(&object, path, payload)?;
+        let (data, timestamp) = self
+            .connection
+            .deserialize_object(interface, path, payload)?;
 
         let timestamp = Self::validate_timestamp(
-            interface.interface_name(),
+            interface.interface_name().as_str(),
             path.as_str(),
-            object.explicit_timestamp(),
+            interface.explicit_timestamp(),
             timestamp,
         )?;
 
@@ -220,14 +205,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use astarte_interfaces::schema::Ownership;
     use chrono::{DateTime, Utc};
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
     use crate::aggregate::AstarteObject;
     use crate::connection::tests::mock_connection;
-    use crate::interface::Ownership;
-    use crate::store::PropertyInterface;
     use crate::test::{
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, E2E_SERVER_DATASTREAM,
         E2E_SERVER_DATASTREAM_NAME, E2E_SERVER_PROPERTY, E2E_SERVER_PROPERTY_NAME, SERVER_OBJECT,
@@ -256,8 +240,8 @@ mod tests {
                 let value = *value.as_ref();
 
                 move |mapping, payload| {
-                    mapping.interface().interface_name() == E2E_SERVER_DATASTREAM_NAME
-                        && mapping.path() == endpoint
+                    mapping.interface().name() == E2E_SERVER_DATASTREAM_NAME
+                        && mapping.path().as_str() == endpoint
                         && *payload.downcast_ref::<(i32, DateTime<Utc>)>().unwrap() == value
                 }
             })
@@ -394,8 +378,8 @@ mod tests {
                 let value = *value.as_ref();
 
                 move |mapping, payload| {
-                    mapping.interface().interface_name() == E2E_SERVER_PROPERTY_NAME
-                        && mapping.path() == endpoint
+                    mapping.interface().name() == E2E_SERVER_PROPERTY_NAME
+                        && mapping.path().as_str() == endpoint
                         && *payload.downcast_ref::<i32>().unwrap() == value
                 }
             })
@@ -414,15 +398,15 @@ mod tests {
 
         assert_eq!(event, exp);
 
+        let interfaces = connection.state.interfaces.read().await;
+        let path = MappingPath::try_from(endpoint).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_SERVER_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = connection
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_SERVER_PROPERTY_NAME, Ownership::Device),
-                    endpoint,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
@@ -457,8 +441,8 @@ mod tests {
             .once()
             .in_sequence(&mut seq)
             .withf(move |mapping, payload| {
-                mapping.interface().interface_name() == E2E_SERVER_PROPERTY_NAME
-                    && mapping.path() == endpoint
+                mapping.interface().name() == E2E_SERVER_PROPERTY_NAME
+                    && mapping.path().as_str() == endpoint
                     && payload.downcast_ref::<[u8; 0]>().unwrap().is_empty()
             })
             .returning(|_mapping, _payload| Ok(None));
@@ -472,15 +456,15 @@ mod tests {
 
         assert_eq!(event, exp);
 
+        let interfaces = connection.state.interfaces.read().await;
+        let path = MappingPath::try_from(endpoint).unwrap();
+        let mapping = interfaces
+            .get_property(E2E_SERVER_PROPERTY_NAME, &path)
+            .unwrap();
+
         let prop = connection
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_SERVER_PROPERTY_NAME, Ownership::Device),
-                    endpoint,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap();
 
@@ -514,8 +498,8 @@ mod tests {
             .once()
             .in_sequence(&mut seq)
             .withf(move |mapping, payload| {
-                mapping.interface().interface_name() == SERVER_PROPERTIES_NO_UNSET_NAME
-                    && mapping.path() == endpoint
+                mapping.interface().name() == SERVER_PROPERTIES_NO_UNSET_NAME
+                    && mapping.path().as_str() == endpoint
                     && payload.downcast_ref::<[u8; 0]>().unwrap().is_empty()
             })
             .returning(|_mapping, _payload| Ok(None));
@@ -530,15 +514,15 @@ mod tests {
             "got {err:?}"
         );
 
+        let path = MappingPath::try_from(endpoint).unwrap();
+        let interfaces = connection.state.interfaces.read().await;
+        let mapping = interfaces
+            .get_property(SERVER_PROPERTIES_NO_UNSET_NAME, &path)
+            .unwrap();
+
         let prop = connection
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(SERVER_PROPERTIES_NO_UNSET_NAME, Ownership::Device),
-                    endpoint,
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();

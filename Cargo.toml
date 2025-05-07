@@ -63,6 +63,7 @@ rust-version = "1.78.0"
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
+astarte-interfaces = { workspace = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
 base64 = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
@@ -138,6 +139,7 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.6" }
 astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
+astarte-interfaces = { path = "./astarte-interfaces", version = "=0.1.0-alpha.1" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 async-channel = "2.0.0"

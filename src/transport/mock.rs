@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,6 +21,9 @@
 use std::any::Any;
 use std::collections::HashMap;
 
+use astarte_interfaces::{
+    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+};
 use mockall::mock;
 
 use super::{
@@ -28,11 +31,10 @@ use super::{
 };
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
-use crate::interface::mapping::path::MappingPath;
-use crate::interface::reference::{MappingRef, ObjectRef};
+use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::store::StoreCapabilities;
-use crate::{AstarteType, Error, Interface, Timestamp};
+use crate::{AstarteType, Error, Timestamp};
 
 type GenericPayload = Box<dyn Any + Send + Sync>;
 
@@ -65,19 +67,19 @@ mock! {
 
         fn deserialize_property<'a>(
             &self,
-            mapping: &MappingRef<'a, &'a Interface> ,
+            mapping: &MappingRef<'a, Properties> ,
             payload: GenericPayload,
         ) -> Result<Option<AstarteType>, TransportError>;
 
         fn deserialize_individual<'a>(
             &self,
-            mapping: &MappingRef<'a, &'a Interface> ,
+            mapping: &MappingRef<'a, DatastreamIndividual> ,
             payload: GenericPayload,
         ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
 
         fn deserialize_object<'a>(
             &self,
-            object: &ObjectRef<'a>,
+            object: &DatastreamObject,
             path: &MappingPath<'a> ,
             payload: GenericPayload,
         ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;

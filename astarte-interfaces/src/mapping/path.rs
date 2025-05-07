@@ -24,7 +24,7 @@ use std::fmt::Display;
 /// Path of a mapping in interface.
 ///
 /// This is used to access the [`Interface`](crate::interface::Interface) so we can compare the parsed [`MappingPath`]
-/// with the [`Endpoint`].
+/// with the [`Endpoint`](crate::Endpoint).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MappingPath<'a> {
     pub(crate) path: &'a str,

@@ -32,7 +32,7 @@ use crate::{
     schema::{Mapping, MappingType, Reliability},
 };
 
-/// Mapping of a [`DatastreamIndividual`](super::DatastreamIndividual) interface.
+/// Mapping of a [`DatastreamIndividual`](crate::DatastreamIndividual) interface.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct DatastreamIndividualMapping {
     pub(crate) endpoint: Endpoint<String>,
@@ -63,7 +63,7 @@ impl DatastreamIndividualMapping {
         self.retention
     }
 
-    /// Returns the [`DatabaseRetention`] of the mapping.
+    /// Returns the [`DatabaseRetention`](crate::interface::DatabaseRetention) of the mapping.
     #[must_use]
     #[cfg(feature = "server-fields")]
     #[cfg_attr(docsrs, doc(cfg(feature = "server-fields")))]

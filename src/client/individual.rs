@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +18,11 @@
 
 //! Handles the sending of individual datastream.
 
+use astarte_interfaces::interface::Retention;
+use astarte_interfaces::MappingPath;
 use tracing::{debug, trace, warn};
 
 use crate::client::ValidatedIndividual;
-use crate::interface::mapping::path::MappingPath;
-use crate::interface::Retention;
 use crate::state::{SharedState, Status};
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
@@ -45,7 +45,7 @@ where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces.read().await;
-        let mapping = interfaces.interface_mapping(interface_name, path)?;
+        let mapping = interfaces.get_individual(interface_name, path)?;
 
         let validated = ValidatedIndividual::validate(mapping, data, timestamp)?;
 
@@ -71,7 +71,7 @@ where
             }
         }
 
-        match mapping.retention() {
+        match mapping.mapping().retention() {
             Retention::Volatile { .. } => {
                 Self::send_volatile_individual(&self.state, &mut self.sender, validated).await
             }
@@ -179,6 +179,7 @@ where
 mod tests {
     use std::time::Duration;
 
+    use astarte_interfaces::schema::Reliability;
     use chrono::Utc;
     use mockall::{predicate, Sequence};
     use pretty_assertions::assert_eq;
@@ -187,7 +188,6 @@ mod tests {
     use super::*;
 
     use crate::client::tests::{mock_client, mock_client_with_store};
-    use crate::interface::Reliability;
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, StoredRetention};
     use crate::store::SqliteStore;

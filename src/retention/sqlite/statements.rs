@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-use super::{RetentionMapping, RetentionPublish, TimestampSecs};
+use super::{RetentionMapping, RetentionPublish, RetentionReliability, TimestampSecs};
 
 impl WriteConnection {
     pub(super) fn store(
@@ -274,7 +274,7 @@ impl ReadConnection {
                             path: Cow::Owned(row.get(3)?),
                             sent: row.get(4)?,
                             value: Cow::Owned(row.get(5)?),
-                            reliability: row.get(6)?,
+                            reliability: row.get::<_, RetentionReliability>(6)?.into(),
                             version_major: row.get(7)?,
                             expiry: expiry_from_sql(row.get(8)?),
                         },
@@ -334,10 +334,10 @@ fn expiry_from_sql(expiry: Option<i64>) -> Option<Duration> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use astarte_interfaces::{interface::Retention, schema::Reliability};
     use itertools::Itertools;
 
     use crate::{
-        interface::Reliability,
         retention::{Context, StoredRetention, TimestampMillis},
         store::SqliteStore,
     };
@@ -414,7 +414,7 @@ pub(crate) mod tests {
             interface: "com.Foo".into(),
             path: "/bar".into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -435,7 +435,7 @@ pub(crate) mod tests {
             interface: "com.Foo".into(),
             path: "/bar".into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -470,7 +470,7 @@ pub(crate) mod tests {
             interface: "com.Foo".into(),
             path: "/bar".into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: Some(Duration::from_secs(u64::MAX)),
         };
 
@@ -499,7 +499,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: Some(Duration::from_secs(2)),
         };
         store_mapping(&store, &mapping).await;
@@ -539,7 +539,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
         store_mapping(&store, &mapping).await;
@@ -592,7 +592,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -641,7 +641,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
         store_mapping(&store, &mapping).await;
@@ -681,7 +681,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
         store_mapping(&store, &mapping).await;
@@ -727,7 +727,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -781,7 +781,7 @@ pub(crate) mod tests {
                     PublishInfo {
                         interface: p.interface,
                         path: p.path,
-                        reliability: mapping.reliability,
+                        reliability: mapping.reliability.into(),
                         version_major: mapping.version_major,
                         value: p.payload,
                         sent: p.sent,
@@ -812,7 +812,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
         store_mapping(&store, &mapping).await;
@@ -854,7 +854,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: Some(Duration::from_secs(3600)),
         };
 
@@ -866,8 +866,8 @@ pub(crate) mod tests {
             interface,
             path,
             mapping.version_major,
-            mapping.reliability,
-            crate::interface::Retention::Stored {
+            mapping.reliability.into(),
+            Retention::Stored {
                 expiry: mapping.expiry,
             },
             false,
@@ -909,7 +909,7 @@ pub(crate) mod tests {
                     PublishInfo {
                         interface: p.interface,
                         path: p.path,
-                        reliability: mapping.reliability,
+                        reliability: mapping.reliability.into(),
                         version_major: mapping.version_major,
                         expiry: mapping.expiry,
                         sent: p.sent,
@@ -940,7 +940,7 @@ pub(crate) mod tests {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -952,8 +952,8 @@ pub(crate) mod tests {
             interface,
             path,
             mapping.version_major,
-            mapping.reliability,
-            crate::interface::Retention::Stored {
+            mapping.reliability.into(),
+            Retention::Stored {
                 expiry: mapping.expiry,
             },
             false,
@@ -1002,7 +1002,7 @@ pub(crate) mod tests {
                     PublishInfo {
                         interface: p.interface,
                         path: p.path,
-                        reliability: mapping.reliability,
+                        reliability: mapping.reliability.into(),
                         version_major: mapping.version_major,
                         expiry: mapping.expiry,
                         sent: p.sent,
@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
             interface: "com.Foo".into(),
             path: "/path".into(),
             version_major: 1,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 
@@ -1038,7 +1038,7 @@ pub(crate) mod tests {
             interface: "com.Bar".into(),
             path: "path".into(),
             version_major: 2,
-            reliability: Reliability::Guaranteed,
+            reliability: Reliability::Guaranteed.into(),
             expiry: None,
         };
 

@@ -18,9 +18,13 @@
 
 //! Error types for the Astarte SDK.
 
-use crate::interface::error::InterfaceError;
-use crate::interface::mapping::path::MappingError;
-use crate::interface::{Aggregation, InterfaceTypeDef, Ownership};
+use std::convert::Infallible;
+use std::fmt::{Display, Formatter};
+
+use astarte_interfaces::error::Error as InterfaceError;
+use astarte_interfaces::mapping::path::MappingPathError;
+use astarte_interfaces::schema::{Aggregation, InterfaceType, Ownership};
+
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
@@ -29,8 +33,6 @@ use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
-use std::convert::Infallible;
-use std::fmt::{Display, Formatter};
 
 /// Dynamic error type
 pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -65,8 +67,8 @@ pub enum Error {
         mapping: String,
     },
     /// Couldn't parse the mapping path.
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
+    #[error("invalid mapping path")]
+    InvalidEndpoint(#[from] MappingPathError),
     /// Errors when converting between Astarte types.
     #[error("couldn't convert to Astarte Type")]
     Types(#[from] TypeError),
@@ -82,6 +84,9 @@ pub enum Error {
     /// Invalid aggregation between the interface and the data.
     #[error(transparent)]
     Aggregation(#[from] AggregationError),
+    /// Invalid interface type between the interface and the data.
+    #[error(transparent)]
+    InterfaceType(#[from] InterfaceTypeError),
     /// Infallible conversion.
     #[error(transparent)]
     Infallible(#[from] Infallible),
@@ -150,17 +155,13 @@ pub struct InterfaceTypeError {
     /// Optional path
     path: Option<String>,
     /// Expected interface type.
-    exp: InterfaceTypeDef,
+    exp: InterfaceType,
     /// Actual interface type.
-    got: InterfaceTypeDef,
+    got: InterfaceType,
 }
 
 impl InterfaceTypeError {
-    pub(crate) fn new(
-        name: impl Into<String>,
-        exp: InterfaceTypeDef,
-        got: InterfaceTypeDef,
-    ) -> Self {
+    pub(crate) fn new(name: impl Into<String>, exp: InterfaceType, got: InterfaceType) -> Self {
         Self {
             name: name.into(),
             path: None,
@@ -174,8 +175,8 @@ impl InterfaceTypeError {
     pub fn with_path(
         name: impl Into<String>,
         path: impl Into<String>,
-        exp: InterfaceTypeDef,
-        got: InterfaceTypeDef,
+        exp: InterfaceType,
+        got: InterfaceType,
     ) -> Self {
         Self {
             name: name.into(),
