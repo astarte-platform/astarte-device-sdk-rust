@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,13 +18,12 @@
 
 //! Handles the sending of object datastream.
 
+use astarte_interfaces::interface::Retention;
+use astarte_interfaces::MappingPath;
 use tracing::{debug, trace, warn};
 
 use crate::aggregate::AstarteObject;
 use crate::client::ValidatedObject;
-use crate::error::AggregationError;
-use crate::interface::mapping::path::MappingPath;
-use crate::interface::{Aggregation, Retention};
 use crate::state::{SharedState, Status};
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
@@ -47,22 +46,9 @@ where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces.read().await;
-        let interface = interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+        let interface = interfaces.get_object(interface_name, path)?;
 
-        let object = interface.as_object_ref().ok_or_else(|| {
-            Error::Aggregation(AggregationError::new(
-                interface_name,
-                path.as_str(),
-                Aggregation::Object,
-                interface.aggregation(),
-            ))
-        })?;
-
-        let validated = ValidatedObject::validate(object, path, data, timestamp)?;
+        let validated = ValidatedObject::validate(interface, path, data, timestamp)?;
 
         debug!("sending object {}{}", interface_name, path);
 
@@ -185,6 +171,7 @@ where
 mod tests {
     use std::time::Duration;
 
+    use astarte_interfaces::schema::Reliability;
     use chrono::Utc;
     use mockall::{predicate, Sequence};
     use pretty_assertions::assert_eq;
@@ -193,7 +180,6 @@ mod tests {
     use super::*;
 
     use crate::client::tests::{mock_client, mock_client_with_store};
-    use crate::interface::Reliability;
     use crate::interfaces::tests::DEVICE_OBJECT;
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, StoredRetention};

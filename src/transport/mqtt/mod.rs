@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! # Astarte MQTT Transport Module
 //!
@@ -25,6 +23,7 @@
 //! receiving, and registering interfaces.
 
 pub(crate) mod client;
+mod components;
 mod config;
 mod connection;
 pub mod crypto;
@@ -42,6 +41,10 @@ use std::{
     sync::Arc,
 };
 
+use astarte_interfaces::{
+    schema::{Ownership, Reliability},
+    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+};
 use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
@@ -61,12 +64,7 @@ use crate::{
     aggregate::AstarteObject,
     client::RecvError,
     error::Report,
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-        Ownership, Reliability,
-    },
-    interfaces::{self, Interfaces, Introspection},
+    interfaces::{self, DeviceIntrospection, Interfaces, MappingRef},
     properties,
     retention::{
         memory::VolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
@@ -74,12 +72,13 @@ use crate::{
     state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteType, Error, Interface, Timestamp,
+    AstarteType, Error, Timestamp,
 };
 use crate::{retention::RetentionError, store::OptStoredProp};
 
 use self::{
     client::AsyncClient,
+    components::{to_qos, ClientId},
     connection::MqttConnection,
     error::MqttError,
     retention::{MqttRetention, RetSender},
@@ -90,57 +89,6 @@ use self::{
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
 /// Default connection timeout in seconds for the MQTT connection.
 pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
-
-/// Borrowing wrapper for the client id
-///
-/// To avoid directly allocating and returning a [`String`] each time
-/// the client id is needed this trait implements [`Display`]
-/// while only borrowing the field needed to construct the client id.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ClientId<S = String> {
-    pub(crate) realm: S,
-    pub(crate) device_id: S,
-}
-
-impl ClientId<String> {
-    fn as_ref(&self) -> ClientId<&str> {
-        ClientId {
-            realm: &self.realm,
-            device_id: &self.device_id,
-        }
-    }
-}
-
-impl<S> ClientId<S>
-where
-    S: Display,
-{
-    /// Create a topic to subscribe on an interface
-    fn make_interface_wildcard<T>(&self, interface_name: T) -> String
-    where
-        T: Display,
-    {
-        format!("{self}/{interface_name}/#")
-    }
-}
-
-impl<S> Display for ClientId<S>
-where
-    S: Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.realm, self.device_id)
-    }
-}
-
-impl From<ClientId<&str>> for ClientId<String> {
-    fn from(value: ClientId<&str>) -> Self {
-        ClientId {
-            realm: value.realm.to_owned(),
-            device_id: value.device_id.to_owned(),
-        }
-    }
-}
 
 /// Struct representing an MQTT connection handler for an Astarte device.
 ///
@@ -259,7 +207,7 @@ where
         self.send(
             &validated.interface,
             &validated.path,
-            validated.reliability.into(),
+            to_qos(validated.reliability),
             buf,
         )
         .await
@@ -284,7 +232,7 @@ where
         self.send(
             &validated.interface,
             &validated.path,
-            validated.reliability.into(),
+            to_qos(validated.reliability),
             buf,
         )
         .await
@@ -304,7 +252,7 @@ where
             .send(
                 &validated.interface,
                 &validated.path,
-                validated.reliability.into(),
+                to_qos(validated.reliability),
                 buf,
             )
             .await?;
@@ -343,7 +291,7 @@ where
             .send(
                 &validated.interface,
                 &validated.path,
-                validated.reliability.into(),
+                to_qos(validated.reliability),
                 buf,
             )
             .await?;
@@ -364,7 +312,7 @@ where
             .send(
                 &data.interface,
                 &data.path,
-                data.reliability.into(),
+                to_qos(data.reliability),
                 data.value.into(),
             )
             .await?;
@@ -395,7 +343,7 @@ where
         self.send(
             &validated.interface,
             &validated.path,
-            Reliability::Unique.into(),
+            QoS::ExactlyOnce,
             Vec::new(),
         )
         .await
@@ -430,7 +378,7 @@ where
             self.subscribe(added.interface_name()).await?
         }
 
-        let introspection = Introspection::new(interfaces.iter_with_added(added)).to_string();
+        let introspection = DeviceIntrospection::new(interfaces.iter_with_added(added)).to_string();
 
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
@@ -446,7 +394,7 @@ where
         removed: &Interface,
     ) -> Result<(), Error> {
         let iter = interfaces.iter_without_removed(removed);
-        let introspection = Introspection::new(iter).to_string();
+        let introspection = DeviceIntrospection::new(iter).to_string();
 
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
@@ -484,7 +432,8 @@ where
             .await
             .map_err(MqttError::Subscribe)?;
 
-        let introspection = Introspection::new(interfaces.iter_with_added_many(added)).to_string();
+        let introspection =
+            DeviceIntrospection::new(interfaces.iter_with_added_many(added)).to_string();
 
         let res = self
             .client
@@ -517,7 +466,7 @@ where
         removed: &HashMap<&str, &Interface>,
     ) -> Result<(), Error> {
         let interfaces = interfaces.iter_without_removed_many(removed);
-        let introspection = Introspection::new(interfaces).to_string();
+        let introspection = DeviceIntrospection::new(interfaces).to_string();
 
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
@@ -647,33 +596,28 @@ impl<S> Mqtt<S> {
             };
         }
     }
-}
 
-/// Trait to implement functionality on the store.
-trait MqttStoreExt: PropertyStore
-where
-    Error: From<Self::Err>,
-{
     /// This function deletes all the stored server owned properties after receiving a publish on
     /// `/control/consumer/properties`
-    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error> {
+    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error>
+    where
+        S: PropertyStore,
+    {
         let paths = properties::extract_set_properties(bdata)?;
 
-        let stored_props = self.server_props().await?;
+        let stored_props = self.store.server_props().await?;
 
         for ref stored_prop in stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            self.delete_prop(&stored_prop.into()).await?;
+            self.store.delete_prop(&stored_prop.into()).await?;
         }
 
         Ok(())
     }
 }
-
-impl<S> MqttStoreExt for StoreWrapper<S> where S: PropertyStore {}
 
 impl<S> Receive for Mqtt<S>
 where
@@ -696,8 +640,7 @@ where
                 ParsedTopic::PurgeProperties => {
                     debug!("Purging properties");
 
-                    self.store
-                        .purge_server_properties(&publish.payload)
+                    self.purge_server_properties(&publish.payload)
                         .await
                         .map_err(TransportError::Transport)?;
                 }
@@ -716,7 +659,7 @@ where
 
     fn deserialize_property(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError> {
         payload::deserialize_property(mapping, &payload).map_err(|err| {
@@ -726,7 +669,7 @@ where
 
     fn deserialize_individual(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
         payload::deserialize_individual(mapping, &payload).map_err(|err| {
@@ -736,7 +679,7 @@ where
 
     fn deserialize_object(
         &self,
-        object: &ObjectRef,
+        object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
@@ -981,7 +924,7 @@ pub(crate) mod test {
             Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap(),
         ];
 
-        let mut introspection = Introspection::new(to_add.iter())
+        let mut introspection = DeviceIntrospection::new(to_add.iter())
             .to_string()
             .split(';')
             .map(ToOwned::to_owned)
@@ -1045,7 +988,7 @@ pub(crate) mod test {
             Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
         ];
 
-        let mut introspection = Introspection::new(to_add.iter())
+        let mut introspection = DeviceIntrospection::new(to_add.iter())
             .to_string()
             .split(';')
             .map(ToOwned::to_owned)
@@ -1096,7 +1039,7 @@ pub(crate) mod test {
 
         let to_add = [Interface::from_str(crate::test::SERVER_PROPERTIES).unwrap()];
 
-        let introspection = Introspection::new(to_add.iter()).to_string();
+        let introspection = DeviceIntrospection::new(to_add.iter()).to_string();
 
         let interfaces = Interfaces::new();
 

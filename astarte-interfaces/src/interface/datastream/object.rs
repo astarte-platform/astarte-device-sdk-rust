@@ -20,7 +20,7 @@
 //!
 //! Data sent on an object interface is grouped and sent together in a single message.
 
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, str::FromStr};
 
 use serde::Serialize;
 
@@ -328,5 +328,15 @@ impl Serialize for DatastreamObject {
         S: serde::Serializer,
     {
         InterfaceJson::from(self).serialize(serializer)
+    }
+}
+
+impl FromStr for DatastreamObject {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let interface: InterfaceJson<Cow<str>> = serde_json::from_str(s)?;
+
+        Self::try_from(interface)
     }
 }

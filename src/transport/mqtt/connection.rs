@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -250,7 +250,7 @@ impl MqttConnection {
                     break Ok(true);
                 }
                 State::Disconnected(_) => {
-                    debug!("error occured");
+                    debug!("error occurred");
 
                     break Ok(false);
                 }
@@ -870,14 +870,15 @@ impl Next {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
+    use astarte_interfaces::Interface;
     use mockall::predicate;
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
         store::{memory::MemoryStore, StoredProp},
-        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
+        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType, Interface,
+        AstarteType,
     };
 
     use super::*;
@@ -1007,7 +1008,7 @@ mod tests {
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
 
         let prop = StoredProp {
-            interface: interface.interface_name(),
+            interface: DEVICE_PROPERTIES_NAME,
             path: "/sensor1/name",
             value: &AstarteType::String("temperature".to_string()),
             interface_major: 0,
