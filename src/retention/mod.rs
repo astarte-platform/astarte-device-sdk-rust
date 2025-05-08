@@ -24,10 +24,7 @@ use std::{
     fmt::Display,
     future::Future,
     num::TryFromIntError,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -296,7 +293,7 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// Marks all publishes as unset and cleans up expired publishes.
     fn reset_all_publishes(&self) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
-    /// Marks all publishes as unset and cleans up expired publishes.
+    /// Retrieves all the interfaces with data stored in the retention.
     fn fetch_all_interfaces(
         &self,
     ) -> impl Future<Output = Result<HashSet<StoredInterface>, RetentionError>> + Send;
@@ -517,16 +514,16 @@ impl TryFrom<TimestampMillis> for Duration {
 }
 
 /// Context to create a unique [`Id`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context {
-    counter: Arc<AtomicU32>,
+    counter: AtomicU32,
 }
 
 impl Context {
     /// Create a new context
     pub fn new() -> Self {
         Self {
-            counter: Arc::new(AtomicU32::new(0)),
+            counter: AtomicU32::new(0),
         }
     }
 
@@ -551,19 +548,20 @@ impl Default for Context {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     use super::*;
 
     #[test]
     fn id_should_be_unique() {
         const NUM: usize = 5;
-        let ctx = Context::new();
+        let ctx = Arc::new(Context::new());
 
         let (tx, rx) = std::sync::mpsc::sync_channel::<Id>(NUM);
 
         for _ in 0..NUM {
             std::thread::spawn({
-                let ctx = ctx.clone();
+                let ctx = Arc::clone(&ctx);
                 let tx = tx.clone();
 
                 move || {

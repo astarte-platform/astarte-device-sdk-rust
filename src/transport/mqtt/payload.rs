@@ -128,13 +128,11 @@ pub(super) fn serialize_object(
 }
 
 /// Deserialize an individual [`AstarteType`]
-pub(super) fn deserialize_individual<'a>(
+pub(super) fn deserialize_property<'a>(
     mapping: &MappingRef<'a, &'a Interface>,
     buf: &[u8],
-) -> Result<Option<(AstarteType, Option<Timestamp>)>, PayloadError> {
+) -> Result<Option<AstarteType>, PayloadError> {
     if buf.is_empty() {
-        debug!("unset received");
-
         if !mapping.allow_unset() {
             return Err(PayloadError::Unset);
         }
@@ -148,7 +146,21 @@ pub(super) fn deserialize_individual<'a>(
 
     let ast_val = AstarteType::try_from(hint)?;
 
-    Ok(Some((ast_val, payload.timestamp)))
+    Ok(Some(ast_val))
+}
+
+/// Deserialize an individual [`AstarteType`]
+pub(super) fn deserialize_individual<'a>(
+    mapping: &MappingRef<'a, &'a Interface>,
+    buf: &[u8],
+) -> Result<(AstarteType, Option<Timestamp>), PayloadError> {
+    let payload = Payload::<Bson>::from_slice(buf)?;
+
+    let hint = BsonConverter::new(mapping.mapping_type(), payload.value);
+
+    let ast_val = AstarteType::try_from(hint)?;
+
+    Ok((ast_val, payload.timestamp))
 }
 
 pub(super) fn deserialize_object(
@@ -285,9 +297,7 @@ mod test {
             .unwrap();
             let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
-            let (res, _) = deserialize_individual(&mapping, &buf)
-                .unwrap()
-                .expect("invalid unset");
+            let (res, _) = deserialize_individual(&mapping, &buf).unwrap();
 
             assert_eq!(res, ty);
         }
@@ -359,9 +369,7 @@ mod test {
         // 3600i32
         let longinteger_b = [12, 0, 0, 0, 16, 118, 0, 16, 14, 0, 0, 0];
 
-        let (res, _) = deserialize_individual(&mapping, &longinteger_b)
-            .unwrap()
-            .expect("invalid unset");
+        let (res, _) = deserialize_individual(&mapping, &longinteger_b).unwrap();
 
         assert_eq!(res, AstarteType::LongInteger(3600i64));
     }
@@ -389,9 +397,7 @@ mod test {
 
         assert_eq!(buf, expected);
 
-        let (res, _) = deserialize_individual(&mapping, &buf)
-            .unwrap()
-            .expect("invalid unset");
+        let (res, _) = deserialize_individual(&mapping, &buf).unwrap();
 
         assert_eq!(res, og_value);
     }
@@ -408,9 +414,7 @@ mod test {
         let binding = mapping("/longintegerarray_endpoint");
         let mapping = interface.as_mapping_ref(&binding).unwrap();
 
-        let (at, _) = deserialize_individual(&mapping, &buf)
-            .unwrap()
-            .expect("invalid unset");
+        let (at, _) = deserialize_individual(&mapping, &buf).unwrap();
 
         let expected = AstarteType::LongIntegerArray(vec![45543543534, 10, 0, 45543543534]);
 
@@ -426,9 +430,7 @@ mod test {
         let binding = mapping("/longintegerarray_endpoint");
         let mapping = interface.as_mapping_ref(&binding).unwrap();
 
-        let (at, _) = deserialize_individual(&mapping, &buf)
-            .unwrap()
-            .expect("invalid unset");
+        let (at, _) = deserialize_individual(&mapping, &buf).unwrap();
 
         let expected = AstarteType::LongIntegerArray(vec![]);
 
@@ -459,7 +461,7 @@ mod test {
         let path = mapping("/1/double_endpoint");
         let mapping = interface.as_mapping_ref(&path).unwrap();
 
-        let at = deserialize_individual(&mapping, &buf);
+        let at = deserialize_property(&mapping, &buf);
 
         assert!(matches!(at, Err(PayloadError::Unset)));
     }
