@@ -163,8 +163,8 @@ const MESSAGE_HUB_URL: &str = "http://127.0.0.1:50051";
 const STORE_DIRECTORY: &str = "./store-dir";
 
 async fn init() -> eyre::Result<(
-    DeviceClient<GrpcStore>,
-    DeviceConnection<GrpcStore, Grpc<GrpcStore>>,
+    DeviceClient<Grpc>,
+    DeviceConnection<Grpc>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -299,8 +299,8 @@ const INDIVIDUAL_SERVER: &str = include_str!("../../docs/interfaces/org.astarte-
 const PROPERTY_DEVICE: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Property.json");
 
 async fn init() -> eyre::Result<(
-    DeviceClient<GrpcStore>,
-    DeviceConnection<GrpcStore, Grpc<GrpcStore>>,
+    DeviceClient<Grpc>,
+    DeviceConnection<Grpc>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -358,7 +358,7 @@ enum ServerIndividual {
     Boolean(bool),
 }
 
-async fn receive_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
+async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -399,7 +399,7 @@ async fn receive_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<GrpcStore> { todo!() }
+# fn client() -> DeviceClient<Grpc> { todo!() }
 # let client = client();
   // ...
 
@@ -460,17 +460,17 @@ struct AggregatedDevice {
 }
 
 /// Send data after an interval to every interface
-async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
+async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
     loop {
         // Publish on the IndividualDevice
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
-                3.14,
+                3.14.try_into()?,
             )
             .await?;
         // Publish on the Aggregaed
@@ -487,10 +487,10 @@ async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
             .await?;
         // Set the Property
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
-                42.0,
+                42.0.try_into()?,
             )
             .await?;
 
@@ -501,7 +501,7 @@ async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<GrpcStore> { todo!() }
+# fn client() -> DeviceClient<Grpc> { todo!() }
 # let client = client();
   // ...
 

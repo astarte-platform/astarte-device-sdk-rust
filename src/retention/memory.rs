@@ -22,40 +22,33 @@
 
 use std::{
     collections::VecDeque,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, trace};
 
 use crate::{
+    builder::DEFAULT_VOLATILE_CAPACITY,
     interface::Retention,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
 use super::Id;
 
-/// Shared struct for the volatile retention.
+/// Struct for the volatile retention.
 ///
 /// The methods will only require a `&self` and handle the locking internally to prevent problems
 /// in the critical sections.
-#[derive(Debug, Clone)]
-pub(crate) struct SharedVolatileStore {
-    store: Arc<Mutex<VolatileStore>>,
+#[derive(Debug, Default)]
+pub(crate) struct VolatileStore {
+    store: Mutex<State>,
 }
 
-impl SharedVolatileStore {
-    pub(crate) fn new() -> Self {
-        Self {
-            store: Arc::new(Mutex::new(VolatileStore::new())),
-        }
-    }
-
-    #[cfg(test)]
+impl VolatileStore {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            store: Arc::new(Mutex::new(VolatileStore::with_capacity(capacity))),
+            store: Mutex::new(State::with_capacity(capacity)),
         }
     }
 
@@ -74,29 +67,27 @@ impl SharedVolatileStore {
         self.store.lock().await.mark_received(id)
     }
 
-    pub(crate) async fn pop_next(&mut self) -> Option<ItemValue> {
+    pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
         self.store.lock().await.pop_next()
     }
 
+    pub(crate) async fn delete_interface(&self, interface_name: &str) -> usize {
+        self.store.lock().await.delete_interface(interface_name)
+    }
+
     /// This method will swap the capacity.
+    #[cfg(feature = "message-hub")]
     pub(crate) async fn set_capacity(&self, capacity: usize) {
         self.store.lock().await.set_capacity(capacity);
     }
 }
 
 #[derive(Debug)]
-struct VolatileStore {
+struct State {
     store: VecDeque<VolatileItem>,
 }
 
-impl VolatileStore {
-    fn new() -> Self {
-        Self {
-            store: VecDeque::new(),
-        }
-    }
-
-    #[cfg(test)]
+impl State {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             store: VecDeque::with_capacity(capacity),
@@ -173,6 +164,7 @@ impl VolatileStore {
     }
 
     /// A capacity of 0 will make every push into this store a noop.
+    #[cfg(feature = "message-hub")]
     fn set_capacity(&mut self, capacity: usize) {
         let current = self.store.capacity();
 
@@ -189,11 +181,31 @@ impl VolatileStore {
             self.store.reserve_exact(additional);
         }
     }
+
+    fn delete_interface(&mut self, interface_name: &str) -> usize {
+        let now = SystemTime::now();
+
+        let mut count = 0;
+
+        self.store.retain(|v| {
+            let expired_or_interface = v.is_expired(now) || v.is_interface(interface_name);
+
+            if expired_or_interface {
+                count += 1;
+            }
+
+            !expired_or_interface
+        });
+
+        trace!(count, "interface removed");
+
+        count
+    }
 }
 
-impl Default for VolatileStore {
+impl Default for State {
     fn default() -> Self {
-        Self::new()
+        Self::with_capacity(DEFAULT_VOLATILE_CAPACITY)
     }
 }
 
@@ -220,7 +232,22 @@ impl VolatileItem {
             return false;
         };
 
-        (self.store_time + expiry) < now
+        let expired = (self.store_time + expiry) < now;
+
+        if expired {
+            trace!(%self.id, "expired");
+        }
+
+        expired
+    }
+
+    fn is_interface(&self, interface_name: &str) -> bool {
+        let name = match &self.value {
+            ItemValue::Individual(validated_individual) => &validated_individual.interface,
+            ItemValue::Object(validated_object) => &validated_object.interface,
+        };
+
+        name == interface_name
     }
 }
 
@@ -246,13 +273,21 @@ impl ItemValue {
             ItemValue::Object(o) => o.retention.expiry(),
         }
     }
+
+    /// Allow the stored retention, if the [`StoreCapabilities`](crate::store::StoreCapabilities) doesn't support the retention.
+    fn is_retenton_stored_or_volatile(retention: Retention) -> bool {
+        matches!(
+            retention,
+            Retention::Stored { .. } | Retention::Volatile { .. }
+        )
+    }
 }
 
 impl TryFrom<ValidatedIndividual> for ItemValue {
     type Error = VolatileItemError;
 
     fn try_from(value: ValidatedIndividual) -> Result<Self, Self::Error> {
-        if !value.retention.is_volatile() {
+        if !Self::is_retenton_stored_or_volatile(value.retention) {
             return Err(VolatileItemError {
                 interface: value.interface,
                 retention: value.retention,
@@ -267,7 +302,7 @@ impl TryFrom<ValidatedObject> for ItemValue {
     type Error = VolatileItemError;
 
     fn try_from(value: ValidatedObject) -> Result<Self, Self::Error> {
-        if !value.retention.is_volatile() {
+        if !Self::is_retenton_stored_or_volatile(value.retention) {
             return Err(VolatileItemError {
                 interface: value.interface,
                 retention: value.retention,
@@ -282,7 +317,10 @@ impl TryFrom<ValidatedObject> for ItemValue {
 mod tests {
     use std::time::Duration;
 
+    use pretty_assertions::assert_eq;
+
     use crate::{
+        aggregate::AstarteObject,
         interface::{Reliability, Retention},
         retention::Context,
         AstarteType,
@@ -302,7 +340,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(1);
+        let mut store = State::with_capacity(1);
 
         let ctx = Context::new();
 
@@ -333,7 +371,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(1);
+        let mut store = State::with_capacity(1);
         let ctx = Context::new();
 
         store.push(ctx.next(), info1);
@@ -379,7 +417,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(2);
+        let mut store = State::with_capacity(2);
 
         let ctx = Context::new();
 
@@ -429,7 +467,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -453,6 +491,20 @@ mod tests {
             reliability: Reliability::Unique,
             retention: Retention::Discard,
             data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        let res = ItemValue::try_from(info);
+
+        assert!(res.is_err());
+
+        let info = ValidatedObject {
+            interface: "interface1".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Discard,
+            data: AstarteObject::new(),
             timestamp: None,
         };
 
@@ -495,7 +547,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -543,7 +595,7 @@ mod tests {
             timestamp: None,
         };
 
-        let mut store = VolatileStore::with_capacity(3);
+        let mut store = State::with_capacity(3);
 
         let ctx = Context::new();
 
@@ -560,7 +612,7 @@ mod tests {
 
     #[test]
     fn capacity_0_volatile_store_should_not_store() {
-        let mut store = VolatileStore::with_capacity(0);
+        let mut store = State::with_capacity(0);
         let ctx = Context::new();
 
         let info = ValidatedIndividual {
@@ -576,5 +628,74 @@ mod tests {
         store.push(ctx.next(), info.clone());
 
         assert_eq!(None, store.pop_next());
+    }
+
+    #[test]
+    fn should_accept_stored_retention_items() {
+        let mut store = State::with_capacity(1);
+        let ctx = Context::new();
+
+        let info = ValidatedIndividual {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Stored { expiry: None },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        store.push(ctx.next(), info.clone());
+
+        assert_eq!(store.pop_next().unwrap(), ItemValue::Individual(info));
+
+        let info = ValidatedObject {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Stored { expiry: None },
+            data: AstarteObject::new(),
+            timestamp: None,
+        };
+
+        store.push(ctx.next(), info.clone());
+
+        assert_eq!(store.pop_next().unwrap(), ItemValue::Object(info));
+    }
+
+    #[test]
+    fn should_delete_interfaces() {
+        let mut store = State::default();
+        let ctx = Context::new();
+
+        let interface = "interface_individual";
+        let individual = ValidatedIndividual {
+            interface: interface.to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Stored { expiry: None },
+            data: AstarteType::Integer(42),
+            timestamp: None,
+        };
+
+        let object = ValidatedObject {
+            interface: "interface_object".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Stored { expiry: None },
+            data: AstarteObject::new(),
+            timestamp: None,
+        };
+
+        store.push(ctx.next(), individual.clone());
+        store.push(ctx.next(), individual.clone());
+        store.push(ctx.next(), object.clone());
+
+        assert_eq!(store.delete_interface(interface), 2);
+
+        assert_eq!(store.pop_next().unwrap(), ItemValue::Object(object));
     }
 }
