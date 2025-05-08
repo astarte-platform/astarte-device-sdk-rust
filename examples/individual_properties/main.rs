@@ -86,7 +86,7 @@ async fn main() -> eyre::Result<()> {
         .connection(mqtt_config)
         .build()
         .await?;
-    let client_cl = client.clone();
+    let mut client_cl = client.clone();
 
     println!("Connection to Astarte established.");
 
@@ -118,10 +118,10 @@ async fn main() -> eyre::Result<()> {
         // Send in a loop the change of the property "name" of sensor 1
         loop {
             client_cl
-                .send(
+                .set_property(
                     "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                     "/1/name",
-                    format!("name number {i}"),
+                    format!("name number {i}").into(),
                 )
                 .await?;
 
@@ -135,9 +135,9 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         loop {
             match client.recv().await {
-                Ok(data) => {
-                    if let Value::Individual(var) = data.data {
-                        let mut iter = data.path.splitn(3, '/').skip(1);
+                Ok(event) => {
+                    if let Value::Individual { data, timestamp: _ } = event.data {
+                        let mut iter = event.path.splitn(3, '/').skip(1);
                         let sensor_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
@@ -148,11 +148,11 @@ async fn main() -> eyre::Result<()> {
                                 println!(
                                     "Sensor number {} has been {}",
                                     sensor_id,
-                                    if var == true { "ENABLED" } else { "DISABLED" }
+                                    if data == true { "ENABLED" } else { "DISABLED" }
                                 );
                             }
                             Some("samplingPeriod") => {
-                                let value: i32 = var.try_into()?;
+                                let value: i32 = data.try_into()?;
                                 println!("Sampling period for sensor {} is {}", sensor_id, value);
                             }
                             _ => {}

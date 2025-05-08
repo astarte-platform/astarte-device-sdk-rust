@@ -301,25 +301,39 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 ///
 /// ### Example
 ///
+/// To derive the trait for an individual.
+///
+/// ```no_compile
+/// #[derive(FromEvent)]
+/// #[from_event(interface = "com.example.Sensor")]
+/// enum Sensor {
+///     #[mapping(endpoint = "/sensor/luminosity")]
+///     Luminosity(i32),
+///     #[mapping(endpoint = "/sensor/temerature")]
+///     Temperature(Option<f64>),
+/// }
+/// ```
+///
 /// To derive the trait it for an object.
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Foo", path = "/obj")]
+/// #[from_event(interface = "com.example.Foo", path = "/obj", aggregation = "object")]
 /// struct Foo {
 ///     bar: String
 /// }
 /// ```
 ///
-/// To derive the trait it for an individual.
+///
+/// To derive the trait it for a property.
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Sensor", aggregation = "individual")]
+/// #[from_event(interface = "com.example.Sensor", interface_type = "property", aggregation = "individual")]
 /// enum Sensor {
 ///     #[mapping(endpoint = "/sensor/luminosity")]
 ///     Luminosity(i32),
-///     #[mapping(endpoint = "/sensor/temerature", allow_unset = true)]
+///     #[mapping(endpoint = "/sensor/temerature")]
 ///     Temperature(Option<f64>),
 /// }
 /// ```

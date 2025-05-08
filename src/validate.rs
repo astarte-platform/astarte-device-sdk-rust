@@ -26,7 +26,7 @@ use crate::{
     interface::{
         mapping::path::MappingPath,
         reference::{MappingRef, ObjectRef, PropertyRef},
-        Aggregation, MappingAccess, Ownership, Reliability, Retention,
+        Aggregation, InterfaceTypeDef, MappingAccess, Ownership, Reliability, Retention,
     },
     store::PropertyInterface,
     types::AstarteType,
@@ -102,11 +102,23 @@ impl ValidatedIndividual {
         let path = mapping.path();
         let mapping = mapping.mapping();
 
+        let interface_type = interface.interface_type();
+        if interface_type != InterfaceTypeDef::Datastream {
+            return Err(UserValidationError::InterfaceType(
+                InterfaceTypeError::with_path(
+                    interface.interface_name(),
+                    path.to_string(),
+                    InterfaceTypeDef::Datastream,
+                    interface_type,
+                ),
+            ));
+        }
+
         let aggregation = interface.aggregation();
         if aggregation != Aggregation::Individual {
             return Err(UserValidationError::Aggregation(AggregationError::new(
-                interface.interface_name().to_string(),
-                path.to_string(),
+                interface.interface_name(),
+                path.as_str(),
                 Aggregation::Individual,
                 aggregation,
             )));
@@ -214,6 +226,72 @@ impl ValidatedObject {
             retention: interface.retention(),
             data,
             timestamp,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ValidatedProperty {
+    pub(crate) interface: String,
+    pub(crate) path: String,
+    pub(crate) version_major: i32,
+    pub(crate) data: AstarteType,
+}
+
+impl ValidatedProperty {
+    pub(crate) fn validate(
+        mapping: MappingRef<'_, PropertyRef<'_>>,
+        data: AstarteType,
+    ) -> Result<Self, UserValidationError> {
+        let interface = mapping.interface();
+        let path = mapping.path();
+        let mapping = mapping.mapping();
+
+        let interface_type = interface.interface_type();
+        if interface_type != InterfaceTypeDef::Properties {
+            return Err(UserValidationError::InterfaceType(
+                InterfaceTypeError::with_path(
+                    interface.interface_name(),
+                    path.to_string(),
+                    InterfaceTypeDef::Properties,
+                    interface_type,
+                ),
+            ));
+        }
+
+        let aggregation = interface.aggregation();
+        if aggregation != Aggregation::Individual {
+            return Err(UserValidationError::Aggregation(AggregationError::new(
+                interface.interface_name(),
+                path.as_str(),
+                Aggregation::Individual,
+                aggregation,
+            )));
+        }
+
+        let ownership = interface.ownership();
+        if ownership != Ownership::Device {
+            return Err(UserValidationError::Ownership(OwnershipError::new(
+                interface.interface_name(),
+                Ownership::Device,
+                ownership,
+            )));
+        }
+
+        if data != mapping.mapping_type() {
+            return Err(UserValidationError::MappingType {
+                interface: interface.interface_name().to_string(),
+                path: path.as_str().to_string(),
+                expected: mapping.mapping_type().to_string(),
+                got: data.display_type().to_string(),
+            });
+        }
+
+        Ok(Self {
+            interface: interface.interface_name().to_string(),
+            path: path.to_string(),
+            version_major: interface.version_major(),
+            data,
         })
     }
 }
