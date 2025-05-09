@@ -24,10 +24,7 @@ use std::{
     fmt::Display,
     future::Future,
     num::TryFromIntError,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -172,10 +169,6 @@ impl RetentionError {
         }
     }
 
-    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
-        Self::DeleteInterfaceMany(backtrace.into())
-    }
-
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
         Self::FetchInterfaces(backtrace.into())
     }
@@ -216,7 +209,11 @@ impl<'a> PublishInfo<'a> {
         }
     }
 
-    fn from_individual(sent: bool, individual: &'a ValidatedIndividual, value: &'a [u8]) -> Self {
+    pub(crate) fn from_individual(
+        sent: bool,
+        individual: &'a ValidatedIndividual,
+        value: &'a [u8],
+    ) -> Self {
         Self::from_ref(
             &individual.interface,
             &individual.path,
@@ -272,14 +269,6 @@ pub trait StoredRetention: Clone + Send + Sync {
         interface: &str,
     ) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
-    /// Deletes all the stored publishes for all the interfaces.
-    fn delete_interface_many<I>(
-        &self,
-        interfaces: &[I],
-    ) -> impl Future<Output = Result<(), RetentionError>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
-
     /// Resend all the publishes that were not sent.
     ///
     /// It will fetch at most `limit` elements and store them in the [`Vec`], returning the actual
@@ -296,7 +285,7 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// Marks all publishes as unset and cleans up expired publishes.
     fn reset_all_publishes(&self) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
-    /// Marks all publishes as unset and cleans up expired publishes.
+    /// Retrieves all the interfaces with data stored in the retention.
     fn fetch_all_interfaces(
         &self,
     ) -> impl Future<Output = Result<HashSet<StoredInterface>, RetentionError>> + Send;
@@ -410,13 +399,6 @@ impl StoredRetention for Missing {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
-        unreachable!("the type is Un-constructable");
-    }
-
     async fn unsent_publishes(
         &self,
         _limit: usize,
@@ -517,16 +499,16 @@ impl TryFrom<TimestampMillis> for Duration {
 }
 
 /// Context to create a unique [`Id`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context {
-    counter: Arc<AtomicU32>,
+    counter: AtomicU32,
 }
 
 impl Context {
     /// Create a new context
     pub fn new() -> Self {
         Self {
-            counter: Arc::new(AtomicU32::new(0)),
+            counter: AtomicU32::new(0),
         }
     }
 
@@ -536,7 +518,7 @@ impl Context {
 
         // We want the values to be unique, this will wrap around, but it will never wrap on the
         // same ms
-        let counter = self.counter.fetch_add(1, Ordering::AcqRel);
+        let counter = self.counter.fetch_add(1, Ordering::SeqCst);
 
         Id { timestamp, counter }
     }
@@ -551,32 +533,36 @@ impl Default for Context {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     use super::*;
 
     #[test]
     fn id_should_be_unique() {
         const NUM: usize = 5;
-        let ctx = Context::new();
+        const CAP: usize = 1000;
+        let ctx = Arc::new(Context::new());
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Id>(NUM);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Id>>(NUM);
 
         for _ in 0..NUM {
             std::thread::spawn({
-                let ctx = ctx.clone();
+                let ctx = Arc::clone(&ctx);
                 let tx = tx.clone();
 
                 move || {
+                    let mut gen = Vec::with_capacity(CAP);
                     let mut prev = ctx.next();
-                    for _i in 0..1000 {
+                    for _i in 0..CAP {
                         let new = ctx.next();
-
-                        tx.send(new).expect("channel closed");
 
                         assert!(new > prev);
 
+                        gen.push(prev);
                         prev = new;
                     }
+
+                    tx.send(gen).expect("channel closed");
                 }
             });
         }
@@ -584,8 +570,10 @@ mod tests {
         drop(tx);
 
         let mut recvd = HashSet::new();
-        while let Ok(new) = rx.recv() {
-            assert!(recvd.insert(new));
+        while let Ok(gen) = rx.recv() {
+            for i in gen {
+                assert!(recvd.insert(i));
+            }
         }
     }
 }
