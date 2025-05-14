@@ -370,53 +370,42 @@ impl FromEventDerive {
         let variants = variants.iter().enumerate().map(|(i, v)| {
             let variant = &v.name;
 
-            if v.attrs.allow_unset {
-                quote! {
-                    #i => {
-                        match event.data {
-                            Value::Individual{..} | Value::Object{..} => {
-                                return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
-                                    event.interface,
-                                    event.path,
-                                    InterfaceTypeDef::Properties,
-                                    InterfaceTypeDef::Datastream,
-                                )));
-                            },
-                            Value::Property(Some(prop)) => {
-                                prop.try_into()
-                                    .map(|value| #name::#variant(Some(value)))
-                                    .map_err(FromEventError::from)
-                            },
-                            Value::Property(None) => {
-                                Ok(#name::#variant(None))
-                            },
-                        }
-                    }
-                }
+            let prop_set_case = if v.attrs.allow_unset {
+                quote! { Some(value) }
+            } else {
+                quote! { value }
+            };
+
+            let prop_unset = if v.attrs.allow_unset {
+                quote! { Ok(#name::#variant(None)) }
             } else {
                 quote! {
-                    #i => {
-                        match event.data {
-                            Value::Individual{..} | Value::Object{..} => {
-                                return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
-                                    event.interface,
-                                    event.path,
-                                    InterfaceTypeDef::Properties,
-                                    InterfaceTypeDef::Datastream,
-                                )));
-                            },
-                            Value::Property(Some(prop)) => {
-                                prop.try_into()
-                                    .map(|value| #name::#variant(value))
-                                    .map_err(FromEventError::from)
-                            },
-                            Value::Property(None) => {
-                                return Err(FromEventError::Unset {
-                                    interface: INTERFACE,
-                                    endpoint: event.path,
-                                });
-                            },
-                        }
+                    return Err(FromEventError::Unset {
+                        interface: INTERFACE,
+                        endpoint: event.path,
+                    });
+                }
+            };
+
+            quote! {
+                #i => {
+                    match event.data {
+                        Value::Individual{..} | Value::Object{..} => {
+                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
+                                event.interface,
+                                event.path,
+                                InterfaceTypeDef::Properties,
+                                InterfaceTypeDef::Datastream,
+                            )));
+                        },
+                        Value::Property(Some(prop)) => {
+                            prop.try_into()
+                                .map(|value| #name::#variant(#prop_set_case))
+                                .map_err(FromEventError::from)
+                        },
+                        Value::Property(None) => {
+                            #prop_unset
+                        },
                     }
                 }
             }
