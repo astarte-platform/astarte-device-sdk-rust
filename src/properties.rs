@@ -29,6 +29,7 @@ use crate::{
     error::Error,
     interface::mapping::path::MappingPath,
     store::{PropertyStore, StoredProp},
+    transport::Connection,
     types::AstarteType,
 };
 
@@ -98,9 +99,9 @@ pub trait PropAccess {
     fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
 }
 
-impl<S> PropAccess for DeviceClient<S>
+impl<C> PropAccess for DeviceClient<C>
 where
-    S: PropertyStore,
+    C: Connection,
 {
     async fn property(
         &self,
@@ -109,22 +110,22 @@ where
     ) -> Result<Option<AstarteType>, Error> {
         let path = MappingPath::try_from(path)?;
 
-        let interfaces = &self.interfaces.read().await;
+        let interfaces = self.state.interfaces.read().await;
         let mapping = interfaces.property_mapping(interface_name, &path)?;
 
         self.try_load_prop(&mapping, &path).await
     }
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
-        let interfaces = &self.interfaces.read().await;
+        let interfaces = self.state.interfaces.read().await;
         let prop_if =
-            &interfaces
+            interfaces
                 .get_property(interface_name)
                 .ok_or_else(|| Error::InterfaceNotFound {
                     name: interface_name.to_string(),
                 })?;
 
-        let stored_prop = self.store.interface_props(&prop_if.into()).await?;
+        let stored_prop = self.store.interface_props(&(&prop_if).into()).await?;
 
         futures::stream::iter(stored_prop)
             .then(|p| async {
@@ -261,15 +262,11 @@ fn encode_prop(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::str::FromStr;
 
+    use crate::client::tests::mock_client_with_store;
     use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
-    use crate::store::SqliteStore;
-    use crate::test::mock_astarte_device_store;
-    use crate::Interface;
-
-    use crate::transport::mqtt::client::{AsyncClient, EventLoop};
+    use crate::store::{SqliteStore, StoreCapabilities};
 
     use super::*;
 
@@ -319,7 +316,10 @@ pub(crate) mod tests {
     }]
 }"#;
 
-    async fn test_prop_access_for_store<S: PropertyStore>(store: S) {
+    async fn test_prop_access_for_store<S>(store: S)
+    where
+        S: StoreCapabilities,
+    {
         store
             .store_prop(StoredProp {
                 interface: "org.Foo",
@@ -342,20 +342,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let mut client = AsyncClient::default();
-
-        client.expect_clone().once().returning(AsyncClient::default);
-
-        let (sdk, _) = mock_astarte_device_store(
-            client,
-            EventLoop::default(),
-            [
-                Interface::from_str(SERVER_PROP).unwrap(),
-                Interface::from_str(DEVICE_PROP).unwrap(),
-            ],
-            store,
-        )
-        .await;
+        let (sdk, _) = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], store);
 
         let prop = sdk.property("org.Foo", "/bar").await.unwrap();
         assert_eq!(prop, Some(AstarteType::Boolean(true)));

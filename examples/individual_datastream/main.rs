@@ -20,6 +20,8 @@
 
 use std::time::{Duration, SystemTime};
 
+use astarte_device_sdk::{AstarteType, Value};
+use chrono::Utc;
 use eyre::OptionExt;
 use serde::Deserialize;
 
@@ -60,14 +62,14 @@ async fn main() -> eyre::Result<()> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connection(mqtt_config)
         .build()
         .await?;
 
-    let client_cl = client.clone();
+    let mut client_cl = client.clone();
     println!("Connection to Astarte established.");
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
@@ -83,22 +85,24 @@ async fn main() -> eyre::Result<()> {
             // Send endpoint 1
             let elapsed: i64 = now.elapsed()?.as_secs().try_into()?;
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint1",
-                    elapsed,
+                    elapsed.into(),
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 1, content: {elapsed}");
             // Sleep 1 sec
             tokio::time::sleep(Duration::from_secs(1)).await;
             // Send endpoint 2
-            let elapsed: f64 = now.elapsed()?.as_secs_f64();
+            let elapsed = now.elapsed()?.as_secs_f64();
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint2",
-                    elapsed,
+                    AstarteType::try_from(elapsed)?,
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 2, content: {elapsed}");
@@ -110,9 +114,10 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         loop {
             match client_cl.recv().await {
-                Ok(data) => {
-                    if let astarte_device_sdk::Value::Individual(var) = data.data {
-                        let mut iter = data.path.splitn(3, '/').skip(1);
+                Ok(event) => {
+                    if let Value::Individual{data, timestamp: _ } = event.data {
+                        let mut iter = event.path.splitn(3, '/').skip(1);
+
                         let led_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
@@ -120,14 +125,12 @@ async fn main() -> eyre::Result<()> {
 
                         match iter.next() {
                             Some("enable") => {
-                                println!(
-                            "Received new enable datastream for LED number {}. LED status is now {}",
-                            led_id,
-                            if var == true { "ON" } else { "OFF" }
-                        );
+                                 let status = if data == true { "ON" } else { "OFF" };
+
+                                println!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
                             }
                             Some("intensity") => {
-                                let value: f64 = var.try_into()?;
+                                let value: f64 = data.try_into()?;
                                 println!(
                             "Received new intensity datastream for LED number {}. LED intensity is now {}",
                             led_id, value

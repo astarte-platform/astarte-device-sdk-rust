@@ -24,7 +24,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
-    transport::grpc::{store::GrpcStore, tonic::transport::Endpoint, Grpc, GrpcConfig},
+    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
     DeviceClient, DeviceConnection,
 };
 use eyre::OptionExt;
@@ -64,10 +64,7 @@ enum ServerIndividual {
     Double(f64),
 }
 
-async fn init() -> eyre::Result<(
-    DeviceClient<GrpcStore>,
-    DeviceConnection<GrpcStore, Grpc<GrpcStore>>,
-)> {
+async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(MESSAGE_HUB_URL);
@@ -87,7 +84,7 @@ async fn init() -> eyre::Result<(
     Ok((client, connection))
 }
 
-async fn receive_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
+async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -133,17 +130,17 @@ struct AggregatedDevice {
 }
 
 /// Send data after an interval to every interface
-async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
+async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
     loop {
         // Publish on the IndividualDevice
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
-                42.6,
+                42.6.try_into()?,
             )
             .await?;
         // Publish on the Aggregaed
@@ -160,10 +157,10 @@ async fn send_data(client: DeviceClient<GrpcStore>) -> eyre::Result<()> {
             .await?;
         // Set the Property
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
-                42.0,
+                42.0.try_into()?,
             )
             .await?;
 

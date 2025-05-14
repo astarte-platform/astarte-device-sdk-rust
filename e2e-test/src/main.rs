@@ -19,7 +19,9 @@
 use std::env;
 use std::io::{stdout, IsTerminal};
 
-use astarte_device_sdk::transport::mqtt::Credential;
+use astarte_device_sdk::store::SqliteStore;
+use astarte_device_sdk::transport::mqtt::{Credential, Mqtt};
+use astarte_device_sdk::DeviceClient;
 use clap::Parser;
 use eyre::{eyre, Context};
 use tokio::task::JoinSet;
@@ -45,6 +47,8 @@ pub(crate) mod tls;
 pub(crate) mod utils;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
+
+pub(crate) type AstarteClient = DeviceClient<Mqtt<SqliteStore>>;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -141,12 +145,12 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(async move {
         channel::register_triggers(&mut channel).await?;
 
-        device::interfaces::check_add(&api, &client).await?;
+        device::interfaces::check_add(&api, &mut client).await?;
 
         // Device
-        device::individual::check(&mut channel, &client).await?;
-        device::property::check(&mut channel, &client).await?;
-        device::object::check(&mut channel, &client).await?;
+        device::individual::check(&mut channel, &mut client).await?;
+        device::property::check(&mut channel, &mut client).await?;
+        device::object::check(&mut channel, &mut client).await?;
         device::update::check(&api, &mut channel, &mut client).await?;
 
         // Server
@@ -154,7 +158,7 @@ async fn main() -> eyre::Result<()> {
         server::property::check(&api, &client).await?;
         server::object::check(&api, &client).await?;
 
-        device::interfaces::check_remove(&api, &client).await?;
+        device::interfaces::check_remove(&api, &mut client).await?;
 
         info!("e2e completed successfully");
 

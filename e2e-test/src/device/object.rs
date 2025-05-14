@@ -16,8 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{Client, DeviceClient};
+use astarte_device_sdk::Client;
 use chrono::Utc;
 use eyre::{bail, ensure, eyre};
 use tracing::{info, instrument};
@@ -25,7 +24,7 @@ use tracing::{info, instrument};
 use crate::channel::IncomingData;
 use crate::data::{InterfaceData, InterfaceDataObject};
 use crate::utils::check_astarte_value;
-use crate::Channel;
+use crate::{AstarteClient, Channel};
 
 #[derive(Debug)]
 struct DeviceAggregate {}
@@ -38,10 +37,7 @@ impl InterfaceData for DeviceAggregate {
 
 impl InterfaceDataObject for DeviceAggregate {}
 
-async fn validate_object<T>(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()>
+async fn validate_object<T>(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceDataObject,
 {
@@ -82,10 +78,7 @@ where
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()> {
     validate_object::<DeviceAggregate>(channel, client).await?;
 
     Ok(())

@@ -20,13 +20,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use astarte_device_sdk::prelude::PropAccess;
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, Client, DeviceClient, DeviceEvent, Value};
+use astarte_device_sdk::{AstarteType, Client, DeviceEvent, Value};
 use eyre::{bail, ensure, OptionExt};
 use tracing::info;
 
 use crate::api::ApiClient;
 use crate::data::{all_type_data, InterfaceData};
+use crate::AstarteClient;
 
 #[derive(Debug)]
 struct ServerProperty {}
@@ -68,7 +68,7 @@ impl InterfaceData for ServerDatastreamOverflow {
     }
 }
 
-async fn validate<T>(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()>
+async fn validate<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceData,
 {
@@ -89,10 +89,10 @@ where
         ensure!(path == data_path);
 
         let value = data
-            .as_individual()
+            .as_property()
             .ok_or_eyre("received invalid data type")?;
 
-        ensure!(*value == exp);
+        ensure!(*value == Some(exp.clone()));
 
         let prop = client
             .property(&data_interface, &data_path)
@@ -112,7 +112,7 @@ where
         ensure!(interface == data_interface);
         ensure!(path == data_path);
 
-        let Value::Unset = data else {
+        let Value::Property(None) = data else {
             bail!("prop was not unseted")
         };
 
@@ -122,7 +122,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn check(api: &ApiClient, client: &DeviceClient<SqliteStore>) -> eyre::Result<()> {
+pub(crate) async fn check(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()> {
     validate::<ServerProperty>(api, client).await?;
     validate::<ServerDatastreamOverflow>(api, client).await?;
 

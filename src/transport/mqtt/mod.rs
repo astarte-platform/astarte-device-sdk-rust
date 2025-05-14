@@ -39,6 +39,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
+    sync::Arc,
 };
 
 use bytes::Bytes;
@@ -49,6 +50,7 @@ use tracing::{debug, error, info, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    ValidatedProperty,
 };
 
 pub use self::config::Credential;
@@ -67,8 +69,9 @@ use crate::{
     interfaces::{self, Interfaces, Introspection},
     properties,
     retention::{
-        memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
+        memory::VolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
+    state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteType, Error, Interface, Timestamp,
@@ -149,7 +152,7 @@ pub struct MqttClient<S> {
     client: AsyncClient,
     retention: RetSender,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
@@ -159,14 +162,14 @@ impl<S> MqttClient<S> {
         client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client_id,
             client,
             retention,
             store,
-            volatile,
+            state,
         }
     }
 
@@ -214,7 +217,7 @@ impl<S> MqttClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_received(id).await;
+                self.state.volatile_store.mark_received(id).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -232,7 +235,7 @@ impl<S> MqttClient<S> {
     {
         match id {
             RetentionId::Volatile(id) => {
-                self.volatile.mark_sent(id, true).await;
+                self.state.volatile_store.mark_sent(id, true).await;
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
@@ -262,6 +265,16 @@ where
         .await
         .map(drop)
         .map_err(Error::Mqtt)
+    }
+
+    async fn send_property(&mut self, validated: ValidatedProperty) -> Result<(), Error> {
+        let buf =
+            payload::serialize_individual(&validated.data, None).map_err(MqttError::Payload)?;
+
+        self.send(&validated.interface, &validated.path, QoS::ExactlyOnce, buf)
+            .await
+            .map(drop)
+            .map_err(Error::Mqtt)
     }
 
     async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), Error> {
@@ -553,34 +566,30 @@ pub struct Mqtt<S> {
     connection: MqttConnection,
     retention: MqttRetention,
     store: StoreWrapper<S>,
-    volatile: SharedVolatileStore,
+    state: Arc<SharedState>,
 }
 
 impl<S> Mqtt<S> {
-    /// Initializes values for this struct
-    ///
-    /// This method should only be used for testing purposes since it does not fully
-    /// connect to the mqtt broker as described by the astarte protocol.
-    /// This struct should be constructed with the [`Mqtt::connected`] associated function.
+    /// Creates a new MQTT connection struct.
     fn new(
         client_id: ClientId,
         connection: MqttConnection,
         retention: MqttRetention,
         store: StoreWrapper<S>,
-        volatile: SharedVolatileStore,
+        state: Arc<SharedState>,
     ) -> Self {
         Self {
             client_id,
             connection,
             retention,
             store,
-            volatile,
+            state,
         }
     }
 
     /// Marks the packets as received for the retention.
     async fn mark_packet_received(
-        volatile: &SharedVolatileStore,
+        volatile: &VolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, TokenError>,
     ) -> Result<(), RetentionError>
@@ -625,7 +634,7 @@ impl<S> Mqtt<S> {
 
             match futures::future::select(self.retention.into_future(), &mut conn_future).await {
                 Either::Left((res, _)) => {
-                    Self::mark_packet_received(&self.volatile, &self.store, res)
+                    Self::mark_packet_received(&self.state.volatile_store, &self.store, res)
                         .await
                         .map_err(|err| TransportError::Transport(Error::Retention(err)))?;
                 }
@@ -679,7 +688,7 @@ where
             debug!("Incoming publish = {} {:x}", publish.topic, publish.payload);
 
             let publish_topic = ParsedTopic::try_parse(self.client_id.as_ref(), &publish.topic)
-                .map_err(|err| RecvError::connection(MqttError::Topic(err)))?;
+                .map_err(|err| RecvError::mqtt_connection_error(MqttError::Topic(err)))?;
 
             match publish_topic {
                 ParsedTopic::PurgeProperties => {
@@ -703,13 +712,24 @@ where
         Ok(None)
     }
 
+    fn deserialize_property(
+        &self,
+        mapping: &MappingRef<'_, &Interface>,
+        payload: Self::Payload,
+    ) -> Result<Option<AstarteType>, TransportError> {
+        payload::deserialize_property(mapping, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
+    }
+
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<(AstarteType, Option<Timestamp>)>, TransportError> {
-        payload::deserialize_individual(mapping, &payload)
-            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
+    ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
+        payload::deserialize_individual(mapping, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
     }
 
     fn deserialize_object(
@@ -718,8 +738,9 @@ where
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
-        payload::deserialize_object(object, path, &payload)
-            .map_err(|err| TransportError::Recv(RecvError::connection(err)))
+        payload::deserialize_object(object, path, &payload).map_err(|err| {
+            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
+        })
     }
 }
 
@@ -727,21 +748,20 @@ impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
 {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
         self.connection
-            .connect(self.client_id.as_ref(), interfaces, &self.store)
+            .reconnect(self.client_id.as_ref(), interfaces, &self.store)
             .await
-            .map_err(MqttError::Poll)?;
-
-        Ok(())
+            .map_err(|err| Error::Mqtt(MqttError::Poll(err)))
     }
 }
 
 impl<S> Connection for Mqtt<S>
 where
-    S: PropertyStore,
+    S: StoreCapabilities,
 {
     type Sender = MqttClient<S>;
+    type Store = S;
 }
 
 /// Wrapper structs that holds data used when connecting/reconnecting
@@ -879,9 +899,7 @@ pub(crate) mod test {
     };
 
     use crate::{
-        builder::{
-            ConnectionBuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY,
-        },
+        builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
         store::memory::MemoryStore,
     };
 
@@ -916,8 +934,6 @@ pub(crate) mod test {
 
         let (ret_tx, ret_rx) = flume::unbounded();
 
-        let volatile = SharedVolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY);
-
         let store = StoreWrapper::new(store);
 
         let transport_provider = TransportProvider::configure(
@@ -929,6 +945,11 @@ pub(crate) mod test {
         .await
         .expect("failed to configure transport provider");
 
+        let state = Arc::new(SharedState::new(
+            Interfaces::new(),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+        ));
+
         let mqtt = Mqtt::new(
             client_id.clone(),
             MqttConnection::new(
@@ -939,10 +960,10 @@ pub(crate) mod test {
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
-            volatile.clone(),
+            Arc::clone(&state),
         );
 
-        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store, volatile);
+        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store, state);
 
         (mqtt_client, mqtt)
     }
@@ -954,8 +975,8 @@ pub(crate) mod test {
 
         let to_add = [
             Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
-            Interface::from_str(crate::test::INDIVIDUAL_SERVER_DATASTREAM).unwrap(),
+            Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
+            Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap(),
         ];
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -1019,7 +1040,7 @@ pub(crate) mod test {
         // no server owned interfaces are present
         let to_add = [
             Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(crate::test::OBJECT_DEVICE_DATASTREAM).unwrap(),
+            Interface::from_str(crate::test::DEVICE_OBJECT).unwrap(),
         ];
 
         let mut introspection = Introspection::new(to_add.iter())
@@ -1291,10 +1312,14 @@ pub(crate) mod test {
 
         tokio::time::timeout(
             Duration::from_secs(3),
-            config.connect(ConnectionBuildConfig {
+            config.connect(BuildConfig {
                 store: builder.store,
-                interfaces: &builder.interfaces,
-                config: builder.config,
+                channel_size: builder.channel_size,
+                writable_dir: builder.writable_dir,
+                state: Arc::new(SharedState::new(
+                    builder.interfaces,
+                    VolatileStore::with_capacity(builder.volatile_retention),
+                )),
             }),
         )
         .await

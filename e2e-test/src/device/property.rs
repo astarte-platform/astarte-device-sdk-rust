@@ -19,15 +19,14 @@
 use std::collections::HashMap;
 
 use astarte_device_sdk::prelude::PropAccess;
-use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::{AstarteType, Client, DeviceClient};
+use astarte_device_sdk::{AstarteType, Client};
 use eyre::{ensure, OptionExt};
 use tracing::{info, instrument};
 
 use crate::channel::IncomingData;
 use crate::data::{all_type_data, InterfaceData};
 use crate::utils::check_astarte_value;
-use crate::Channel;
+use crate::{AstarteClient, Channel};
 
 #[derive(Debug)]
 struct DeviceProperty {}
@@ -71,7 +70,7 @@ impl InterfaceData for DevicePropertyOverflow {
 
 pub(crate) async fn validate_property<T>(
     channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
+    client: &mut AstarteClient,
     unset: bool,
 ) -> eyre::Result<()>
 where
@@ -87,7 +86,7 @@ where
             .await?
             .is_some()
         {
-            client.unset(&interface_name, &data_path).await?;
+            client.unset_property(&interface_name, &data_path).await?;
 
             let IncomingData {
                 interface, path, ..
@@ -99,7 +98,7 @@ where
 
         // Send prop
         client
-            .send(&interface_name, &data_path, data.clone())
+            .set_property(&interface_name, &data_path, data.clone())
             .await?;
 
         let IncomingData {
@@ -121,7 +120,7 @@ where
 
         // Unset
         if unset {
-            client.unset(&interface_name, &data_path).await?;
+            client.unset_property(&interface_name, &data_path).await?;
 
             let IncomingData {
                 interface, path, ..
@@ -142,10 +141,7 @@ where
 }
 
 #[instrument(skip_all)]
-pub(crate) async fn check(
-    channel: &mut Channel,
-    client: &DeviceClient<SqliteStore>,
-) -> eyre::Result<()> {
+pub(crate) async fn check(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()> {
     validate_property::<DeviceProperty>(channel, client, true).await?;
     validate_property::<DevicePropertyOverflow>(channel, client, true).await?;
 
