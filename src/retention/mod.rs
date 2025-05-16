@@ -35,6 +35,7 @@ use crate::{
     error::{DynError, Report},
     interface::{Reliability, Retention},
     interfaces::Interfaces,
+    store::MissingCapability,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -119,19 +120,19 @@ pub enum RetentionError {
 }
 
 impl RetentionError {
-    pub(crate) fn store(info: &PublishInfo<'_>, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn store(info: &PublishInfo<'_>, backtrace: impl Into<DynError>) -> Self {
         Self::Store {
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
             interface: info.interface.to_string(),
             path: info.path.to_string(),
             major_version: info.version_major,
         }
     }
 
-    pub(crate) fn received(id: Id, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn received(id: Id, backtrace: impl Into<DynError>) -> Self {
         Self::Received {
             id,
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
         }
     }
 
@@ -167,10 +168,6 @@ impl RetentionError {
             interface,
             backtrace: backtrace.into(),
         }
-    }
-
-    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
-        Self::DeleteInterfaceMany(backtrace.into())
     }
 
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
@@ -213,7 +210,11 @@ impl<'a> PublishInfo<'a> {
         }
     }
 
-    fn from_individual(sent: bool, individual: &'a ValidatedIndividual, value: &'a [u8]) -> Self {
+    pub(crate) fn from_individual(
+        sent: bool,
+        individual: &'a ValidatedIndividual,
+        value: &'a [u8],
+    ) -> Self {
         Self::from_ref(
             &individual.interface,
             &individual.path,
@@ -268,14 +269,6 @@ pub trait StoredRetention: Clone + Send + Sync {
         &self,
         interface: &str,
     ) -> impl Future<Output = Result<(), RetentionError>> + Send;
-
-    /// Deletes all the stored publishes for all the interfaces.
-    fn delete_interface_many<I>(
-        &self,
-        interfaces: &[I],
-    ) -> impl Future<Output = Result<(), RetentionError>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
 
     /// Resend all the publishes that were not sent.
     ///
@@ -376,13 +369,7 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
 
 impl<T: StoredRetention> StoredRetentionExt for T {}
 
-/// Un-constructable type for a default retention.
-///
-/// This should be the never type [`!`] in the future.
-#[derive(Clone, Copy)]
-pub enum Missing {}
-
-impl StoredRetention for Missing {
+impl StoredRetention for MissingCapability {
     async fn store_publish(
         &self,
         _id: &Id,
@@ -404,13 +391,6 @@ impl StoredRetention for Missing {
     }
 
     async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
         unreachable!("the type is Un-constructable");
     }
 

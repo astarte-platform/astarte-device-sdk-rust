@@ -71,6 +71,7 @@ use crate::{
     retention::{
         memory::VolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
     },
+    session::{IntrospectionInterface, StoredSession},
     state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -243,6 +244,24 @@ impl<S> MqttClient<S> {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn extend_interfaces_await_pub(
+        &self,
+        res: Result<Token<AckOfPub>, MqttError>,
+    ) -> Result<(), MqttError> {
+        let Ok(token) = res else {
+            error!("error while subscribing to interfaces");
+            return res.map(drop);
+        };
+
+        let ack_result = token.await;
+        let Ok(_) = ack_result else {
+            error!("error in ack reception while subscribing to interfaces");
+            return ack_result.map(drop).map_err(MqttError::PubAckToken);
+        };
 
         Ok(())
     }
@@ -419,7 +438,7 @@ where
 
 impl<S> Register for MqttClient<S>
 where
-    S: Send + Sync,
+    S: StoreCapabilities + Send + Sync,
 {
     async fn add_interface(
         &mut self,
@@ -435,7 +454,14 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            let interface: IntrospectionInterface = added.interface().into();
+            session.add_interfaces(&[interface]).await?;
+        }
 
         Ok(())
     }
@@ -451,7 +477,13 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            session.remove_interfaces(&[removed.into()]).await?;
+        }
 
         if removed.ownership().is_server() {
             self.unsubscribe(removed.interface_name()).await?;
@@ -490,13 +522,23 @@ where
             .client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map(drop)
-            .map_err(|err| MqttError::publish("send introspection", err).into());
+            .map_err(|err| MqttError::publish("send introspection", err));
 
-        // Cleanup the already subscribed interfaces
-        if res.is_err() {
-            error!("error while subscribing to interfaces");
+        let res = self
+            .extend_interfaces_await_pub(res)
+            .await
+            .map_err(Into::into);
 
+        if res.is_ok() {
+            if let Some(session) = self.store.get_session() {
+                let added = added
+                    .iter_interfaces()
+                    .map(|i| i.into())
+                    .collect::<Vec<IntrospectionInterface>>();
+
+                session.add_interfaces(&added).await?;
+            }
+        } else {
             for srv_interface in server_interfaces {
                 if let Err(err) = self.unsubscribe(srv_interface).await {
                     error!(
@@ -522,7 +564,18 @@ where
         self.client
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
-            .map_err(|err| MqttError::publish("send introspection", err))?;
+            .map_err(|err| MqttError::publish("send introspection", err))?
+            .await
+            .map_err(MqttError::PubAckToken)?;
+
+        if let Some(session) = self.store.get_session() {
+            let removed = removed
+                .values()
+                .map(|&i| i.into())
+                .collect::<Vec<IntrospectionInterface>>();
+
+            session.remove_interfaces(&removed).await?;
+        }
 
         for iface in removed.values() {
             if iface.ownership().is_server() {
@@ -605,6 +658,8 @@ impl<S> Mqtt<S> {
             }
         };
 
+        trace!("received packet {id}");
+
         match id {
             RetentionId::Volatile(id) => {
                 volatile.mark_received(&id).await;
@@ -616,7 +671,7 @@ impl<S> Mqtt<S> {
             }
         }
 
-        debug!("marking {id} as received");
+        debug!("marked {id} as received");
 
         Ok(())
     }
