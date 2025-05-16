@@ -169,10 +169,6 @@ impl RetentionError {
         }
     }
 
-    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
-        Self::DeleteInterfaceMany(backtrace.into())
-    }
-
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
         Self::FetchInterfaces(backtrace.into())
     }
@@ -213,7 +209,11 @@ impl<'a> PublishInfo<'a> {
         }
     }
 
-    fn from_individual(sent: bool, individual: &'a ValidatedIndividual, value: &'a [u8]) -> Self {
+    pub(crate) fn from_individual(
+        sent: bool,
+        individual: &'a ValidatedIndividual,
+        value: &'a [u8],
+    ) -> Self {
         Self::from_ref(
             &individual.interface,
             &individual.path,
@@ -268,14 +268,6 @@ pub trait StoredRetention: Clone + Send + Sync {
         &self,
         interface: &str,
     ) -> impl Future<Output = Result<(), RetentionError>> + Send;
-
-    /// Deletes all the stored publishes for all the interfaces.
-    fn delete_interface_many<I>(
-        &self,
-        interfaces: &[I],
-    ) -> impl Future<Output = Result<(), RetentionError>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
 
     /// Resend all the publishes that were not sent.
     ///
@@ -404,13 +396,6 @@ impl StoredRetention for Missing {
     }
 
     async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
         unreachable!("the type is Un-constructable");
     }
 
