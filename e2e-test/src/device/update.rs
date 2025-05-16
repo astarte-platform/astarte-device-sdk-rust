@@ -45,7 +45,7 @@ impl InterfaceData for DeviceProperty01 {
 
     fn data() -> eyre::Result<HashMap<String, AstarteType>> {
         let data = HashMap::from_iter(
-            [("/sensor_1/endpoint", AstarteType::Double(42.1))].map(|(k, v)| (k.to_string(), v)),
+            [("/sensor_1/endpoint", AstarteType::try_from(42.1)?)].map(|(k, v)| (k.to_string(), v)),
         );
 
         Ok(data)
@@ -82,8 +82,8 @@ impl InterfaceData for DeviceDatastream01 {
     fn data() -> eyre::Result<HashMap<String, AstarteType>> {
         let data = HashMap::from_iter(
             [
-                ("/sensor_1/stored", AstarteType::Double(42.1)),
-                ("/sensor_1/volatile", AstarteType::Double(42.1)),
+                ("/sensor_1/stored", AstarteType::try_from(42.1)?),
+                ("/sensor_1/volatile", AstarteType::try_from(42.1)?),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );

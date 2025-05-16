@@ -200,7 +200,7 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::Double(42.0)),
+                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
                 ("integer_endpoint", AstarteType::Integer(42)),
                 ("boolean_endpoint", AstarteType::Boolean(false)),
                 (
@@ -425,7 +425,7 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::Double(42.0)),
+                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
                 ("integer_endpoint", AstarteType::Integer(42)),
                 ("boolean_endpoint", AstarteType::Boolean(false)),
                 (
@@ -599,7 +599,7 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::Double(42.0)),
+                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
                 ("integer_endpoint", AstarteType::Integer(42)),
                 ("boolean_endpoint", AstarteType::Boolean(false)),
                 (
@@ -635,7 +635,7 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::Double(42.0)),
+                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
                 ("integer_endpoint", AstarteType::Integer(42)),
                 ("boolean_endpoint", AstarteType::Boolean(false)),
                 (

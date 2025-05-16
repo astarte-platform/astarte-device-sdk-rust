@@ -47,7 +47,7 @@ pub(crate) trait InterfaceDataObject: InterfaceData {
 
 pub(crate) fn all_type_data() -> [(&'static str, AstarteType); 14] {
     [
-        ("double_endpoint", AstarteType::Double(4.35)),
+        ("double_endpoint", AstarteType::try_from(4.35).unwrap()),
         ("integer_endpoint", AstarteType::Integer(1)),
         ("boolean_endpoint", AstarteType::Boolean(true)),
         (
@@ -65,7 +65,7 @@ pub(crate) fn all_type_data() -> [(&'static str, AstarteType); 14] {
         ),
         (
             "doublearray_endpoint",
-            AstarteType::DoubleArray([43.5, 10.5, 11.9].to_vec()),
+            AstarteType::try_from(vec![43.5, 10.5, 11.9]).unwrap(),
         ),
         (
             "integerarray_endpoint",

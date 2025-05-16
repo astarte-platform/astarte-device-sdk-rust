@@ -410,7 +410,7 @@ mod tests {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor/temperature".to_string(),
             data: Value::Individual {
-                data: AstarteType::Double(3.),
+                data: AstarteType::try_from(3.0).unwrap(),
                 timestamp: Utc::now(),
             },
         };
@@ -456,12 +456,12 @@ mod tests {
         let event = DeviceEvent {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor/temperature".to_string(),
-            data: Value::Property(Some(AstarteType::Double(3.))),
+            data: Value::Property(Some(AstarteType::try_from(3.0).unwrap())),
         };
 
         let temperature = Sensor::from_event(event).expect("couldn't parse the event");
 
-        let expected = Sensor::Temperature(3.);
+        let expected = Sensor::Temperature(3.0);
 
         assert_eq!(temperature, expected);
 

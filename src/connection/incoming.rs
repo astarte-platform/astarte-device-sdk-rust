@@ -313,7 +313,7 @@ mod tests {
         let timestamp = Utc::now();
         let obj = AstarteObject::from_iter(
             [
-                ("endpoint1", AstarteType::Double(42.)),
+                ("endpoint1", AstarteType::try_from(42.1).unwrap()),
                 ("endpoint2", AstarteType::String("value".to_string())),
                 ("endpoint3", AstarteType::BooleanArray(vec![true, false])),
             ]
