@@ -239,11 +239,13 @@ pub(crate) trait Disconnect {
 
 #[cfg(test)]
 mod test {
+    use std::fmt::Debug;
+
     use crate::aggregate::AstarteObject;
     use crate::error::AggregationError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
-        types::{AstarteType, TypeError},
+        types::AstarteType,
         validate::{ValidatedIndividual, ValidatedObject},
         Interface,
     };
@@ -274,8 +276,9 @@ mod test {
     ) -> Result<ValidatedIndividual, crate::Error>
     where
         D: TryInto<AstarteType> + Send,
+        D::Error: Debug,
     {
-        let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
+        let individual = data.try_into().unwrap();
 
         ValidatedIndividual::validate(mapping_ref, individual, timestamp).map_err(|uve| uve.into())
     }

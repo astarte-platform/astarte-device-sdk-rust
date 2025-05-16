@@ -76,10 +76,10 @@ impl InterfaceData for CustomDeviceDatastream {
             [
                 ("/volatileUnreliable", AstarteType::LongInteger(42)),
                 ("/volatileGuaranteed", AstarteType::Boolean(false)),
-                ("/volatileUnique", AstarteType::Double(35.2)),
+                ("/volatileUnique", AstarteType::try_from(35.2)?),
                 ("/storedUnreliable", AstarteType::LongInteger(42)),
                 ("/storedGuaranteed", AstarteType::Boolean(false)),
-                ("/storedUnique", AstarteType::Double(35.2)),
+                ("/storedUnique", AstarteType::try_from(35.2)?),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
