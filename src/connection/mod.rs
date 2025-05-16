@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::error::Report;
 use crate::state::{SharedState, Status};
@@ -128,19 +128,29 @@ where
 
                 Ok(Utc::now())
             }
-            (None, true) => Err(RecvError::MissingTimestamp {
-                interface_name: interface_name.to_string(),
-                path: path.to_string(),
-            }),
+            (None, true) => {
+                error!("missing timestamp on interface with `explicit_timestamp`");
+
+                if cfg!(debug_assertions) {
+                    Err(RecvError::MissingTimestamp {
+                        interface_name: interface_name.to_string(),
+                        path: path.to_string(),
+                    })
+                } else {
+                    Ok(Utc::now())
+                }
+            }
         }
     }
 
     /// Keeps polling connection events
+    #[instrument(skip(self))]
     pub(super) async fn poll(&mut self) -> Result<Status, TransportError>
     where
         C: Receive + Reconnect,
         C::Sender: Publish + 'static,
     {
+        trace!("polling connection");
         let Some(event) = self.connection.next_event().await? else {
             trace!("disconnected");
 
@@ -149,6 +159,8 @@ where
             // This will check if the connection was closed
             return Ok(self.state.status.connection());
         };
+
+        trace!("event received");
 
         let event = self
             .handle_event(&event.interface, &event.path, event.payload)
@@ -197,7 +209,13 @@ where
                     self.tx
                         .send_async(Err(recv_err))
                         .await
-                        .map_err(|_| Error::Disconnected)?;
+                        .map_err(|send_err| {
+                            if let Err(err) = send_err.into_inner() {
+                                error!(error = %Report::new(err), "failed to send receive error");
+                            }
+
+                            Error::Disconnected
+                        })?;
                 }
             }
         }
@@ -212,17 +230,22 @@ where
 mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::{Interface, Schema};
+    use mockall::Sequence;
+    use pretty_assertions::assert_eq;
+
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
     use crate::store::memory::MemoryStore;
     use crate::store::StoreCapabilities;
+    use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
     use crate::transport::mock::{MockCon, MockSender};
-    use crate::Interface;
+    use crate::transport::ReceivedEvent;
+    use crate::AstarteType;
 
     use super::*;
 
-    #[expect(dead_code)]
     pub(crate) fn mock_connection(
         interfaces: &[&str],
     ) -> (
@@ -262,5 +285,71 @@ mod tests {
         );
 
         (connection, rx)
+    }
+
+    #[tokio::test]
+    async fn poll_disconnected() {
+        let (mut connection, _rx) = mock_connection(&[]);
+
+        let mut seq = Sequence::new();
+
+        connection
+            .connection
+            .expect_next_event()
+            .once()
+            .in_sequence(&mut seq)
+            .with()
+            .returning(|| Ok(None));
+
+        let status = connection.poll().await.unwrap();
+
+        assert_eq!(Status::Disconnected, status);
+    }
+
+    #[tokio::test]
+    async fn poll_individual() {
+        let (mut connection, _rx) = mock_connection(&[E2E_SERVER_DATASTREAM]);
+
+        let endpoint = "/boolean_endpoint";
+        let value = true;
+
+        let mut seq = Sequence::new();
+
+        connection
+            .connection
+            .expect_next_event()
+            .once()
+            .in_sequence(&mut seq)
+            .with()
+            .returning(move || {
+                Ok(Some(ReceivedEvent {
+                    interface: E2E_SERVER_DATASTREAM_NAME.to_string(),
+                    path: endpoint.to_string(),
+                    payload: Box::new(value),
+                }))
+            });
+
+        connection
+            .connection
+            .expect_deserialize_individual()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(move |mapping, payload| {
+                mapping.interface().name() == E2E_SERVER_DATASTREAM_NAME
+                    && mapping.path().as_str() == endpoint
+                    && *payload.downcast_ref::<bool>().unwrap() == value
+            })
+            .returning(|_, payload| {
+                let value = payload
+                    .downcast_ref::<bool>()
+                    .map(|val| AstarteType::Boolean(*val))
+                    .unwrap();
+
+                Ok((value, None))
+            });
+
+        let status = connection.poll().await.unwrap();
+
+        assert_eq!(Status::Connected, status);
     }
 }

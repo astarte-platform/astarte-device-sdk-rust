@@ -18,14 +18,13 @@
 
 use std::{future::Future, path::Path};
 
-use astarte_device_sdk::{
-    aggregate::AstarteObject,
-    client::{ClientDisconnect, RecvError},
-    properties::PropAccess,
-    store::StoredProp,
-    transport::Connection,
-    AstarteType, DeviceEvent, Error, Interface,
-};
+use astarte_device_sdk::aggregate::AstarteObject;
+use astarte_device_sdk::astarte_interfaces::Interface;
+use astarte_device_sdk::client::{ClientDisconnect, RecvError};
+use astarte_device_sdk::properties::PropAccess;
+use astarte_device_sdk::store::StoredProp;
+use astarte_device_sdk::transport::Connection;
+use astarte_device_sdk::{AstarteType, DeviceEvent, Error};
 use mockall::mock;
 
 // Export public facing dependencies

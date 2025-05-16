@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,12 +28,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use astarte_interfaces::{interface::Retention, schema::Reliability};
 use futures::{StreamExt, TryStreamExt};
 use tracing::{error, warn};
 
 use crate::{
     error::{DynError, Report},
-    interface::{Reliability, Retention},
     interfaces::Interfaces,
     validate::{ValidatedIndividual, ValidatedObject},
 };
@@ -169,10 +169,6 @@ impl RetentionError {
         }
     }
 
-    pub(crate) fn delete_interface_many(backtrace: impl Into<DynError>) -> Self {
-        Self::DeleteInterfaceMany(backtrace.into())
-    }
-
     pub(crate) fn fetch_interfaces(backtrace: impl Into<DynError>) -> Self {
         Self::FetchInterfaces(backtrace.into())
     }
@@ -191,7 +187,7 @@ pub struct PublishInfo<'a> {
 }
 
 impl<'a> PublishInfo<'a> {
-    pub(crate) const fn from_ref(
+    pub(crate) fn from_ref(
         interface: &'a str,
         path: &'a str,
         version_major: i32,
@@ -207,13 +203,17 @@ impl<'a> PublishInfo<'a> {
             path: Cow::Borrowed(path),
             version_major,
             reliability,
-            expiry: retention.expiry(),
+            expiry: retention.as_expiry().copied(),
             sent,
             value: Cow::Borrowed(value),
         }
     }
 
-    fn from_individual(sent: bool, individual: &'a ValidatedIndividual, value: &'a [u8]) -> Self {
+    pub(crate) fn from_individual(
+        sent: bool,
+        individual: &'a ValidatedIndividual,
+        value: &'a [u8],
+    ) -> Self {
         Self::from_ref(
             &individual.interface,
             &individual.path,
@@ -268,14 +268,6 @@ pub trait StoredRetention: Clone + Send + Sync {
         &self,
         interface: &str,
     ) -> impl Future<Output = Result<(), RetentionError>> + Send;
-
-    /// Deletes all the stored publishes for all the interfaces.
-    fn delete_interface_many<I>(
-        &self,
-        interfaces: &[I],
-    ) -> impl Future<Output = Result<(), RetentionError>> + Send
-    where
-        I: AsRef<str> + Send + Sync;
 
     /// Resend all the publishes that were not sent.
     ///
@@ -404,13 +396,6 @@ impl StoredRetention for Missing {
     }
 
     async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface_many<I>(&self, _interfaces: &[I]) -> Result<(), RetentionError>
-    where
-        I: AsRef<str> + Send + Sync,
-    {
         unreachable!("the type is Un-constructable");
     }
 

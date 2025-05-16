@@ -19,8 +19,8 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use astarte_device_sdk::astarte_interfaces::Interface;
 use astarte_device_sdk::prelude::DynamicIntrospection;
-use astarte_device_sdk::Interface;
 use eyre::ensure;
 use tracing::{debug, instrument};
 
@@ -115,6 +115,7 @@ pub(crate) async fn check_remove(api: &ApiClient, client: &mut AstarteClient) ->
 
     Ok(())
 }
+
 fn read_additional_interfaces() -> eyre::Result<Vec<Interface>> {
     [
         include_str!(
