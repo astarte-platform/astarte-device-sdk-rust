@@ -1,5 +1,3 @@
-use std::future::Future;
-
 // This file is part of Astarte.
 //
 // Copyright 2023 - 2025 SECO Mind Srl
@@ -18,6 +16,7 @@ use std::future::Future;
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -144,14 +143,16 @@ pub(crate) fn check_astarte_value(data: &AstarteType, value: &Value) -> eyre::Re
 
 pub(crate) fn convert_type_to_json(data: &AstarteType) -> serde_json::Value {
     match data {
-        AstarteType::Double(v) => Value::from(*v),
+        AstarteType::Double(v) => Value::from(f64::from(*v)),
         AstarteType::Integer(v) => Value::from(*v),
         AstarteType::Boolean(v) => Value::from(*v),
         AstarteType::LongInteger(v) => Value::from(*v),
         AstarteType::String(v) => Value::from(v.as_str()),
         AstarteType::BinaryBlob(v) => Value::from(base64_encode(v)),
         AstarteType::DateTime(v) => Value::from(v.to_rfc3339()),
-        AstarteType::DoubleArray(v) => Value::from(v.as_slice()),
+        AstarteType::DoubleArray(v) => {
+            Value::from(v.iter().map(|v| f64::from(*v)).collect::<Vec<f64>>())
+        }
         AstarteType::IntegerArray(v) => Value::from(v.as_slice()),
         AstarteType::BooleanArray(v) => Value::from(v.as_slice()),
         AstarteType::LongIntegerArray(v) => Value::from(v.as_slice()),
