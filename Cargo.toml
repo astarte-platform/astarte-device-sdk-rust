@@ -73,7 +73,6 @@ flume = { workspace = true, features = ["async"] }
 futures = { workspace = true }
 http = { workspace = true }
 itertools = { workspace = true }
-rand_core = { workspace = true, features = ["getrandom"] }
 # Use aws-lc-rs to support all PrivateKey types
 rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
 reqwest = { workspace = true, default-features = false }
@@ -83,7 +82,7 @@ rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 rustls-pemfile = { workspace = true }
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws_lc_rs"] }
+rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws-lc-rs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sync_wrapper = { workspace = true }
@@ -154,24 +153,25 @@ flate2 = "1.0.0"
 flume = "0.11.0"
 futures = "0.3.0"
 http = "1.0.0"
-itertools = "0.11.0"
-mockall = "0.12.1"
+itertools = "0.14.0"
+mockall = "0.13.1"
 mockito = "1.4.0"
 openssl = "0.10.46"
 phoenix-chan = "0.4.2"
 pretty_assertions = "1.4.1"
 proc-macro2 = "1.0.83"
 quote = "1.0.35"
-rand_core = "0.6.4"
 rcgen = { version = "0.13.1", default-features = false }
 reqwest = { version = "0.12.9", default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.6-ack-notify" }
-rusqlite = "0.29.0"
+# Error with bindgen and rust <1.82
+# See: https://github.com/rusqlite/rusqlite/issues/1631
+rusqlite = "=0.32.1"
 rustls = "0.23.4"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.5.1"
-rustls-webpki = { version = "0.102.8", default-features = false }
+rustls-webpki = { version = "0.103.0", default-features = false }
 serde = "1.0.184"
 serde_json = "1.0.85"
 syn = "2.0.87"
@@ -184,7 +184,7 @@ tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
 url = "2.4.0"
 uuid = "1.1.2"
-webpki-roots = "0.26.0"
+webpki-roots = "1.0.0"
 
 # Transitive dependencies
 litemap = "=0.7.4"
