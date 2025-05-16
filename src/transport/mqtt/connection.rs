@@ -437,11 +437,11 @@ impl Disconnected {
         debug!("created a new transport, reconnecting");
 
         if conn.session_sync {
-            Self::disable_clean_session(conn.eventloop_mut());
+            let eventloop = conn.eventloop_mut();
+            Self::disable_clean_session(eventloop);
+            eventloop.clean();
         }
-        let eventloop = conn.eventloop_mut();
-        eventloop.clean();
-        Self::set_transport(eventloop, transport);
+        Self::set_transport(conn.eventloop_mut(), transport);
 
         Ok(Next::state(Connecting))
     }
@@ -581,8 +581,6 @@ impl Handshake {
                 .map_err(InitError::client("send introspection"))?
                 .await
                 .map_err(InitError::ack("subscribe server interface"))?;
-
-            debug!("session present {}", session_present);
 
             if !session_present {
                 Self::send_empty_cache(&client, client_id).await?;

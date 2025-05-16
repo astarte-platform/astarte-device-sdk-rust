@@ -276,6 +276,12 @@ pub(crate) struct Validated {
 }
 
 impl Validated {
+    pub(crate) fn interface(&self) -> &Interface {
+        &self.interface
+    }
+}
+
+impl Validated {
     pub(crate) fn is_major_change(&self) -> bool {
         self.major_change
     }
