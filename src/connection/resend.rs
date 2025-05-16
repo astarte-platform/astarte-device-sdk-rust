@@ -114,7 +114,9 @@ where
             resend.abort();
 
             match resend.await {
-                Ok(()) => todo!(),
+                Ok(()) => {
+                    trace!("resend task joined")
+                }
                 Err(err) if err.is_cancelled() => {
                     debug!("resend task was cancelled");
                 }
@@ -203,5 +205,119 @@ where
         self.state.status.set_connected(true);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use mockall::{predicate, Sequence};
+    use tempfile::TempDir;
+
+    use crate::connection::tests::{mock_connection, mock_connection_with_store};
+    use crate::interface::mapping::path::MappingPath;
+    use crate::retention::{PublishInfo, RetentionId, StoredRetentionExt};
+    use crate::store::{SqliteStore, StoreCapabilities};
+    use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
+    use crate::transport::mock::MockSender;
+    use crate::validate::ValidatedIndividual;
+    use crate::AstarteType;
+
+    #[tokio::test]
+    async fn reconnect_success_no_data() {
+        let (mut connection, _rx) = mock_connection(&[]);
+
+        let mut seq = Sequence::new();
+
+        connection
+            .connection
+            .expect_reconnect()
+            .with(predicate::always())
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(true));
+
+        connection
+            .sender
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockSender::new);
+
+        connection.reconnect_and_resend().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_init_stored_retention_simple() {
+        let tmp = TempDir::new().unwrap();
+        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+
+        let (mut connection, _rx) = mock_connection_with_store(&[STORED_DEVICE_DATASTREAM], store);
+
+        let retention_id = connection.state.retention_ctx.next();
+        let path = "/endpoint1";
+        let value = AstarteType::LongInteger(42);
+        let bytes = [4, 2];
+
+        let individual = {
+            let mapping_path = MappingPath::try_from(path).unwrap();
+            let interfaces = connection.state.interfaces.read().await;
+            let mapping = interfaces
+                .interface_mapping(STORED_DEVICE_DATASTREAM_NAME, &mapping_path)
+                .unwrap();
+
+            ValidatedIndividual::validate(mapping, value.clone(), None).unwrap()
+        };
+
+        connection
+            .store
+            .get_retention()
+            .unwrap()
+            .store_publish_individual(&retention_id, &individual, &bytes)
+            .await
+            .unwrap();
+
+        connection
+            .store
+            .get_retention()
+            .unwrap()
+            .mark_as_sent(&retention_id)
+            .await
+            .unwrap();
+
+        let mut seq = Sequence::new();
+
+        connection
+            .sender
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(move || {
+                let mut sender = MockSender::new();
+                let mut seq = Sequence::new();
+
+                let individual = individual.clone();
+
+                sender
+                    .expect_resend_stored()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .withf(move |id, info| {
+                        let publish_info = PublishInfo::from_individual(false, &individual, &bytes);
+
+                        *id == RetentionId::Stored(retention_id) && publish_info == *info
+                    })
+                    .returning(|_, _| Ok(()));
+
+                sender
+            });
+
+        connection.init_stored_retention().await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), connection.resend.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
