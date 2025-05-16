@@ -256,6 +256,10 @@ impl Interfaces {
     pub(crate) fn len(&self) -> usize {
         self.interfaces.len()
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.interfaces.is_empty()
+    }
 }
 
 impl FromIterator<Interface> for Interfaces {
@@ -273,6 +277,12 @@ impl FromIterator<Interface> for Interfaces {
 pub(crate) struct Validated {
     interface: Interface,
     major_change: bool,
+}
+
+impl Validated {
+    pub(crate) fn interface(&self) -> &Interface {
+        &self.interface
+    }
 }
 
 impl Validated {

@@ -36,7 +36,6 @@ mod retention;
 pub mod topic;
 
 use std::{
-    borrow::Borrow,
     collections::HashMap,
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
@@ -47,7 +46,7 @@ use bytes::Bytes;
 use futures::future::Either;
 use itertools::Itertools;
 use rumqttc::{AckOfPub, ClientError, QoS, SubAck, SubscribeFilter, Token, TokenError};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
@@ -460,10 +459,8 @@ where
             .map_err(MqttError::PubAckToken)?;
 
         if let Some(session) = self.store.get_session() {
-            let _ = session
-                .add_interfaces(&[Into::into(added.borrow())])
-                .await
-                .inspect_err(|e| warn!("Error while updating the stored introspection: {}", e));
+            let interface: IntrospectionInterface = added.interface().into();
+            session.add_interfaces(&[interface]).await?;
         }
 
         Ok(())
@@ -485,10 +482,7 @@ where
             .map_err(MqttError::PubAckToken)?;
 
         if let Some(session) = self.store.get_session() {
-            let _ = session
-                .remove_interfaces(&[Into::into(removed)])
-                .await
-                .inspect_err(|e| warn!("Error while updating the stored introspection: {}", e));
+            session.remove_interfaces(&[removed.into()]).await?;
         }
 
         if removed.ownership().is_server() {
@@ -542,10 +536,7 @@ where
                     .map(|i| i.into())
                     .collect::<Vec<IntrospectionInterface>>();
 
-                let _ = session
-                    .add_interfaces(&added)
-                    .await
-                    .inspect_err(|e| warn!("Error while updating the stored introspection: {}", e));
+                session.add_interfaces(&added).await?;
             }
         } else {
             for srv_interface in server_interfaces {
@@ -583,10 +574,7 @@ where
                 .map(|&i| i.into())
                 .collect::<Vec<IntrospectionInterface>>();
 
-            let _ = session
-                .remove_interfaces(&removed)
-                .await
-                .inspect_err(|e| warn!("Error while updating the stored introspection: {}", e));
+            session.remove_interfaces(&removed).await?;
         }
 
         for iface in removed.values() {
