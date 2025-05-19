@@ -969,11 +969,11 @@ impl Next {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
-    use mockall::predicate;
+    use mockall::{predicate, Sequence};
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
-        store::{memory::MemoryStore, StoredProp},
+        store::{memory::MemoryStore, mock::MockStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
         AstarteType, Interface,
@@ -981,118 +981,214 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn test_connect_client_response() {
+    trait ConnectionBehavior: Clone + Send + Sync {
+        fn poll_loop_connack(&self, seq: &mut Sequence, eventl: &mut EventLoop);
+
+        fn subscribe_interfaces(&self, seq: &mut Sequence, client: &mut AsyncClient);
+
+        fn send_introspection(&self, seq: &mut Sequence, client: &mut AsyncClient);
+
+        fn send_empty_cache(&self, seq: &mut Sequence, client: &mut AsyncClient);
+
+        fn send_purge_properties(&self, seq: &mut Sequence, client: &mut AsyncClient);
+
+        fn send_properties(&self, seq: &mut Sequence, client: &mut AsyncClient);
+    }
+
+    #[derive(Clone)]
+    struct ConnectSuccess {
+        session_present: bool,
+        client_id: ClientId,
+        server_interfaces: Vec<String>,
+        device_properties: Vec<StoredProp>,
+    }
+
+    impl ConnectionBehavior for ConnectSuccess {
+        fn poll_loop_connack(&self, seq: &mut Sequence, eventl: &mut EventLoop) {
+            let session_present = self.session_present;
+            // Connak response for loop in connect method
+            eventl
+                .expect_poll()
+                .once()
+                .in_sequence(seq)
+                .returning(move || {
+                    Box::pin(async move {
+                        tokio::task::yield_now().await;
+
+                        Ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                            rumqttc::ConnAck {
+                                session_present,
+                                code: rumqttc::ConnectReturnCode::Success,
+                            },
+                        )))
+                    })
+                });
+        }
+
+        fn subscribe_interfaces(&self, seq: &mut Sequence, client: &mut AsyncClient) {
+            client
+                .expect_subscribe::<String>()
+                .once()
+                .in_sequence(seq)
+                .with(
+                    predicate::eq(format!("{}/control/consumer/properties", self.client_id)),
+                    predicate::always(),
+                )
+                .returning(|_topic, _qos| notify_success(SubAck::new(0, Vec::new())));
+
+            for si in &self.server_interfaces {
+                client
+                    .expect_subscribe()
+                    .once()
+                    .in_sequence(seq)
+                    .with(
+                        predicate::eq(format!("{}/{}/#", self.client_id, si)),
+                        predicate::always(),
+                    )
+                    .returning(|_: String, _| notify_success(SubAck::new(0, Vec::new())));
+            }
+        }
+
+        fn send_introspection(&self, seq: &mut Sequence, client: &mut AsyncClient) {
+            client
+                .expect_publish::<String, String>()
+                .once()
+                .in_sequence(seq)
+                .with(
+                    predicate::eq(self.client_id.to_string()),
+                    predicate::always(),
+                    predicate::always(),
+                    predicate::always(),
+                )
+                .returning(|_, _, _, _| notify_success(AckOfPub::None));
+        }
+
+        fn send_empty_cache(&self, seq: &mut Sequence, client: &mut AsyncClient) {
+            if self.session_present {
+                return;
+            }
+            client
+                .expect_publish::<String, &str>()
+                .once()
+                .in_sequence(seq)
+                .with(
+                    predicate::eq(format!("{}/control/emptyCache", self.client_id)),
+                    predicate::always(),
+                    predicate::always(),
+                    predicate::eq("1"),
+                )
+                .returning(|_, _, _, _| notify_success(AckOfPub::None));
+        }
+
+        fn send_purge_properties(&self, seq: &mut Sequence, client: &mut AsyncClient) {
+            if self.session_present {
+                return;
+            }
+
+            client
+                .expect_publish::<String, Vec<u8>>()
+                .once()
+                .in_sequence(seq)
+                .with(
+                    predicate::eq(format!("{}/control/producer/properties", self.client_id)),
+                    predicate::eq(QoS::ExactlyOnce),
+                    predicate::always(),
+                    predicate::always(),
+                )
+                .returning(|_, _, _, _| notify_success(AckOfPub::None));
+        }
+
+        fn send_properties(&self, _seq: &mut Sequence, client: &mut AsyncClient) {
+            if self.session_present {
+                return;
+            }
+
+            for prop in &self.device_properties {
+                client
+                    .expect_publish::<String, Vec<u8>>()
+                    .once()
+                    .with(
+                        predicate::eq(format!(
+                            "{}/{}{}",
+                            self.client_id, prop.interface, prop.path
+                        )),
+                        predicate::always(),
+                        predicate::always(),
+                        predicate::always(),
+                    )
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+            }
+        }
+    }
+
+    fn mock_eventl_client<CB>(seq: &mut Sequence, behavior: CB) -> (EventLoop, AsyncClient)
+    where
+        CB: ConnectionBehavior + 'static,
+    {
         let mut eventl = EventLoop::default();
         let mut client = AsyncClient::default();
 
-        let mut seq = mockall::Sequence::new();
-
-        // Connak response for loop in connect method
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
-                Box::pin(async {
-                    tokio::task::yield_now().await;
-
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                        rumqttc::ConnAck {
-                            session_present: false,
-                            code: rumqttc::ConnectReturnCode::Success,
-                        },
-                    )))
-                })
-            });
+        behavior.poll_loop_connack(seq, &mut eventl);
 
         client
             .expect_clone()
             .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
+            .in_sequence(seq)
+            .returning(move || {
                 let mut client = AsyncClient::default();
 
                 let mut seq = mockall::Sequence::new();
 
-                client
-                    .expect_subscribe::<String>()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(
-                        predicate::eq("realm/device_id/control/consumer/properties".to_string()),
-                        predicate::always(),
-                    )
-                    .returning(|_topic, _qos| notify_success(SubAck::new(0,Vec::new())));
+                behavior.subscribe_interfaces(&mut seq, &mut client);
 
-                client
-                    .expect_subscribe()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()), predicate::always())
-                    .returning(|_: String, _| notify_success(SubAck::new(0, Vec::new())));
+                behavior.send_introspection(&mut seq, &mut client);
 
-                // Client id
-                client
-                    .expect_publish::<String, String>()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(
-                        predicate::eq("realm/device_id".to_string()),
-                        predicate::always(),
-                        predicate::always(),
-                        predicate::always(),
-                    )
-                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+                behavior.send_empty_cache(&mut seq, &mut client);
 
-                // empty cache
-                client
-                    .expect_publish::<String, &str>()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(
-                        predicate::eq("realm/device_id/control/emptyCache".to_string()),
-                        predicate::always(),
-                        predicate::always(),
-                        predicate::eq("1"),
-                    )
-                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+                behavior.send_purge_properties(&mut seq, &mut client);
 
-
-                // purge device properties
-                client
-                    .expect_publish::<String, Vec<u8>>()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .withf(|topic, qos, _, _| {
-                        topic == "realm/device_id/control/producer/properties"
-                            && *qos == QoS::ExactlyOnce
-                    })
-                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                // device property publish
-                client
-                    .expect_publish::<String, Vec<u8>>()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-properties.DeviceProperties/sensor1/name".to_string()), predicate::always(), predicate::always(), predicate::always())
-                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+                behavior.send_properties(&mut seq, &mut client);
 
                 client
             });
 
         // Catch other call to poll
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+        eventl.expect_poll().once().in_sequence(seq).returning(|| {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
-                    Ok(Event::Incoming(rumqttc::Packet::PingReq))
-                })
-            });
+                Ok(Event::Incoming(rumqttc::Packet::PingReq))
+            })
+        });
+
+        (eventl, client)
+    }
+
+    #[tokio::test]
+    async fn test_connect_client_response() {
+        let mut seq = mockall::Sequence::new();
+        let client_id = ClientId {
+            realm: "realm",
+            device_id: "device_id",
+        };
+        let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+        let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+        let prop = StoredProp {
+            interface: interface.interface_name().to_owned(),
+            path: "/sensor1/name".to_owned(),
+            value: AstarteType::String("temperature".to_string()),
+            interface_major: 0,
+            ownership: interface.ownership(),
+        };
+
+        let behavior = ConnectSuccess {
+            session_present: false,
+            client_id: client_id.into(),
+            server_interfaces: vec![server_interface.interface_name().to_owned()],
+            device_properties: vec![prop.clone()],
+        };
+
+        let (eventl, client) = mock_eventl_client(&mut seq, behavior);
 
         let interfaces = [
             Interface::from_str(DEVICE_PROPERTIES).unwrap(),
@@ -1103,18 +1199,8 @@ mod tests {
         let interfaces = Interfaces::from_iter(interfaces);
         let store = StoreWrapper::new(MemoryStore::new());
 
-        let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
-
-        let prop = StoredProp {
-            interface: interface.interface_name(),
-            path: "/sensor1/name",
-            value: &AstarteType::String("temperature".to_string()),
-            interface_major: 0,
-            ownership: interface.ownership(),
-        };
-
         store
-            .store_prop(prop)
+            .store_prop(prop.as_ref())
             .await
             .expect("Error while storing test property");
 
@@ -1131,12 +1217,95 @@ mod tests {
                 )
                 .await
                 .expect("failed to configure transport provider"),
-                ClientId {
-                    realm: "realm",
-                    device_id: "device_id",
-                },
+                client_id,
                 &interfaces,
                 &store,
+            ),
+        )
+        .await
+        .expect("taimeout reached")
+        .expect("failed to connect");
+
+        assert!(connection.state.is_connected());
+    }
+
+    #[tokio::test]
+    async fn test_connect_store_load_error() {
+        let mut seq = mockall::Sequence::new();
+        let client_id = ClientId {
+            realm: "realm",
+            device_id: "device_id",
+        };
+        let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
+
+        let mut mock_store = MockStore::new();
+        // enable session capability
+        mock_store.expect_return_session().return_const(true);
+
+        // NOTE an error while loading the stored introspection can happen
+        // the error will be logged and the connection will continue with a full
+        // handshake
+        mock_store
+            .expect_load_introspection()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Err(SessionError::load_introspection("test load error")));
+
+        let behavior = ConnectSuccess {
+            session_present: false,
+            client_id: client_id.into(),
+            server_interfaces: vec![server_interface.interface_name().to_owned()],
+            device_properties: vec![],
+        };
+
+        let (eventl, client) = mock_eventl_client(&mut seq, behavior);
+
+        // a clone is performed to pass the store over to the handshake task
+        mock_store.expect_clone().once().returning(MockStore::new);
+        // properties will be fetched to be sent after connection
+        mock_store
+            .expect_device_props_with_unset()
+            .once()
+            .returning(|| Ok(Vec::new()));
+        // after a successful connection we expect that the introspection gets stored in the
+        // session storage
+        mock_store
+            .expect_clear_introspection()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Ok(()));
+        mock_store
+            .expect_add_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(()));
+
+        let interfaces = [
+            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+            Interface::from_str(DEVICE_OBJECT).unwrap(),
+            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
+        ];
+
+        let interfaces = Interfaces::from_iter(interfaces);
+
+        let mock_store = StoreWrapper::new(mock_store);
+
+        let connection = tokio::time::timeout(
+            Duration::from_secs(3),
+            MqttConnection::wait_connack(
+                client,
+                eventl,
+                TransportProvider::configure(
+                    "http://api.astarte.localhost/pairing".parse().unwrap(),
+                    "secret".to_string(),
+                    None,
+                    true,
+                )
+                .await
+                .expect("failed to configure transport provider"),
+                client_id,
+                &interfaces,
+                &mock_store,
             ),
         )
         .await

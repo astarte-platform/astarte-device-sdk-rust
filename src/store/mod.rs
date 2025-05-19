@@ -35,6 +35,8 @@ use crate::{
 
 pub mod error;
 pub mod memory;
+#[cfg(test)]
+pub(crate) mod mock;
 pub mod sqlite;
 pub mod wrapper;
 

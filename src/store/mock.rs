@@ -1,0 +1,128 @@
+// This file is part of Astarte.
+//
+// Copyright 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use mockall::mock;
+
+use crate::session::StoredSession;
+
+use super::{error::StoreError, MissingCapability, PropertyStore, StoreCapabilities};
+
+/// trait that should be mocked to control which capabilities
+/// the store is allowed to return
+pub(crate) trait MockedStoreCapabilities {
+    // TODO enable once a mock for store capabilities gets implemented
+    // // should the store capability be returned ?
+    // fn return_retention(&self) -> bool;
+    // should the store capability be returned ?
+    fn return_session(&self) -> bool;
+}
+
+mock! {
+    pub(crate) Store {}
+
+    impl Clone for Store {
+        fn clone(&self) -> Self;
+    }
+
+    impl std::fmt::Debug for Store {
+        fn fmt<'a>(&self, f: &mut std::fmt::Formatter<'a>) -> std::fmt::Result;
+    }
+
+    impl PropertyStore for Store {
+        type Err = StoreError;
+
+        async fn store_prop<'a, 'b>(
+            &self,
+            prop: super::StoredProp<&'a str, &'b crate::AstarteType>,
+        ) -> Result<(), StoreError>;
+
+        async fn load_prop<'a>(
+            &self,
+            property: &super::PropertyMapping<'a>,
+            interface_major: i32,
+        ) -> Result<Option<crate::AstarteType>, StoreError>;
+
+        async fn unset_prop<'a>(
+            &self,
+            property: &super::PropertyMapping<'a>,
+        ) -> Result<(), StoreError>;
+
+        async fn delete_prop<'a>(
+            &self,
+            property: &super::PropertyMapping<'a>,
+        ) -> Result<(), StoreError>;
+
+        async fn clear(&self) -> Result<(), StoreError>;
+
+        async fn load_all_props(&self) -> Result<Vec<super::StoredProp>, StoreError>;
+
+        async fn device_props(&self) -> Result<Vec<super::StoredProp>, StoreError>;
+
+        async fn server_props(&self) -> Result<Vec<super::StoredProp>, StoreError>;
+
+        async fn interface_props<'a>(
+            &self,
+            interface: &super::PropertyInterface<'a>,
+        ) -> Result<Vec<super::StoredProp>, StoreError>;
+
+        async fn delete_interface<'a>(
+            &self,
+            interface: &super::PropertyInterface<'a>,
+        ) -> Result<(), StoreError>;
+
+        async fn device_props_with_unset(
+            &self,
+        ) -> Result<Vec<super::OptStoredProp>, StoreError>;
+    }
+
+    impl MockedStoreCapabilities for Store {
+        // fn return_retention(&self) -> bool;
+        fn return_session(&self) -> bool;
+    }
+
+    impl StoredSession for Store {
+        async fn add_interfaces(
+            &self,
+            interfaces: &[crate::session::IntrospectionInterface],
+        ) -> Result<(), crate::session::SessionError>;
+
+        async fn clear_introspection(&self) -> Result<(), crate::session::SessionError>;
+
+        async fn load_introspection(
+            &self,
+        ) -> Result<Vec<crate::session::IntrospectionInterface>, crate::session::SessionError>;
+
+        async fn remove_interfaces(
+            &self,
+            interfaces: &[crate::session::IntrospectionInterface],
+        ) -> Result<(), crate::session::SessionError>;
+    }
+}
+
+impl StoreCapabilities for MockStore {
+    type Retention = MissingCapability;
+    type Session = Self;
+
+    fn get_retention(&self) -> Option<&Self::Retention> {
+        None
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
+        self.return_session().then_some(self)
+    }
+}
