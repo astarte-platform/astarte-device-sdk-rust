@@ -57,7 +57,6 @@ use crate::{
     error::Report,
     interfaces::Interfaces,
     properties::{encode_set_properties, PropertiesError},
-    retention::StoredRetention,
     retry::ExponentialIter,
     session::{IntrospectionInterface, SessionError, StoredSession},
     store::{
@@ -141,12 +140,13 @@ impl MqttConnection {
         eventloop: EventLoop,
         provider: TransportProvider,
         state: impl Into<State>,
+        session_sync: bool,
     ) -> Self {
         let connection = Connection {
             client,
             eventloop: SyncWrapper::new(eventloop),
             provider,
-            session_sync: false,
+            session_sync,
         };
 
         Self {
@@ -200,9 +200,9 @@ impl MqttConnection {
     ) -> Result<Self, PollError>
     where
         S: PropertyStore + StoreCapabilities,
-        S::Retention: StoredRetention,
     {
-        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
+        let session_sync = Self::compare_introspection(interfaces, store).await;
+        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting, session_sync);
 
         let mut exp_back = ExponentialIter::default();
 
@@ -217,7 +217,44 @@ impl MqttConnection {
             tokio::time::sleep(Duration::from_secs(timeout)).await;
         }
 
+        // after the first connection we store the introspection and update the sync status
+        if let Some(introspection) = store.get_session() {
+            info!("Connected, storing new introspection");
+
+            mqtt_connection.connection.session_sync = true;
+
+            introspection.clear_introspection().await?;
+            let interfaces: Vec<IntrospectionInterface> = interfaces.into();
+            introspection.add_interfaces(&interfaces).await?;
+        }
+
         Ok(mqtt_connection)
+    }
+
+    #[must_use]
+    pub(crate) async fn compare_introspection<S>(
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+    ) -> bool
+    where
+        S: StoreCapabilities,
+    {
+        let Some(introspection) = store.get_session() else {
+            return false;
+        };
+
+        let stored = match introspection.load_introspection().await {
+            Ok(s) => s,
+            Err(err) => {
+                error!(
+                    error = %Report::new(err),
+                    "couldn't retrieve the introspection from the store",
+                );
+                return false;
+            }
+        };
+
+        !interfaces.is_empty() && interfaces.matches(&stored)
     }
 
     /// Reconnect to astarte, wait till the state is [`Connected`].
@@ -280,35 +317,13 @@ struct Connection {
     //       https://doc.rust-lang.org/std/sync/struct.Exclusive.html
     eventloop: SyncWrapper<EventLoop>,
     provider: TransportProvider,
-    // Wether the stored introspection matches the current one
+    /// Whether the stored introspection matches the current one
     session_sync: bool,
 }
 
 impl Connection {
     fn eventloop_mut(&mut self) -> &mut EventLoop {
         self.eventloop.get_mut()
-    }
-
-    async fn update_session_status<S>(&mut self, interfaces: &Interfaces, store: &StoreWrapper<S>)
-    where
-        S: StoreCapabilities,
-    {
-        let Some(introspection) = store.get_session() else {
-            return;
-        };
-
-        let stored = match introspection.load_introspection().await {
-            Ok(s) => s,
-            Err(err) => {
-                warn!(
-                    "Error while retrieving the introspection from the store: {}",
-                    err
-                );
-                return;
-            }
-        };
-
-        self.session_sync = !interfaces.is_empty() && interfaces.matches(&stored);
     }
 }
 
@@ -346,11 +361,7 @@ impl State {
         trace!("state {}", self);
 
         let next = match self {
-            State::Disconnected(disconnected) => {
-                conn.update_session_status(interfaces, store).await;
-
-                disconnected.reconnect(conn, client_id).await?
-            }
+            State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await?,
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
             State::Handshake(handshake) => {
                 let session_data = SessionData::try_from_props(interfaces, store).await?;
@@ -360,18 +371,6 @@ impl State {
             State::WaitAcks(init) => init.wait_connection(conn).await?,
             State::Connected(connected) => connected.poll(conn).await,
         };
-
-        if matches!(next, Next::State(State::Connected(..))) {
-            if let Some(introspection) = store.get_session() {
-                info!("Connected, storing new introspection");
-
-                introspection.clear_introspection().await?;
-                let _ = introspection
-                    .add_interfaces(&Into::<Vec<IntrospectionInterface>>::into(interfaces))
-                    .await
-                    .inspect_err(|e| warn!("Error while storing the updated introspection {}", e));
-            }
-        }
 
         let res = match next {
             Next::Same => None,
@@ -538,19 +537,20 @@ impl Handshake {
         let store = store.clone();
 
         let handle = if self.session_present && conn.session_sync {
-            info!(
-                "Already synchronized skipping handshake (introspection synchronized: {})",
-                conn.session_sync
+            debug!(
+                session_sync = conn.session_sync,
+                "introspection already synchronized"
             );
 
-            Self::prop_handshake(client, client_id, store, session_data, self.session_present)
+            Self::prop_handshake(client, client_id, store, session_data)
         } else {
-            info!(
-                "The device is not synchronized (session_present: {}, matching introspection: {}), redoing handshake",
-                self.session_present, conn.session_sync,
+            debug!(
+                session_present = self.session_present,
+                session_sync = conn.session_sync,
+                "perform again handshake to synchronize the device",
             );
 
-            Self::full_handshake(client, client_id, store, session_data, self.session_present)
+            Self::full_handshake(client, client_id, store, session_data)
         };
 
         Next::state(WaitAcks { handle })
@@ -561,7 +561,6 @@ impl Handshake {
         client_id: ClientId,
         store: StoreWrapper<S>,
         session_data: SessionData,
-        session_present: bool,
     ) -> JoinHandle<Result<(), InitError>>
     where
         S: PropertyStore,
@@ -582,20 +581,18 @@ impl Handshake {
                 .await
                 .map_err(InitError::ack("subscribe server interface"))?;
 
-            if !session_present {
-                Self::send_empty_cache(&client, client_id).await?;
+            Self::send_empty_cache(&client, client_id).await?;
 
-                Self::purge_device_properties(&client, client_id, &session_data.device_properties)
-                    .await?;
-
-                Self::send_device_properties(
-                    &client,
-                    client_id,
-                    &store,
-                    &session_data.device_properties,
-                )
+            Self::purge_device_properties(&client, client_id, &session_data.device_properties)
                 .await?;
-            }
+
+            Self::send_device_properties(
+                &client,
+                client_id,
+                &store,
+                &session_data.device_properties,
+            )
+            .await?;
 
             Ok(())
         })
@@ -606,26 +603,25 @@ impl Handshake {
         client_id: ClientId,
         store: StoreWrapper<S>,
         session_data: SessionData,
-        session_present: bool,
     ) -> JoinHandle<Result<(), InitError>>
     where
         S: PropertyStore,
     {
-        // FIXME we should probably purge the properties
         // NOTE send device properties even if synchronized because they could
         // have been updated while disconnected
         tokio::spawn(async move {
             let client_id = client_id.as_ref();
 
-            if !session_present {
-                Self::send_device_properties(
-                    &client,
-                    client_id,
-                    &store,
-                    &session_data.device_properties,
-                )
+            Self::purge_device_properties(&client, client_id, &session_data.device_properties)
                 .await?;
-            }
+
+            Self::send_device_properties(
+                &client,
+                client_id,
+                &store,
+                &session_data.device_properties,
+            )
+            .await?;
 
             Ok(())
         })

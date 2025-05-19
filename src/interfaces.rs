@@ -32,6 +32,7 @@ use crate::{
         reference::{MappingRef, PropertyRef},
         InterfaceTypeDef,
     },
+    session::IntrospectionInterface,
     validate::UserValidationError,
     Error, Interface,
 };
@@ -251,6 +252,16 @@ impl Interfaces {
         self.interfaces
             .values()
             .filter(|i| !removed.contains_key(i.interface_name()))
+    }
+
+    pub(crate) fn matches(&self, stored: &[IntrospectionInterface]) -> bool {
+        stored.len() == self.len()
+            && stored.iter().all(|stored_i| {
+                self.get(stored_i.name()).is_some_and(|i| {
+                    i.version_major() == stored_i.version_major()
+                        && i.version_minor() == stored_i.version_minor()
+                })
+            })
     }
 
     pub(crate) fn len(&self) -> usize {

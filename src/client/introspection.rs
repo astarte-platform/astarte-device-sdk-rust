@@ -127,7 +127,6 @@ where
         debug!("adding interface to introspection");
         let mut interfaces = self.state.interfaces.write().await;
 
-        debug!("adding interface to introspection");
         interfaces.add(to_add);
 
         Ok(true)
@@ -170,6 +169,7 @@ where
         let names = to_add.keys().cloned().collect();
 
         drop(interfaces);
+        debug!("adding interfaces to introspection");
         let mut interfaces = self.state.interfaces.write().await;
         interfaces.extend(to_add);
 
@@ -226,6 +226,7 @@ where
         Self::cleanup_interface(&self.state.volatile_store, &self.store, to_remove).await;
 
         drop(interfaces);
+        debug!("removing interface from introspection");
         let mut interfaces = self.state.interfaces.write().await;
         interfaces.remove(interface_name);
 
@@ -275,6 +276,7 @@ where
         let removed_names: Vec<String> = to_remove.keys().map(|k| k.to_string()).collect();
 
         drop(interfaces);
+        debug!("removing interfaces from introspection");
         let mut interfaces = self.state.interfaces.write().await;
         interfaces.remove_many(&removed_names);
 

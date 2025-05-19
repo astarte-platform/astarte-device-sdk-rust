@@ -56,7 +56,7 @@ mock! {
         type Store = S;
     }
 
-    impl<S: StoreCapabilities> Receive  for Con<S> {
+    impl<S: StoreCapabilities> Receive for Con<S> {
         type Payload = GenericPayload;
 
         async fn next_event(

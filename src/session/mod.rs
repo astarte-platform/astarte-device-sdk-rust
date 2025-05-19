@@ -16,14 +16,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handles storing the current introspection to mantain
-//! a persistent session with the astarte mqtt server.
+//! Handles the storage of the current introspection to maintain
+//! a persistent session with the Astarte MQTT server.
 
 use std::future::Future;
 
 use itertools::Itertools;
 
-use crate::{error::DynError, interfaces::Interfaces, store::MissingCapability, Interface};
+use crate::{error::DynError, interfaces::Interfaces, Interface};
 
 mod sqlite;
 
@@ -31,11 +31,35 @@ mod sqlite;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IntrospectionInterface {
     /// Name of the interface.
-    pub name: String,
+    name: String,
     /// Major version.
-    pub version_major: i32,
+    version_major: i32,
     /// Minor version.
-    pub version_minor: i32,
+    version_minor: i32,
+}
+
+impl IntrospectionInterface {
+    /// Create a new instance of the struct
+    pub fn new(name: String, version_major: i32, version_minor: i32) -> Self {
+        Self {
+            name,
+            version_major,
+            version_minor,
+        }
+    }
+
+    /// Get the name of the interface
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Get the major version of the interface
+    pub fn version_major(&self) -> i32 {
+        self.version_major
+    }
+    /// Get the minor version of the interface
+    pub fn version_minor(&self) -> i32 {
+        self.version_minor
+    }
 }
 
 /// Error returned by the retention.
@@ -43,7 +67,7 @@ pub struct IntrospectionInterface {
 #[non_exhaustive]
 pub enum SessionError {
     /// Error in the store introspection method
-    #[error("couldn't store introspection")]
+    #[error("couldn't store the introspection")]
     StoreIntrospection(#[source] DynError),
     /// Error in the clear introspection method
     #[error("couldn't clear the introspection")]
@@ -57,19 +81,19 @@ pub enum SessionError {
 }
 
 impl SessionError {
-    fn store_introspection(err: impl Into<DynError>) -> Self {
+    pub(crate) fn store_introspection(err: impl Into<DynError>) -> Self {
         Self::StoreIntrospection(err.into())
     }
 
-    fn clear_introspection(err: impl Into<DynError>) -> Self {
+    pub(crate) fn clear_introspection(err: impl Into<DynError>) -> Self {
         Self::ClearIntrospection(err.into())
     }
 
-    fn load_introspection(err: impl Into<DynError>) -> Self {
+    pub(crate) fn load_introspection(err: impl Into<DynError>) -> Self {
         Self::LoadIntrospection(err.into())
     }
 
-    fn remove_interfaces(err: impl Into<DynError>) -> Self {
+    pub(crate) fn remove_interfaces(err: impl Into<DynError>) -> Self {
         Self::RemoveInterfaces(err.into())
     }
 }
@@ -97,49 +121,13 @@ pub trait StoredSession: Clone + Send + Sync {
     ) -> impl Future<Output = Result<(), SessionError>> + Send;
 }
 
-impl StoredSession for MissingCapability {
-    async fn add_interfaces(
-        &self,
-        _interfaces: &[IntrospectionInterface],
-    ) -> Result<(), SessionError> {
-        unreachable!("the type is un-constructable");
-    }
-
-    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
-        unreachable!("the type is un-constructable");
-    }
-
-    async fn clear_introspection(&self) -> Result<(), SessionError> {
-        unreachable!("the type is un-constructable");
-    }
-
-    async fn remove_interfaces(
-        &self,
-        _interfaces: &[IntrospectionInterface],
-    ) -> Result<(), SessionError> {
-        unreachable!("the type is un-constructable");
-    }
-}
-
-impl Interfaces {
-    pub(crate) fn matches(&self, stored: &[IntrospectionInterface]) -> bool {
-        stored.len() == self.len()
-            && stored.iter().all(|stored_i| {
-                self.get(&stored_i.name).is_some_and(|i| {
-                    i.version_major() == stored_i.version_major
-                        && i.version_minor() == stored_i.version_minor
-                })
-            })
-    }
-}
-
 impl From<&Interface> for IntrospectionInterface {
     fn from(val: &Interface) -> Self {
-        IntrospectionInterface {
-            name: val.interface_name().to_string(),
-            version_major: val.version_major(),
-            version_minor: val.version_minor(),
-        }
+        IntrospectionInterface::new(
+            val.interface_name().to_string(),
+            val.version_major(),
+            val.version_minor(),
+        )
     }
 }
 

@@ -1012,6 +1012,7 @@ pub(crate) mod test {
                 eventloop,
                 transport_provider,
                 self::connection::Connected,
+                false,
             ),
             MqttRetention::new(ret_rx),
             store.clone(),

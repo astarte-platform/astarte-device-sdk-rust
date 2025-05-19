@@ -35,7 +35,6 @@ use crate::{
     error::{DynError, Report},
     interface::{Reliability, Retention},
     interfaces::Interfaces,
-    store::MissingCapability,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -368,48 +367,6 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
 }
 
 impl<T: StoredRetention> StoredRetentionExt for T {}
-
-impl StoredRetention for MissingCapability {
-    async fn store_publish(
-        &self,
-        _id: &Id,
-        _publish: PublishInfo<'_>,
-    ) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn mark_received(&self, _packet: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn unsent_publishes(
-        &self,
-        _limit: usize,
-        _buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-}
 
 /// Retention Id to be passed to the connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

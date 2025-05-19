@@ -18,6 +18,8 @@
 
 //! Provides functionality to wrap a generic Store to convert the error in Error.
 
+use tracing::trace;
+
 use crate::types::AstarteType;
 
 use super::{
@@ -45,11 +47,23 @@ where
     type Session = S::Session;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
-        self.store.get_retention()
+        let retention = self.store.get_retention();
+
+        if retention.is_none() {
+            trace!("no stored retention");
+        }
+
+        retention
     }
 
     fn get_session(&self) -> Option<&Self::Session> {
-        self.store.get_session()
+        let session = self.store.get_session();
+
+        if session.is_none() {
+            trace!("no persistent session");
+        }
+
+        session
     }
 }
 

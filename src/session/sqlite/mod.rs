@@ -170,7 +170,7 @@ mod tests {
         assert!(stored.is_empty());
 
         // test remove different minor
-        let interface_diffrent_min = IntrospectionInterface {
+        let interface_different_min = IntrospectionInterface {
             name: TO_REMOVE_NAME.to_owned(),
             version_major: 1,
             version_minor: 0,
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(vec![interface.clone()], stored);
         // remove same name different minor
         store
-            .remove_interfaces(&[interface_diffrent_min])
+            .remove_interfaces(&[interface_different_min])
             .await
             .unwrap();
         // nothing removed (all parameters have to match)
