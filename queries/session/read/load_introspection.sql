@@ -1,2 +1,5 @@
-SELECT name, major, minor
+SELECT
+    name,
+    major,
+    minor
 FROM introspection

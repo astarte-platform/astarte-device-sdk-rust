@@ -1,2 +1,2 @@
-INSERT OR REPLACE INTO introspection(name, major, minor)
+INSERT OR REPLACE INTO introspection (name, major, minor)
 VALUES (?, ?, ?)
