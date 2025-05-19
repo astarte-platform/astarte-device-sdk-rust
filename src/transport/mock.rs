@@ -23,7 +23,9 @@ use std::collections::HashMap;
 
 use mockall::mock;
 
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError};
+use super::{
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+};
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
 use crate::interface::mapping::path::MappingPath;
@@ -79,6 +81,11 @@ mock! {
             path: &MappingPath<'a> ,
             payload: GenericPayload,
         ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
+    }
+
+    impl<S: StoreCapabilities> Reconnect  for Con<S> {
+        async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, Error> {
+        }
     }
 }
 

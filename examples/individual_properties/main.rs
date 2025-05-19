@@ -92,7 +92,7 @@ async fn main() -> eyre::Result<()> {
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create an thread to transmit
+    // Create a thread to transmit
     tasks.spawn(async move {
         let mut i: u32 = 0;
 

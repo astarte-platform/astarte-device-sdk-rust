@@ -95,6 +95,14 @@ pub enum RecvError {
     /// Invalid aggregation between the interface and the data.
     #[error("invalid interface type between interface and data")]
     InterfaceType(#[from] InterfaceTypeError),
+    /// Received data on a device owned interface.
+    #[error("received data on a device owned interface {interface}{path}")]
+    Ownership {
+        /// The interface we received on.
+        interface: String,
+        /// The endpoint we received on.
+        path: String,
+    },
     /// Error when the Device is disconnected from Astarte or client.
     ///
     /// This is an unrecoverable error for the SDK.
@@ -440,7 +448,7 @@ where
 
         let path = MappingPath::try_from(mapping_path)?;
 
-        self.unset_prop(interface_name, &path).await
+        self.send_unset(interface_name, &path).await
     }
 
     async fn recv(&self) -> Result<DeviceEvent, RecvError> {
@@ -469,13 +477,18 @@ where
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use chrono::Utc;
+    use mockall::Sequence;
+    use pretty_assertions::assert_eq;
+
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
+    use crate::state::Status;
     use crate::store::memory::MemoryStore;
     use crate::store::StoreCapabilities;
     use crate::transport::mock::{MockCon, MockSender};
-    use crate::Interface;
+    use crate::{Interface, Value};
 
     use super::*;
 
@@ -511,5 +524,57 @@ pub(crate) mod tests {
         let client = DeviceClient::new(sender, rx, StoreWrapper::new(store), Arc::new(state));
 
         (client, tx)
+    }
+
+    #[test]
+    fn client_must_be_clone() {
+        let (mut client, _tx) = mock_client(&[]);
+
+        let mut seq = Sequence::new();
+        client
+            .sender
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockSender::new);
+
+        let _b = client.clone();
+    }
+
+    #[tokio::test]
+    async fn client_recv() {
+        let (client, tx) = mock_client(&[]);
+
+        let exp = DeviceEvent {
+            interface: "interface".to_string(),
+            path: "path".to_string(),
+            data: Value::Individual {
+                data: AstarteType::LongInteger(42),
+                timestamp: Utc::now(),
+            },
+        };
+
+        tx.send_async(Ok(exp.clone())).await.unwrap();
+
+        let event = client.recv().await.unwrap();
+
+        assert_eq!(event, exp);
+    }
+
+    #[tokio::test]
+    async fn client_disconnect_closed() {
+        let (mut client, _tx) = mock_client(&[]);
+
+        let mut seq = Sequence::new();
+        client
+            .sender
+            .expect_disconnect()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Ok(()));
+
+        client.disconnect().await.unwrap();
+
+        assert_eq!(client.state.status.connection(), Status::Closed);
     }
 }

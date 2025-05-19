@@ -24,7 +24,7 @@ pub mod device {
     pub use crate::client::Client;
     pub use crate::client::ClientDisconnect;
     pub use crate::connection::EventLoop;
-    pub use crate::introspection::DynamicIntrospection;
+    pub use crate::introspection::{DeviceIntrospection, DynamicIntrospection};
     pub use crate::FromEvent;
 }
 

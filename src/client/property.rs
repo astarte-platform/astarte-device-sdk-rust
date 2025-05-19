@@ -138,7 +138,7 @@ where
         Ok(value)
     }
 
-    pub(crate) async fn unset_prop(
+    pub(crate) async fn send_unset(
         &mut self,
         interface_name: &str,
         path: &MappingPath<'_>,
@@ -173,5 +173,264 @@ where
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mockall::{predicate, Sequence};
+
+    use crate::client::tests::mock_client;
+    use crate::interface::Ownership;
+    use crate::store::{PropertyInterface, PropertyMapping, PropertyStore, StoredProp};
+    use crate::test::{E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME};
+    use crate::validate::{ValidatedProperty, ValidatedUnset};
+    use crate::{AstarteType, Client};
+
+    #[tokio::test]
+    async fn send_property_connected() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(true);
+
+        let path = "/sensor_1/longinteger_endpoint";
+        let value = AstarteType::LongInteger(42);
+
+        let mut seq = Sequence::new();
+
+        client
+            .sender
+            .expect_send_property()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(ValidatedProperty {
+                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                path: path.to_string(),
+                version_major: 0,
+                data: value.clone(),
+            }))
+            .returning(|_| Ok(()));
+
+        // Send
+        client
+            .set_property(E2E_DEVICE_PROPERTY_NAME, path, value.clone())
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prop, value);
+    }
+
+    #[tokio::test]
+    async fn send_property_offline() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(false);
+
+        let path = "/sensor_1/longinteger_endpoint";
+        let value = AstarteType::LongInteger(42);
+
+        // Send
+        client
+            .set_property(E2E_DEVICE_PROPERTY_NAME, path, value.clone())
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prop, value);
+    }
+
+    #[tokio::test]
+    async fn send_property_connected_already_stored() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(true);
+
+        let path = "/sensor_1/longinteger_endpoint";
+        let value = AstarteType::LongInteger(42);
+
+        // No expect, but store the prop
+        client
+            .store
+            .store_prop(StoredProp {
+                interface: E2E_DEVICE_PROPERTY_NAME,
+                path,
+                value: &value,
+                interface_major: 0,
+                ownership: Ownership::Device,
+            })
+            .await
+            .unwrap();
+
+        // Send
+        client
+            .set_property(E2E_DEVICE_PROPERTY_NAME, path, value.clone())
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prop, value);
+    }
+
+    #[tokio::test]
+    async fn unset_property_connected_already_stored() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(true);
+
+        let path = "/sensor_1/longinteger_endpoint";
+
+        let mut seq = Sequence::new();
+
+        client
+            .sender
+            .expect_unset()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(ValidatedUnset {
+                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                path: path.to_string(),
+            }))
+            .returning(|_| Ok(()));
+
+        // Send
+        client
+            .unset_property(E2E_DEVICE_PROPERTY_NAME, path)
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(prop, None);
+    }
+
+    #[tokio::test]
+    async fn send_property_connected_already_stored_wrong_type() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(true);
+
+        let path = "/sensor_1/longinteger_endpoint";
+        let value = AstarteType::LongInteger(42);
+
+        client
+            .store
+            .store_prop(StoredProp {
+                interface: E2E_DEVICE_PROPERTY_NAME,
+                path,
+                // Wrong type
+                value: &AstarteType::Boolean(false),
+                interface_major: 0,
+                ownership: Ownership::Device,
+            })
+            .await
+            .unwrap();
+
+        let mut seq = Sequence::new();
+
+        client
+            .sender
+            .expect_send_property()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(ValidatedProperty {
+                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                path: path.to_string(),
+                version_major: 0,
+                data: value.clone(),
+            }))
+            .returning(|_| Ok(()));
+
+        // Send
+        client
+            .set_property(E2E_DEVICE_PROPERTY_NAME, path, value.clone())
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(prop, value);
+    }
+
+    #[tokio::test]
+    async fn unset_property_offline_already_stored() {
+        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+
+        client.state.status.set_connected(false);
+
+        let path = "/sensor_1/longinteger_endpoint";
+
+        // Send
+        client
+            .unset_property(E2E_DEVICE_PROPERTY_NAME, path)
+            .await
+            .unwrap();
+
+        let prop = client
+            .store
+            .load_prop(
+                &PropertyMapping::new_unchecked(
+                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
+                    path,
+                ),
+                0,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(prop, None);
     }
 }

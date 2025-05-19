@@ -605,6 +605,8 @@ impl<S> Mqtt<S> {
             }
         };
 
+        trace!("received packet {id}");
+
         match id {
             RetentionId::Volatile(id) => {
                 volatile.mark_received(&id).await;
@@ -616,7 +618,7 @@ impl<S> Mqtt<S> {
             }
         }
 
-        debug!("marking {id} as received");
+        debug!("marked {id} as received");
 
         Ok(())
     }

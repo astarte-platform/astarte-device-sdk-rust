@@ -174,7 +174,7 @@ impl Channel {
             let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
                 .await
                 .wrap_err("waiting for new_event")?
-                .wrap_err("error receving from channel")?;
+                .wrap_err("error receiving from channel")?;
 
             let Ok(new_event) = reply.try_into_new_event() else {
                 continue;

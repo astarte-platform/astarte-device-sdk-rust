@@ -26,6 +26,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
 };
 use tokio::task::JoinSet;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize)]
@@ -64,7 +65,7 @@ async fn main() -> eyre::Result<()> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (mut client, connection) = DeviceBuilder::new()
+    let (client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connection(mqtt_config)
@@ -73,27 +74,41 @@ async fn main() -> eyre::Result<()> {
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create an thread to transmit
+    // Create a thread to transmit
+    tasks.spawn({
+        let mut client = client.clone();
+
+        async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                let data = DataObject {
+                    endpoint1: 1.34,
+                    endpoint2: "Hello world.".to_string(),
+                    endpoint3: vec![true, false, true, false],
+                };
+
+                info!(?data, "sending");
+
+                client
+                    .send_object_with_timestamp(
+                        "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                        "/23",
+                        data.try_into().unwrap(),
+                        Utc::now(),
+                    )
+                    .await?;
+
+                interval.tick().await;
+            }
+        }
+    });
+
+    // Create a thread to receive
     tasks.spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
-            let data = DataObject {
-                endpoint1: 1.34,
-                endpoint2: "Hello world.".to_string(),
-                endpoint3: vec![true, false, true, false],
-            };
+            let event = client.recv().await?;
 
-            println!("Sending {data:?}");
-            client
-                .send_object_with_timestamp(
-                    "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
-                    "/23",
-                    data.try_into().unwrap(),
-                    Utc::now(),
-                )
-                .await?;
-
-            interval.tick().await;
+            info!(?event, "received");
         }
     });
 

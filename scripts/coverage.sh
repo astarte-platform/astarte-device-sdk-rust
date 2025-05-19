@@ -127,6 +127,21 @@ filter_lcov() {
         --llvm \
         --excl-start 'mod test(s)?' \
         --output-type lcov,html
+
+    # Better branch coverage information
+    if command -v genhtml; then
+        mkdir -p "$COVERAGE_OUT_DIR/$1/genhtml"
+        genhtml \
+            --show-details \
+            --legend \
+            --branch-coverage \
+            --dark-mode \
+            --missed \
+            --ignore-errors category \
+            --output-directory "$COVERAGE_OUT_DIR/$1/genhtml" \
+            "$COVERAGE_OUT_DIR/$1/lcov.info"
+
+    fi
 }
 
 list=(
