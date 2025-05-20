@@ -830,7 +830,8 @@ impl AsyncClientExt for AsyncClient {
 pub(crate) mod test {
     use std::{str::FromStr, time::Duration};
 
-    use mockall::predicate;
+    use chrono::Utc;
+    use mockall::{predicate, Sequence};
     use mockito::Server;
     use properties::extract_set_properties;
     use rumqttc::{
@@ -846,6 +847,8 @@ pub(crate) mod test {
     use crate::{
         builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
         store::memory::MemoryStore,
+        test::{E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME},
+        transport::mqtt::payload::Payload,
     };
 
     use self::{
@@ -855,6 +858,11 @@ pub(crate) mod test {
 
     use super::*;
 
+    const CLIENT_ID: ClientId<&str> = ClientId {
+        realm: "realm",
+        device_id: "device_id",
+    };
+
     pub(crate) fn notify_success<T, E>(out: T) -> Result<Token<T>, E> {
         let (tx, token) = Resolver::new();
 
@@ -863,19 +871,24 @@ pub(crate) mod test {
         Ok(token)
     }
 
-    pub(crate) async fn mock_mqtt_connection<S>(
+    pub(crate) async fn mock_mqtt_connection(
         client: AsyncClient,
         eventloop: EventLoop,
+        interfaces: &[&str],
+    ) -> (MqttClient<MemoryStore>, Mqtt<MemoryStore>) {
+        mock_mqtt_connection_with_store(client, eventloop, interfaces, MemoryStore::new()).await
+    }
+
+    pub(crate) async fn mock_mqtt_connection_with_store<S>(
+        client: AsyncClient,
+        eventloop: EventLoop,
+        interfaces: &[&str],
         store: S,
     ) -> (MqttClient<S>, Mqtt<S>)
     where
         S: Clone,
     {
-        let client_id: ClientId = ClientId {
-            realm: "realm",
-            device_id: "device_id",
-        }
-        .into();
+        let client_id: ClientId = CLIENT_ID.into();
 
         let (ret_tx, ret_rx) = flume::unbounded();
 
@@ -890,8 +903,10 @@ pub(crate) mod test {
         .await
         .expect("failed to configure transport provider");
 
+        let interfaces = interfaces.iter().map(|i| Interface::from_str(i).unwrap());
+
         let state = Arc::new(SharedState::new(
-            Interfaces::new(),
+            Interfaces::from_iter(interfaces),
             VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         ));
 
@@ -968,8 +983,7 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
-        let (mut client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, &[]).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1023,8 +1037,7 @@ pub(crate) mod test {
             })
             .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
-        let (mut client, _connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
+        let (mut client, _connection) = mock_mqtt_connection(client, eventl, &[]).await;
 
         client
             .extend_interfaces(&interfaces, &to_add)
@@ -1086,8 +1099,7 @@ pub(crate) mod test {
                 Err(ClientError::Request(rumqttc::Request::Disconnect(Resolver::new().0)))
             });
 
-        let (mut mqtt_client, _mqtt_connection) =
-            mock_mqtt_connection(client, eventl, MemoryStore::new()).await;
+        let (mut mqtt_client, _mqtt_connection) = mock_mqtt_connection(client, eventl, &[]).await;
 
         mqtt_client
             .extend_interfaces(&interfaces, &to_add)
@@ -1273,5 +1285,48 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_send_individual_sucess() {
+        let mut client = AsyncClient::default();
+        let eventloop = EventLoop::default();
+
+        let mut seq = Sequence::new();
+
+        let path = MappingPath::try_from("/integer_endpoint").unwrap();
+        let interface = DatastreamIndividual::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+        let mapping = MappingRef::new(&interface, &path).unwrap();
+        let timestamp = Utc::now();
+        let value = AstarteType::Integer(42);
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(AsyncClient::default);
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq(format!("{CLIENT_ID}/{E2E_DEVICE_DATASTREAM_NAME}{path}",)),
+                predicate::eq(QoS::AtMostOnce),
+                predicate::eq(false),
+                predicate::eq(
+                    Payload::with_timestamp(value.clone(), Some(timestamp.clone()))
+                        .to_vec()
+                        .unwrap(),
+                ),
+            )
+            .returning(|_, _, _, _| Ok(Resolver::new().1));
+
+        let (mut client, _connection) =
+            mock_mqtt_connection(client, eventloop, &[E2E_DEVICE_DATASTREAM]).await;
+
+        let data = ValidatedIndividual::validate(mapping, value, Some(timestamp)).unwrap();
+
+        client.send_individual(data).await.unwrap();
     }
 }
