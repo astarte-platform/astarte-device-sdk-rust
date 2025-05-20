@@ -501,6 +501,32 @@ impl Reliability {
     pub fn is_unreliable(&self) -> bool {
         matches!(self, Self::Unreliable)
     }
+
+    /// Returns `true` if the reliability is [`Guaranteed`].
+    ///
+    /// [`Guaranteed`]: Reliability::Guaranteed
+    #[must_use]
+    pub fn is_guaranteed(&self) -> bool {
+        matches!(self, Self::Guaranteed)
+    }
+
+    /// Returns `true` if the reliability is [`Unique`].
+    ///
+    /// [`Unique`]: Reliability::Unique
+    #[must_use]
+    pub fn is_unique(&self) -> bool {
+        matches!(self, Self::Unique)
+    }
+}
+
+impl Display for Reliability {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Reliability::Unreliable => write!(f, "unreliable"),
+            Reliability::Guaranteed => write!(f, "guaranteed"),
+            Reliability::Unique => write!(f, "unique"),
+        }
+    }
 }
 
 /// Defines the retention of a data stream.
@@ -521,6 +547,16 @@ pub enum Retention {
     Stored,
 }
 
+impl Display for Retention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Retention::Discard => write!(f, "discard"),
+            Retention::Volatile => write!(f, "volatile"),
+            Retention::Stored => write!(f, "stored"),
+        }
+    }
+}
+
 /// Defines whether data should expire from the database after a given interval.
 ///
 /// See
@@ -537,6 +573,15 @@ pub enum DatabaseRetentionPolicy {
     /// The field [`database_retention_ttl`](Mapping::database_retention_ttl) will be used to
     /// determine how many seconds the data is kept in the database.
     UseTtl,
+}
+
+impl Display for DatabaseRetentionPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DatabaseRetentionPolicy::NoTtl => write!(f, "no_ttl"),
+            DatabaseRetentionPolicy::UseTtl => write!(f, "use_ttl"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -676,5 +721,155 @@ mod tests {
             mapping.database_retention_with_ttl().unwrap_err(),
             SchemaError::NegativeDatabaseRetentionTtl(-32)
         ));
+    }
+
+    #[test]
+    fn retention_and_expiry() {
+        let mut mapping = Mapping {
+            endpoint: "/some/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: Some(Retention::Discard),
+            expiry: Some(420),
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        cfg_if! {
+            if #[cfg(feature = "strict")] {
+                let err = mapping.retention_with_expiry().unwrap_err();
+                assert!(matches!(err, SchemaError::ExpiryWithDiscard(420)));
+            } else {
+                let retention = mapping.retention_with_expiry().unwrap();
+                assert_eq!(retention, InterfaceRetention::Discard);
+           }
+        }
+
+        mapping.retention = Some(Retention::Volatile);
+
+        let exp = InterfaceRetention::Volatile {
+            expiry: Some(Duration::from_secs(420)),
+        };
+        assert_eq!(mapping.retention_with_expiry().unwrap(), exp);
+
+        mapping.retention = Some(Retention::Stored);
+
+        let exp = InterfaceRetention::Stored {
+            expiry: Some(Duration::from_secs(420)),
+        };
+        assert_eq!(mapping.retention_with_expiry().unwrap(), exp);
+
+        mapping.expiry = None;
+
+        let exp = InterfaceRetention::Stored { expiry: None };
+        assert_eq!(mapping.retention_with_expiry().unwrap(), exp);
+    }
+
+    #[test]
+    fn database_retention_ttl() {
+        let mut mapping = Mapping {
+            endpoint: "/some/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: Some(DatabaseRetentionPolicy::NoTtl),
+            database_retention_ttl: Some(420),
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        cfg_if! {
+            if #[cfg(feature = "strict")] {
+                let err = mapping.database_retention_with_ttl().unwrap_err();
+                assert!(matches!(err, SchemaError::DatabaseRetentionTtlWithNoTtl(420)));
+            } else {
+                let retention = mapping.database_retention_with_ttl().unwrap();
+                assert_eq!(retention, InterfaceDatabaseRetention::NoTtl);
+           }
+        }
+
+        mapping.database_retention_policy = Some(DatabaseRetentionPolicy::UseTtl);
+
+        let exp = InterfaceDatabaseRetention::UseTtl {
+            ttl: Duration::from_secs(420),
+        };
+        assert_eq!(mapping.database_retention_with_ttl().unwrap(), exp);
+
+        mapping.database_retention_ttl = None;
+
+        assert_eq!(mapping.database_retention_ttl_as_duration().unwrap(), None);
+    }
+
+    #[test]
+    fn interface_type_functions() {
+        assert_eq!(InterfaceType::Datastream.to_string(), "datastream");
+        assert_eq!(InterfaceType::Properties.to_string(), "properties");
+    }
+
+    #[test]
+    fn ownership_functions() {
+        assert_eq!(Ownership::Device.to_string(), "device");
+        assert_eq!(Ownership::Server.to_string(), "server");
+        assert!(Ownership::Server.is_server());
+        assert!(!Ownership::Device.is_server());
+        assert!(Ownership::Device.is_device());
+        assert!(!Ownership::Server.is_device());
+    }
+
+    #[test]
+    fn aggregation_functions() {
+        assert_eq!(Aggregation::Individual.to_string(), "individual");
+        assert_eq!(Aggregation::Object.to_string(), "object");
+    }
+
+    #[test]
+    fn mapping_type_functions() {
+        assert_eq!(MappingType::Double.to_string(), "double");
+        assert_eq!(MappingType::Integer.to_string(), "integer");
+        assert_eq!(MappingType::Boolean.to_string(), "boolean");
+        assert_eq!(MappingType::LongInteger.to_string(), "longinteger");
+        assert_eq!(MappingType::String.to_string(), "string");
+        assert_eq!(MappingType::BinaryBlob.to_string(), "binaryblob");
+        assert_eq!(MappingType::DateTime.to_string(), "datetime");
+        assert_eq!(MappingType::DoubleArray.to_string(), "doublearray");
+        assert_eq!(MappingType::IntegerArray.to_string(), "integerarray");
+        assert_eq!(MappingType::BooleanArray.to_string(), "booleanarray");
+        assert_eq!(
+            MappingType::LongIntegerArray.to_string(),
+            "longintegerarray"
+        );
+        assert_eq!(MappingType::StringArray.to_string(), "stringarray");
+        assert_eq!(MappingType::BinaryBlobArray.to_string(), "binaryblobarray");
+        assert_eq!(MappingType::DateTimeArray.to_string(), "datetimearray");
+    }
+
+    #[test]
+    fn reliability_functions() {
+        assert_eq!(Reliability::Unreliable.to_string(), "unreliable");
+        assert_eq!(Reliability::Guaranteed.to_string(), "guaranteed");
+        assert_eq!(Reliability::Unique.to_string(), "unique");
+        assert!(Reliability::Unreliable.is_unreliable());
+        assert!(Reliability::Guaranteed.is_guaranteed());
+        assert!(Reliability::Unique.is_unique());
+    }
+
+    #[test]
+    fn retention_functions() {
+        assert_eq!(Retention::Discard.to_string(), "discard");
+        assert_eq!(Retention::Volatile.to_string(), "volatile");
+        assert_eq!(Retention::Stored.to_string(), "stored");
+    }
+
+    #[test]
+    fn database_retention_policy_functions() {
+        assert_eq!(DatabaseRetentionPolicy::NoTtl.to_string(), "no_ttl");
+        assert_eq!(DatabaseRetentionPolicy::UseTtl.to_string(), "use_ttl");
     }
 }

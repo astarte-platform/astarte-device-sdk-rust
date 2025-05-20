@@ -30,7 +30,9 @@ use crate::{
     interface::{
         name::InterfaceName, version::InterfaceVersion, AggregationIndividual, MappingVec, Schema,
     },
-    mapping::{datastream::individual::DatastreamIndividualMapping, path::MappingPath},
+    mapping::{
+        datastream::individual::DatastreamIndividualMapping, path::MappingPath, MappingError,
+    },
     schema::{Aggregation, InterfaceJson, InterfaceType, Mapping, Ownership},
 };
 
@@ -149,8 +151,8 @@ where
             .mappings
             .into_iter()
             .map(DatastreamIndividualMapping::try_from)
-            .collect::<Result<Vec<_>, Error>>()
-            .and_then(|value| MappingVec::try_from(value).map_err(Error::Mapping))?;
+            .collect::<Result<Vec<DatastreamIndividualMapping>, MappingError>>()
+            .and_then(MappingVec::try_from)?;
 
         Ok(Self {
             name: name.into_string(),

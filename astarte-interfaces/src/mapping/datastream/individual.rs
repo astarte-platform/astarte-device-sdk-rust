@@ -26,9 +26,8 @@ use std::borrow::Cow;
 use cfg_if::cfg_if;
 
 use crate::{
-    error::Error,
     interface::Retention,
-    mapping::{endpoint::Endpoint, invalid_filed, InterfaceMapping},
+    mapping::{endpoint::Endpoint, invalid_filed, InterfaceMapping, MappingError},
     schema::{Mapping, MappingType, Reliability},
 };
 
@@ -106,7 +105,7 @@ impl<T> TryFrom<Mapping<T>> for DatastreamIndividualMapping
 where
     T: AsRef<str> + Into<String>,
 {
-    type Error = Error;
+    type Error = MappingError;
 
     fn try_from(value: Mapping<T>) -> Result<Self, Self::Error> {
         let endpoint = Endpoint::try_from(value.endpoint.as_ref())?;
@@ -169,5 +168,86 @@ impl<'a> From<&'a DatastreamIndividualMapping> for Mapping<Cow<'a, str>> {
             description,
             doc,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::schema::{self};
+
+    use super::*;
+
+    #[test]
+    fn getters_succes() {
+        let mapping_type = MappingType::Boolean;
+        let reliability = Reliability::Guaranteed;
+        let retention_expiry = Duration::from_secs(420);
+        let database_ttl = Duration::from_secs(360);
+        let description = Some("Individual mapping description");
+        let doc = Some("Individual mapping doc");
+        let mapping = Mapping {
+            endpoint: "/individual/path",
+            mapping_type,
+            reliability: Some(reliability),
+            explicit_timestamp: Some(true),
+            retention: Some(schema::Retention::Stored),
+            expiry: Some(retention_expiry.as_secs().try_into().unwrap()),
+            database_retention_policy: Some(schema::DatabaseRetentionPolicy::UseTtl),
+            database_retention_ttl: Some(database_ttl.as_secs().try_into().unwrap()),
+            allow_unset: None,
+            description,
+            doc,
+        };
+
+        let individual_mapping = DatastreamIndividualMapping::try_from(mapping).unwrap();
+
+        let exp = Endpoint::try_from("/individual/path").unwrap();
+        assert_eq!(*individual_mapping.endpoint(), exp);
+        assert_eq!(individual_mapping.mapping_type(), mapping_type);
+        assert_eq!(individual_mapping.reliability(), reliability);
+        assert!(individual_mapping.explicit_timestamp());
+        let exp_retention = Retention::Stored {
+            expiry: Some(retention_expiry),
+        };
+        assert_eq!(individual_mapping.retention(), exp_retention);
+        #[cfg(feature = "server-fields")]
+        {
+            let exp = crate::interface::DatabaseRetention::UseTtl { ttl: database_ttl };
+            assert_eq!(individual_mapping.database_retention(), exp);
+        }
+        #[cfg(feature = "doc-fields")]
+        {
+            assert_eq!(description, individual_mapping.description());
+            assert_eq!(doc, individual_mapping.doc());
+        }
+    }
+
+    #[cfg(feature = "strict")]
+    #[test]
+    fn mapping_error_invalid_fields() {
+        let mapping = Mapping {
+            endpoint: "/individual/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: Some(true),
+            description: None,
+            doc: None,
+        };
+
+        let err = DatastreamIndividualMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "allow_unset",
+                interface_type: crate::schema::InterfaceType::Datastream,
+            }
+        ));
     }
 }

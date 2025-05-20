@@ -23,7 +23,7 @@ use endpoint::EndpointError;
 use self::endpoint::Endpoint;
 
 use crate::interface::MAX_INTERFACE_MAPPINGS;
-use crate::schema::MappingType;
+use crate::schema::{MappingType, SchemaError};
 
 pub mod collection;
 pub mod datastream;
@@ -57,6 +57,9 @@ pub enum MappingError {
     /// The object interface endpoints should have at least 2 levels.
     #[error("object endpoint should have at least 2 levels: '{0}'")]
     TooShortForObject(String),
+    /// The interface schema is invalid for mapping.
+    #[error("invalid schema for mapping")]
+    Schema(#[from] SchemaError),
     /// A filed is set on an interface of an invalid type.
     #[cfg(feature = "strict")]
     #[cfg_attr(docsrs, doc(cfg(feature = "strict")))]
@@ -89,7 +92,7 @@ macro_rules! invalid_filed {
                 return Err($crate::mapping::MappingError::InvalidField{
                     field: $field,
                     interface_type: $crate::schema::InterfaceType::Datastream,
-                }.into());
+                });
             } else {
                 tracing::warn!("property cannot have $field, ignoring");
             }

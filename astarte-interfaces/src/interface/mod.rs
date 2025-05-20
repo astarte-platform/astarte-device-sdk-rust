@@ -625,12 +625,15 @@ mod tests {
     };
 
     const E2E_DEVICE_PROPERTY: &str= include_str!("../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json");
+    const E2E_DEVICE_PROPERTY_NAME: &str = "org.astarte-platform.rust.e2etest.DeviceProperty";
     const E2E_DEVICE_AGGREGATE: &str = include_str!(
         "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
     );
+    const E2E_DEVICE_AGGREGATE_NAME: &str = "org.astarte-platform.rust.e2etest.DeviceAggregate";
     const E2E_DEVICE_DATASTREAM: &str = include_str!(
         "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
+    const E2E_DEVICE_DATASTREAM_NAME: &str = "org.astarte-platform.rust.e2etest.DeviceDatastream";
 
     // The mappings are sorted alphabetically by endpoint, so we can confront them
     #[cfg(feature = "doc-fields")]
@@ -788,9 +791,14 @@ mod tests {
     fn test_properties() {
         let interface = Interface::from_str(PROPERTIES_JSON).unwrap();
 
-        let exp = InterfaceVersion::try_new(1, 0).unwrap();
-
+        let exp = Properties::from_str(PROPERTIES_JSON).unwrap();
+        assert_eq!(
+            *interface.inner(),
+            InterfaceTypeAggregation::Properties(exp)
+        );
         assert_eq!(interface.interface_type(), InterfaceType::Properties);
+
+        let exp = InterfaceVersion::try_new(1, 0).unwrap();
         assert_eq!(interface.version(), exp);
         assert_eq!(interface.version_major(), 1);
         assert_eq!(interface.version_minor(), 0);
@@ -967,5 +975,61 @@ mod tests {
 
         let interface = interface.as_datastream_individual().unwrap();
         assert_eq!(interface.mappings_len(), 14);
+    }
+
+    #[test]
+    fn test_interface_getters() {
+        let version = InterfaceVersion::try_new(0, 1).unwrap();
+
+        let interface = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+
+        assert_eq!(interface.interface_name(), E2E_DEVICE_DATASTREAM_NAME);
+        assert_eq!(interface.version(), version);
+        assert_eq!(interface.version_major(), 0);
+        assert_eq!(interface.version_minor(), 1);
+        assert_eq!(interface.interface_type(), InterfaceType::Datastream);
+        assert_eq!(interface.ownership(), Ownership::Device);
+        assert_eq!(interface.aggregation(), Aggregation::Individual);
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(interface.description(), Some("Test datastream interface."));
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(
+            interface.doc(),
+            Some("Test interface used to test datastream.")
+        );
+
+        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+
+        assert_eq!(interface.interface_name(), E2E_DEVICE_AGGREGATE_NAME);
+        assert_eq!(interface.version(), version);
+        assert_eq!(interface.version_major(), 0);
+        assert_eq!(interface.version_minor(), 1);
+        assert_eq!(interface.interface_type(), InterfaceType::Datastream);
+        assert_eq!(interface.ownership(), Ownership::Device);
+        assert_eq!(interface.aggregation(), Aggregation::Object);
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(interface.description(), Some("Test aggregate interface."));
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(
+            interface.doc(),
+            Some("Test interface used to test aggregates.")
+        );
+
+        let interface = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
+
+        assert_eq!(interface.interface_name(), E2E_DEVICE_PROPERTY_NAME);
+        assert_eq!(interface.version(), version);
+        assert_eq!(interface.version_major(), 0);
+        assert_eq!(interface.version_minor(), 1);
+        assert_eq!(interface.interface_type(), InterfaceType::Properties);
+        assert_eq!(interface.ownership(), Ownership::Device);
+        assert_eq!(interface.aggregation(), Aggregation::Individual);
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(interface.description(), Some("Test properties interface."));
+        #[cfg(feature = "doc-fields")]
+        assert_eq!(
+            interface.doc(),
+            Some("Test interface used to test properties.")
+        );
     }
 }

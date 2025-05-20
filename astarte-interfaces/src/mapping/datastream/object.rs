@@ -86,3 +86,61 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn getters_success() {
+        let description = Some("Object mapping description");
+        let doc = Some("Object mapping doc");
+        let mapping_type = MappingType::Boolean;
+        let mapping = Mapping {
+            endpoint: "/object/path",
+            mapping_type,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description,
+            doc,
+        };
+
+        let obj_mapping = DatastreamObjectMapping::try_from(mapping).unwrap();
+
+        let exp = Endpoint::try_from("/object/path").unwrap();
+        assert_eq!(*obj_mapping.endpoint(), exp);
+        assert_eq!(obj_mapping.mapping_type(), mapping_type);
+        #[cfg(feature = "doc-fields")]
+        {
+            assert_eq!(description, obj_mapping.description());
+            assert_eq!(doc, obj_mapping.doc());
+        }
+    }
+
+    #[test]
+    fn mapping_error_to_short() {
+        let mapping = Mapping {
+            endpoint: "/tooShort",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = DatastreamObjectMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(err, MappingError::TooShortForObject(_)));
+    }
+}

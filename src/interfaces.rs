@@ -496,8 +496,9 @@ pub(crate) mod tests {
 
     use crate::builder::DeviceBuilder;
     use crate::test::{
-        E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME,
-        E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME, E2E_SERVER_PROPERTY,
+        E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_DATASTREAM,
+        E2E_DEVICE_DATASTREAM_NAME, E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME,
+        E2E_SERVER_PROPERTY,
     };
 
     pub(crate) const DEVICE_OBJECT: &str = r#"
@@ -734,5 +735,44 @@ pub(crate) mod tests {
             .get_property(E2E_DEVICE_DATASTREAM_NAME, &path)
             .unwrap_err();
         assert!(matches!(err, Error::InterfaceType { .. }));
+    }
+
+    #[test]
+    fn get_object() {
+        let exp = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        let interfaces = Interfaces::from_iter([
+            exp.clone(),
+            Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
+        ]);
+
+        let path = MappingPath::try_from("/sendor_1").unwrap();
+
+        let object = interfaces
+            .get_object(E2E_DEVICE_AGGREGATE_NAME, &path)
+            .unwrap();
+
+        let exp = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        assert_eq!(*object, exp);
+
+        // is object path
+        let wron_path = MappingPath::try_from("/foo/bar").unwrap();
+        let err = interfaces
+            .get_object(E2E_DEVICE_AGGREGATE_NAME, &wron_path)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Validation(UserValidationError::ObjectPath { .. })
+        ));
+
+        // Not found
+        let err = interfaces
+            .get_object(E2E_DEVICE_DATASTREAM_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        // Type
+        let err = interfaces
+            .get_object(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceType { .. }), "{err:?}");
     }
 }
