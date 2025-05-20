@@ -161,3 +161,8 @@ for p in "${list[@]}"; do
         cp -v "$COVERAGE_OUT_DIR/$p/lcov" "$PWD/coverage-$p.info"
     fi
 done
+
+# Fixes the profraw being detected by codecov
+if [[ -n "${EXPORT_FOR_CI:-}" ]]; then
+    rm -rf "$CARGO_TARGET_DIR"
+fi
