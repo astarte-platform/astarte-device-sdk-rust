@@ -24,7 +24,6 @@
 use std::{borrow::Cow, fmt::Display, sync::OnceLock};
 
 use regex::Regex;
-use serde::{Deserialize, Deserializer, Serialize};
 
 /// Error when parsing an [`InterfaceName`].
 #[derive(Debug, thiserror::Error)]
@@ -33,8 +32,8 @@ pub enum InterfaceNameError {
     #[error("name cannot be empty")]
     Empty,
     /// Interface name must be at most 128 characters
-    #[error("it must be shorter than 128 characters: {0}")]
-    TooLong(String),
+    #[error("it must be shorter than 128 characters, was {0} characters long")]
+    TooLong(usize),
     /// Interface name must be an alphanumeric reverse domain
     #[error("must be an alphanumeric reverse domain: {0}")]
     Invalid(String),
@@ -62,7 +61,7 @@ impl<T> InterfaceName<T> {
         }
 
         if value_str.len() > 128 {
-            return Err(InterfaceNameError::TooLong(value_str.to_string()));
+            return Err(InterfaceNameError::TooLong(value_str.len()));
         }
 
         let rgx = RE.get_or_init(|| {
@@ -122,34 +121,6 @@ impl<'a> TryFrom<Cow<'a, str>> for InterfaceName<Cow<'a, str>> {
     }
 }
 
-impl<T> Serialize for InterfaceName<T>
-where
-    T: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.inner.serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for InterfaceName<T>
-where
-    T: Deserialize<'de> + AsRef<str>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        use serde::de::Error;
-
-        let value = T::deserialize(deserializer)?;
-
-        InterfaceName::from_str_ref(value).map_err(D::Error::custom)
-    }
-}
-
 impl<T> AsRef<str> for InterfaceName<T>
 where
     T: AsRef<str>,
@@ -179,5 +150,22 @@ impl<'a> From<&'a InterfaceName> for InterfaceName<Cow<'a, str>> {
 impl Display for InterfaceName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_validate_str() {
+        let err = InterfaceName::from_str_ref("").unwrap_err();
+        assert!(matches!(err, InterfaceNameError::Empty));
+
+        let err = InterfaceName::from_str_ref("A".repeat(129)).unwrap_err();
+        assert!(matches!(err, InterfaceNameError::TooLong(129)));
+
+        let err = InterfaceName::from_str_ref("09com.example").unwrap_err();
+        assert!(matches!(err, InterfaceNameError::Invalid(..)));
     }
 }

@@ -135,3 +135,228 @@ impl<'a> From<&'a PropertiesMapping> for Mapping<Cow<'a, str>> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn getters_success() {
+        let mapping_type = MappingType::Boolean;
+        let description = Some("Property mapping description");
+        let doc = Some("Property mapping doc");
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: Some(true),
+            description,
+            doc,
+        };
+
+        let prop_mapping = PropertiesMapping::try_from(mapping).unwrap();
+        let exp_endpoint = Endpoint::try_from("/property/path").unwrap();
+        assert_eq!(*prop_mapping.endpoint(), exp_endpoint);
+        assert_eq!(prop_mapping.mapping_type(), mapping_type);
+        assert!(prop_mapping.allow_unset());
+        #[cfg(feature = "doc-fields")]
+        {
+            assert_eq!(prop_mapping.description(), description);
+            assert_eq!(prop_mapping.doc(), doc);
+        }
+    }
+
+    #[test]
+    fn from_and_into() {
+        let description = Some(Cow::Borrowed("Property mapping description"));
+        let doc = Some(Cow::Borrowed("Property mapping doc"));
+        let mapping = Mapping {
+            endpoint: Cow::Borrowed("/property/path"),
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: Some(true),
+            description,
+            doc,
+        };
+
+        let prop_mapping = PropertiesMapping::try_from(mapping.clone()).unwrap();
+
+        let exp = PropertiesMapping {
+            endpoint: Endpoint::try_from("/property/path").unwrap(),
+            mapping_type: MappingType::Boolean,
+            allow_unset: true,
+            #[cfg(feature = "doc-fields")]
+            description: mapping.description.as_ref().map(|v| v.to_string()),
+            #[cfg(feature = "doc-fields")]
+            doc: mapping.doc.as_ref().map(|v| v.to_string()),
+        };
+        assert_eq!(prop_mapping, exp);
+
+        let cov_mapping: Mapping<Cow<str>> = (&prop_mapping).into();
+
+        #[cfg(not(feature = "doc-fields"))]
+        let mut mapping = mapping;
+        #[cfg(not(feature = "doc-fields"))]
+        {
+            mapping.description.take();
+            mapping.doc.take();
+        }
+
+        assert_eq!(cov_mapping, mapping);
+    }
+
+    #[cfg(feature = "strict")]
+    #[test]
+    fn mapping_error_invalid_fields() {
+        use crate::schema::{DatabaseRetentionPolicy, InterfaceType, Reliability, Retention};
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: Some(Reliability::Guaranteed),
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "reliability",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: Some(true),
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "explicit_timestamp",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: Some(Retention::Stored),
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "retention",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: Some(420),
+            database_retention_policy: None,
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "expiry",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: Some(DatabaseRetentionPolicy::NoTtl),
+            database_retention_ttl: None,
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "database_retention_policy",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+
+        let mapping = Mapping {
+            endpoint: "/property/path",
+            mapping_type: MappingType::Boolean,
+            reliability: None,
+            explicit_timestamp: None,
+            retention: None,
+            expiry: None,
+            database_retention_policy: None,
+            database_retention_ttl: Some(420),
+            allow_unset: None,
+            description: None,
+            doc: None,
+        };
+
+        let err = PropertiesMapping::try_from(mapping).unwrap_err();
+        assert!(matches!(
+            err,
+            MappingError::InvalidField {
+                field: "database_retention_ttl",
+                interface_type: InterfaceType::Properties
+            }
+        ));
+    }
+}

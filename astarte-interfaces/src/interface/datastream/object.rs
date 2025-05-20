@@ -246,6 +246,17 @@ where
     type Error = Error;
 
     fn try_from(value: InterfaceJson<T>) -> Result<Self, Self::Error> {
+        if value.interface_type != InterfaceType::Datastream
+            || value.aggregation != Some(Aggregation::Object)
+        {
+            return Err(Error::InterfaceConversion {
+                exp_type: InterfaceType::Datastream,
+                exp_aggregation: Aggregation::Object,
+                got_type: value.interface_type,
+                got_aggregation: value.aggregation.unwrap_or_default(),
+            });
+        }
+
         let name = InterfaceName::from_str_ref(value.interface_name)?;
         let version = InterfaceVersion::try_new(value.version_major, value.version_minor)?;
 
@@ -362,5 +373,137 @@ impl FromStr for DatastreamObject {
         let interface: InterfaceJson<Cow<str>> = serde_json::from_str(s)?;
 
         Self::try_from(interface)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use pretty_assertions::assert_eq;
+
+    use crate::schema::MappingType;
+    use crate::Endpoint;
+
+    use super::*;
+
+    #[test]
+    fn should_parse_str() {
+        let object = DatastreamObject::from_str(
+            r#"{
+                "interface_name": "com.example.Example",
+                "version_major": 0,
+                "version_minor": 1,
+                "type": "datastream",
+                "aggregation": "object",
+                "ownership": "server",
+                "description": "The description of the\tinterface",
+                "doc": "The documentation of the\tinterface",
+                "mappings": [{
+                    "endpoint": "/prefix/path",
+                    "type": "boolean",
+                    "reliability": "unique",
+                    "explicit_timestamp": true,
+                    "retention": "stored",
+                    "expiry": 30,
+                    "database_retention_policy": "use_ttl",
+                    "database_retention_ttl": 420,
+                    "description": "The description of the\tmapping",
+                    "doc": "The documentation of the\tmapping"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let exp_mapping = DatastreamObjectMapping {
+            endpoint: Endpoint::try_from("/prefix/path").unwrap(),
+            mapping_type: MappingType::Boolean,
+            #[cfg(feature = "doc-fields")]
+            description: Some("The description of the\tmapping".to_string()),
+            #[cfg(feature = "doc-fields")]
+            doc: Some("The documentation of the\tmapping".to_string()),
+        };
+
+        let exp = DatastreamObject {
+            name: InterfaceName::try_from("com.example.Example".to_string()).unwrap(),
+            version: InterfaceVersion::try_new(0, 1).unwrap(),
+            ownership: Ownership::Server,
+            reliability: Reliability::Unique,
+            explicit_timestamp: true,
+            retention: Retention::Stored {
+                expiry: Some(Duration::from_secs(30)),
+            },
+            mappings: MappingVec::try_from(vec![exp_mapping.clone()]).unwrap(),
+            #[cfg(feature = "server-fields")]
+            database_retention: crate::interface::DatabaseRetention::UseTtl {
+                ttl: Duration::from_secs(420),
+            },
+            #[cfg(feature = "doc-fields")]
+            description: Some("The description of the\tinterface".to_string()),
+            #[cfg(feature = "doc-fields")]
+            doc: Some("The documentation of the\tinterface".to_string()),
+        };
+
+        assert_eq!(object, exp);
+
+        // Just for coverage
+        assert_eq!(object.name(), object.name.as_str());
+        assert_eq!(*object.interface_name(), object.name);
+        assert_eq!(object.version(), object.version);
+        assert_eq!(object.version_major(), object.version.version_major());
+        assert_eq!(object.version_minor(), object.version.version_minor());
+        assert_eq!(object.ownership(), object.ownership);
+        assert_eq!(object.retention(), object.retention);
+        assert_eq!(object.reliability(), object.reliability);
+        assert_eq!(object.explicit_timestamp(), object.explicit_timestamp);
+        assert_eq!(object.interface_type(), InterfaceType::Datastream);
+        assert_eq!(object.aggregation(), Aggregation::Object);
+        #[cfg(feature = "server-fields")]
+        assert_eq!(object.database_retention(), object.database_retention);
+        #[cfg(feature = "doc-fields")]
+        {
+            assert_eq!(object.doc(), object.doc.as_deref());
+            assert_eq!(object.description(), object.description.as_deref());
+        }
+
+        let path = MappingPath::try_from("/prefix").unwrap();
+        assert!(object.is_object_path(&path));
+
+        assert_eq!(*object.mapping("path").unwrap(), exp_mapping);
+
+        let mapping = object.iter_mappings().next().unwrap();
+        assert_eq!(*mapping, exp_mapping);
+
+        let exp_interface_mapping = Mapping::<Cow<'_, str>> {
+            endpoint: mapping.endpoint.to_string().into(),
+            mapping_type: mapping.mapping_type,
+            reliability: object.reliability.into(),
+            explicit_timestamp: Some(object.explicit_timestamp),
+            retention: Some(object.retention.into()),
+            expiry: object.retention.as_expiry_seconds(),
+            allow_unset: None,
+            #[cfg(feature = "doc-fields")]
+            description: object.description.as_ref().map(Cow::from),
+            #[cfg(feature = "doc-fields")]
+            doc: object.doc.as_ref().map(Cow::from),
+            #[cfg(not(feature = "doc-fields"))]
+            description: None,
+            #[cfg(not(feature = "doc-fields"))]
+            doc: None,
+            #[cfg(feature = "server-fields")]
+            database_retention_policy: Some(object.database_retention.into()),
+            #[cfg(feature = "server-fields")]
+            database_retention_ttl: object.database_retention.as_ttl_secs(),
+            #[cfg(not(feature = "server-fields"))]
+            database_retention_policy: None,
+            #[cfg(not(feature = "server-fields"))]
+            database_retention_ttl: None,
+        };
+        assert_eq!(
+            object.iter_interface_mappings().next().unwrap(),
+            exp_interface_mapping
+        );
+
+        assert_eq!(object.to_string(), format!("{}:{}", exp.name, exp.version));
     }
 }

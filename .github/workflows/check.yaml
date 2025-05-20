@@ -79,10 +79,12 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
-      - name: cargo hack test
+      - name: cargo hack test sdk
         # Doesn't test all combination of features, but the space is becoming too large and it takes
         # too long
-        run: cargo hack --each-feature test --locked
+        run: cargo hack --each-feature test --locked -p astarte-device-sdk
+      - name: cargo hack test interfaces
+        run: cargo hack --each-feature test --locked -p astarte-interfaces
   minimal-versions:
     runs-on: ubuntu-24.04
     steps:

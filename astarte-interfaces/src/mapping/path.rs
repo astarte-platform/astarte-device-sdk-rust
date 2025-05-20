@@ -120,7 +120,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_mappings() {
+    fn getters_success() {
+        let value = "/some/path";
+        let path = MappingPath::try_from(value).unwrap();
+
+        assert_eq!(path.as_str(), value);
+        assert_eq!(path.len(), 2);
+        assert!(!path.is_empty());
+        assert_eq!(path.to_string(), value);
+    }
+
+    #[test]
+    fn parse_mappings_success() {
         let cases = [
             "/foo/value",
             "/bar/value",
@@ -132,5 +143,12 @@ mod tests {
         for case in cases {
             MappingPath::try_from(case).unwrap_or_else(|err| panic!("failed for {case}: {err}"));
         }
+    }
+
+    #[test]
+    fn parse_mappings_error() {
+        let err = MappingPath::try_from("/").unwrap_err();
+
+        assert!(matches!(err, MappingPathError::EmptyLevel(_)), "{err:?}");
     }
 }
