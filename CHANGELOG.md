@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Introduce `webpki` feature to use Mozilla webpki root certificates rather than the native ones
   [#396](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/396).
 - Add the AstarteObject struct for Object Datastream [#430].
+- Allow setting the sqlite database size
+  [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
 
 ### Changed
 

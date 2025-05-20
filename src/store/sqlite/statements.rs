@@ -21,7 +21,7 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
+use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
 
 use crate::{
     interface::Ownership,
@@ -30,8 +30,9 @@ use crate::{
 };
 
 use super::{
-    into_stored_type, wrap_sync_call, PropRecord, RecordOwnership, SqliteError, StoredRecord,
-    SQLITE_BUSY_TIMEOUT,
+    into_stored_type, set_pragma, wrap_sync_call, PropRecord, RecordOwnership, SqliteError,
+    StoredRecord, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE, SQLITE_DEFAULT_DB_MAX_SIZE,
+    SQLITE_JOURNAL_SIZE_LIMIT,
 };
 
 #[cfg(feature = "sqlite-trace")]
@@ -58,6 +59,8 @@ impl WriteConnection {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
+        let db_created = !db_file.as_ref().exists();
+
         let connection = wrap_sync_call(|| Connection::open_with_flags(&db_file, flags))
             .map_err(SqliteError::Connection)?;
 
@@ -69,23 +72,40 @@ impl WriteConnection {
 
         let connection = Self(connection);
 
-        connection.set_pragma("foreign_keys", true)?;
-        connection.set_pragma("busy_timeout", SQLITE_BUSY_TIMEOUT)?;
-        connection.set_pragma("journal_mode", "WALL")?;
+        if db_created {
+            let page_size: u64 = connection.get_pragma("page_size")?;
+            let pages = SQLITE_DEFAULT_DB_MAX_SIZE.calculate_max_page_count(page_size);
+            set_pragma(&connection, "max_page_count", pages)?;
+        }
+
+        set_pragma(&connection, "foreign_keys", true)?;
+        set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
+        set_pragma(&connection, "synchronous", "NORMAL")?;
+        // Reduces the size of the database
+        set_pragma(&connection, "auto_vacuum", "INCREMENTAL")?;
+        set_pragma(&connection, "temp_store", "MEMORY")?;
+        set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
+        set_pragma(&connection, "journal_mode", "WAL")?;
+        set_pragma(&connection, "journal_size_limit", SQLITE_JOURNAL_SIZE_LIMIT)?;
+
+        // perform vacuum
+        connection.execute("VACUUM", [])?;
 
         Ok(connection)
     }
 
-    pub(crate) fn set_pragma<V>(
-        &self,
-        pragma_name: &str,
-        pragma_value: V,
-    ) -> Result<(), SqliteError>
+    /// Return db pages information
+    ///
+    /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
+    pub(crate) fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, SqliteError>
     where
-        V: ToSql,
+        T: FromSql,
     {
-        wrap_sync_call(|| self.pragma_update(None, pragma_name, pragma_value))
-            .map_err(SqliteError::Option)
+        wrap_sync_call(|| {
+            self.0
+                .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
+        })
+        .map_err(SqliteError::Query)
     }
 
     pub(super) fn store_prop(
@@ -204,6 +224,12 @@ impl ReadConnection {
         let mut connection = connection;
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
+
+        // init read pragma
+        set_pragma(&connection, "foreign_keys", true)?;
+        set_pragma(&connection, "temp_store", "MEMORY")?;
+        set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
+        set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
 
         Ok(Self(connection))
     }
@@ -384,5 +410,49 @@ impl Deref for ReadConnection {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::store::{
+        sqlite::{const_non_zero, Size},
+        SqliteStore,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn custom_journal_size_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
+
+        let journal_size: u64 = {
+            let connection = db.writer.lock().await;
+            connection.get_pragma("journal_size_limit").unwrap()
+        };
+
+        // check that journal size has been set to default
+        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT);
+
+        let new_journal_size = Size::MiB(const_non_zero(100)).to_bytes();
+
+        // change journal size
+        {
+            let connection = db.writer.lock().await;
+            set_pragma(&connection, "journal_size_limit", new_journal_size).unwrap();
+        }
+
+        assert!(dir.path().join("prop-cache.db").exists());
+
+        // reopen the db connection resets the journal size
+        let db: SqliteStore = SqliteStore::connect(dir.as_ref()).await.unwrap();
+
+        let journal_size: u64 = {
+            let connection = db.writer.lock().await;
+            connection.get_pragma("journal_size_limit").unwrap()
+        };
+
+        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT);
     }
 }
