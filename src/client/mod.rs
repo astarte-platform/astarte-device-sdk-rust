@@ -34,7 +34,7 @@ use crate::{
     event::DeviceEvent,
     interface::{mapping::path::MappingPath, reference::MappingRef},
     store::wrapper::StoreWrapper,
-    types::AstarteType,
+    types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject},
     Error,
 };
@@ -132,7 +132,7 @@ pub trait Client: Clone {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     /// use chrono::{TimeZone, Utc};
     ///
@@ -153,7 +153,7 @@ pub trait Client: Clone {
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Send an individual datastream on an interface, with an explicit timestamp.
@@ -161,7 +161,7 @@ pub trait Client: Clone {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     /// use chrono::{TimeZone, Utc};
     ///
@@ -183,7 +183,7 @@ pub trait Client: Clone {
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
@@ -204,7 +204,7 @@ pub trait Client: Clone {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     /// # #[cfg(feature = "derive")]
     /// use astarte_device_sdk::IntoAstarteObject;
@@ -248,7 +248,7 @@ pub trait Client: Clone {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     /// use chrono::{TimeZone, Utc};
     ///
@@ -269,7 +269,7 @@ pub trait Client: Clone {
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// Unset a device property.
@@ -277,7 +277,7 @@ pub trait Client: Clone {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -405,7 +405,7 @@ where
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> Result<(), Error> {
         let path = MappingPath::try_from(mapping_path)?;
 
@@ -417,7 +417,7 @@ where
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), Error> {
         let mapping = MappingPath::try_from(mapping_path)?;
@@ -430,7 +430,7 @@ where
         &mut self,
         interface_name: &str,
         mapping_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> Result<(), Error> {
         trace!("setting property {}{}", interface_name, mapping_path);
 
@@ -549,7 +549,7 @@ pub(crate) mod tests {
             interface: "interface".to_string(),
             path: "path".to_string(),
             data: Value::Individual {
-                data: AstarteType::LongInteger(42),
+                data: AstarteData::LongInteger(42),
                 timestamp: Utc::now(),
             },
         };

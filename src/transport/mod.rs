@@ -36,7 +36,7 @@ use crate::{
     interfaces::{self, Interfaces},
     retention::{PublishInfo, RetentionId},
     store::StoreCapabilities,
-    types::AstarteType,
+    types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
     Interface, Timestamp,
 };
@@ -163,14 +163,14 @@ pub(crate) trait Receive {
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteType>, TransportError>;
+    ) -> Result<Option<AstarteData>, TransportError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteData, Option<Timestamp>), TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -245,7 +245,7 @@ mod test {
     use crate::error::AggregationError;
     use crate::{
         interface::{mapping::path::MappingPath, reference::MappingRef},
-        types::AstarteType,
+        types::AstarteData,
         validate::{ValidatedIndividual, ValidatedObject},
         Interface,
     };
@@ -275,7 +275,7 @@ mod test {
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<ValidatedIndividual, crate::Error>
     where
-        D: TryInto<AstarteType> + Send,
+        D: TryInto<AstarteData> + Send,
         D::Error: Debug,
     {
         let individual = data.try_into().unwrap();

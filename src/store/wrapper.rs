@@ -20,7 +20,7 @@
 
 use tracing::trace;
 
-use crate::types::AstarteType;
+use crate::types::AstarteData;
 
 use super::{
     error::StoreError, OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore,
@@ -73,7 +73,7 @@ where
 {
     type Err = StoreError;
 
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
@@ -81,7 +81,7 @@ where
         &self,
         property: &PropertyMapping<'_>,
         interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         self.store
             .load_prop(property, interface_major)
             .await

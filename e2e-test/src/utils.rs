@@ -26,7 +26,7 @@ use chrono::{DateTime, Utc};
 use eyre::bail;
 use eyre::eyre;
 
-use astarte_device_sdk::types::AstarteType;
+use astarte_device_sdk::types::AstarteData;
 use serde_json::Value;
 use tracing::warn;
 
@@ -72,49 +72,49 @@ where
     bail!("to many attempts")
 }
 
-pub(crate) fn check_astarte_value(data: &AstarteType, value: &Value) -> eyre::Result<()> {
+pub(crate) fn check_astarte_value(data: &AstarteData, value: &Value) -> eyre::Result<()> {
     let eq = match data {
-        AstarteType::Double(exp) => value.as_f64().is_some_and(|v| v == *exp),
-        AstarteType::Integer(exp) => value.as_i64().is_some_and(|v| v == i64::from(*exp)),
-        AstarteType::Boolean(exp) => value.as_bool().is_some_and(|v| v == *exp),
-        AstarteType::LongInteger(exp) => value.as_i64().is_some_and(|v| v == *exp),
-        AstarteType::String(exp) => value.as_str().is_some_and(|v| v == exp),
-        AstarteType::BinaryBlob(exp) => value
+        AstarteData::Double(exp) => value.as_f64().is_some_and(|v| v == *exp),
+        AstarteData::Integer(exp) => value.as_i64().is_some_and(|v| v == i64::from(*exp)),
+        AstarteData::Boolean(exp) => value.as_bool().is_some_and(|v| v == *exp),
+        AstarteData::LongInteger(exp) => value.as_i64().is_some_and(|v| v == *exp),
+        AstarteData::String(exp) => value.as_str().is_some_and(|v| v == exp),
+        AstarteData::BinaryBlob(exp) => value
             .as_str()
             .map(base64_decode)
             .transpose()?
             .is_some_and(|blob| blob == *exp),
-        AstarteType::DateTime(exp) => value
+        AstarteData::DateTime(exp) => value
             .as_str()
             .map(Timestamp::from_str)
             .transpose()?
             .is_some_and(|date_time| date_time == *exp),
-        AstarteType::DoubleArray(exp) => {
+        AstarteData::DoubleArray(exp) => {
             let arr: Vec<f64> = serde_json::from_value(value.clone())?;
 
             arr == *exp
         }
-        AstarteType::IntegerArray(exp) => {
+        AstarteData::IntegerArray(exp) => {
             let arr: Vec<i32> = serde_json::from_value(value.clone())?;
 
             arr == *exp
         }
-        AstarteType::BooleanArray(exp) => {
+        AstarteData::BooleanArray(exp) => {
             let arr: Vec<bool> = serde_json::from_value(value.clone())?;
 
             arr == *exp
         }
-        AstarteType::LongIntegerArray(exp) => {
+        AstarteData::LongIntegerArray(exp) => {
             let arr: Vec<i64> = serde_json::from_value(value.clone())?;
 
             arr == *exp
         }
-        AstarteType::StringArray(exp) => {
+        AstarteData::StringArray(exp) => {
             let arr: Vec<String> = serde_json::from_value(value.clone())?;
 
             arr == *exp
         }
-        AstarteType::BinaryBlobArray(exp) => {
+        AstarteData::BinaryBlobArray(exp) => {
             let arr: Vec<String> = serde_json::from_value(value.clone())?;
             let arr = arr
                 .into_iter()
@@ -123,7 +123,7 @@ pub(crate) fn check_astarte_value(data: &AstarteType, value: &Value) -> eyre::Re
 
             arr == *exp
         }
-        AstarteType::DateTimeArray(exp) => {
+        AstarteData::DateTimeArray(exp) => {
             let arr: Vec<String> = serde_json::from_value(value.clone())?;
             let arr = arr
                 .into_iter()
@@ -141,26 +141,26 @@ pub(crate) fn check_astarte_value(data: &AstarteType, value: &Value) -> eyre::Re
     }
 }
 
-pub(crate) fn convert_type_to_json(data: &AstarteType) -> serde_json::Value {
+pub(crate) fn convert_type_to_json(data: &AstarteData) -> serde_json::Value {
     match data {
-        AstarteType::Double(v) => Value::from(f64::from(*v)),
-        AstarteType::Integer(v) => Value::from(*v),
-        AstarteType::Boolean(v) => Value::from(*v),
-        AstarteType::LongInteger(v) => Value::from(*v),
-        AstarteType::String(v) => Value::from(v.as_str()),
-        AstarteType::BinaryBlob(v) => Value::from(base64_encode(v)),
-        AstarteType::DateTime(v) => Value::from(v.to_rfc3339()),
-        AstarteType::DoubleArray(v) => {
+        AstarteData::Double(v) => Value::from(f64::from(*v)),
+        AstarteData::Integer(v) => Value::from(*v),
+        AstarteData::Boolean(v) => Value::from(*v),
+        AstarteData::LongInteger(v) => Value::from(*v),
+        AstarteData::String(v) => Value::from(v.as_str()),
+        AstarteData::BinaryBlob(v) => Value::from(base64_encode(v)),
+        AstarteData::DateTime(v) => Value::from(v.to_rfc3339()),
+        AstarteData::DoubleArray(v) => {
             Value::from(v.iter().map(|v| f64::from(*v)).collect::<Vec<f64>>())
         }
-        AstarteType::IntegerArray(v) => Value::from(v.as_slice()),
-        AstarteType::BooleanArray(v) => Value::from(v.as_slice()),
-        AstarteType::LongIntegerArray(v) => Value::from(v.as_slice()),
-        AstarteType::StringArray(v) => Value::from(v.as_slice()),
-        AstarteType::BinaryBlobArray(v) => {
+        AstarteData::IntegerArray(v) => Value::from(v.as_slice()),
+        AstarteData::BooleanArray(v) => Value::from(v.as_slice()),
+        AstarteData::LongIntegerArray(v) => Value::from(v.as_slice()),
+        AstarteData::StringArray(v) => Value::from(v.as_slice()),
+        AstarteData::BinaryBlobArray(v) => {
             Value::from(v.iter().map(base64_encode).collect::<Vec<String>>())
         }
-        AstarteType::DateTimeArray(v) => {
+        AstarteData::DateTimeArray(v) => {
             Value::from(v.iter().map(|d| d.to_rfc3339()).collect::<Vec<String>>())
         }
     }

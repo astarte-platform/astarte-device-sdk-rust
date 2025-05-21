@@ -29,7 +29,7 @@ use crate::{
         Aggregation, InterfaceTypeDef, MappingAccess, Ownership, Reliability, Retention,
     },
     store::PropertyInterface,
-    types::AstarteType,
+    types::AstarteData,
     Interface, Timestamp,
 };
 
@@ -88,14 +88,14 @@ pub(crate) struct ValidatedIndividual {
     pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
     pub(crate) retention: Retention,
-    pub(crate) data: AstarteType,
+    pub(crate) data: AstarteData,
     pub(crate) timestamp: Option<Timestamp>,
 }
 
 impl ValidatedIndividual {
     pub(crate) fn validate(
         mapping: MappingRef<'_, &Interface>,
-        data: AstarteType,
+        data: AstarteData,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedIndividual, UserValidationError> {
         let interface = mapping.interface();
@@ -235,13 +235,13 @@ pub(crate) struct ValidatedProperty {
     pub(crate) interface: String,
     pub(crate) path: String,
     pub(crate) version_major: i32,
-    pub(crate) data: AstarteType,
+    pub(crate) data: AstarteData,
 }
 
 impl ValidatedProperty {
     pub(crate) fn validate(
         mapping: MappingRef<'_, PropertyRef<'_>>,
-        data: AstarteType,
+        data: AstarteData,
     ) -> Result<Self, UserValidationError> {
         let interface = mapping.interface();
         let path = mapping.path();
@@ -386,13 +386,13 @@ mod tests {
         let aggregate = AstarteObject::from_iter([
             (
                 "double_endpoint".to_string(),
-                AstarteType::Double(37.534543.try_into().unwrap()),
+                AstarteData::Double(37.534543.try_into().unwrap()),
             ),
-            ("integer_endpoint".to_string(), AstarteType::Integer(45)),
-            ("boolean_endpoint".to_string(), AstarteType::Boolean(true)),
+            ("integer_endpoint".to_string(), AstarteData::Integer(45)),
+            ("boolean_endpoint".to_string(), AstarteData::Boolean(true)),
             (
                 "booleanarray_endpoint".to_string(),
-                AstarteType::BooleanArray(vec![true, false, true]),
+                AstarteData::BooleanArray(vec![true, false, true]),
             ),
         ]);
 
@@ -420,7 +420,7 @@ mod tests {
 
         // Test sending an aggregate (with and without timestamp)
         let err =
-            ValidatedIndividual::validate(object, AstarteType::Boolean(false), Some(Utc::now()))
+            ValidatedIndividual::validate(object, AstarteData::Boolean(false), Some(Utc::now()))
                 .unwrap_err();
 
         assert!(matches!(err, UserValidationError::Aggregation(_)))
@@ -434,7 +434,7 @@ mod tests {
 
         // Test sending an aggregate with an non existing object field
         let invalid_key = "gibberish";
-        aggregate.insert(invalid_key.to_string(), AstarteType::Boolean(false));
+        aggregate.insert(invalid_key.to_string(), AstarteData::Boolean(false));
         let res =
             ValidatedObject::validate(object, &path, aggregate, Some(Utc::now())).unwrap_err();
         assert!(matches!(
@@ -450,10 +450,10 @@ mod tests {
         let path = mapping("/boolean_endpoint");
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
-        ValidatedIndividual::validate(mapping, AstarteType::Boolean(false), Some(Utc::now()))
+        ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), Some(Utc::now()))
             .unwrap();
         // Check timestamp
-        ValidatedIndividual::validate(mapping, AstarteType::Boolean(false), None).unwrap_err();
+        ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), None).unwrap_err();
     }
 
     #[test]
@@ -464,7 +464,7 @@ mod tests {
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let err =
-            ValidatedIndividual::validate(mapping, AstarteType::Integer(42), Some(Utc::now()))
+            ValidatedIndividual::validate(mapping, AstarteData::Integer(42), Some(Utc::now()))
                 .unwrap_err();
 
         assert!(matches!(err, UserValidationError::MappingType { .. }))
@@ -478,7 +478,7 @@ mod tests {
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let res =
-            ValidatedIndividual::validate(mapping, AstarteType::Boolean(false), Some(Utc::now()));
+            ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), Some(Utc::now()));
         assert!(res.is_err());
     }
 
@@ -489,7 +489,7 @@ mod tests {
         let path = MappingPath::try_from("/sensor_1").unwrap();
 
         aggregate
-            .insert("double_endpoint".to_string(), AstarteType::Boolean(false))
+            .insert("double_endpoint".to_string(), AstarteData::Boolean(false))
             .unwrap();
 
         let err = ValidatedObject::validate(object, &path, aggregate.clone(), Some(Utc::now()))

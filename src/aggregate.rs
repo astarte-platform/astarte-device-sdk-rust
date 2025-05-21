@@ -21,9 +21,9 @@
 use serde::ser::SerializeMap;
 use serde::Serialize;
 
-use crate::types::AstarteType;
+use crate::types::AstarteData;
 
-/// Map of name and [`AstarteType`].
+/// Map of name and [`AstarteData`].
 ///
 /// This is used to send data on an interface with object aggregation.
 ///
@@ -33,10 +33,10 @@ use crate::types::AstarteType;
 ///
 /// ```
 /// use astarte_device_sdk::aggregate::AstarteObject;
-/// use astarte_device_sdk::types::AstarteType;
+/// use astarte_device_sdk::types::AstarteData;
 ///
-/// let sensor = AstarteType::String("light".to_string());
-/// let id = AstarteType::Integer(42i32);
+/// let sensor = AstarteData::String("light".to_string());
+/// let id = AstarteData::Integer(42i32);
 ///
 /// let mut object = AstarteObject::new();
 /// object.insert("name".to_string(), sensor.clone());
@@ -47,7 +47,7 @@ use crate::types::AstarteType;
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct AstarteObject {
-    pub(crate) inner: Vec<(String, AstarteType)>,
+    pub(crate) inner: Vec<(String, AstarteData)>,
 }
 
 impl AstarteObject {
@@ -66,7 +66,7 @@ impl AstarteObject {
     /// Add the value with the given name to the object.
     ///
     /// The keys of the object are unique. It overrides and returns the previous value if it's already set.
-    pub fn insert(&mut self, key: String, value: AstarteType) -> Option<AstarteType> {
+    pub fn insert(&mut self, key: String, value: AstarteData) -> Option<AstarteData> {
         match self.inner.iter_mut().find(|(item, _)| *item == key) {
             Some((_, old)) => Some(std::mem::replace(old, value)),
             None => {
@@ -78,14 +78,14 @@ impl AstarteObject {
     }
 
     /// Returns a reference to the value with the given name, if present.
-    pub fn get(&self, name: &str) -> Option<&AstarteType> {
+    pub fn get(&self, name: &str) -> Option<&AstarteData> {
         self.inner
             .iter()
             .find_map(|(item, value)| (*item == name).then_some(value))
     }
 
     /// Remove the value with the given name, if present.
-    pub fn remove(&mut self, name: &str) -> Option<AstarteType> {
+    pub fn remove(&mut self, name: &str) -> Option<AstarteData> {
         let position = self.inner.iter().position(|(item, _)| *item == name)?;
 
         let (_name, value) = self.inner.swap_remove(position);
@@ -104,18 +104,18 @@ impl AstarteObject {
     }
 
     /// Iterates the name and values of the object.
-    pub fn iter(&self) -> impl Iterator<Item = &(String, AstarteType)> {
+    pub fn iter(&self) -> impl Iterator<Item = &(String, AstarteData)> {
         self.inner.iter()
     }
 
     /// Iterates the name and values of the object.
-    pub fn into_key_values(self) -> impl Iterator<Item = (String, AstarteType)> {
+    pub fn into_key_values(self) -> impl Iterator<Item = (String, AstarteData)> {
         self.inner.into_iter()
     }
 }
 
-impl FromIterator<(String, AstarteType)> for AstarteObject {
-    fn from_iter<T: IntoIterator<Item = (String, AstarteType)>>(iter: T) -> Self {
+impl FromIterator<(String, AstarteData)> for AstarteObject {
+    fn from_iter<T: IntoIterator<Item = (String, AstarteData)>>(iter: T) -> Self {
         Self {
             inner: Vec::from_iter(iter),
         }
@@ -164,11 +164,11 @@ mod tests {
     #[test]
     fn add_value_to_obj_and_replace() {
         let mut object = AstarteObject::new();
-        let exp = AstarteType::from("foo");
+        let exp = AstarteData::from("foo");
         object.insert("foo".to_string(), exp.clone());
         assert_eq!(object.get("foo"), Some(&exp));
 
-        let exp = AstarteType::from("other");
+        let exp = AstarteData::from("other");
         object.insert("foo".to_string(), exp.clone());
         assert_eq!(object.get("foo"), Some(&exp));
     }
@@ -176,9 +176,9 @@ mod tests {
     #[test]
     fn iter_object_values() {
         let values = [
-            ("foo", AstarteType::from("foo")),
-            ("bar", AstarteType::from("bar")),
-            ("some", AstarteType::from("some")),
+            ("foo", AstarteData::from("foo")),
+            ("bar", AstarteData::from("bar")),
+            ("some", AstarteData::from("some")),
         ]
         .map(|(n, v)| (n.to_string(), v));
 
@@ -199,9 +199,9 @@ mod tests {
     #[test]
     fn astarte_object_custom_serialize_map() {
         let values = [
-            ("foo", AstarteType::from("foo")),
-            ("bar", AstarteType::from("bar")),
-            ("some", AstarteType::from("some")),
+            ("foo", AstarteData::from("foo")),
+            ("bar", AstarteData::from("bar")),
+            ("some", AstarteData::from("some")),
         ]
         .map(|(n, v)| (n.to_string(), v));
 
@@ -223,13 +223,13 @@ mod tests {
     #[test]
     fn astarte_object_custom_partial_eq() {
         let values = [
-            ("foo", AstarteType::from("foo")),
-            ("bar", AstarteType::from("bar")),
-            ("some", AstarteType::from("some")),
+            ("foo", AstarteData::from("foo")),
+            ("bar", AstarteData::from("bar")),
+            ("some", AstarteData::from("some")),
         ]
         .map(|(n, v)| (n.to_string(), v));
 
-        let other: Vec<(String, AstarteType)> = values.iter().rev().cloned().collect();
+        let other: Vec<(String, AstarteData)> = values.iter().rev().cloned().collect();
 
         let value = AstarteObject::from_iter(values);
         let other = AstarteObject::from_iter(other);
