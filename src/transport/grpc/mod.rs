@@ -64,7 +64,7 @@ use crate::{
     interfaces::{self, Interfaces},
     retention::StoredRetention,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
-    types::AstarteType,
+    types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     Error, Timestamp,
 };
@@ -459,7 +459,7 @@ impl Receive for Grpc {
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteType>, TransportError> {
+    ) -> Result<Option<AstarteData>, TransportError> {
         let ProtoPayload::PropertyIndividual(prop) = payload.data else {
             return Err(TransportError::Recv(RecvError::InterfaceType(
                 InterfaceTypeError::with_path(
@@ -487,7 +487,7 @@ impl Receive for Grpc {
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
+    ) -> Result<(AstarteData, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamIndividual(individual) = payload.data else {
             return Err(TransportError::Recv(RecvError::Aggregation(
                 AggregationError::new(
@@ -697,14 +697,14 @@ mod test {
     impl MockDeviceObject {
         fn mock_object() -> AstarteObject {
             AstarteObject::from_iter([
-                ("endpoint1".to_string(), AstarteType::try_from(4.2).unwrap()),
+                ("endpoint1".to_string(), AstarteData::try_from(4.2).unwrap()),
                 (
                     "endpoint2".to_string(),
-                    AstarteType::String("obj".to_string()),
+                    AstarteData::String("obj".to_string()),
                 ),
                 (
                     "endpoint3".to_string(),
-                    AstarteType::BooleanArray(vec![true, false, true]),
+                    AstarteData::BooleanArray(vec![true, false, true]),
                 ),
             ])
         }
@@ -717,15 +717,15 @@ mod test {
             AstarteObject::from_iter([
                 (
                     "double_endpoint".to_string(),
-                    AstarteType::try_from(4.2).unwrap(),
+                    AstarteData::try_from(4.2).unwrap(),
                 ),
                 (
                     "string_endpoint".to_string(),
-                    AstarteType::String("obj".to_string()),
+                    AstarteData::String("obj".to_string()),
                 ),
                 (
                     "boleanarray_endpoint".to_string(),
-                    AstarteType::BooleanArray(vec![true, false, true]),
+                    AstarteData::BooleanArray(vec![true, false, true]),
                 ),
             ])
         }
@@ -833,7 +833,7 @@ mod test {
         msg: &AstarteMessage,
         interface: &str,
         path: &str,
-        value: AstarteType,
+        value: AstarteData,
     ) -> bool {
         let Some(astarte_message_hub_proto::astarte_message::Payload::DatastreamIndividual(
             AstarteDatastreamIndividual {
@@ -846,7 +846,7 @@ mod test {
 
         msg.interface_name == interface
             && msg.path == path
-            && AstarteType::try_from(data.clone()).is_ok_and(|data| data == value)
+            && AstarteData::try_from(data.clone()).is_ok_and(|data| data == value)
     }
 
     fn check_object_message(
@@ -1086,7 +1086,7 @@ mod test {
                     r.get_ref(),
                     &interface_name_cl,
                     PATH,
-                    AstarteType::String(STRING_VALUE.to_string()),
+                    AstarteData::String(STRING_VALUE.to_string()),
                 )
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
@@ -1107,7 +1107,7 @@ mod test {
         let mapping_ref = interfaces.get_individual(&interface_name, &path).unwrap();
         let validated = ValidatedIndividual::validate(
             mapping_ref,
-            AstarteType::String(STRING_VALUE.to_string()),
+            AstarteData::String(STRING_VALUE.to_string()),
             Some(Utc::now()),
         )
         .unwrap();

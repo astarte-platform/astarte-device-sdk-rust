@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use astarte_device_sdk::{AstarteType, Client, DeviceEvent};
+use astarte_device_sdk::{AstarteData, Client, DeviceEvent};
 use eyre::{ensure, OptionExt};
 use tracing::{error, info, instrument};
 
@@ -45,16 +45,16 @@ impl InterfaceData for ServerDatastreamOverflow {
         "org.astarte-platform.rust.e2etest.ServerDatastream".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let mut data = HashMap::with_capacity(2);
 
         data.insert(
             "/longinteger_endpoint".to_string(),
-            AstarteType::LongInteger(2i64.pow(55)),
+            AstarteData::LongInteger(2i64.pow(55)),
         );
         data.insert(
             "/longintegerarray_endpoint".to_string(),
-            AstarteType::LongIntegerArray(vec![2i64.pow(55); 4]),
+            AstarteData::LongIntegerArray(vec![2i64.pow(55); 4]),
         );
 
         Ok(data)

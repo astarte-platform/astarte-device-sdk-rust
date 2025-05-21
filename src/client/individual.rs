@@ -26,7 +26,7 @@ use crate::client::ValidatedIndividual;
 use crate::state::{SharedState, Status};
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
-use crate::{AstarteType, Error};
+use crate::{AstarteData, Error};
 
 use super::{DeviceClient, Publish, RetentionId, StoreWrapper, StoredRetentionExt, Timestamp};
 
@@ -38,7 +38,7 @@ where
         &mut self,
         interface_name: &str,
         path: &MappingPath<'_>,
-        data: AstarteType,
+        data: AstarteData,
         timestamp: Option<Timestamp>,
     ) -> Result<(), Error>
     where
@@ -220,7 +220,7 @@ mod tests {
                 version_major: 0,
                 reliability: Reliability::Unreliable,
                 retention: Retention::Discard,
-                data: AstarteType::Integer(value),
+                data: AstarteData::Integer(value),
                 timestamp: Some(timestamp),
             }))
             .returning(|_| Ok(()));
@@ -253,7 +253,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Guaranteed,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::LongInteger(value),
+            data: AstarteData::LongInteger(value),
             timestamp: None,
         };
         client
@@ -296,7 +296,7 @@ mod tests {
             retention: Retention::Stored {
                 expiry: Some(Duration::from_secs(30)),
             },
-            data: AstarteType::Boolean(value),
+            data: AstarteData::Boolean(value),
             timestamp: None,
         };
         client
@@ -338,7 +338,7 @@ mod tests {
             retention: Retention::Stored {
                 expiry: Some(Duration::from_secs(30)),
             },
-            data: AstarteType::Boolean(value),
+            data: AstarteData::Boolean(value),
             timestamp: None,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
@@ -429,7 +429,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Guaranteed,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::LongInteger(value),
+            data: AstarteData::LongInteger(value),
             timestamp: None,
         };
 
@@ -460,7 +460,7 @@ mod tests {
             retention: Retention::Stored {
                 expiry: Some(Duration::from_secs(30)),
             },
-            data: AstarteType::Boolean(value),
+            data: AstarteData::Boolean(value),
             timestamp: None,
         };
 
@@ -493,7 +493,7 @@ mod tests {
             retention: Retention::Stored {
                 expiry: Some(Duration::from_secs(30)),
             },
-            data: AstarteType::Boolean(value),
+            data: AstarteData::Boolean(value),
             timestamp: None,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];

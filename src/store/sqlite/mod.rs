@@ -36,7 +36,7 @@ use tracing::{debug, error, trace, warn};
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteType, BsonConverter, TypeError},
+    types::{AstarteData, BsonConverter, TypeError},
 };
 
 pub(crate) mod statements;
@@ -161,8 +161,8 @@ impl FromSql for RecordOwnership {
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum ValueError {
-    /// Couldn't convert to AstarteType.
-    #[error("couldn't convert to AstarteType")]
+    /// Couldn't convert to AstarteData.
+    #[error("couldn't convert to AstarteData")]
     Conversion(#[from] TypeError),
     /// Couldn't decode the BSON buffer.
     #[error("couldn't decode property from bson")]
@@ -170,10 +170,10 @@ pub enum ValueError {
     /// Couldn't encode the BSON buffer.
     #[error("couldn't encode property from bson")]
     Encode(#[source] PayloadError),
-    /// Unsupported [`AstarteType`].
+    /// Unsupported [`AstarteData`].
     #[error("unsupported property type {0}")]
     UnsupportedType(&'static str),
-    /// Unsupported [`AstarteType`].
+    /// Unsupported [`AstarteData`].
     #[error("unsupported stored type {0}, expected [0-13]")]
     StoredType(u8),
 }
@@ -237,7 +237,7 @@ struct PropRecord {
 }
 
 impl PropRecord {
-    fn try_into_value(self) -> Result<Option<AstarteType>, ValueError> {
+    fn try_into_value(self) -> Result<Option<AstarteData>, ValueError> {
         self.value
             .map(|value| deserialize_prop(self.stored_type, &value))
             .transpose()
@@ -316,22 +316,22 @@ impl TryFrom<StoredRecord> for OptStoredProp {
     }
 }
 
-fn into_stored_type(value: &AstarteType) -> Result<u8, ValueError> {
+fn into_stored_type(value: &AstarteData) -> Result<u8, ValueError> {
     let mapping_type = match value {
-        AstarteType::Double(_) => 1,
-        AstarteType::Integer(_) => 2,
-        AstarteType::Boolean(_) => 3,
-        AstarteType::LongInteger(_) => 4,
-        AstarteType::String(_) => 5,
-        AstarteType::BinaryBlob(_) => 6,
-        AstarteType::DateTime(_) => 7,
-        AstarteType::DoubleArray(_) => 8,
-        AstarteType::IntegerArray(_) => 9,
-        AstarteType::BooleanArray(_) => 10,
-        AstarteType::LongIntegerArray(_) => 11,
-        AstarteType::StringArray(_) => 12,
-        AstarteType::BinaryBlobArray(_) => 13,
-        AstarteType::DateTimeArray(_) => 14,
+        AstarteData::Double(_) => 1,
+        AstarteData::Integer(_) => 2,
+        AstarteData::Boolean(_) => 3,
+        AstarteData::LongInteger(_) => 4,
+        AstarteData::String(_) => 5,
+        AstarteData::BinaryBlob(_) => 6,
+        AstarteData::DateTime(_) => 7,
+        AstarteData::DoubleArray(_) => 8,
+        AstarteData::IntegerArray(_) => 9,
+        AstarteData::BooleanArray(_) => 10,
+        AstarteData::LongIntegerArray(_) => 11,
+        AstarteData::StringArray(_) => 12,
+        AstarteData::BinaryBlobArray(_) => 13,
+        AstarteData::DateTimeArray(_) => 14,
     };
 
     Ok(mapping_type)
@@ -390,7 +390,7 @@ where
 /// retention stored.
 ///
 /// The properties are stored as a BSON serialized SQLite BLOB. That can be then deserialized in the
-/// respective [`AstarteType`].
+/// respective [`AstarteData`].
 ///
 /// The retention is stored as a BLOB serialized by the connection.
 ///
@@ -602,7 +602,7 @@ impl StoreCapabilities for SqliteStore {
 impl PropertyStore for SqliteStore {
     type Err = SqliteError;
 
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         debug!(
             "Storing property {} {} in db ({:?})",
             prop.interface, prop.path, prop.value
@@ -620,7 +620,7 @@ impl PropertyStore for SqliteStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         let opt_record = self
             .with_reader(|reader| reader.load_prop(property.interface_name(), property.path()))?;
 
@@ -737,7 +737,7 @@ where
 }
 
 /// Deserialize a property from the store.
-fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueError> {
+fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteData, ValueError> {
     let mapping_type = from_stored_type(stored_type)?;
 
     let payload = Payload::from_slice(buf).map_err(ValueError::Decode)?;
@@ -777,7 +777,7 @@ mod tests {
         let db1 = SqliteStore::connect(dir1.path()).await.unwrap();
 
         let test = |store: SqliteStore| async move {
-            let value = AstarteType::Integer(42);
+            let value = AstarteData::Integer(42);
             let prop = StoredProp {
                 interface: "com.test",
                 path: "/test",
@@ -846,7 +846,7 @@ mod tests {
         db.store_prop(StoredProp {
             interface: "interface",
             path: "/path",
-            value: &AstarteType::BinaryBlob(vec![1; page_size * 3]),
+            value: &AstarteData::BinaryBlob(vec![1; page_size * 3]),
             interface_major: 0,
             ownership: Ownership::Device,
         })
@@ -884,7 +884,7 @@ mod tests {
             .store_prop(StoredProp {
                 interface: "interface",
                 path: "/path",
-                value: &AstarteType::BinaryBlob(vec![1; size]),
+                value: &AstarteData::BinaryBlob(vec![1; size]),
                 interface_major: 0,
                 ownership: Ownership::Device,
             })

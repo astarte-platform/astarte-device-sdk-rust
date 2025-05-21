@@ -35,7 +35,7 @@ use crate::store::StoredProp;
 use crate::types::{Double, TypeError};
 use crate::validate::ValidatedUnset;
 use crate::{
-    transport::ReceivedEvent, types::AstarteType, validate::ValidatedIndividual,
+    transport::ReceivedEvent, types::AstarteData, validate::ValidatedIndividual,
     validate::ValidatedObject,
 };
 use crate::{DeviceEvent, Timestamp, Value};
@@ -63,7 +63,7 @@ pub enum MessageHubProtoError {
 /// Map a received message hub property to an optional astarte type
 pub(crate) fn map_property_to_astarte_type(
     value: astarte_message_hub_proto::Property,
-) -> Result<Option<AstarteType>, MessageHubProtoError> {
+) -> Result<Option<AstarteData>, MessageHubProtoError> {
     let astarte_message_hub_proto::Property { data, .. } = value;
 
     let Some(individual) = data else {
@@ -119,7 +119,7 @@ fn convert_timestamp(
         .ok_or(MessageHubProtoError::Timestamp(val))
 }
 
-impl TryFrom<ProtoDataWrapper> for AstarteType {
+impl TryFrom<ProtoDataWrapper> for AstarteData {
     type Error = MessageHubProtoError;
 
     fn try_from(value: ProtoDataWrapper) -> Result<Self, Self::Error> {
@@ -128,68 +128,68 @@ impl TryFrom<ProtoDataWrapper> for AstarteType {
             .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?;
 
         match astarte_data {
-            ProtoData::DateTime(v) => convert_timestamp(v).map(AstarteType::DateTime),
+            ProtoData::DateTime(v) => convert_timestamp(v).map(AstarteData::DateTime),
             ProtoData::Double(v) => {
-                AstarteType::try_from(v).map_err(MessageHubProtoError::Conversion)
+                AstarteData::try_from(v).map_err(MessageHubProtoError::Conversion)
             }
-            ProtoData::Integer(v) => Ok(AstarteType::Integer(v)),
-            ProtoData::Boolean(v) => Ok(AstarteType::Boolean(v)),
-            ProtoData::LongInteger(v) => Ok(AstarteType::LongInteger(v)),
-            ProtoData::String(v) => Ok(AstarteType::String(v)),
-            ProtoData::BinaryBlob(v) => Ok(AstarteType::BinaryBlob(v)),
+            ProtoData::Integer(v) => Ok(AstarteData::Integer(v)),
+            ProtoData::Boolean(v) => Ok(AstarteData::Boolean(v)),
+            ProtoData::LongInteger(v) => Ok(AstarteData::LongInteger(v)),
+            ProtoData::String(v) => Ok(AstarteData::String(v)),
+            ProtoData::BinaryBlob(v) => Ok(AstarteData::BinaryBlob(v)),
             ProtoData::DoubleArray(arr) => {
-                AstarteType::try_from(arr.values).map_err(MessageHubProtoError::Conversion)
+                AstarteData::try_from(arr.values).map_err(MessageHubProtoError::Conversion)
             }
-            ProtoData::IntegerArray(arr) => Ok(AstarteType::IntegerArray(arr.values)),
-            ProtoData::BooleanArray(arr) => Ok(AstarteType::BooleanArray(arr.values)),
-            ProtoData::LongIntegerArray(arr) => Ok(AstarteType::LongIntegerArray(arr.values)),
-            ProtoData::StringArray(arr) => Ok(AstarteType::StringArray(arr.values)),
-            ProtoData::BinaryBlobArray(arr) => Ok(AstarteType::BinaryBlobArray(arr.values)),
+            ProtoData::IntegerArray(arr) => Ok(AstarteData::IntegerArray(arr.values)),
+            ProtoData::BooleanArray(arr) => Ok(AstarteData::BooleanArray(arr.values)),
+            ProtoData::LongIntegerArray(arr) => Ok(AstarteData::LongIntegerArray(arr.values)),
+            ProtoData::StringArray(arr) => Ok(AstarteData::StringArray(arr.values)),
+            ProtoData::BinaryBlobArray(arr) => Ok(AstarteData::BinaryBlobArray(arr.values)),
             ProtoData::DateTimeArray(arr) => arr
                 .values
                 .into_iter()
                 .map(convert_timestamp)
                 .try_collect()
-                .map(AstarteType::DateTimeArray),
+                .map(AstarteData::DateTimeArray),
         }
     }
 }
 
-impl From<AstarteType> for ProtoDataWrapper {
-    fn from(value: AstarteType) -> Self {
+impl From<AstarteData> for ProtoDataWrapper {
+    fn from(value: AstarteData) -> Self {
         let astarte_data = match value {
-            AstarteType::Double(value) => ProtoData::Double(*value),
-            AstarteType::Integer(value) => ProtoData::Integer(value),
-            AstarteType::Boolean(value) => ProtoData::Boolean(value),
-            AstarteType::LongInteger(value) => ProtoData::LongInteger(value),
-            AstarteType::String(value) => ProtoData::String(value),
-            AstarteType::BinaryBlob(value) => ProtoData::BinaryBlob(value),
-            AstarteType::DateTime(value) => ProtoData::DateTime(value.into()),
-            AstarteType::DoubleArray(values) => {
+            AstarteData::Double(value) => ProtoData::Double(*value),
+            AstarteData::Integer(value) => ProtoData::Integer(value),
+            AstarteData::Boolean(value) => ProtoData::Boolean(value),
+            AstarteData::LongInteger(value) => ProtoData::LongInteger(value),
+            AstarteData::String(value) => ProtoData::String(value),
+            AstarteData::BinaryBlob(value) => ProtoData::BinaryBlob(value),
+            AstarteData::DateTime(value) => ProtoData::DateTime(value.into()),
+            AstarteData::DoubleArray(values) => {
                 ProtoData::DoubleArray(astarte_message_hub_proto::AstarteDoubleArray {
                     values: values.into_iter().map(Double::into).collect(),
                 })
             }
-            AstarteType::IntegerArray(values) => {
+            AstarteData::IntegerArray(values) => {
                 ProtoData::IntegerArray(astarte_message_hub_proto::AstarteIntegerArray { values })
             }
-            AstarteType::BooleanArray(values) => {
+            AstarteData::BooleanArray(values) => {
                 ProtoData::BooleanArray(astarte_message_hub_proto::AstarteBooleanArray { values })
             }
-            AstarteType::LongIntegerArray(values) => {
+            AstarteData::LongIntegerArray(values) => {
                 ProtoData::LongIntegerArray(astarte_message_hub_proto::AstarteLongIntegerArray {
                     values,
                 })
             }
-            AstarteType::StringArray(values) => {
+            AstarteData::StringArray(values) => {
                 ProtoData::StringArray(astarte_message_hub_proto::AstarteStringArray { values })
             }
-            AstarteType::BinaryBlobArray(values) => {
+            AstarteData::BinaryBlobArray(values) => {
                 ProtoData::BinaryBlobArray(astarte_message_hub_proto::AstarteBinaryBlobArray {
                     values,
                 })
             }
-            AstarteType::DateTimeArray(values) => {
+            AstarteData::DateTimeArray(values) => {
                 let values = values
                     .into_iter()
                     .map(pbjson_types::Timestamp::from)
@@ -314,7 +314,7 @@ impl TryFrom<AstarteDatastreamObject> for AstarteObject {
         value
             .data
             .into_iter()
-            .map(|(k, value)| AstarteType::try_from(value).map(|v| (k, v)))
+            .map(|(k, value)| AstarteData::try_from(value).map(|v| (k, v)))
             .collect()
     }
 }
@@ -322,7 +322,7 @@ impl TryFrom<AstarteDatastreamObject> for AstarteObject {
 // For deserialize individual
 pub(crate) fn try_from_individual(
     individual: AstarteDatastreamIndividual,
-) -> Result<(AstarteType, Option<Timestamp>), MessageHubProtoError> {
+) -> Result<(AstarteData, Option<Timestamp>), MessageHubProtoError> {
     let data = individual
         .data
         .ok_or(MessageHubProtoError::ExpectedField("data"))?
@@ -336,8 +336,8 @@ pub(crate) fn try_from_individual(
 // For deserialize property
 pub(crate) fn try_from_property(
     property: AstartePropertyIndividual,
-) -> Result<Option<AstarteType>, MessageHubProtoError> {
-    property.data.map(AstarteType::try_from).transpose()
+) -> Result<Option<AstarteData>, MessageHubProtoError> {
+    property.data.map(AstarteData::try_from).transpose()
 }
 
 impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
@@ -399,24 +399,24 @@ pub(crate) mod test {
     #[test]
     fn proto_conversions_success() {
         let cases = [
-            AstarteType::Double(12.21.try_into().unwrap()),
-            AstarteType::Integer(12),
-            AstarteType::Boolean(false),
-            AstarteType::LongInteger(42),
-            AstarteType::String("hello".to_string()),
-            AstarteType::BinaryBlob(vec![1, 2, 3, 4]),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(
+            AstarteData::Double(12.21.try_into().unwrap()),
+            AstarteData::Integer(12),
+            AstarteData::Boolean(false),
+            AstarteData::LongInteger(42),
+            AstarteData::String("hello".to_string()),
+            AstarteData::BinaryBlob(vec![1, 2, 3, 4]),
+            AstarteData::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteData::DoubleArray(
                 [1.3, 2.6, 3.1, 4.0]
                     .map(|v| Double::try_from(v).unwrap())
                     .to_vec(),
             ),
-            AstarteType::IntegerArray(vec![1, 2, 3, 4]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![32, 11, 33, 1]),
-            AstarteType::StringArray(vec!["Hello".to_string(), " world!".to_string()]),
-            AstarteType::BinaryBlobArray(vec![vec![1, 2, 3, 4], vec![4, 4, 1, 4]]),
-            AstarteType::DateTimeArray(vec![
+            AstarteData::IntegerArray(vec![1, 2, 3, 4]),
+            AstarteData::BooleanArray(vec![true, false, true, true]),
+            AstarteData::LongIntegerArray(vec![32, 11, 33, 1]),
+            AstarteData::StringArray(vec!["Hello".to_string(), " world!".to_string()]),
+            AstarteData::BinaryBlobArray(vec![vec![1, 2, 3, 4], vec![4, 4, 1, 4]]),
+            AstarteData::DateTimeArray(vec![
                 TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1611580808, 0).unwrap(),
             ]),
@@ -424,7 +424,7 @@ pub(crate) mod test {
 
         for exp in cases {
             let proto = ProtoDataWrapper::from(exp.clone());
-            let astarte_type = AstarteType::try_from(proto).unwrap();
+            let astarte_type = AstarteData::try_from(proto).unwrap();
 
             assert_eq!(exp, astarte_type);
         }
@@ -452,7 +452,7 @@ pub(crate) mod test {
 
     fn get_astarte_data_from_payload(
         payload: ProtoPayload,
-    ) -> Result<AstarteType, MessageHubProtoError> {
+    ) -> Result<AstarteData, MessageHubProtoError> {
         let astarte_data = take_individual(payload)
             .expect("individual")
             .data
@@ -468,7 +468,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_f64_to_astarte_message() {
-        let expected_data = AstarteType::try_from(10.1).unwrap();
+        let expected_data = AstarteData::try_from(10.1).unwrap();
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -494,7 +494,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_i32_to_astarte_message() {
-        let expected_data = AstarteType::Integer(10);
+        let expected_data = AstarteData::Integer(10);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -520,7 +520,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_bool_to_astarte_message() {
-        let expected_data = AstarteType::Boolean(true);
+        let expected_data = AstarteData::Boolean(true);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -545,7 +545,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_i64_to_astarte_message() {
-        let expected_data = AstarteType::LongInteger(45);
+        let expected_data = AstarteData::LongInteger(45);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -571,7 +571,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_string_to_astarte_message() {
-        let expected_data = AstarteType::String("test".to_owned());
+        let expected_data = AstarteData::String("test".to_owned());
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -597,7 +597,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_bytes_to_astarte_message() {
-        let expected_data = AstarteType::BinaryBlob(vec![12, 48]);
+        let expected_data = AstarteData::BinaryBlob(vec![12, 48]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -623,7 +623,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_date_time_to_astarte_message() {
-        let expected_data = AstarteType::DateTime(Utc::now());
+        let expected_data = AstarteData::DateTime(Utc::now());
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -649,7 +649,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_f64_array_to_astarte_message() {
-        let expected_data = AstarteType::try_from(vec![13.5, 487.35]).unwrap();
+        let expected_data = AstarteData::try_from(vec![13.5, 487.35]).unwrap();
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -675,7 +675,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_i32_array_to_astarte_message() {
-        let expected_data = AstarteType::IntegerArray(vec![78, 45]);
+        let expected_data = AstarteData::IntegerArray(vec![78, 45]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -701,7 +701,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_bool_array_to_astarte_message() {
-        let expected_data = AstarteType::BooleanArray(vec![true, false, true]);
+        let expected_data = AstarteData::BooleanArray(vec![true, false, true]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -727,7 +727,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_i64_array_to_astarte_message() {
-        let expected_data = AstarteType::LongIntegerArray(vec![658, 77845, 4444]);
+        let expected_data = AstarteData::LongIntegerArray(vec![658, 77845, 4444]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -754,7 +754,7 @@ pub(crate) mod test {
     #[test]
     fn convert_astarte_device_data_event_individual_string_array_to_astarte_message() {
         let expected_data =
-            AstarteType::StringArray(vec!["test1".to_owned(), "test_098".to_string()]);
+            AstarteData::StringArray(vec!["test1".to_owned(), "test_098".to_string()]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -780,7 +780,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_bytes_array_to_astarte_message() {
-        let expected_data = AstarteType::BinaryBlobArray(vec![vec![12, 48], vec![47, 55], vec![9]]);
+        let expected_data = AstarteData::BinaryBlobArray(vec![vec![12, 48], vec![47, 55], vec![9]]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -806,7 +806,7 @@ pub(crate) mod test {
 
     #[test]
     fn convert_astarte_device_data_event_individual_date_time_array_to_astarte_message() {
-        let expected_data = AstarteType::DateTimeArray(vec![Utc::now(), Utc::now()]);
+        let expected_data = AstarteData::DateTimeArray(vec![Utc::now(), Utc::now()]);
 
         let astarte_device_data_event = DeviceEvent {
             interface: "test.name.json".to_owned(),
@@ -834,19 +834,19 @@ pub(crate) mod test {
         let expected_map = AstarteObject::from_iter([
             (
                 "Mercury".to_owned(),
-                AstarteType::Double(0.4.try_into().unwrap()),
+                AstarteData::Double(0.4.try_into().unwrap()),
             ),
             (
                 "Venus".to_owned(),
-                AstarteType::Double(0.7.try_into().unwrap()),
+                AstarteData::Double(0.7.try_into().unwrap()),
             ),
             (
                 "Earth".to_owned(),
-                AstarteType::Double(1.0.try_into().unwrap()),
+                AstarteData::Double(1.0.try_into().unwrap()),
             ),
             (
                 "Mars".to_owned(),
-                AstarteType::Double(1.5.try_into().unwrap()),
+                AstarteData::Double(1.5.try_into().unwrap()),
             ),
         ]);
 
@@ -869,7 +869,7 @@ pub(crate) mod test {
 
         let object_data = astarte_object.data;
         for (k, v) in expected_map.into_key_values() {
-            let astarte_type: AstarteType = object_data
+            let astarte_type: AstarteData = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
                 .and_then(|data| {
@@ -888,13 +888,13 @@ pub(crate) mod test {
     #[test]
     fn convert_astarte_device_data_event_object2_to_astarte_message() {
         let expected_map = AstarteObject::from_iter([
-            ("M".to_owned(), AstarteType::try_from(0.4).unwrap()),
+            ("M".to_owned(), AstarteData::try_from(0.4).unwrap()),
             (
                 "V".to_owned(),
-                AstarteType::StringArray(vec!["test1".to_owned(), "test2".to_owned()]),
+                AstarteData::StringArray(vec!["test1".to_owned(), "test2".to_owned()]),
             ),
-            ("R".to_owned(), AstarteType::Integer(112)),
-            ("a".to_owned(), AstarteType::Boolean(false)),
+            ("R".to_owned(), AstarteData::Integer(112)),
+            ("a".to_owned(), AstarteData::Boolean(false)),
         ]);
 
         let astarte_device_data_event = DeviceEvent {
@@ -915,7 +915,7 @@ pub(crate) mod test {
         let object_data = astarte_message.payload.and_then(take_object).unwrap().data;
 
         for (k, v) in expected_map.inner.into_iter() {
-            let astarte_type: AstarteType = object_data
+            let astarte_type: AstarteData = object_data
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
                 .and_then(|data| {
@@ -934,7 +934,7 @@ pub(crate) mod test {
     #[test]
     fn from_sdk_astarte_type_to_astarte_message_payload_success() {
         let expected_double_value: f64 = 15.5;
-        let astarte_sdk_type_double = AstarteType::try_from(expected_double_value).unwrap();
+        let astarte_sdk_type_double = AstarteData::try_from(expected_double_value).unwrap();
 
         let payload: ProtoPayload =
             ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
@@ -1000,7 +1000,7 @@ pub(crate) mod test {
 
         let astarte_type = map_property_to_astarte_type(prop).unwrap().unwrap();
 
-        assert_eq!(AstarteType::String("test".to_string()), astarte_type);
+        assert_eq!(AstarteData::String("test".to_string()), astarte_type);
     }
 
     #[test]

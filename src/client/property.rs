@@ -27,7 +27,7 @@ use crate::state::Status;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
-use crate::{AstarteType, Error};
+use crate::{AstarteData, Error};
 
 use super::{DeviceClient, Publish};
 
@@ -39,7 +39,7 @@ where
         &mut self,
         interface_name: &str,
         path: &MappingPath<'_>,
-        data: AstarteType,
+        data: AstarteData,
     ) -> Result<(), Error>
     where
         C::Sender: Publish,
@@ -108,7 +108,7 @@ where
     pub(crate) async fn try_load_prop(
         &self,
         mapping: &MappingRef<'_, Properties>,
-    ) -> Result<Option<AstarteType>, Error> {
+    ) -> Result<Option<AstarteData>, Error> {
         let property_mapping = PropertyMapping::from(mapping);
         let mapping = mapping.mapping();
 
@@ -181,7 +181,7 @@ mod tests {
     use crate::store::{PropertyMapping, PropertyStore, StoredProp};
     use crate::test::{E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME};
     use crate::validate::{ValidatedProperty, ValidatedUnset};
-    use crate::{AstarteType, Client};
+    use crate::{AstarteData, Client};
 
     #[tokio::test]
     async fn send_property_connected() {
@@ -190,7 +190,7 @@ mod tests {
         client.state.status.set_connected(true);
 
         let path = "/sensor_1/longinteger_endpoint";
-        let value = AstarteType::LongInteger(42);
+        let value = AstarteData::LongInteger(42);
 
         let mut seq = Sequence::new();
 
@@ -235,7 +235,7 @@ mod tests {
         client.state.status.set_connected(false);
 
         let path = "/sensor_1/longinteger_endpoint";
-        let value = AstarteType::LongInteger(42);
+        let value = AstarteData::LongInteger(42);
 
         // Send
         client
@@ -266,7 +266,7 @@ mod tests {
         client.state.status.set_connected(true);
 
         let path = "/sensor_1/longinteger_endpoint";
-        let value = AstarteType::LongInteger(42);
+        let value = AstarteData::LongInteger(42);
 
         // No expect, but store the prop
         client
@@ -352,7 +352,7 @@ mod tests {
         client.state.status.set_connected(true);
 
         let path = "/sensor_1/longinteger_endpoint";
-        let value = AstarteType::LongInteger(42);
+        let value = AstarteData::LongInteger(42);
 
         client
             .store
@@ -360,7 +360,7 @@ mod tests {
                 interface: E2E_DEVICE_PROPERTY_NAME,
                 path,
                 // Wrong type
-                value: &AstarteType::Boolean(false),
+                value: &AstarteData::Boolean(false),
                 interface_major: 0,
                 ownership: Ownership::Device,
             })

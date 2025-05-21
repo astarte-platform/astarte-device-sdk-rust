@@ -315,7 +315,7 @@ mod tests {
         E2E_DEVICE_PROPERTY_NAME,
     };
     use crate::validate::ValidatedIndividual;
-    use crate::AstarteType;
+    use crate::AstarteData;
 
     #[tokio::test]
     async fn get_interface() {
@@ -454,7 +454,7 @@ mod tests {
                     version_major: 0,
                     reliability: Reliability::Guaranteed,
                     retention: Retention::Volatile { expiry: None },
-                    data: AstarteType::try_from(42.0).unwrap(),
+                    data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
             )
@@ -507,7 +507,7 @@ mod tests {
                     version_major: 0,
                     reliability: Reliability::Guaranteed,
                     retention: Retention::Stored { expiry: None },
-                    data: AstarteType::try_from(42.0).unwrap(),
+                    data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
@@ -563,7 +563,7 @@ mod tests {
                     version_major: 0,
                     reliability: Reliability::Guaranteed,
                     retention: Retention::Volatile { expiry: None },
-                    data: AstarteType::try_from(42.0).unwrap(),
+                    data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
             )
@@ -619,7 +619,7 @@ mod tests {
                     version_major: 0,
                     reliability: Reliability::Guaranteed,
                     retention: Retention::Stored { expiry: None },
-                    data: AstarteType::try_from(42.0).unwrap(),
+                    data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
@@ -718,7 +718,7 @@ mod tests {
             .store_prop(crate::store::StoredProp {
                 interface: E2E_DEVICE_PROPERTY_NAME,
                 path,
-                value: &AstarteType::LongInteger(2),
+                value: &AstarteData::LongInteger(2),
                 interface_major: to_remove.version_major(),
                 ownership: to_remove.ownership(),
             })
