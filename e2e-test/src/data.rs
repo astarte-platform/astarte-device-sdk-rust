@@ -19,14 +19,14 @@
 use std::collections::HashMap;
 
 use astarte_device_sdk::aggregate::AstarteObject;
-use astarte_device_sdk::types::AstarteType;
+use astarte_device_sdk::types::AstarteData;
 
 use crate::utils::{base64_decode, timestamp_from_rfc3339};
 
 pub(crate) trait InterfaceData {
     fn interface() -> String;
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = all_type_data().map(|(name, v)| (format!("/{name}"), v));
 
         Ok(HashMap::from_iter(data))
@@ -45,47 +45,47 @@ pub(crate) trait InterfaceDataObject: InterfaceData {
     }
 }
 
-pub(crate) fn all_type_data() -> [(&'static str, AstarteType); 14] {
+pub(crate) fn all_type_data() -> [(&'static str, AstarteData); 14] {
     [
-        ("double_endpoint", AstarteType::try_from(4.35).unwrap()),
-        ("integer_endpoint", AstarteType::Integer(1)),
-        ("boolean_endpoint", AstarteType::Boolean(true)),
+        ("double_endpoint", AstarteData::try_from(4.35).unwrap()),
+        ("integer_endpoint", AstarteData::Integer(1)),
+        ("boolean_endpoint", AstarteData::Boolean(true)),
         (
             "longinteger_endpoint",
-            AstarteType::LongInteger(45543543534),
+            AstarteData::LongInteger(45543543534),
         ),
-        ("string_endpoint", AstarteType::String("Hello".to_string())),
+        ("string_endpoint", AstarteData::String("Hello".to_string())),
         (
             "binaryblob_endpoint",
-            AstarteType::BinaryBlob(base64_decode("aGVsbG8=").unwrap()),
+            AstarteData::BinaryBlob(base64_decode("aGVsbG8=").unwrap()),
         ),
         (
             "datetime_endpoint",
-            AstarteType::DateTime(timestamp_from_rfc3339("2021-09-29T17:46:48.000Z").unwrap()),
+            AstarteData::DateTime(timestamp_from_rfc3339("2021-09-29T17:46:48.000Z").unwrap()),
         ),
         (
             "doublearray_endpoint",
-            AstarteType::try_from(vec![43.5, 10.5, 11.9]).unwrap(),
+            AstarteData::try_from(vec![43.5, 10.5, 11.9]).unwrap(),
         ),
         (
             "integerarray_endpoint",
-            AstarteType::IntegerArray([-4, 123, -2222, 30].to_vec()),
+            AstarteData::IntegerArray([-4, 123, -2222, 30].to_vec()),
         ),
         (
             "booleanarray_endpoint",
-            AstarteType::BooleanArray([true, false].to_vec()),
+            AstarteData::BooleanArray([true, false].to_vec()),
         ),
         (
             "longintegerarray_endpoint",
-            AstarteType::LongIntegerArray([53267895478, 53267895428, 53267895118].to_vec()),
+            AstarteData::LongIntegerArray([53267895478, 53267895428, 53267895118].to_vec()),
         ),
         (
             "stringarray_endpoint",
-            AstarteType::StringArray(["Test ".to_string(), "String".to_string()].to_vec()),
+            AstarteData::StringArray(["Test ".to_string(), "String".to_string()].to_vec()),
         ),
         (
             "binaryblobarray_endpoint",
-            AstarteType::BinaryBlobArray(
+            AstarteData::BinaryBlobArray(
                 ["aGVsbG8=", "aGVsbG8="]
                     .map(|s| base64_decode(s).unwrap())
                     .to_vec(),
@@ -93,7 +93,7 @@ pub(crate) fn all_type_data() -> [(&'static str, AstarteType); 14] {
         ),
         (
             "datetimearray_endpoint",
-            AstarteType::DateTimeArray(
+            AstarteData::DateTimeArray(
                 ["2021-10-23T17:46:48.000Z", "2021-11-11T17:46:48.000Z"]
                     .map(|s| timestamp_from_rfc3339(s).unwrap())
                     .to_vec(),
