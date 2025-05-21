@@ -24,8 +24,8 @@ use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
 use astarte_message_hub_proto::{
-    AstarteData, AstarteDatastreamIndividual, AstarteDatastreamObject, AstartePropertyIndividual,
-    MessageHubEvent,
+    AstarteData as ProtoDataWrapper, AstarteDatastreamIndividual, AstarteDatastreamObject,
+    AstartePropertyIndividual, MessageHubEvent,
 };
 use chrono::TimeZone;
 use itertools::Itertools;
@@ -119,10 +119,10 @@ fn convert_timestamp(
         .ok_or(MessageHubProtoError::Timestamp(val))
 }
 
-impl TryFrom<astarte_message_hub_proto::AstarteData> for AstarteType {
+impl TryFrom<ProtoDataWrapper> for AstarteType {
     type Error = MessageHubProtoError;
 
-    fn try_from(value: astarte_message_hub_proto::AstarteData) -> Result<Self, Self::Error> {
+    fn try_from(value: ProtoDataWrapper) -> Result<Self, Self::Error> {
         let astarte_data = value
             .astarte_data
             .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?;
@@ -155,7 +155,7 @@ impl TryFrom<astarte_message_hub_proto::AstarteData> for AstarteType {
     }
 }
 
-impl From<AstarteType> for astarte_message_hub_proto::AstarteData {
+impl From<AstarteType> for ProtoDataWrapper {
     fn from(value: AstarteType) -> Self {
         let astarte_data = match value {
             AstarteType::Double(value) => ProtoData::Double(*value),
@@ -359,7 +359,7 @@ impl From<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
             }
             Value::Property(prop) => ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual {
-                    data: prop.map(AstarteData::from),
+                    data: prop.map(ProtoDataWrapper::from),
                 },
             ),
         };
@@ -377,7 +377,7 @@ pub(crate) mod test {
     use std::collections::HashMap;
 
     use astarte_message_hub_proto::{
-        AstarteData, AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual, Property,
+        AstarteDatastreamObject, AstarteMessage, AstartePropertyIndividual, Property,
     };
     use chrono::Utc;
     use pretty_assertions::assert_eq;
@@ -423,7 +423,7 @@ pub(crate) mod test {
         ];
 
         for exp in cases {
-            let proto = AstarteData::from(exp.clone());
+            let proto = ProtoDataWrapper::from(exp.clone());
             let astarte_type = AstarteType::try_from(proto).unwrap();
 
             assert_eq!(exp, astarte_type);
@@ -460,7 +460,7 @@ pub(crate) mod test {
             .astarte_data
             .expect("astarte_data");
 
-        AstarteData {
+        ProtoDataWrapper {
             astarte_data: Some(astarte_data),
         }
         .try_into()
@@ -873,7 +873,7 @@ pub(crate) mod test {
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
                 .and_then(|data| {
-                    AstarteData {
+                    ProtoDataWrapper {
                         astarte_data: Some(data.clone()),
                     }
                     .try_into()
@@ -919,7 +919,7 @@ pub(crate) mod test {
                 .get(&k)
                 .and_then(|data| data.astarte_data.as_ref())
                 .and_then(|data| {
-                    AstarteData {
+                    ProtoDataWrapper {
                         astarte_data: Some(data.clone()),
                     }
                     .try_into()
@@ -966,15 +966,12 @@ pub(crate) mod test {
 
     #[test]
     fn from_sdk_astarte_aggregate_to_astarte_message_payload_success() {
-        use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
-        use astarte_message_hub_proto::AstarteData;
-
         let expected_data: f64 = 15.5;
 
         let payload_result = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
             data: HashMap::from([(
                 "key1".to_string(),
-                AstarteData {
+                ProtoDataWrapper {
                     astarte_data: Some(ProtoData::Double(expected_data)),
                 },
             )]),
@@ -996,7 +993,7 @@ pub(crate) mod test {
             path: "/path11".to_owned(),
             version_major: 0,
             ownership: astarte_message_hub_proto::Ownership::Device.into(),
-            data: Some(AstarteData {
+            data: Some(ProtoDataWrapper {
                 astarte_data: Some(ProtoData::String("test".to_owned())),
             }),
         };
@@ -1030,7 +1027,7 @@ pub(crate) mod test {
             path: "/path11".to_owned(),
             version_major: 0,
             ownership: astarte_message_hub_proto::Ownership::Device.into(),
-            data: Some(AstarteData {
+            data: Some(ProtoDataWrapper {
                 astarte_data: Some(ProtoData::String("test".to_owned())),
             }),
         };
@@ -1039,7 +1036,7 @@ pub(crate) mod test {
             path: "/path12".to_owned(),
             version_major: 0,
             ownership: astarte_message_hub_proto::Ownership::Device.into(),
-            data: Some(AstarteData {
+            data: Some(ProtoDataWrapper {
                 astarte_data: Some(ProtoData::Integer(0)),
             }),
         };
@@ -1048,7 +1045,7 @@ pub(crate) mod test {
             path: "/path21".to_owned(),
             version_major: 0,
             ownership: astarte_message_hub_proto::Ownership::Server.into(),
-            data: Some(AstarteData {
+            data: Some(ProtoDataWrapper {
                 astarte_data: Some(ProtoData::BinaryBlob(vec![0, 54, 0, 23])),
             }),
         };
@@ -1057,7 +1054,7 @@ pub(crate) mod test {
             path: "/path22".to_owned(),
             version_major: 0,
             ownership: astarte_message_hub_proto::Ownership::Server.into(),
-            data: Some(AstarteData {
+            data: Some(ProtoDataWrapper {
                 astarte_data: Some(ProtoData::Double(std::f64::consts::PI)),
             }),
         };
