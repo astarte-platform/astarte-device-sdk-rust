@@ -27,7 +27,7 @@ use super::{
     StoreCapabilities, StoredProp,
 };
 
-/// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
+/// Wrapper for a generic [`PropertyStore`] to convert the error in [`Error`](crate::Error).
 #[derive(Debug, Clone)]
 pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
