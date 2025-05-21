@@ -74,7 +74,7 @@ use crate::{
     state::SharedState,
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteType, Error, Interface, Timestamp,
+    AstarteData, Error, Interface, Timestamp,
 };
 use crate::{retention::RetentionError, store::OptStoredProp};
 
@@ -718,7 +718,7 @@ where
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteType>, TransportError> {
+    ) -> Result<Option<AstarteData>, TransportError> {
         payload::deserialize_property(mapping, &payload).map_err(|err| {
             TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
         })
@@ -728,7 +728,7 @@ where
         &self,
         mapping: &MappingRef<'_, &Interface>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
+    ) -> Result<(AstarteData, Option<Timestamp>), TransportError> {
         payload::deserialize_individual(mapping, &payload).map_err(|err| {
             TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
         })

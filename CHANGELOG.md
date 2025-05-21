@@ -21,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rename the AstarteAggregate derive macro to IntoAstarteObject [#430].
 - Remove the AstarteAggregate trait in favor of the AstarteObject [#430].
 - Change the send_object client methods to receive an AstarteObject argument [#430].
+- Rename `AstarteType` into `AstarteData`.
 - Create a `Float` struct to make sure the `AstarteData::Double` is always a valid float.
   [#459](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/459)
 

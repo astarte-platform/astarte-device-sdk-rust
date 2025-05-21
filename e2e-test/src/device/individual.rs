@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use astarte_device_sdk::{AstarteType, Client};
+use astarte_device_sdk::{AstarteData, Client};
 use chrono::Utc;
 use eyre::ensure;
 use tracing::{info, instrument};
@@ -46,16 +46,16 @@ impl InterfaceData for DeviceDatastreamOverflow {
         "org.astarte-platform.rust.e2etest.DeviceDatastream".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let mut data = HashMap::with_capacity(2);
 
         data.insert(
             "/longinteger_endpoint".to_string(),
-            AstarteType::LongInteger(2i64.pow(55)),
+            AstarteData::LongInteger(2i64.pow(55)),
         );
         data.insert(
             "/longintegerarray_endpoint".to_string(),
-            AstarteType::LongIntegerArray(vec![2i64.pow(55); 4]),
+            AstarteData::LongIntegerArray(vec![2i64.pow(55); 4]),
         );
 
         Ok(data)
@@ -71,15 +71,15 @@ impl InterfaceData for CustomDeviceDatastream {
         "org.astarte-platform.rust.e2etest.CustomDeviceDatastream".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = HashMap::from_iter(
             [
-                ("/volatileUnreliable", AstarteType::LongInteger(42)),
-                ("/volatileGuaranteed", AstarteType::Boolean(false)),
-                ("/volatileUnique", AstarteType::try_from(35.2)?),
-                ("/storedUnreliable", AstarteType::LongInteger(42)),
-                ("/storedGuaranteed", AstarteType::Boolean(false)),
-                ("/storedUnique", AstarteType::try_from(35.2)?),
+                ("/volatileUnreliable", AstarteData::LongInteger(42)),
+                ("/volatileGuaranteed", AstarteData::Boolean(false)),
+                ("/volatileUnique", AstarteData::try_from(35.2)?),
+                ("/storedUnreliable", AstarteData::LongInteger(42)),
+                ("/storedGuaranteed", AstarteData::Boolean(false)),
+                ("/storedUnique", AstarteData::try_from(35.2)?),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
