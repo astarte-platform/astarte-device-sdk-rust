@@ -35,7 +35,7 @@ use super::{
 use crate::{
     interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteData, BsonConverter, TypeError},
+    types::{de::BsonConverter, AstarteData, TypeError},
 };
 
 pub(crate) mod statements;
