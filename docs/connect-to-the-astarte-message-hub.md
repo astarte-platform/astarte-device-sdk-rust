@@ -421,7 +421,7 @@ introspection.
 Finally, we can send data to the MessageHub. We implement a task similar to the receive one, in a
 loop every 2 seconds we send the data to all the interfaces. The property one will set and save the
 value, and will only send it once to the Server since it doesn't change. While for the `Aggregated`
-interface we create a struct and derive the [`IntoAstarteObject`](crate::IntoAstarteObject) that will
+interface we create a struct and derive the [`AstarteAggregate`](crate::AstarteAggregate) that will
 convert the Rust struct in an Object Aggregate to send.
 
 ```no_run
@@ -438,7 +438,7 @@ use std::time::Duration;
 # #[cfg(feature = "derive")]
 use astarte_device_sdk::AstarteAggregate;
 # #[cfg(not(feature = "derive"))]
-# use astarte_device_sdk_derive::IntoAstarteObject;
+# use astarte_device_sdk_derive::AstarteAggregate;
 
 /// Aggregated object
 #[derive(Debug, AstarteAggregate)]

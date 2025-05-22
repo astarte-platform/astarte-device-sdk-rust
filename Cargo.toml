@@ -13,16 +13,17 @@ edition = { workspace = true }
 homepage = { workspace = true }
 # Needed to include the `.sqlx/` hidden folder
 include = [
+  "!*.sqlite*",
   "/.sqlx",
+  "/CHANGELOG.md",
+  "/LICENSE",
   "/LICENSES",
+  "/README.md",
+  "/docs",
   "/examples",
   "/migrations",
   "/queries",
   "/src",
-  "/CHANGELOG.md",
-  "/LICENSE",
-  "/README.md",
-  "!*.sqlite*",
 ]
 keywords = ["sdk", "iot", "astarte"]
 license = { workspace = true }
@@ -47,7 +48,7 @@ edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.72.0"
+rust-version = "1.72"
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
