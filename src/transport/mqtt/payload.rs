@@ -32,7 +32,7 @@ use crate::{
         reference::{MappingRef, ObjectRef},
         MappingAccess,
     },
-    types::{AstarteData, BsonConverter, TypeError},
+    types::{de::BsonConverter, AstarteData, TypeError},
     Interface, Timestamp,
 };
 
