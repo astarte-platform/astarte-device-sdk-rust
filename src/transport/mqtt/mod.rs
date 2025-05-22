@@ -945,7 +945,7 @@ pub(crate) mod test {
     use properties::extract_set_properties;
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
-        Resolver,
+        Resolver, UnsubAck,
     };
     use tempfile::TempDir;
     use test::{
@@ -955,7 +955,8 @@ pub(crate) mod test {
 
     use crate::{
         builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
-        store::memory::MemoryStore,
+        session::SessionError,
+        store::{memory::MemoryStore, mock::MockStore},
     };
 
     use self::{
@@ -1384,5 +1385,287 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_add_interface() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_add = Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap();
+
+        let introspection = Introspection::new([to_add.clone()].iter()).to_string();
+
+        let interfaces = Interfaces::new();
+
+        let to_add = interfaces.validate(to_add).unwrap().unwrap();
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_subscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+                predicate::eq( QoS::ExactlyOnce)
+            )
+            .in_sequence(&mut seq)
+            .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(introspection),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [to_add.interface().into()];
+        store
+            .expect_add_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::function(move |actual| actual == expected))
+            .returning(|_| Ok(()));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client.add_interface(&interfaces, &to_add).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn should_remove_interface() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_remove = Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.add(interfaces.validate(to_remove.clone()).unwrap().unwrap());
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [(&to_remove).into()];
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::function(move |actual| actual == expected))
+            .returning(|_| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+            )
+            .in_sequence(&mut seq)
+            .returning(|_| notify_success(UnsubAck::new(0)));
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client
+            .remove_interface(&interfaces, &to_remove)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn remove_interface_error() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let to_remove = Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.add(interfaces.validate(to_remove.clone()).unwrap().unwrap());
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(String::new()),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: [IntrospectionInterface; 1] = [(&to_remove).into()];
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::function(move |actual| actual == expected))
+            .returning(|_| Err(SessionError::remove_interfaces("remove interface error")));
+
+        // NOTE when a store error is thrown in the remove interface operation
+        // no unsusbscribe is performed
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        let result = client.remove_interface(&interfaces, &to_remove).await;
+
+        assert!(matches!(
+            result,
+            Err(crate::Error::Session(SessionError::RemoveInterfaces(..)))
+        ))
+    }
+
+    #[tokio::test]
+    async fn should_remove_interfaces() {
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let device_properties = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let server_properties = Interface::from_str(crate::test::SERVER_INDIVIDUAL).unwrap();
+
+        let to_remove: HashMap<&str, &Interface> = [
+            (crate::test::DEVICE_PROPERTIES_NAME, &device_properties),
+            (crate::test::SERVER_INDIVIDUAL_NAME, &server_properties),
+        ]
+        .into_iter()
+        .collect();
+
+        let remaining = Interface::from_str(crate::test::DEVICE_OBJECT).unwrap();
+
+        let introspection = Introspection::new([remaining.clone()].iter()).to_string();
+
+        let mut interfaces = Interfaces::new();
+        interfaces.extend(
+            interfaces
+                .validate_many(
+                    to_remove
+                        .values()
+                        .copied()
+                        .chain(std::iter::once(&remaining))
+                        .cloned(),
+                )
+                .unwrap(),
+        );
+
+        let mut store = MockStore::new();
+        // enable session
+        store.expect_return_session().return_const(true);
+
+        let mut seq = mockall::Sequence::new();
+
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .once()
+            .returning(AsyncClient::default);
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockStore::new);
+
+        client
+            .expect_publish::<String, String>()
+            .once()
+            .in_sequence(&mut seq)
+            .with(
+                predicate::eq("realm/device_id".to_owned()),
+                predicate::always(),
+                predicate::always(),
+                predicate::eq(introspection),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let expected: Vec<IntrospectionInterface> = to_remove.values().map(|&i| i.into()).collect();
+        store
+            .expect_remove_interfaces()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::function(move |actual| actual == expected))
+            .returning(|_| Ok(()));
+
+        client
+            .expect_unsubscribe::<String>()
+            .once()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream/#".to_string()),
+            )
+            .in_sequence(&mut seq)
+            .returning(|_| notify_success(UnsubAck::new(0)));
+
+        let (mut client, _mqtt_connection) = mock_mqtt_connection(client, eventl, store).await;
+
+        client
+            .remove_interfaces(&interfaces, &to_remove)
+            .await
+            .unwrap()
     }
 }

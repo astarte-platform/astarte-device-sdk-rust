@@ -25,10 +25,11 @@ use super::{error::StoreError, MissingCapability, PropertyStore, StoreCapabiliti
 /// trait that should be mocked to control which capabilities
 /// the store is allowed to return
 pub(crate) trait MockedStoreCapabilities {
-    // TODO enable once a mock for store capabilities gets implemented
-    // // should the store capability be returned ?
-    // fn return_retention(&self) -> bool;
-    // should the store capability be returned ?
+    // add an expectation if the retention store capability should be returned
+    // TODO to be used when a mock for the retention gets implemented
+    #[allow(dead_code)]
+    fn return_retention(&self) -> bool;
+    // add an expectation if the session store capability should be returned
     fn return_session(&self) -> bool;
 }
 
@@ -91,7 +92,7 @@ mock! {
     }
 
     impl MockedStoreCapabilities for Store {
-        // fn return_retention(&self) -> bool;
+        fn return_retention(&self) -> bool;
         fn return_session(&self) -> bool;
     }
 
@@ -119,6 +120,8 @@ impl StoreCapabilities for MockStore {
     type Session = Self;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
+        // TODO enable once a mock for store capabilities gets implemented
+        //self.return_session().then_some(self)
         None
     }
 

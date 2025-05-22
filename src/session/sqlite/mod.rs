@@ -31,7 +31,7 @@ impl StoredSession for SqliteStore {
             .lock()
             .await
             .add_interfaces(interfaces)
-            .map_err(SessionError::store_introspection)
+            .map_err(SessionError::add_interfaces)
     }
 
     async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {

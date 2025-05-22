@@ -68,7 +68,7 @@ impl IntrospectionInterface {
 pub enum SessionError {
     /// Error in the store introspection method
     #[error("couldn't store the introspection")]
-    StoreIntrospection(#[source] DynError),
+    AddInterfaces(#[source] DynError),
     /// Error in the clear introspection method
     #[error("couldn't clear the introspection")]
     ClearIntrospection(#[source] DynError),
@@ -81,8 +81,8 @@ pub enum SessionError {
 }
 
 impl SessionError {
-    pub(crate) fn store_introspection(err: impl Into<DynError>) -> Self {
-        Self::StoreIntrospection(err.into())
+    pub(crate) fn add_interfaces(err: impl Into<DynError>) -> Self {
+        Self::AddInterfaces(err.into())
     }
 
     pub(crate) fn clear_introspection(err: impl Into<DynError>) -> Self {
