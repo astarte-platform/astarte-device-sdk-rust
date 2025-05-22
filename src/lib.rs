@@ -21,6 +21,8 @@
 #![warn(clippy::dbg_macro, missing_docs, rustdoc::missing_crate_level_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod _docs;
+
 pub mod aggregate;
 pub mod builder;
 pub mod client;
