@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,13 +20,13 @@
 
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 
+use astarte_interfaces::schema::Ownership;
+use astarte_interfaces::{Properties, Schema};
 use tokio::sync::RwLock;
 use tracing::error;
 
-use super::{
-    OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
-};
-use crate::{interface::Ownership, retention::Missing, types::AstarteType};
+use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
+use crate::{retention::Missing, types::AstarteType};
 
 /// Error from the memory store.
 ///
@@ -91,9 +91,8 @@ impl PropertyStore for MemoryStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-        interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
-        let key = Key::new(property.name, property.path);
+        let key = Key::new(property.interface_name(), property.path());
 
         // We need to drop the lock before calling delete_prop
         let opt_val = {
@@ -103,10 +102,13 @@ impl PropertyStore for MemoryStore {
         };
 
         match opt_val {
-            Some(value) if value.interface_major != interface_major => {
+            Some(value) if value.interface_major != property.version_major() => {
                 error!(
                     "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                    property.name, property.path, value.interface_major, interface_major
+                    property.interface_name(),
+                    property.path(),
+                    value.interface_major,
+                    property.version_major()
                 );
 
                 self.delete_prop(property).await?;
@@ -119,7 +121,7 @@ impl PropertyStore for MemoryStore {
     }
 
     async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        let key = Key::new(property.name, property.path);
+        let key = Key::new(property.interface_name(), property.path());
 
         let mut writer = self.store.write().await;
 
@@ -131,7 +133,7 @@ impl PropertyStore for MemoryStore {
     }
 
     async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        let key = Key::new(property.name, property.path);
+        let key = Key::new(property.interface_name(), property.path());
 
         let mut store = self.store.write().await;
 
@@ -184,17 +186,14 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn interface_props(
-        &self,
-        interface: &PropertyInterface<'_>,
-    ) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
         Ok(self
             .store
             .read()
             .await
             .iter()
             .filter_map(|(k, v)| {
-                if k.interface == interface.name {
+                if k.interface == interface.name() {
                     v.as_prop(k)
                 } else {
                     None
@@ -203,11 +202,11 @@ impl PropertyStore for MemoryStore {
             .collect())
     }
 
-    async fn delete_interface(&self, interface: &PropertyInterface<'_>) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
         self.store
             .write()
             .await
-            .retain(|k, _v| k.interface != interface.name);
+            .retain(|k, _v| k.interface != interface.name());
 
         Ok(())
     }

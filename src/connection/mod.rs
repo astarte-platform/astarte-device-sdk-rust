@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::error::Report;
 use crate::state::{SharedState, Status};
@@ -144,11 +144,13 @@ where
     }
 
     /// Keeps polling connection events
+    #[instrument(skip(self))]
     pub(super) async fn poll(&mut self) -> Result<Status, TransportError>
     where
         C: Receive + Reconnect,
         C::Sender: Publish + 'static,
     {
+        trace!("polling connection");
         let Some(event) = self.connection.next_event().await? else {
             trace!("disconnected");
 
@@ -157,6 +159,8 @@ where
             // This will check if the connection was closed
             return Ok(self.state.status.connection());
         };
+
+        trace!("event received");
 
         let event = self
             .handle_event(&event.interface, &event.path, event.payload)
@@ -226,6 +230,7 @@ where
 mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::{Interface, Schema};
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
@@ -237,7 +242,7 @@ mod tests {
     use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
     use crate::transport::mock::{MockCon, MockSender};
     use crate::transport::ReceivedEvent;
-    use crate::{AstarteType, Interface};
+    use crate::AstarteType;
 
     use super::*;
 
@@ -330,8 +335,8 @@ mod tests {
             .once()
             .in_sequence(&mut seq)
             .withf(move |mapping, payload| {
-                mapping.interface().interface_name() == E2E_SERVER_DATASTREAM_NAME
-                    && mapping.path() == endpoint
+                mapping.interface().name() == E2E_SERVER_DATASTREAM_NAME
+                    && mapping.path().as_str() == endpoint
                     && *payload.downcast_ref::<bool>().unwrap() == value
             })
             .returning(|_, payload| {

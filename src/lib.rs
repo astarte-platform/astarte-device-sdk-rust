@@ -39,7 +39,6 @@ pub mod client;
 pub mod connection;
 pub mod error;
 pub mod event;
-pub mod interface;
 mod interfaces;
 pub mod introspection;
 pub mod prelude;
@@ -58,10 +57,10 @@ pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
 pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
-pub use crate::interface::Interface;
 pub use crate::types::AstarteType;
 
 // Re-export rumqttc since we return its types in some methods
+pub use astarte_interfaces;
 pub use chrono;
 pub use rumqttc;
 
@@ -77,10 +76,16 @@ mod test {
     // Interfaces
     pub(crate) const DEVICE_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
+    pub(crate) const DEVICE_PROPERTIES_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
+
     pub(crate) const SERVER_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.ServerDatastream.json");
     pub(crate) const SERVER_OBJECT_NAME: &str =
         "org.astarte-platform.rust.examples.object-datastream.ServerDatastream";
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    #[cfg(feature = "message-hub")]
+    pub(crate) const SERVER_PROPERTIES_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-properties.ServerProperties";
     pub(crate) const SERVER_INDIVIDUAL: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
 
     // E2E Interfaces
