@@ -877,7 +877,7 @@ mod tests {
         store::{memory::MemoryStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType, Interface,
+        AstarteData, Interface,
     };
 
     use super::*;
@@ -1009,7 +1009,7 @@ mod tests {
         let prop = StoredProp {
             interface: interface.interface_name(),
             path: "/sensor1/name",
-            value: &AstarteType::String("temperature".to_string()),
+            value: &AstarteData::String("temperature".to_string()),
             interface_major: 0,
             ownership: interface.ownership(),
         };

@@ -168,7 +168,7 @@ impl FromEventDerive {
         for param in &mut generics.params {
             if let GenericParam::Type(ref mut type_param) = *param {
                 type_param.bounds.push(parse_quote!(
-                    std::convert::TryFrom<astarte_device_sdk::types::AstarteType, Error =  >
+                    std::convert::TryFrom<astarte_device_sdk::types::AstarteData, Error =  >
                 ));
             }
         }
@@ -321,7 +321,7 @@ impl FromEventDerive {
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
-                    use astarte_device_sdk::AstarteType;
+                    use astarte_device_sdk::AstarteData;
                     use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
@@ -417,7 +417,7 @@ impl FromEventDerive {
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
-                    use astarte_device_sdk::AstarteType;
+                    use astarte_device_sdk::AstarteData;
                     use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
