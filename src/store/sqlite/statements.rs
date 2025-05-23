@@ -17,11 +17,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    num::NonZeroU64,
     ops::{Deref, DerefMut},
     path::Path,
 };
 
 use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
+use tracing::instrument;
 
 use crate::{
     interface::Ownership,
@@ -51,10 +53,17 @@ macro_rules! include_query {
 pub(crate) use include_query;
 
 #[derive(Debug)]
-pub(crate) struct WriteConnection(Connection);
+pub(crate) struct WriteConnection {
+    connection: Connection,
+    // useful to perform eviction when the store is full
+    pub(crate) store_capacity: NonZeroU64,
+}
 
 impl WriteConnection {
-    pub(crate) async fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
+    pub(crate) async fn connect(
+        db_file: impl AsRef<Path>,
+        store_capacity: NonZeroU64,
+    ) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -70,7 +79,10 @@ impl WriteConnection {
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
 
-        let connection = Self(connection);
+        let connection = Self {
+            connection,
+            store_capacity,
+        };
 
         if db_created {
             let page_size: u64 = connection.get_pragma("page_size")?;
@@ -94,6 +106,10 @@ impl WriteConnection {
         Ok(connection)
     }
 
+    pub(crate) fn store_capacity(&self) -> u64 {
+        self.store_capacity.get()
+    }
+
     /// Return db pages information
     ///
     /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
@@ -102,14 +118,15 @@ impl WriteConnection {
         T: FromSql,
     {
         wrap_sync_call(|| {
-            self.0
+            self.connection
                 .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
         })
         .map_err(SqliteError::Query)
     }
 
+    #[instrument(skip_all)]
     pub(super) fn store_prop(
-        &self,
+        &mut self,
         prop: StoredProp<&str, &AstarteType>,
         buf: &[u8],
     ) -> Result<(), SqliteError> {
@@ -117,8 +134,16 @@ impl WriteConnection {
 
         let ownership = RecordOwnership::from(prop.ownership);
 
-        wrap_sync_call(|| {
-            let mut statement = self
+        let capacity = self.store_capacity.get();
+
+        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+
+        // before storing the property, check if the max capacity is reached and
+        // eventually evict the expired and the oldest properties.
+        Self::free_space(&transaction, capacity)?;
+
+        let res = wrap_sync_call(|| {
+            let mut statement = transaction
                 .prepare_cached(include_query!("queries/properties/write/store_prop.sql"))
                 .map_err(SqliteError::Prepare)?;
 
@@ -131,10 +156,12 @@ impl WriteConnection {
                     prop.interface_major,
                     ownership,
                 ))
-                .map_err(SqliteError::Query)?;
+                .map_err(SqliteError::Query)
+        });
 
-            Ok(())
-        })
+        res?;
+
+        transaction.commit().map_err(SqliteError::Transaction)
     }
 
     pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), SqliteError> {
@@ -200,13 +227,13 @@ impl Deref for WriteConnection {
     type Target = Connection;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.connection
     }
 }
 
 impl DerefMut for WriteConnection {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.connection
     }
 }
 
@@ -415,9 +442,12 @@ impl Deref for ReadConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::store::{
-        sqlite::{const_non_zero, Size},
-        SqliteStore,
+    use crate::{
+        builder::DEFAULT_STORE_CAPACITY,
+        store::{
+            sqlite::{const_non_zero, Size},
+            SqliteStore,
+        },
     };
 
     use super::*;
@@ -425,7 +455,9 @@ mod tests {
     #[tokio::test]
     async fn custom_journal_size_unchanged() {
         let dir = tempfile::tempdir().unwrap();
-        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db = SqliteStore::connect(dir.as_ref(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;
@@ -446,7 +478,9 @@ mod tests {
         assert!(dir.path().join("prop-cache.db").exists());
 
         // reopen the db connection resets the journal size
-        let db: SqliteStore = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db: SqliteStore = SqliteStore::connect(dir.as_ref(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;

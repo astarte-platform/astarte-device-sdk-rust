@@ -98,6 +98,9 @@ pub enum SqliteError {
         /// Context of the error
         ctx: &'static str,
     },
+    /// Couldn't set store capacity
+    #[error("couldn't set store capacity to {0}")]
+    InvalidCapacity(u64),
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct.
@@ -428,11 +431,14 @@ impl SqliteStore {
     ///     let store = SqliteStore::connect("/val/lib/astarte/").await.unwrap();
     /// }
     /// ```
-    pub async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
+    pub async fn connect(
+        writable_path: impl AsRef<Path>,
+        capacity: NonZeroU64,
+    ) -> Result<Self, SqliteError> {
         // TODO: rename the database to store.db since it doesn't contain only  properties
         let db = writable_path.as_ref().join("prop-cache.db");
 
-        Self::connect_db(db).await
+        Self::connect_db(db, capacity).await
     }
 
     /// Connect to the SQLite database give as a filename.
@@ -447,8 +453,11 @@ impl SqliteStore {
     ///     let store = SqliteStore::connect_db("/val/lib/astarte/store.db").await.unwrap();
     /// }
     /// ```
-    pub async fn connect_db(database_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        let connection = WriteConnection::connect(&database_file).await?;
+    pub async fn connect_db(
+        database_file: impl AsRef<Path>,
+        capacity: NonZeroU64,
+    ) -> Result<Self, SqliteError> {
+        let connection = WriteConnection::connect(&database_file, capacity).await?;
 
         Self::new(database_file, connection).await
     }
@@ -747,7 +756,7 @@ fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueErr
 }
 
 /// Necessary for rust 1.78 const compatibility
-const fn const_non_zero(v: u64) -> NonZeroU64 {
+pub(crate) const fn const_non_zero(v: u64) -> NonZeroU64 {
     let Some(v) = NonZeroU64::new(v) else {
         panic!("value cannot be zero");
     };
@@ -758,13 +767,15 @@ const fn const_non_zero(v: u64) -> NonZeroU64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::tests::test_property_store;
+    use crate::{builder::DEFAULT_STORE_CAPACITY, store::tests::test_property_store};
 
     #[tokio::test]
     async fn test_sqlite_store() {
         let dir = tempfile::tempdir().unwrap();
 
-        let db = SqliteStore::connect(dir.path()).await.unwrap();
+        let db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         test_property_store(db).await;
     }
@@ -774,7 +785,9 @@ mod tests {
         let dir1 = tempfile::tempdir().unwrap();
         let dir2 = tempfile::tempdir().unwrap();
 
-        let db1 = SqliteStore::connect(dir1.path()).await.unwrap();
+        let db1 = SqliteStore::connect(dir1.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let test = |store: SqliteStore| async move {
             let value = AstarteType::Integer(42);
@@ -800,7 +813,9 @@ mod tests {
 
         (test)(db1).await;
 
-        let db2 = SqliteStore::connect(dir2.path()).await.unwrap();
+        let db2 = SqliteStore::connect(dir2.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         (test)(db2).await;
     }
@@ -808,7 +823,9 @@ mod tests {
     #[tokio::test]
     async fn set_max_pages_invalid_size() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let err = db.set_max_pages(0).await.unwrap_err();
 
@@ -823,7 +840,9 @@ mod tests {
     #[tokio::test]
     async fn skip_set_max_pages() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         {
             let connection = db.writer.lock().await;
@@ -836,7 +855,9 @@ mod tests {
     #[tokio::test]
     async fn set_max_pages_cannot_shrink() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let page_size: usize = {
             let connection = db.writer.lock().await;
@@ -866,7 +887,9 @@ mod tests {
     #[tokio::test]
     async fn store_cannot_exceed_max_pages() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let (page_size, page_count): (u32, u32) = {
             let connection = db.writer.lock().await;
@@ -900,7 +923,9 @@ mod tests {
     #[tokio::test]
     async fn set_max_pages() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         assert!(db.set_max_pages(10).await.is_ok());
 
@@ -913,7 +938,9 @@ mod tests {
     #[tokio::test]
     async fn set_db_max_size() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let size = Size::MiB(NonZeroU64::new(4).unwrap());
 
@@ -935,7 +962,9 @@ mod tests {
     #[tokio::test]
     async fn set_journal_size_limit() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+        let mut db = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let size = Size::MiB(NonZeroU64::new(1).unwrap());
 

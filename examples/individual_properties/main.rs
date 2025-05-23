@@ -18,6 +18,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use std::num::NonZeroU64;
+
 use eyre::OptionExt;
 use serde::{Deserialize, Serialize};
 
@@ -67,8 +69,12 @@ async fn main() -> eyre::Result<()> {
     let cfg: Config = serde_json::from_str(&file)?;
 
     // Open the database, create it if it does not exists
-    let db =
-        SqliteStore::connect_db("examples/individual_properties/astarte-example-db.sqlite").await?;
+    let db = SqliteStore::connect_db(
+        "examples/individual_properties/astarte-example-db.sqlite",
+        // TODO: change capacity from NonZeroU64 to u64 and check internally if it is 0
+        NonZeroU64::new(1000).unwrap(),
+    )
+    .await?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,

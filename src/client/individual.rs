@@ -186,6 +186,7 @@ mod tests {
 
     use super::*;
 
+    use crate::builder::DEFAULT_STORE_CAPACITY;
     use crate::client::tests::{mock_client, mock_client_with_store};
     use crate::interface::Reliability;
     use crate::retention::memory::ItemValue;
@@ -323,7 +324,9 @@ mod tests {
     #[tokio::test]
     async fn send_datastream_individual_connected_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let store = SqliteStore::connect(tmp.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
         let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_DATASTREAM], store);
 
         client.state.status.set_connected(true);
@@ -478,7 +481,9 @@ mod tests {
     #[tokio::test]
     async fn send_datastream_individual_offline_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let store = SqliteStore::connect(tmp.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
         let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_DATASTREAM], store);
 
         client.state.status.set_connected(false);

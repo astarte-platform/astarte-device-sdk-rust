@@ -243,7 +243,7 @@ impl<'a> PublishInfo<'a> {
 /// A store wants to implement this retention to implement the interfaces with retention stored for
 /// a connection.
 pub trait StoredRetention: Clone + Send + Sync {
-    /// Store a publish returning the id to access the publish in the future.
+    /// Store a publish.
     fn store_publish(
         &self,
         id: &Id,

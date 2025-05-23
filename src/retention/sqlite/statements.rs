@@ -19,7 +19,7 @@
 use std::{borrow::Cow, collections::HashSet, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use tracing::{trace, warn};
+use tracing::{debug, instrument, trace, warn};
 
 use crate::{
     retention::{Id, PublishInfo, StoredInterface},
@@ -32,6 +32,7 @@ use crate::{
 use super::{RetentionMapping, RetentionPublish, TimestampSecs};
 
 impl WriteConnection {
+    #[instrument(skip_all)]
     pub(super) fn store(
         &mut self,
         mapping: &RetentionMapping<'_>,
@@ -48,7 +49,11 @@ impl WriteConnection {
                 true
             }
         });
+
+        let capacity = self.store_capacity();
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+
+        Self::free_space(&transaction, capacity)?;
 
         wrap_sync_call(|| {
             if !exists {
@@ -116,6 +121,79 @@ impl WriteConnection {
             .map_err(SqliteError::Query)?;
 
         Ok(())
+    }
+
+    /// Empty space when the database is full to allow storing newer elements
+    ///
+    /// In sequence
+    /// - first we check the occupied space is greater than the capacity
+    /// - if so, remove the expired elements from the store
+    /// - if the available space is still unsufficient, remove the oldest elements
+    #[instrument(skip_all)]
+    pub(crate) fn free_space(transaction: &Transaction, capacity: u64) -> Result<(), SqliteError> {
+        debug!("remove elements from strore if it's full");
+
+        let count_stored = Self::count_stored(transaction)?;
+
+        trace!("initial count: {count_stored}");
+
+        if count_stored < capacity {
+            return Ok(());
+        }
+
+        trace!("store is full, evicting expired properties");
+        Self::delete_expired_transaction(transaction, &TimestampSecs::now())?;
+
+        // retrieve the updated number of stored properties after the removal of the expired ones
+        let count_stored = Self::count_stored(transaction)?;
+
+        trace!("count after expired removal: {count_stored}");
+
+        if count_stored < capacity {
+            return Ok(());
+        }
+
+        // TODO: decide whether to remove exactly the oldest elements or more
+        // this way the cleaning operation is ammortized over time
+        let to_remove = count_stored - capacity + 1;
+
+        trace!("store is still full, evicting the {to_remove} oldest elements");
+
+        let removed = Self::remove_oldest(transaction, to_remove)?;
+
+        debug!("removed {} elements", removed);
+
+        Ok(())
+    }
+
+    /// Retrieve the number of stored properties
+    fn count_stored(transaction: &Transaction) -> Result<u64, SqliteError> {
+        wrap_sync_call(|| {
+            let mut statement = transaction
+                .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
+                .map_err(SqliteError::Prepare)?;
+
+            statement
+                .query_row((), |row| row.get::<_, u64>(0))
+                .map_err(SqliteError::Query)
+        })
+    }
+
+    /// Remove the N oldest elements from the store
+    fn remove_oldest(transaction: &Transaction, to_remove: u64) -> Result<usize, SqliteError> {
+        if to_remove == 0 {
+            return Ok(0);
+        }
+
+        wrap_sync_call(|| {
+            let mut statement = transaction
+                .prepare_cached(include_query!(
+                    "queries/retention/write/delete_n_oldest.sql"
+                ))
+                .map_err(SqliteError::Prepare)?;
+
+            statement.execute([to_remove]).map_err(SqliteError::Query)
+        })
     }
 
     pub(super) fn update_publish_sent_flag(&self, id: &Id, sent: bool) -> Result<(), SqliteError> {
@@ -194,6 +272,24 @@ impl WriteConnection {
     pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<(), SqliteError> {
         wrap_sync_call(|| {
             let mut statement = self
+                .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
+                .map_err(SqliteError::Prepare)?;
+
+            let timestamp = now.to_bytes();
+            let timestamp = timestamp.as_slice();
+
+            statement.execute([timestamp])?;
+
+            Ok(())
+        })
+    }
+
+    pub(super) fn delete_expired_transaction(
+        transaction: &Transaction,
+        now: &TimestampSecs,
+    ) -> Result<(), SqliteError> {
+        wrap_sync_call(|| {
+            let mut statement = transaction
                 .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
                 .map_err(SqliteError::Prepare)?;
 
@@ -337,6 +433,7 @@ pub(crate) mod tests {
     use itertools::Itertools;
 
     use crate::{
+        builder::DEFAULT_STORE_CAPACITY,
         interface::Reliability,
         retention::{Context, StoredRetention, TimestampMillis},
         store::SqliteStore,
@@ -408,7 +505,9 @@ pub(crate) mod tests {
     async fn should_store_and_check_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -429,7 +528,9 @@ pub(crate) mod tests {
     async fn should_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -464,7 +565,9 @@ pub(crate) mod tests {
     async fn expiry_too_big() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -490,7 +593,9 @@ pub(crate) mod tests {
     async fn should_store_and_check_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -530,7 +635,9 @@ pub(crate) mod tests {
     async fn should_store_and_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -583,7 +690,9 @@ pub(crate) mod tests {
     async fn should_update_sent_flag() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -632,7 +741,9 @@ pub(crate) mod tests {
     async fn should_remove_sent_packet() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -672,7 +783,9 @@ pub(crate) mod tests {
     async fn should_delete_interface() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -718,7 +831,9 @@ pub(crate) mod tests {
     async fn should_get_all_packets() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -803,7 +918,9 @@ pub(crate) mod tests {
     async fn should_store_and_delete_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -845,7 +962,9 @@ pub(crate) mod tests {
     async fn should_resend_all_without_expired() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -931,7 +1050,9 @@ pub(crate) mod tests {
     async fn should_get_unsent_publishes() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -1024,7 +1145,9 @@ pub(crate) mod tests {
     async fn should_get_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         let mapping1 = RetentionMapping {
             interface: "com.Foo".into(),

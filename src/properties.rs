@@ -263,6 +263,7 @@ fn encode_prop(
 #[cfg(test)]
 pub(crate) mod tests {
 
+    use crate::builder::DEFAULT_STORE_CAPACITY;
     use crate::client::tests::mock_client_with_store;
     use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
@@ -410,7 +411,9 @@ pub(crate) mod tests {
 
         let db = dir.path().join("prop-cache.db");
 
-        let store = SqliteStore::connect_db(&db).await.unwrap();
+        let store = SqliteStore::connect_db(&db, DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         test_prop_access_for_store(store).await;
     }
@@ -419,7 +422,9 @@ pub(crate) mod tests {
     async fn test_in_sqlite_property_access() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
+            .await
+            .unwrap();
 
         test_prop_access_for_store(store).await;
     }
