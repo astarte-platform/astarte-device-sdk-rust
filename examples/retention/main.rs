@@ -21,6 +21,7 @@ use std::time::Duration;
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
 use eyre::Context;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const INDIVIDUAL_STORED: &str = include_str!(
@@ -83,6 +84,7 @@ async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
+        .with(LevelFilter::TRACE)
         .try_init()?;
 
     let realm = get_env("ASTARTE_REALM")?;

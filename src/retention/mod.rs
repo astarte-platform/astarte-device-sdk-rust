@@ -119,19 +119,19 @@ pub enum RetentionError {
 }
 
 impl RetentionError {
-    pub(crate) fn store(info: &PublishInfo<'_>, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn store(info: &PublishInfo<'_>, backtrace: impl Into<DynError>) -> Self {
         Self::Store {
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
             interface: info.interface.to_string(),
             path: info.path.to_string(),
             major_version: info.version_major,
         }
     }
 
-    pub(crate) fn received(id: Id, backstrace: impl Into<DynError>) -> Self {
+    pub(crate) fn received(id: Id, backtrace: impl Into<DynError>) -> Self {
         Self::Received {
             id,
-            backtrace: backstrace.into(),
+            backtrace: backtrace.into(),
         }
     }
 
@@ -367,54 +367,6 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
 }
 
 impl<T: StoredRetention> StoredRetentionExt for T {}
-
-/// Un-constructable type for a default retention.
-///
-/// This should be the never type [`!`] in the future.
-#[derive(Clone, Copy)]
-pub enum Missing {}
-
-impl StoredRetention for Missing {
-    async fn store_publish(
-        &self,
-        _id: &Id,
-        _publish: PublishInfo<'_>,
-    ) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn mark_received(&self, _packet: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn unsent_publishes(
-        &self,
-        _limit: usize,
-        _buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-}
 
 /// Retention Id to be passed to the connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

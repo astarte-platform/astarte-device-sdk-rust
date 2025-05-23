@@ -98,7 +98,14 @@ where
 {
     async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error> {
         // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.state.interfaces.write().await;
+        let _permit = self
+            .state
+            .introspection
+            .acquire()
+            .await
+            .map_err(|_| Error::Disconnected)?;
+
+        let interfaces = self.state.interfaces.read().await;
 
         let map_err = interfaces
             .validate(interface)
@@ -116,6 +123,10 @@ where
             Self::cleanup_interface(&self.state.volatile_store, &self.store, &to_add).await;
         }
 
+        drop(interfaces);
+        debug!("adding interface to introspection");
+        let mut interfaces = self.state.interfaces.write().await;
+
         interfaces.add(to_add);
 
         Ok(true)
@@ -126,7 +137,13 @@ where
         I: IntoIterator<Item = Interface> + Send,
     {
         // Lock for writing for the whole scope, even the checks
-        let mut interfaces = self.state.interfaces.write().await;
+        let _permit = self
+            .state
+            .introspection
+            .acquire()
+            .await
+            .map_err(|_| Error::Disconnected)?;
+        let interfaces = self.state.interfaces.read().await;
 
         let to_add = interfaces
             .validate_many(iter)
@@ -151,6 +168,9 @@ where
 
         let names = to_add.keys().cloned().collect();
 
+        drop(interfaces);
+        debug!("adding interfaces to introspection");
+        let mut interfaces = self.state.interfaces.write().await;
         interfaces.extend(to_add);
 
         debug!("Interfaces added");
@@ -186,7 +206,15 @@ where
     }
 
     async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error> {
-        let mut interfaces = self.state.interfaces.write().await;
+        // Lock for writing for the whole scope, even the checks
+        let _permit = self
+            .state
+            .introspection
+            .acquire()
+            .await
+            .map_err(|_| Error::Disconnected)?;
+
+        let interfaces = self.state.interfaces.read().await;
 
         let Some(to_remove) = interfaces.get(interface_name) else {
             debug!("{interface_name} not found, skipping");
@@ -197,6 +225,9 @@ where
 
         Self::cleanup_interface(&self.state.volatile_store, &self.store, to_remove).await;
 
+        drop(interfaces);
+        debug!("removing interface from introspection");
+        let mut interfaces = self.state.interfaces.write().await;
         interfaces.remove(interface_name);
 
         Ok(true)
@@ -207,7 +238,15 @@ where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send,
     {
-        let mut interfaces = self.state.interfaces.write().await;
+        // Lock for writing for the whole scope, even the checks
+        let _permit = self
+            .state
+            .introspection
+            .acquire()
+            .await
+            .map_err(|_| Error::Disconnected)?;
+
+        let interfaces = self.state.interfaces.read().await;
 
         let to_remove: HashMap<&str, &Interface> = interfaces_name
             .into_iter()
@@ -236,6 +275,9 @@ where
 
         let removed_names: Vec<String> = to_remove.keys().map(|k| k.to_string()).collect();
 
+        drop(interfaces);
+        debug!("removing interfaces from introspection");
+        let mut interfaces = self.state.interfaces.write().await;
         interfaces.remove_many(&removed_names);
 
         Ok(removed_names)
