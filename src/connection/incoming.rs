@@ -32,21 +32,9 @@ impl<C> DeviceConnection<C>
 where
     C: Connection,
 {
-    #[instrument(skip(self, payload))]
+    // Solves https://github.com/rust-lang/rust/issues/110486
+    #[cfg_attr(not(__coverage), instrument(skip(self, payload)))]
     pub(crate) async fn handle_event(
-        &self,
-        interface: &str,
-        path: &str,
-        payload: C::Payload,
-    ) -> Result<Value, TransportError>
-    where
-        C: Receive + Sync,
-    {
-        // Solves https://github.com/rust-lang/rust/issues/110486
-        self.handle_event_inner(interface, path, payload).await
-    }
-
-    async fn handle_event_inner(
         &self,
         interface: &str,
         path: &str,
