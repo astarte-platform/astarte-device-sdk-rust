@@ -127,6 +127,10 @@ sqlite-trace = ["rusqlite/trace"]
 tokio-multi-thread = ["tokio/rt-multi-thread"]
 webpki = ["dep:webpki-roots"]
 
+[lints.rust]
+# config used for coverage generation
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(__coverage)'] }
+
 [package.metadata.docs.rs]
 all-features = true
 rustc-args = ["--cfg=docsrs"]

@@ -30,6 +30,7 @@
     rustdoc::missing_crate_level_docs
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(__coverage, feature(coverage_attribute))]
 
 pub mod _docs;
 

@@ -70,6 +70,7 @@ pub trait StoreCapabilities: PropertyStore {
 #[derive(Clone, Copy)]
 pub enum MissingCapability {}
 
+#[cfg_attr(__coverage, coverage(off))]
 impl StoredRetention for MissingCapability {
     async fn store_publish(
         &self,
@@ -112,6 +113,7 @@ impl StoredRetention for MissingCapability {
     }
 }
 
+#[cfg_attr(__coverage, coverage(off))]
 impl StoredSession for MissingCapability {
     async fn add_interfaces(
         &self,
