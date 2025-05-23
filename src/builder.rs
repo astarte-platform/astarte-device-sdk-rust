@@ -24,6 +24,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::future::Future;
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -31,12 +32,15 @@ use std::sync::Arc;
 
 use astarte_interfaces::Interface;
 use tracing::debug;
+use tracing::instrument;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::retention::memory::VolatileStore;
+use crate::retention::RetentionError;
+use crate::retention::StoredRetention;
 use crate::state::SharedState;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
@@ -54,7 +58,21 @@ use crate::Error;
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
+/// TODO: change into NonZeroUsize
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
+
+/// Default capacity for the number of packets w ith retention store to store in memory.
+/// TODO: choose proper value
+pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1000);
+
+/// Necessary for rust 1.78 const compatibility
+pub(crate) const fn const_non_zero_usize(v: usize) -> NonZeroUsize {
+    let Some(v) = NonZeroUsize::new(v) else {
+        panic!("value cannot be zero");
+    };
+
+    v
+}
 
 /// Astarte builder error.
 ///
@@ -89,6 +107,9 @@ pub enum BuilderError {
     /// Couldn't connect to the SQLite store
     #[error("couldn't connect to the SQLite store")]
     Sqlite(#[from] SqliteError),
+    /// Couldn't set the maximum number of items in the store
+    #[error("couldn't set the maximum number of items in the store")]
+    Retention(#[from] RetentionError),
 }
 
 /// Marker struct to identify a builder with no store configured
@@ -113,6 +134,7 @@ pub struct BuildConfig<S> {
 pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
+    pub(crate) store_retention: NonZeroUsize,
     pub(crate) store: S,
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
@@ -138,6 +160,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
+            store_retention: DEFAULT_STORE_CAPACITY,
             writable_dir: None,
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
@@ -255,7 +278,8 @@ impl<C> DeviceBuilder<C, NoStore> {
 
         self = self.writable_dir(path)?;
 
-        let store = SqliteStore::connect(path).await?;
+        let mut store = SqliteStore::connect(path).await?;
+        store.set_max_items(self.store_retention).await?;
 
         Ok(self.store(store))
     }
@@ -271,10 +295,30 @@ impl<C> DeviceBuilder<C, NoStore> {
             interfaces: self.interfaces,
             connection_config: self.connection_config,
             store,
+            store_retention: self.store_retention,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
         }
+    }
+
+    /// Set the maximum number of elements that will be kept in the store
+    ///
+    /// if the provided size is zero, the default value of [`crate::builder::DEFAULT_STORE_CAPACITY`] will be used.
+    #[instrument(skip(self))]
+    pub fn max_retention_items(mut self, size: usize) -> Self {
+        let Some(size) = NonZeroUsize::new(size) else {
+            debug!(
+                "Maintaining currebt retention store size: {}",
+                self.store_retention
+            );
+
+            return self;
+        };
+
+        self.store_retention = size;
+
+        self
     }
 }
 
@@ -298,6 +342,7 @@ where
             store: self.store,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
+            store_retention: self.store_retention,
             writable_dir: self.writable_dir,
         }
     }

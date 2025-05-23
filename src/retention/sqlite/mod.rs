@@ -286,16 +286,42 @@ impl StoredRetention for SqliteStore {
         self.with_reader(|reader| reader.all_interfaces())
             .map_err(RetentionError::fetch_interfaces)
     }
+
+    async fn set_max_items(&mut self, size: std::num::NonZeroUsize) -> Result<(), RetentionError> {
+        let mut connection = self.writer.lock().await;
+
+        connection
+            .set_store_capacity(size)
+            .await
+            .map_err(|err| RetentionError::set_capacity(size.get(), err))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use astarte_interfaces::interface::Retention;
     use statements::tests::{fetch_mapping, fetch_publish};
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use crate::retention::Context;
 
     use super::*;
+
+    fn publish_with_expiry(path: &'static str, millis: Option<u64>) -> PublishInfo<'static> {
+        let expiry = millis.and_then(|m| (m != 0).then(|| Duration::from_millis(m)));
+
+        PublishInfo::from_ref(
+            "com.Foo",
+            path,
+            1,
+            Reliability::Unique,
+            Retention::Stored { expiry },
+            false,
+            &[],
+        )
+    }
 
     #[tokio::test]
     async fn should_store_publish() {
@@ -344,6 +370,146 @@ mod tests {
         let res = fetch_mapping(&store, interface, path).unwrap();
 
         assert_eq!(res, mapping)
+    }
+
+    #[tokio::test]
+    async fn should_remove_expired_and_store_publish() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .try_init()
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // suppose we can only store 2 publishes and we try storing 3 publishes: the new one should replace the expired one
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_items(capacity).await.unwrap();
+
+        let interface = "com.Foo";
+
+        let id1 = Context::new().next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", Some(5000)))
+            .await
+            .unwrap();
+
+        // sleep to ensure the publish is stored (since the id is computed from the current time)
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // this publish wil expire after 1ms, so it will be removed to insert the next one
+        let id2 = Context::new().next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", Some(1)))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+
+        // this will cause publish1 to be removed since the store is full
+        let id3 = Context::new().next();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", Some(3000)))
+            .await
+            .unwrap();
+
+        let res = fetch_publish(&store, &id1).unwrap();
+
+        let publish1 = RetentionPublish {
+            id: id1,
+            interface: interface.into(),
+            path: "/path1".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: Some(TimestampSecs::from_id(&id1, Duration::from_secs(5)).unwrap()),
+        };
+
+        assert_eq!(res, publish1);
+
+        let res = fetch_publish(&store, &id2);
+        assert!(res.is_none());
+
+        let res = fetch_publish(&store, &id3).unwrap();
+
+        let publish3 = RetentionPublish {
+            id: id3,
+            interface: interface.into(),
+            path: "/path3".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: Some(TimestampSecs::from_id(&id3, Duration::from_secs(3)).unwrap()),
+        };
+
+        assert_eq!(res, publish3);
+    }
+
+    #[tokio::test]
+    async fn should_free_space_and_store_publish() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // create a store which can only store 2 publishes.
+        // try storing 3 publishes: a new one should replace the oldest one.
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_items(capacity).await.unwrap();
+
+        let interface = "com.Foo";
+
+        // first publish to be inserted. This will be removed
+        let id1 = Context::new().next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        // sleep to ensure the publish is stored (since the id is computed from the current time)
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let id2 = Context::new().next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", None))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // this will cause publish1 to be removed since the store is full
+        let id3 = Context::new().next();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", None))
+            .await
+            .unwrap();
+
+        let res = fetch_publish(&store, &id1);
+        assert!(res.is_none());
+
+        let res = fetch_publish(&store, &id2).unwrap();
+
+        let publish2 = RetentionPublish {
+            id: id2,
+            interface: interface.into(),
+            path: "/path2".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish2);
+
+        let res = fetch_publish(&store, &id3).unwrap();
+
+        let publish3 = RetentionPublish {
+            id: id3,
+            interface: interface.into(),
+            path: "/path3".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish3);
     }
 
     #[tokio::test]

@@ -18,7 +18,8 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{collections::HashSet, error::Error as StdError, fmt::Debug, future::Future};
+use std::{
+    collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, num::NonZeroUsize, };
 
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{Properties, Schema};
@@ -105,6 +106,10 @@ impl StoredRetention for MissingCapability {
     }
 
     async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn set_max_items(&mut self, _size: NonZeroUsize) -> Result<(), RetentionError> {
         unreachable!("the type is Un-constructable");
     }
 }

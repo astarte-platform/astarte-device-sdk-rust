@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,16 +17,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    num::NonZeroUsize,
     ops::{Deref, DerefMut},
     path::Path,
 };
 
 use astarte_interfaces::schema::Ownership;
 use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
+use tracing::{instrument, warn};
 
 use crate::{
     store::{OptStoredProp, StoredProp},
     AstarteData,
+    builder::DEFAULT_STORE_CAPACITY,
 };
 
 use super::{
@@ -51,7 +54,11 @@ macro_rules! include_query {
 pub(crate) use include_query;
 
 #[derive(Debug)]
-pub(crate) struct WriteConnection(Connection);
+pub(crate) struct WriteConnection {
+    connection: Connection,
+    // useful to perform eviction when the store is full
+    pub(crate) store_capacity: NonZeroUsize,
+}
 
 impl WriteConnection {
     pub(crate) async fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
@@ -70,7 +77,10 @@ impl WriteConnection {
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
 
-        let connection = Self(connection);
+        let connection = Self {
+            connection,
+            store_capacity: DEFAULT_STORE_CAPACITY,
+        };
 
         if db_created {
             let page_size: u64 = connection.get_pragma("page_size")?;
@@ -94,22 +104,27 @@ impl WriteConnection {
         Ok(connection)
     }
 
+    pub(crate) fn store_capacity(&self) -> usize {
+        self.store_capacity.get()
+    }
+
     /// Return db pages information
     ///
     /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
     pub(crate) fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, SqliteError>
-    where
-        T: FromSql,
-    {
-        wrap_sync_call(|| {
-            self.0
-                .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
-        })
-        .map_err(SqliteError::Query)
-    }
+where
+T: FromSql,
+{
+wrap_sync_call(|| {
+self.connection
+    .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
+})
+.map_err(SqliteError::Query)
+}
 
+    #[instrument(skip_all)]
     pub(super) fn store_prop(
-        &self,
+        &mut self,
         prop: StoredProp<&str, &AstarteData>,
         buf: &[u8],
     ) -> Result<(), SqliteError> {
@@ -117,8 +132,16 @@ impl WriteConnection {
 
         let ownership = RecordOwnership::from(prop.ownership);
 
-        wrap_sync_call(|| {
-            let mut statement = self
+        let capacity = self.store_capacity.get();
+
+        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+
+        // before storing the property, check if the max capacity is reached and
+        // eventually evict the expired and the oldest properties.
+        Self::free_space(&transaction, capacity)?;
+
+        let res = wrap_sync_call(|| {
+            let mut statement = transaction
                 .prepare_cached(include_query!("queries/properties/write/store_prop.sql"))
                 .map_err(SqliteError::Prepare)?;
 
@@ -131,10 +154,12 @@ impl WriteConnection {
                     prop.interface_major,
                     ownership,
                 ))
-                .map_err(SqliteError::Query)?;
+                .map_err(SqliteError::Query)
+        });
 
-            Ok(())
-        })
+        res?;
+
+        transaction.commit().map_err(SqliteError::Transaction)
     }
 
     pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), SqliteError> {
@@ -200,13 +225,13 @@ impl Deref for WriteConnection {
     type Target = Connection;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.connection
     }
 }
 
 impl DerefMut for WriteConnection {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.connection
     }
 }
 
