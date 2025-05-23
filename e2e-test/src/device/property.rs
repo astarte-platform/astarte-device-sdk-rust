@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use astarte_device_sdk::prelude::PropAccess;
-use astarte_device_sdk::{AstarteType, Client};
+use astarte_device_sdk::{AstarteData, Client};
 use eyre::{ensure, OptionExt};
 use tracing::{info, instrument};
 
@@ -36,7 +36,7 @@ impl InterfaceData for DeviceProperty {
         "org.astarte-platform.rust.e2etest.DeviceProperty".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = all_type_data().map(|(name, value)| (format!("/sensor_1/{name}"), value));
 
         Ok(HashMap::from_iter(data))
@@ -52,16 +52,16 @@ impl InterfaceData for DevicePropertyOverflow {
         "org.astarte-platform.rust.e2etest.DeviceProperty".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let mut data = HashMap::with_capacity(1);
 
         data.insert(
             "/overflow/longinteger_endpoint".to_string(),
-            AstarteType::LongInteger(2i64.pow(55)),
+            AstarteData::LongInteger(2i64.pow(55)),
         );
         data.insert(
             "/overflow/longintegerarray_endpoint".to_string(),
-            AstarteType::LongIntegerArray(vec![2i64.pow(55); 4]),
+            AstarteData::LongIntegerArray(vec![2i64.pow(55); 4]),
         );
 
         Ok(data)

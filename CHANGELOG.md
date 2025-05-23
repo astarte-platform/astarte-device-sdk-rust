@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add the AstarteObject struct for Object Datastream [#430].
 - Allow setting the sqlite database size
   [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
+- Implement Display for the AstarteData
+  [#462](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/462)
 
 ### Changed
 
@@ -21,6 +23,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rename the AstarteAggregate derive macro to IntoAstarteObject [#430].
 - Remove the AstarteAggregate trait in favor of the AstarteObject [#430].
 - Change the send_object client methods to receive an AstarteObject argument [#430].
+- Rename `AstarteType` into `AstarteData`.
+- Create a `Float` struct to make sure the `AstarteData::Double` is always a valid float.
+  [#459](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/459)
 
 [#430]: (https://github.com/astarte-platform/astarte-device-sdk-rust/pull/430)
 

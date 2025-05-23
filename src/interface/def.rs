@@ -429,7 +429,7 @@ impl Display for Aggregation {
 
 /// Defines the type of the mapping.
 ///
-/// See the [`AstarteType`](crate::AstarteType) for more information.
+/// See the [`AstarteData`](crate::AstarteData) for more information.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingType {

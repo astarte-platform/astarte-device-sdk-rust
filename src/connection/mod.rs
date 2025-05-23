@@ -50,7 +50,7 @@ pub trait EventLoop {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -237,7 +237,7 @@ mod tests {
     use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
     use crate::transport::mock::{MockCon, MockSender};
     use crate::transport::ReceivedEvent;
-    use crate::{AstarteType, Interface};
+    use crate::{AstarteData, Interface};
 
     use super::*;
 
@@ -337,7 +337,7 @@ mod tests {
             .returning(|_, payload| {
                 let value = payload
                     .downcast_ref::<bool>()
-                    .map(|val| AstarteType::Boolean(*val))
+                    .map(|val| AstarteData::Boolean(*val))
                     .unwrap();
 
                 Ok((value, None))
