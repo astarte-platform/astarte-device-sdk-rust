@@ -517,8 +517,9 @@ impl Context {
         let timestamp = TimestampMillis::now();
 
         // We want the values to be unique, this will wrap around, but it will never wrap on the
-        // same ms
-        let counter = self.counter.fetch_add(1, Ordering::AcqRel);
+        // same ms, the ordering can be relaxed since the only guarantee we need is for the counter
+        // to yield unique values.
+        let counter = self.counter.fetch_add(1, Ordering::Relaxed);
 
         Id { timestamp, counter }
     }
@@ -540,9 +541,10 @@ mod tests {
     #[test]
     fn id_should_be_unique() {
         const NUM: usize = 5;
+        const CAP: usize = 1000;
         let ctx = Arc::new(Context::new());
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Id>(NUM);
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Id>>(NUM);
 
         for _ in 0..NUM {
             std::thread::spawn({
@@ -550,16 +552,18 @@ mod tests {
                 let tx = tx.clone();
 
                 move || {
+                    let mut gen = Vec::with_capacity(CAP);
                     let mut prev = ctx.next();
-                    for _i in 0..1000 {
+                    for _i in 0..CAP {
                         let new = ctx.next();
-
-                        tx.send(new).expect("channel closed");
 
                         assert!(new > prev);
 
+                        gen.push(prev);
                         prev = new;
                     }
+
+                    tx.send(gen).expect("channel closed");
                 }
             });
         }
@@ -567,8 +571,10 @@ mod tests {
         drop(tx);
 
         let mut recvd = HashSet::new();
-        while let Ok(new) = rx.recv() {
-            assert!(recvd.insert(new));
+        while let Ok(gen) = rx.recv() {
+            for i in gen {
+                assert!(recvd.insert(i));
+            }
         }
     }
 }

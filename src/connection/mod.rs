@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::error::Report;
+use crate::retry::ExponentialIter;
 use crate::state::{SharedState, Status};
 use crate::transport::TransportError;
 use crate::Timestamp;
@@ -87,6 +88,7 @@ where
     sender: C::Sender,
     state: Arc<SharedState>,
     resend: Option<JoinHandle<()>>,
+    backoff: ExponentialIter,
 }
 
 impl<C> DeviceConnection<C>
@@ -107,6 +109,7 @@ where
             connection,
             sender,
             resend: None,
+            backoff: ExponentialIter::default(),
         }
     }
 
