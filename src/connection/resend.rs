@@ -25,7 +25,6 @@ use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
-use crate::retry::ExponentialIter;
 use crate::state::SharedState;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::StoreCapabilities;
@@ -115,7 +114,7 @@ where
 
             match resend.await {
                 Ok(()) => {
-                    trace!("resend task joined")
+                    trace!("task already exited")
                 }
                 Err(err) if err.is_cancelled() => {
                     debug!("resend task was cancelled");
@@ -191,10 +190,32 @@ where
     {
         let interfaces = self.state.interfaces.read().await;
         debug!("reconnecting");
-        let mut exp = ExponentialIter::default();
+
+        // Wait before trying to reconnect the first time, this will prevent cases where the
+        // connection will loop that will keep throwing errors.
+        //
+        // The back-off will start with a wait time of 0s and increase exponentially until it
+        // reaches a max. We also keep track of when the last disconnection happened, to reset the
+        // wait time only if the connection has been stable for a certain duration of time.
+        //
+        // An example of an error loop is when the MQTT connection Interfaces (the device
+        // introspection) contains interfaces not installed on Astarte:
+        //
+        // - Device: publishes on that interface
+        // - Astarte: disconnects us since we don't have that interface in the introspection
+        // - Device: reconnects and succeeds on the first try (the while loop bellow)
+        // - Device: publishes on the same interface and gets disconnected again.
+        //
+        // If we didn't keep track of the last disconnection, the error loop above would continue to
+        // happen without timeouts, wasting device bandwidth and resources.
+        let timeout = self.backoff.next();
+
+        debug!("waiting {timeout} seconds before retrying");
+
+        tokio::time::sleep(Duration::from_secs(timeout)).await;
 
         while !self.connection.reconnect(&interfaces).await? {
-            let timeout = exp.next();
+            let timeout = self.backoff.next();
 
             debug!("waiting {timeout} seconds before retrying");
 

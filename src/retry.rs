@@ -18,15 +18,33 @@
 
 //! Module to handle the retry of the MQTT connection
 
+use std::time::{Duration, Instant};
+
+use tracing::trace;
+
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExponentialIter {
     n: u32,
     max: u32,
+    reset_after: Duration,
+    last: Option<Instant>,
 }
 
 impl ExponentialIter {
     pub(crate) fn next(&mut self) -> u64 {
+        if self
+            .last
+            .is_some_and(|instant| instant.elapsed() > self.reset_after)
+        {
+            trace!("resetting timeout");
+
+            // Start from the beginning
+            self.n = 0;
+        }
+
+        self.last = Some(Instant::now());
+
         let v = ((self.n > 0) as u64).wrapping_shl(self.n.saturating_sub(1));
 
         self.n = self.n.saturating_add(1).min(self.max);
@@ -37,7 +55,12 @@ impl ExponentialIter {
 
 impl Default for ExponentialIter {
     fn default() -> Self {
-        Self { n: 0, max: 9 }
+        Self {
+            n: 0,
+            max: 9,
+            reset_after: Duration::from_secs(256 * 4),
+            last: None,
+        }
     }
 }
 
