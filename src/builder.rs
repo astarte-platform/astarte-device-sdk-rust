@@ -58,11 +58,9 @@ use crate::Error;
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
-/// TODO: change into NonZeroUsize
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
-/// TODO: choose proper value
 pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1000);
 
 /// Necessary for rust 1.78 const compatibility

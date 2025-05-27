@@ -314,15 +314,7 @@ mod tests {
         let interface = "com.Foo";
         let path = "/bar";
 
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry(path, None);
 
         let mapping = RetentionMapping {
             interface: interface.into(),
@@ -503,15 +495,7 @@ mod tests {
         let interface = "com.Foo";
         let path = "/bar";
 
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry(path, None);
 
         let mapping = RetentionMapping {
             interface: interface.into(),
@@ -542,18 +526,7 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let interface = "com.Foo";
-        let path = "/bar";
-
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry("/bar", None);
 
         let id = Context::new().next();
 
@@ -562,7 +535,7 @@ mod tests {
         let res = store.fetch_all_interfaces().await.unwrap();
 
         let exp = StoredInterface {
-            name: interface.into(),
+            name: "com.Foo".into(),
             version_major: 1,
         };
 
@@ -576,18 +549,7 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let interface = "com.Foo";
-        let path = "/bar";
-
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry("/bar", None);
 
         let id = Context::new().next();
 
