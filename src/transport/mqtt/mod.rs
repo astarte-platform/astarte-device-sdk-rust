@@ -73,7 +73,7 @@ use crate::{
     },
     session::{IntrospectionInterface, StoredSession},
     state::SharedState,
-    store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
+    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
     AstarteType, Error, Interface, Timestamp,
 };
@@ -833,31 +833,44 @@ impl SessionData {
             .collect()
     }
 
-    pub(crate) async fn try_from_props<S>(
-        interfaces: &Interfaces,
-        store: &S,
-    ) -> Result<Self, StoreError>
+    async fn load_device_properties<S>(interfaces: &Interfaces, store: &S) -> Vec<OptStoredProp>
     where
-        S: PropertyStore<Err = StoreError>,
+        S: PropertyStore,
     {
-        let mut device_properties = store.device_props_with_unset().await?;
-        // Filter interfaces that are missing or have been updated
-        device_properties.retain(|prop| {
-            interfaces
-                .get(&prop.interface)
-                .is_some_and(|interface| interface.version_major() == prop.interface_major)
+        let device_properties = store.device_props_with_unset().await.map(|mut p| {
+            // Filter interfaces that are missing or have been updated
+            p.retain(|prop| {
+                interfaces
+                    .get(&prop.interface)
+                    .is_some_and(|interface| interface.version_major() == prop.interface_major)
+            });
+
+            p
         });
 
+        match device_properties {
+            Ok(p) => p,
+            Err(e) => {
+                error!(error = %Report::new(e), "error while loading device properties from the store");
+                Vec::new()
+            }
+        }
+    }
+
+    pub(crate) async fn from_props<S>(interfaces: &Interfaces, store: &S) -> Self
+    where
+        S: PropertyStore,
+    {
         let server_interfaces = Self::filter_server_interfaces(interfaces);
+        let interfaces_stored: Vec<IntrospectionInterface> = interfaces.into();
+        let device_properties = Self::load_device_properties(interfaces, store).await;
 
-        let interfaces_store: Vec<IntrospectionInterface> = interfaces.into();
-
-        Ok(Self {
+        Self {
             interfaces: interfaces.get_introspection_string(),
             server_interfaces,
             device_properties,
-            interfaces_stored: interfaces_store,
-        })
+            interfaces_stored,
+        }
     }
 }
 
