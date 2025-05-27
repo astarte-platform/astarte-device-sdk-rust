@@ -109,7 +109,7 @@ impl StoredRetention for MissingCapability {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn set_max_items(&mut self, _size: NonZeroUsize) -> Result<(), RetentionError> {
+    async fn set_max_retention_items(&self, _size: NonZeroUsize) -> Result<(), RetentionError> {
         unreachable!("the type is Un-constructable");
     }
 }

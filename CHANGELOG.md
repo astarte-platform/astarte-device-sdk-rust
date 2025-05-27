@@ -36,6 +36,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
 - Implement Display for the AstarteData
   [#462](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/462)
+- Allow setting the maximum number of items for the retention
+  [#463](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/463).
 
 ### Changed
 

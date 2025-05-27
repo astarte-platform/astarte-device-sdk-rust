@@ -57,7 +57,7 @@ pub(crate) use include_query;
 pub(crate) struct WriteConnection {
     connection: Connection,
     // useful to perform eviction when the store is full
-    pub(crate) store_capacity: NonZeroUsize,
+    pub(crate) retention_capacity: NonZeroUsize,
 }
 
 impl WriteConnection {
@@ -79,7 +79,7 @@ impl WriteConnection {
 
         let connection = Self {
             connection,
-            store_capacity: DEFAULT_STORE_CAPACITY,
+            retention_capacity: DEFAULT_STORE_CAPACITY,
         };
 
         if db_created {
@@ -104,10 +104,6 @@ impl WriteConnection {
         Ok(connection)
     }
 
-    pub(crate) fn store_capacity(&self) -> usize {
-        self.store_capacity.get()
-    }
-
     /// Return db pages information
     ///
     /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
@@ -117,7 +113,7 @@ T: FromSql,
 {
 wrap_sync_call(|| {
 self.connection
-    .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
+.pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
 })
 .map_err(SqliteError::Query)
 }
@@ -132,16 +128,12 @@ self.connection
 
         let ownership = RecordOwnership::from(prop.ownership);
 
-        let capacity = self.store_capacity.get();
-
-        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
-
         // before storing the property, check if the max capacity is reached and
         // eventually evict the expired and the oldest properties.
-        Self::free_space(&transaction, capacity)?;
+        self.free_retention_items(1)?;
 
-        let res = wrap_sync_call(|| {
-            let mut statement = transaction
+        wrap_sync_call(|| {
+            let mut statement = self
                 .prepare_cached(include_query!("queries/properties/write/store_prop.sql"))
                 .map_err(SqliteError::Prepare)?;
 
@@ -154,12 +146,10 @@ self.connection
                     prop.interface_major,
                     ownership,
                 ))
-                .map_err(SqliteError::Query)
-        });
+                .map_err(SqliteError::Query)?;
 
-        res?;
-
-        transaction.commit().map_err(SqliteError::Transaction)
+            Ok(())
+        })
     }
 
     pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), SqliteError> {
