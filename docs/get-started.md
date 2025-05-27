@@ -160,8 +160,7 @@ async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>, DeviceConnecti
 
     // connect to a db in the current working directory
     // if it doesn't exist, the method will create it
-    let store_capacity = std::num::NonZeroUsize::new(1000).unwrap();
-    let store = SqliteStore::connect_db("./store.db", store_capacity).await?;
+    let store = SqliteStore::connect_db("./store.db").await?;
 
     let (client, connection) = DeviceBuilder::new()
         .store(store)

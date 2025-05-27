@@ -66,8 +66,7 @@ pub trait PropAccess {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let store_capacity = std::num::NonZeroUsize::new(1000).unwrap();
-    ///     let database = SqliteStore::connect_db("/path/to/database/store.db", store_capacity)
+    ///     let database = SqliteStore::connect_db("/path/to/database/store.db")
     ///         .await
     ///         .unwrap();
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
@@ -263,8 +262,6 @@ fn encode_prop(
 
 #[cfg(test)]
 pub(crate) mod tests {
-
-    use crate::builder::DEFAULT_STORE_CAPACITY;
     use crate::client::tests::mock_client_with_store;
     use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
@@ -412,9 +409,7 @@ pub(crate) mod tests {
 
         let db = dir.path().join("prop-cache.db");
 
-        let store = SqliteStore::connect_db(&db, DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect_db(&db).await.unwrap();
 
         test_prop_access_for_store(store).await;
     }
@@ -423,9 +418,7 @@ pub(crate) mod tests {
     async fn test_in_sqlite_property_access() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         test_prop_access_for_store(store).await;
     }

@@ -269,6 +269,15 @@ impl StoredRetention for SqliteStore {
         self.with_reader(|reader| reader.all_interfaces())
             .map_err(RetentionError::fetch_interfaces)
     }
+
+    async fn set_max_items(&mut self, size: std::num::NonZeroUsize) -> Result<(), RetentionError> {
+        let mut connection = self.writer.lock().await;
+
+        connection
+            .set_store_capacity(size)
+            .await
+            .map_err(|err| RetentionError::set_capacity(size.get(), err))
+    }
 }
 
 #[cfg(test)]
@@ -278,7 +287,7 @@ mod tests {
     use statements::tests::{fetch_mapping, fetch_publish};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-    use crate::{builder::DEFAULT_STORE_CAPACITY, retention::Context};
+    use crate::retention::Context;
 
     use super::*;
 
@@ -300,9 +309,7 @@ mod tests {
     async fn should_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -356,11 +363,11 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
 
-        // create a store which can only store 2 publishes.
-        // try storing 3 publishes: the newer one should replace the expired one
-        let capacity = NonZeroUsize::new(2).unwrap();
+        let mut store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let store = SqliteStore::connect(dir.path(), capacity).await.unwrap();
+        // suppose we can only store 2 publishes and we try storing 3 publishes: the new one should replace the expired one
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_items(capacity).await.unwrap();
 
         let interface = "com.Foo";
 
@@ -423,29 +430,19 @@ mod tests {
     async fn should_free_space_and_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        // create a store which can only store 2 publishes.
-        // try storing 3 publishes: the newer one should replace the oldest one.
-        let capacity = NonZeroUsize::new(2).unwrap();
+        let mut store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let store = SqliteStore::connect(dir.path(), capacity).await.unwrap();
+        // create a store which can only store 2 publishes.
+        // try storing 3 publishes: a new one should replace the oldest one.
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_items(capacity).await.unwrap();
 
         let interface = "com.Foo";
-        let path = "/bar";
 
         // first publish to be inserted. This will be removed
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
-
         let id1 = Context::new().next();
         store
-            .store_publish(&id1, publish_info.clone())
+            .store_publish(&id1, publish_with_expiry("/path1", None))
             .await
             .unwrap();
 
@@ -454,7 +451,7 @@ mod tests {
 
         let id2 = Context::new().next();
         store
-            .store_publish(&id2, publish_info.clone())
+            .store_publish(&id2, publish_with_expiry("/path2", None))
             .await
             .unwrap();
 
@@ -462,7 +459,10 @@ mod tests {
 
         // this will cause publish1 to be removed since the store is full
         let id3 = Context::new().next();
-        store.store_publish(&id3, publish_info).await.unwrap();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", None))
+            .await
+            .unwrap();
 
         let res = fetch_publish(&store, &id1);
         assert!(res.is_none());
@@ -472,7 +472,7 @@ mod tests {
         let publish2 = RetentionPublish {
             id: id2,
             interface: interface.into(),
-            path: path.into(),
+            path: "/path2".into(),
             payload: [].as_slice().into(),
             sent: false,
             expiry_time: None,
@@ -485,7 +485,7 @@ mod tests {
         let publish3 = RetentionPublish {
             id: id3,
             interface: interface.into(),
-            path: path.into(),
+            path: "/path3".into(),
             payload: [].as_slice().into(),
             sent: false,
             expiry_time: None,
@@ -498,9 +498,7 @@ mod tests {
     async fn should_mark_received() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -542,9 +540,7 @@ mod tests {
     async fn should_fetch_all_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -578,9 +574,7 @@ mod tests {
     async fn should_mark_sent_and_reset() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";

@@ -16,7 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{borrow::Cow, collections::HashSet, time::Duration};
+use std::{borrow::Cow, collections::HashSet, num::NonZeroUsize, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use tracing::{debug, instrument, trace, warn};
@@ -119,6 +119,26 @@ impl WriteConnection {
                 &publish.payload,
             ))
             .map_err(SqliteError::Query)?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub(crate) async fn set_store_capacity(
+        &mut self,
+        store_capacity: NonZeroUsize,
+    ) -> Result<(), SqliteError> {
+        if store_capacity.get() == 0 {
+            warn!("cannot set store capacity to 0, maintaining the actual one");
+            return Ok(());
+        }
+
+        // before setting the new capacity, we perform a cleanup operation
+        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+        Self::free_space(&transaction, store_capacity.get())?;
+        transaction.commit().map_err(SqliteError::Transaction)?;
+
+        self.store_capacity = store_capacity;
 
         Ok(())
     }
@@ -436,7 +456,6 @@ pub(crate) mod tests {
     use itertools::Itertools;
 
     use crate::{
-        builder::DEFAULT_STORE_CAPACITY,
         interface::Reliability,
         retention::{Context, StoredRetention, TimestampMillis},
         store::SqliteStore,
@@ -508,9 +527,7 @@ pub(crate) mod tests {
     async fn should_store_and_check_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -531,9 +548,7 @@ pub(crate) mod tests {
     async fn should_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -568,9 +583,7 @@ pub(crate) mod tests {
     async fn expiry_too_big() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -596,9 +609,7 @@ pub(crate) mod tests {
     async fn should_store_and_check_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -638,9 +649,7 @@ pub(crate) mod tests {
     async fn should_store_and_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -693,9 +702,7 @@ pub(crate) mod tests {
     async fn should_update_sent_flag() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -744,9 +751,7 @@ pub(crate) mod tests {
     async fn should_remove_sent_packet() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -786,9 +791,7 @@ pub(crate) mod tests {
     async fn should_delete_interface() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -834,9 +837,7 @@ pub(crate) mod tests {
     async fn should_get_all_packets() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -921,9 +922,7 @@ pub(crate) mod tests {
     async fn should_store_and_delete_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -965,9 +964,7 @@ pub(crate) mod tests {
     async fn should_resend_all_without_expired() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -1053,9 +1050,7 @@ pub(crate) mod tests {
     async fn should_get_unsent_publishes() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -1148,9 +1143,7 @@ pub(crate) mod tests {
     async fn should_get_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
 
         let mapping1 = RetentionMapping {
             interface: "com.Foo".into(),

@@ -23,9 +23,10 @@ use std::{
 };
 
 use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use crate::{
+    builder::DEFAULT_STORE_CAPACITY,
     interface::Ownership,
     store::{OptStoredProp, StoredProp},
     AstarteType,
@@ -60,10 +61,7 @@ pub(crate) struct WriteConnection {
 }
 
 impl WriteConnection {
-    pub(crate) async fn connect(
-        db_file: impl AsRef<Path>,
-        store_capacity: NonZeroUsize,
-    ) -> Result<Self, SqliteError> {
+    pub(crate) async fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -81,7 +79,7 @@ impl WriteConnection {
 
         let connection = Self {
             connection,
-            store_capacity,
+            store_capacity: DEFAULT_STORE_CAPACITY,
         };
 
         if db_created {
@@ -442,12 +440,9 @@ impl Deref for ReadConnection {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        builder::DEFAULT_STORE_CAPACITY,
-        store::{
-            sqlite::{const_non_zero, Size},
-            SqliteStore,
-        },
+    use crate::store::{
+        sqlite::{const_non_zero, Size},
+        SqliteStore,
     };
 
     use super::*;
@@ -455,9 +450,7 @@ mod tests {
     #[tokio::test]
     async fn custom_journal_size_unchanged() {
         let dir = tempfile::tempdir().unwrap();
-        let db = SqliteStore::connect(dir.as_ref(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;
@@ -478,9 +471,7 @@ mod tests {
         assert!(dir.path().join("prop-cache.db").exists());
 
         // reopen the db connection resets the journal size
-        let db: SqliteStore = SqliteStore::connect(dir.as_ref(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let db: SqliteStore = SqliteStore::connect(dir.as_ref()).await.unwrap();
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;

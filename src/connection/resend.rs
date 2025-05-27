@@ -236,7 +236,6 @@ mod tests {
     use mockall::{predicate, Sequence};
     use tempfile::TempDir;
 
-    use crate::builder::DEFAULT_STORE_CAPACITY;
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
     use crate::interface::mapping::path::MappingPath;
     use crate::retention::{PublishInfo, RetentionId, StoredRetentionExt};
@@ -273,9 +272,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_init_stored_retention_simple() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path(), DEFAULT_STORE_CAPACITY)
-            .await
-            .unwrap();
+        let store = SqliteStore::connect(tmp.path()).await.unwrap();
 
         let (mut connection, _rx) = mock_connection_with_store(&[STORED_DEVICE_DATASTREAM], store);
 

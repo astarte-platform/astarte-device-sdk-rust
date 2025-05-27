@@ -31,6 +31,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use tracing::debug;
+use tracing::instrument;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
@@ -38,6 +39,8 @@ use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::retention::memory::VolatileStore;
+use crate::retention::RetentionError;
+use crate::retention::StoredRetention;
 use crate::state::SharedState;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
@@ -104,6 +107,9 @@ pub enum BuilderError {
     /// Couldn't connect to the SQLite store
     #[error("couldn't connect to the SQLite store")]
     Sqlite(#[from] SqliteError),
+    /// Couldn't set the maximum number of items in the store
+    #[error("couldn't set the maximum number of items in the store")]
+    Retention(#[from] RetentionError),
 }
 
 /// Marker struct to identify a builder with no store configured
@@ -260,14 +266,6 @@ impl<S, C> DeviceBuilder<S, C> {
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
-    /// Set the maximum number of elements that will be kept in the store
-    pub fn max_retention_items(mut self, size: usize) -> Result<Self, BuilderError> {
-        self.store_retention = NonZeroUsize::new(size)
-            .ok_or(BuilderError::Sqlite(SqliteError::InvalidCapacity(size)))?;
-
-        Ok(self)
-    }
-
     /// Configure a writable directory and initializes the [`SqliteStore`] in it.
     pub async fn store_dir<P>(
         mut self,
@@ -280,7 +278,8 @@ impl<C> DeviceBuilder<C, NoStore> {
 
         self = self.writable_dir(path)?;
 
-        let store = SqliteStore::connect(path, self.store_retention).await?;
+        let mut store = SqliteStore::connect(path).await?;
+        store.set_max_items(self.store_retention).await?;
 
         Ok(self.store(store))
     }
@@ -301,6 +300,25 @@ impl<C> DeviceBuilder<C, NoStore> {
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
         }
+    }
+
+    /// Set the maximum number of elements that will be kept in the store
+    ///
+    /// if the provided size is zero, the default value of [`crate::builder::DEFAULT_STORE_CAPACITY`] will be used.
+    #[instrument(skip(self))]
+    pub fn max_retention_items(mut self, size: usize) -> Self {
+        let Some(size) = NonZeroUsize::new(size) else {
+            debug!(
+                "Maintaining currebt retention store size: {}",
+                self.store_retention
+            );
+
+            return self;
+        };
+
+        self.store_retention = size;
+
+        self
     }
 }
 
