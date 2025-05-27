@@ -18,7 +18,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use std::num::NonZeroU64;
+use std::num::NonZeroUsize;
 
 use eyre::OptionExt;
 use serde::{Deserialize, Serialize};
@@ -71,8 +71,7 @@ async fn main() -> eyre::Result<()> {
     // Open the database, create it if it does not exists
     let db = SqliteStore::connect_db(
         "examples/individual_properties/astarte-example-db.sqlite",
-        // TODO: change capacity from NonZeroU64 to u64 and check internally if it is 0
-        NonZeroU64::new(1000).unwrap(),
+        NonZeroUsize::new(1000).unwrap(),
     )
     .await?;
 

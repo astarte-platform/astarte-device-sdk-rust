@@ -273,7 +273,7 @@ impl StoredRetention for SqliteStore {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
+    use std::num::NonZeroUsize;
 
     use statements::tests::{fetch_mapping, fetch_publish};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -358,7 +358,7 @@ mod tests {
 
         // create a store which can only store 2 publishes.
         // try storing 3 publishes: the newer one should replace the expired one
-        let capacity = NonZeroU64::new(2).unwrap();
+        let capacity = NonZeroUsize::new(2).unwrap();
 
         let store = SqliteStore::connect(dir.path(), capacity).await.unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
 
         // create a store which can only store 2 publishes.
         // try storing 3 publishes: the newer one should replace the oldest one.
-        let capacity = NonZeroU64::new(2).unwrap();
+        let capacity = NonZeroUsize::new(2).unwrap();
 
         let store = SqliteStore::connect(dir.path(), capacity).await.unwrap();
 

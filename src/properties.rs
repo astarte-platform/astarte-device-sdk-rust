@@ -66,7 +66,8 @@ pub trait PropAccess {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let database = SqliteStore::connect_db("/path/to/database/store.db")
+    ///     let store_capacity = std::num::NonZeroUsize::new(1000).unwrap();
+    ///     let database = SqliteStore::connect_db("/path/to/database/store.db", store_capacity)
     ///         .await
     ///         .unwrap();
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");

@@ -18,7 +18,14 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{cell::Cell, fmt::Debug, num::NonZeroU64, path::Path, sync::Arc, time::Duration};
+use std::{
+    cell::Cell,
+    fmt::Debug,
+    num::{NonZeroU64, NonZeroUsize},
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use futures::lock::Mutex;
 use rusqlite::{
@@ -100,7 +107,7 @@ pub enum SqliteError {
     },
     /// Couldn't set store capacity
     #[error("couldn't set store capacity to {0}")]
-    InvalidCapacity(u64),
+    InvalidCapacity(usize),
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct.
@@ -421,6 +428,8 @@ impl SqliteStore {
 
     /// Connect to the SQLite database using the default db name in the writable path.
     ///
+    /// Provide also the capacity of the store
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -428,12 +437,13 @@ impl SqliteStore {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let store = SqliteStore::connect("/val/lib/astarte/").await.unwrap();
+    ///     let store_capacity = std::num::NonZeroUsize::new(1000).unwrap();
+    ///     let store = SqliteStore::connect("/val/lib/astarte/", store_capacity).await.unwrap();
     /// }
     /// ```
     pub async fn connect(
         writable_path: impl AsRef<Path>,
-        capacity: NonZeroU64,
+        capacity: NonZeroUsize,
     ) -> Result<Self, SqliteError> {
         // TODO: rename the database to store.db since it doesn't contain only  properties
         let db = writable_path.as_ref().join("prop-cache.db");
@@ -450,12 +460,13 @@ impl SqliteStore {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let store = SqliteStore::connect_db("/val/lib/astarte/store.db").await.unwrap();
+    ///     let store_capacity = std::num::NonZeroUsize::new(1000).unwrap();
+    ///     let store = SqliteStore::connect_db("/val/lib/astarte/store.db", store_capacity).await.unwrap();
     /// }
     /// ```
     pub async fn connect_db(
         database_file: impl AsRef<Path>,
-        capacity: NonZeroU64,
+        capacity: NonZeroUsize,
     ) -> Result<Self, SqliteError> {
         let connection = WriteConnection::connect(&database_file, capacity).await?;
 

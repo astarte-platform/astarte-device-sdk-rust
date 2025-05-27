@@ -17,7 +17,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    num::NonZeroU64,
+    num::NonZeroUsize,
     ops::{Deref, DerefMut},
     path::Path,
 };
@@ -56,13 +56,13 @@ pub(crate) use include_query;
 pub(crate) struct WriteConnection {
     connection: Connection,
     // useful to perform eviction when the store is full
-    pub(crate) store_capacity: NonZeroU64,
+    pub(crate) store_capacity: NonZeroUsize,
 }
 
 impl WriteConnection {
     pub(crate) async fn connect(
         db_file: impl AsRef<Path>,
-        store_capacity: NonZeroU64,
+        store_capacity: NonZeroUsize,
     ) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
@@ -106,7 +106,7 @@ impl WriteConnection {
         Ok(connection)
     }
 
-    pub(crate) fn store_capacity(&self) -> u64 {
+    pub(crate) fn store_capacity(&self) -> usize {
         self.store_capacity.get()
     }
 

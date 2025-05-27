@@ -24,7 +24,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::future::Future;
 use std::io;
-use std::num::NonZeroU64;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -39,7 +39,6 @@ use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::retention::memory::VolatileStore;
 use crate::state::SharedState;
-use crate::store::sqlite::const_non_zero;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
@@ -56,12 +55,21 @@ use crate::Error;
 pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
-/// TODO: change into NonZeroU64
+/// TODO: change into NonZeroUsize
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
 /// TODO: choose proper value
-pub const DEFAULT_STORE_CAPACITY: NonZeroU64 = const_non_zero(1000);
+pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1000);
+
+/// Necessary for rust 1.78 const compatibility
+pub(crate) const fn const_non_zero_usize(v: usize) -> NonZeroUsize {
+    let Some(v) = NonZeroUsize::new(v) else {
+        panic!("value cannot be zero");
+    };
+
+    v
+}
 
 /// Astarte builder error.
 ///
@@ -120,7 +128,7 @@ pub struct BuildConfig<S> {
 pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
-    pub(crate) volatile_store: NonZeroU64,
+    pub(crate) store_retention: NonZeroUsize,
     pub(crate) store: S,
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
@@ -146,7 +154,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
-            volatile_store: DEFAULT_STORE_CAPACITY,
+            store_retention: DEFAULT_STORE_CAPACITY,
             writable_dir: None,
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
@@ -253,8 +261,8 @@ impl<S, C> DeviceBuilder<S, C> {
 
 impl<C> DeviceBuilder<C, NoStore> {
     /// Set the maximum number of elements that will be kept in the store
-    pub fn store_capacity(mut self, size: u64) -> Result<Self, BuilderError> {
-        self.volatile_store = NonZeroU64::new(size)
+    pub fn max_retention_items(mut self, size: usize) -> Result<Self, BuilderError> {
+        self.store_retention = NonZeroUsize::new(size)
             .ok_or(BuilderError::Sqlite(SqliteError::InvalidCapacity(size)))?;
 
         Ok(self)
@@ -272,7 +280,7 @@ impl<C> DeviceBuilder<C, NoStore> {
 
         self = self.writable_dir(path)?;
 
-        let store = SqliteStore::connect(path, self.volatile_store).await?;
+        let store = SqliteStore::connect(path, self.store_retention).await?;
 
         Ok(self.store(store))
     }
@@ -288,7 +296,7 @@ impl<C> DeviceBuilder<C, NoStore> {
             interfaces: self.interfaces,
             connection_config: self.connection_config,
             store,
-            volatile_store: self.volatile_store,
+            store_retention: self.store_retention,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
@@ -316,7 +324,7 @@ where
             store: self.store,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
-            volatile_store: self.volatile_store,
+            store_retention: self.store_retention,
             writable_dir: self.writable_dir,
         }
     }

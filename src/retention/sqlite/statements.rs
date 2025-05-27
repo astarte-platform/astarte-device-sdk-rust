@@ -130,7 +130,10 @@ impl WriteConnection {
     /// - if so, remove the expired elements from the store
     /// - if the available space is still unsufficient, remove the oldest elements
     #[instrument(skip_all)]
-    pub(crate) fn free_space(transaction: &Transaction, capacity: u64) -> Result<(), SqliteError> {
+    pub(crate) fn free_space(
+        transaction: &Transaction,
+        capacity: usize,
+    ) -> Result<(), SqliteError> {
         debug!("remove elements from strore if it's full");
 
         let count_stored = Self::count_stored(transaction)?;
@@ -167,20 +170,20 @@ impl WriteConnection {
     }
 
     /// Retrieve the number of stored properties
-    fn count_stored(transaction: &Transaction) -> Result<u64, SqliteError> {
+    fn count_stored(transaction: &Transaction) -> Result<usize, SqliteError> {
         wrap_sync_call(|| {
             let mut statement = transaction
                 .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
                 .map_err(SqliteError::Prepare)?;
 
             statement
-                .query_row((), |row| row.get::<_, u64>(0))
+                .query_row((), |row| row.get::<_, usize>(0))
                 .map_err(SqliteError::Query)
         })
     }
 
     /// Remove the N oldest elements from the store
-    fn remove_oldest(transaction: &Transaction, to_remove: u64) -> Result<usize, SqliteError> {
+    fn remove_oldest(transaction: &Transaction, to_remove: usize) -> Result<usize, SqliteError> {
         if to_remove == 0 {
             return Ok(0);
         }
