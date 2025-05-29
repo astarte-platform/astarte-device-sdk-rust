@@ -125,9 +125,9 @@ pub trait DynamicIntrospection {
 }
 
 mock! {
-    pub DeviceClient<C: Connection + 'static, S: 'static> { }
+    pub DeviceClient<C: Connection + 'static> { }
 
-    impl<C: Connection + Send + Sync, S: Send + Sync> Client for DeviceClient<C, S> {
+    impl<C: Connection> Client for DeviceClient<C> {
         async fn send_object_with_timestamp(
             &mut self,
             interface_name: &str,
@@ -170,14 +170,14 @@ mock! {
         async fn recv(&self) -> Result<DeviceEvent, RecvError>;
     }
 
-    impl<C: Connection + Send + Sync, S: Send + Sync> DeviceIntrospection for DeviceClient<C, S> {
+    impl<C: Connection> DeviceIntrospection for DeviceClient<C> {
         async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
         where
             F: FnMut(Option<&Interface>) -> O + Send + 'static,
             O: 'static;
     }
 
-    impl<C: Connection + Send + Sync, S: Send + Sync> DynamicIntrospection for DeviceClient<C, S> {
+    impl<C: Connection> DynamicIntrospection for DeviceClient<C> {
         async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>;
 
         async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, Error>
@@ -198,7 +198,7 @@ mock! {
                 I::IntoIter: Send;
     }
 
-    impl<C: Connection + Send + Sync, S: Send + Sync> PropAccess for DeviceClient<C, S> {
+    impl<C: Connection> PropAccess for DeviceClient<C> {
         async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
         async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
         async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
@@ -206,19 +206,19 @@ mock! {
         async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
     }
 
-    impl<C: Connection + Send + Sync, S: Send + Sync> ClientDisconnect for DeviceClient<C, S> {
+    impl<C: Connection> ClientDisconnect for DeviceClient<C> {
         async fn disconnect(&mut self) -> Result<(), Error>;
     }
 
-    impl<C: Connection, S> Clone for DeviceClient<C, S> {
+    impl<C: Connection> Clone for DeviceClient<C> {
         fn clone(&self) -> Self {}
     }
 }
 
 mock! {
-    pub DeviceConnection<S: 'static, C: 'static> {}
+    pub DeviceConnection<C: Connection + 'static> {}
 
-    impl<S: Send, C: Send> astarte_device_sdk::EventLoop for DeviceConnection<S,C> {
+    impl<C: Connection> astarte_device_sdk::EventLoop for DeviceConnection<C> {
         async fn handle_events(self) -> Result<(), crate::Error>;
     }
 }
