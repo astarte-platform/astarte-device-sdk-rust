@@ -511,7 +511,15 @@ impl SqliteStore {
                 .map_err(SqliteError::Query)?
                 .unwrap_or(0usize);
 
+            debug!(
+                current = version,
+                migrations = MIGRATIONS.len(),
+                "checking migrations"
+            );
+
             if version >= MIGRATIONS.len() {
+                trace!("no migration to run");
+
                 return Ok(());
             }
 
@@ -521,10 +529,14 @@ impl SqliteStore {
                     .map_err(SqliteError::Migration)?;
             }
 
+            debug!(version = MIGRATIONS.len(), "setting new database version");
+
+            writer
+                .pragma_update(None, "user_version", MIGRATIONS.len())
+                .map_err(SqliteError::Option)?;
+
             Ok(())
         })?;
-
-        set_pragma(&writer, "user_version", MIGRATIONS.len())?;
 
         Ok(())
     }
