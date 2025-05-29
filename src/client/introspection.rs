@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,19 +20,20 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
+use astarte_interfaces::interface::InterfaceTypeAggregation;
+use astarte_interfaces::{Interface, Schema};
 use tokio::fs;
 use tracing::{debug, error};
 
 use crate::error::Report;
-use crate::interface::InterfaceTypeDef;
 use crate::introspection::{AddInterfaceError, DeviceIntrospection};
 use crate::prelude::DynamicIntrospection;
 use crate::retention::memory::VolatileStore;
 use crate::retention::StoredRetention;
 use crate::store::wrapper::StoreWrapper;
-use crate::store::{PropertyInterface, PropertyStore, StoreCapabilities};
+use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::{Connection, Register};
-use crate::{Error, Interface};
+use crate::Error;
 
 use super::DeviceClient;
 
@@ -50,28 +51,36 @@ where
         store: &StoreWrapper<C::Store>,
         interface: &Interface,
     ) {
-        match interface.interface_type() {
-            InterfaceTypeDef::Datastream => {
-                volatile_store
-                    .delete_interface(interface.interface_name())
-                    .await;
-
-                if let Some(retention) = store.get_retention() {
-                    let res = retention.delete_interface(interface.interface_name()).await;
-
-                    if let Err(err) = res {
-                        error!(error = %Report::new(err),"failed to remove interfaces from retention");
-                    }
-                }
+        match interface.inner() {
+            InterfaceTypeAggregation::DatastreamIndividual(interface) => {
+                Self::cleanup_retention(volatile_store, store, interface.name()).await
             }
-            InterfaceTypeDef::Properties => {
-                let res = store
-                    .delete_interface(&PropertyInterface::from(interface))
-                    .await;
+            InterfaceTypeAggregation::DatastreamObject(interface) => {
+                Self::cleanup_retention(volatile_store, store, interface.name()).await
+            }
+            InterfaceTypeAggregation::Properties(properties) => {
+                let res = store.delete_interface(properties).await;
 
                 if let Err(err) = res {
                     error!(error = %Report::new(err),"failed to remove interfaces from properties");
                 }
+            }
+        }
+    }
+
+    // Cleans up the volatile and store retention.
+    async fn cleanup_retention(
+        volatile_store: &VolatileStore,
+        store: &StoreWrapper<C::Store>,
+        interface_name: &str,
+    ) {
+        volatile_store.delete_interface(interface_name).await;
+
+        if let Some(retention) = store.get_retention() {
+            let res = retention.delete_interface(interface_name).await;
+
+            if let Err(err) = res {
+                error!(error = %Report::new(err),"failed to remove interfaces from retention");
             }
         }
     }
@@ -286,6 +295,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use astarte_interfaces::interface::Retention;
+    use astarte_interfaces::schema::Reliability;
+    use astarte_interfaces::{MappingPath, Properties};
     use chrono::Utc;
     use mockall::{predicate, Sequence};
     use pretty_assertions::assert_eq;
@@ -294,8 +306,8 @@ mod tests {
     use super::*;
 
     use crate::client::tests::{mock_client, mock_client_with_store};
-    use crate::interface::{Ownership, Reliability, Retention};
     use crate::interfaces::tests::{mock_validated_collection, mock_validated_interface};
+    use crate::interfaces::MappingRef;
     use crate::retention::StoredRetentionExt;
     use crate::store::{PropertyMapping, SqliteStore};
     use crate::test::{
@@ -699,11 +711,13 @@ mod tests {
 
         let to_remove = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
 
+        let path = "/sensor_1/double_endpoint";
+
         client
             .store
             .store_prop(crate::store::StoredProp {
                 interface: E2E_DEVICE_PROPERTY_NAME,
-                path: "/sensor_1/double_endpoint",
+                path,
                 value: &AstarteType::LongInteger(2),
                 interface_major: to_remove.version_major(),
                 ownership: to_remove.ownership(),
@@ -732,15 +746,13 @@ mod tests {
             })
             .await;
 
+        let prop = Properties::from_str(E2E_DEVICE_PROPERTY).unwrap();
+        let path = MappingPath::try_from(path).unwrap();
+        let mapping = MappingRef::new(&prop, &path).unwrap();
+
         let res = client
             .store
-            .load_prop(
-                &PropertyMapping::new_unchecked(
-                    PropertyInterface::new(E2E_DEVICE_PROPERTY_NAME, Ownership::Device),
-                    "/sensor_1/double_endpoint",
-                ),
-                0,
-            )
+            .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap();
         assert_eq!(res, None);

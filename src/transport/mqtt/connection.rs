@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -531,7 +531,7 @@ impl Handshake {
 
             // NOTE set session synced to false since we are not synchronized
             // also clear the stored introspection so it can be updated
-            // set to true after a succesful handshake in [`WaitAcks`]
+            // set to true after a successful handshake in [`WaitAcks`]
             conn.set_session_synced(false);
             if let Some(session) = store.get_session() {
                 trace!("Clearing stored introspection before the full handshake");
@@ -740,7 +740,7 @@ impl Handshake {
 
                 let _logged_error = store.delete_prop(&prop.into()).await.inspect_err(|e| {
                     error!(error = %Report::new(e),
-                        "couldn't delete unset property, proceding anyways to ensure connection")
+                        "couldn't delete unset property, proceeding anyways to ensure connection")
                 });
             }
         }
@@ -953,15 +953,16 @@ impl Next {
 mod tests {
     use std::{str::FromStr, time::Duration};
 
+    use astarte_interfaces::Interface;
     use mockall::{predicate, Sequence};
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
         session::{IntrospectionInterface, SessionError},
         store::{memory::MemoryStore, mock::MockStore, StoredProp},
-        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
+        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType, Interface,
+        AstarteType,
     };
 
     use super::*;
@@ -1129,8 +1130,8 @@ mod tests {
         let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
         let prop = StoredProp {
-            interface: interface.interface_name().to_owned(),
-            path: "/sensor1/name".to_owned(),
+            interface: DEVICE_PROPERTIES_NAME.to_string(),
+            path: "/sensor1/name".to_string(),
             value: AstarteType::String("temperature".to_string()),
             interface_major: 0,
             ownership: interface.ownership(),

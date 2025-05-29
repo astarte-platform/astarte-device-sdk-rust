@@ -47,6 +47,7 @@ resolver = "2"
 members = [
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
+  "astarte-interfaces",
   "e2e-test",
 ]
 
@@ -62,6 +63,7 @@ rust-version = "1.78.0"
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
+astarte-interfaces = { workspace = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
 base64 = { workspace = true }
 bson = { workspace = true, features = ["chrono-0_4"] }
@@ -137,6 +139,7 @@ rustc-args = ["--cfg=docsrs"]
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.6" }
 astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
+astarte-interfaces = { path = "./astarte-interfaces", version = "=0.1.0-alpha.1" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 async-channel = "2.0.0"
@@ -162,6 +165,7 @@ pretty_assertions = "1.4.1"
 proc-macro2 = "1.0.83"
 quote = "1.0.35"
 rcgen = { version = "0.13.1", default-features = false }
+regex = "1.11.0"
 reqwest = { version = "0.12.9", default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.6-ack-notify" }
 # Error with bindgen and rust <1.82

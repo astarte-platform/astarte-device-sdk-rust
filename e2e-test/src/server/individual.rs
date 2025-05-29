@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use astarte_device_sdk::{AstarteType, Client, DeviceEvent};
 use eyre::{ensure, OptionExt};
-use tracing::info;
+use tracing::{error, info, instrument};
 
 use crate::api::ApiClient;
 use crate::data::InterfaceData;
@@ -61,6 +61,7 @@ impl InterfaceData for ServerDatastreamOverflow {
     }
 }
 
+#[instrument(skip_all)]
 async fn validate<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceData,
@@ -76,7 +77,15 @@ where
             interface,
             path,
             data,
-        } = tokio::time::timeout(Duration::from_secs(2), client.recv()).await??;
+        } = tokio::time::timeout(Duration::from_secs(2), client.recv())
+            .await
+            .inspect_err(|_| {
+                error!(
+                    interface = data_interface,
+                    path = data_path,
+                    "timeout reached"
+                );
+            })??;
 
         ensure!(interface == data_interface);
         ensure!(path == data_path);

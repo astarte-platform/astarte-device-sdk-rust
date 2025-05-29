@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,11 +20,12 @@
 
 use tracing::trace;
 
+use astarte_interfaces::Properties;
+
 use crate::types::AstarteType;
 
 use super::{
-    error::StoreError, OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore,
-    StoreCapabilities, StoredProp,
+    error::StoreError, OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
 };
 
 /// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
@@ -80,10 +81,9 @@ where
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-        interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
         self.store
-            .load_prop(property, interface_major)
+            .load_prop(property)
             .await
             .map_err(StoreError::load)
     }
@@ -127,17 +127,14 @@ where
             .map_err(StoreError::device_props)
     }
 
-    async fn interface_props(
-        &self,
-        interface: &PropertyInterface<'_>,
-    ) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
         self.store
             .interface_props(interface)
             .await
             .map_err(StoreError::interface_props)
     }
 
-    async fn delete_interface(&self, interface: &PropertyInterface<'_>) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
         self.store
             .delete_interface(interface)
             .await

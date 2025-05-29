@@ -164,6 +164,7 @@ name = "astarte-device-sdk"
 version = "0.9.6"
 dependencies = [
  "astarte-device-sdk-derive",
+ "astarte-interfaces",
  "astarte-message-hub-proto",
  "astarte-message-hub-proto-mock",
  "async-trait",
@@ -222,6 +223,19 @@ dependencies = [
  "astarte-device-sdk",
  "chrono",
  "mockall",
+]
+
+[[package]]
+name = "astarte-interfaces"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "cfg-if",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tracing",
 ]
 
 [[package]]

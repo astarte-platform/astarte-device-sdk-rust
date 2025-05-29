@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,15 +20,17 @@
 
 use std::{future::Future, io::Write};
 
+use astarte_interfaces::{
+    interface::InterfaceTypeAggregation, schema::InterfaceType, MappingPath, Schema,
+};
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use futures::{future, StreamExt, TryStreamExt};
 use tracing::{debug, error, warn};
 
 use crate::{
     client::DeviceClient,
-    error::Error,
-    interface::mapping::path::MappingPath,
-    store::{PropertyStore, StoredProp},
+    error::{Error, InterfaceTypeError},
+    store::{PropertyMapping, PropertyStore, StoredProp},
     transport::Connection,
     types::AstarteType,
 };
@@ -111,38 +113,47 @@ where
         let path = MappingPath::try_from(path)?;
 
         let interfaces = self.state.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface_name, &path)?;
+        let mapping = interfaces.get_property(interface_name, &path)?;
 
-        self.try_load_prop(&mapping, &path).await
+        self.try_load_prop(&mapping).await
     }
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
         let interfaces = self.state.interfaces.read().await;
-        let prop_if =
-            interfaces
-                .get_property(interface_name)
-                .ok_or_else(|| Error::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })?;
+        let interface = interfaces
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
-        let stored_prop = self.store.interface_props(&(&prop_if).into()).await?;
+        let InterfaceTypeAggregation::Properties(interface) = interface.inner() else {
+            return Err(Error::InterfaceType(InterfaceTypeError::new(
+                interface_name,
+                InterfaceType::Properties,
+                interface.interface_type(),
+            )));
+        };
+
+        let stored_prop = self.store.interface_props(interface).await?;
 
         futures::stream::iter(stored_prop)
-            .then(|p| async {
-                if p.interface_major != prop_if.version_major() {
+            .then(|stored_prop| async {
+                if stored_prop.interface_major != interface.version_major() {
                     warn!(
                         "version mismatch for property {}{} (stored {}, interface {}), deleting",
-                        p.interface,
-                        p.path,
-                        p.interface_major,
-                        prop_if.version_major()
+                        stored_prop.interface,
+                        stored_prop.path,
+                        stored_prop.interface_major,
+                        interface.version_major()
                     );
 
-                    self.store.delete_prop(&(&p).into()).await?;
+                    self.store
+                        .delete_prop(&PropertyMapping::from(&stored_prop))
+                        .await?;
 
                     Ok(None)
                 } else {
-                    Ok(Some(p))
+                    Ok(Some(stored_prop))
                 }
             })
             .try_filter_map(future::ok)
@@ -263,8 +274,9 @@ fn encode_prop(
 #[cfg(test)]
 pub(crate) mod tests {
 
+    use astarte_interfaces::schema::Ownership;
+
     use crate::client::tests::mock_client_with_store;
-    use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
     use crate::store::{SqliteStore, StoreCapabilities};
 
@@ -297,8 +309,7 @@ pub(crate) mod tests {
     "description": "Generic aggregated object data.",
     "mappings": [{
         "endpoint": "/bar",
-        "type": "boolean",
-        "explicit_timestamp": false
+        "type": "boolean"
     }]
 }"#;
     const DEVICE_PROP: &str = r#"{
@@ -311,8 +322,7 @@ pub(crate) mod tests {
     "description": "Generic aggregated object data.",
     "mappings": [{
         "endpoint": "/foo",
-        "type": "integer",
-        "explicit_timestamp": false
+        "type": "integer"
     }]
 }"#;
 
