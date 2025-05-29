@@ -498,6 +498,7 @@ impl SqliteStore {
         const MIGRATIONS: &[&str] = &[
             include_query!("migrations/0001_init.sql"),
             include_query!("migrations/0002_unset_property.sql"),
+            include_query!("migrations/0003_session.sql"),
         ];
 
         let writer = self.writer.lock().await;
@@ -586,8 +587,13 @@ impl SqliteStore {
 
 impl StoreCapabilities for SqliteStore {
     type Retention = Self;
+    type Session = Self;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
+        Some(self)
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
         Some(self)
     }
 }

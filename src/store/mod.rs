@@ -18,7 +18,7 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{error::Error as StdError, fmt::Debug, future::Future, ops::Deref};
+use std::{collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, ops::Deref};
 
 pub use self::sqlite::SqliteStore;
 use crate::{
@@ -26,7 +26,8 @@ use crate::{
         reference::{MappingRef, PropertyRef},
         Ownership,
     },
-    retention::StoredRetention,
+    retention::{Id, PublishInfo, RetentionError, StoredInterface, StoredRetention},
+    session::{IntrospectionInterface, SessionError, StoredSession},
     types::AstarteType,
     validate::ValidatedUnset,
     Interface,
@@ -34,6 +35,8 @@ use crate::{
 
 pub mod error;
 pub mod memory;
+#[cfg(test)]
+pub(crate) mod mock;
 pub mod sqlite;
 pub mod wrapper;
 
@@ -48,9 +51,95 @@ pub trait StoreCapabilities: PropertyStore {
     ///
     /// This should be self, it's used as an associated type to not introduce dynamic dispatch.
     type Retention: StoredRetention;
+    /// Type used for the [`StoredSession`].
+    ///
+    /// This should be self, it's used as an associated type to not introduce dynamic dispatch.
+    type Session: StoredSession;
 
     /// Returns the retention if the store supports it.
     fn get_retention(&self) -> Option<&Self::Retention>;
+
+    /// Returns the introspection store if supported.
+    fn get_session(&self) -> Option<&Self::Session>;
+}
+
+/// Un-constructable type for a default capability.
+///
+/// This should be the never type [`!`] in the future.
+/// Useful for types which do not have a capability but must implement [`StoreCapabilities`]
+#[derive(Clone, Copy)]
+pub enum MissingCapability {}
+
+#[cfg_attr(__coverage, coverage(off))]
+impl StoredRetention for MissingCapability {
+    async fn store_publish(
+        &self,
+        _id: &Id,
+        _publish: PublishInfo<'_>,
+    ) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn mark_received(&self, _packet: &Id) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn unsent_publishes(
+        &self,
+        _limit: usize,
+        _buf: &mut Vec<(Id, PublishInfo<'static>)>,
+    ) -> Result<usize, RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+
+    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+        unreachable!("the type is Un-constructable");
+    }
+}
+
+#[cfg_attr(__coverage, coverage(off))]
+impl StoredSession for MissingCapability {
+    async fn add_interfaces(
+        &self,
+        _interfaces: &[IntrospectionInterface<&str>],
+    ) -> Result<(), SessionError> {
+        unreachable!("the type is un-constructable");
+    }
+
+    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
+        unreachable!("the type is un-constructable");
+    }
+
+    async fn store_introspection(&self, _interfaces: &[IntrospectionInterface]) {
+        unreachable!("the type is un-constructable");
+    }
+
+    async fn clear_introspection(&self) {
+        unreachable!("the type is un-constructable");
+    }
+
+    async fn remove_interfaces(
+        &self,
+        _interfaces: &[IntrospectionInterface<&str>],
+    ) -> Result<(), SessionError> {
+        unreachable!("the type is un-constructable");
+    }
 }
 
 /// Data passed to the store that identifies a property

@@ -336,7 +336,7 @@ mod tests {
 
         connection.init_stored_retention().await.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(2), connection.resend.unwrap())
+        tokio::time::timeout(Duration::from_secs(2), connection.resend.take().unwrap())
             .await
             .unwrap()
             .unwrap();

@@ -48,7 +48,7 @@ export COVERAGE_OUT_DIR="$CARGO_TARGET_DIR/debug/coverage"
 # - `coverage-options=branch``: enable block and branch coverage (unstable option)
 #
 # See: https://doc.rust-lang.org/rustc/instrument-coverage.html
-export RUSTFLAGS="-Cinstrument-coverage -Zcoverage-options=branch"
+export RUSTFLAGS="-Cinstrument-coverage -Zcoverage-options=branch --cfg=__coverage"
 export CARGO_INCREMENTAL=0
 
 # Helpful for testing changes in the generation options
@@ -138,6 +138,7 @@ filter_lcov() {
             --dark-mode \
             --missed \
             --ignore-errors category \
+            --ignore-errors inconsistent \
             --output-directory "$COVERAGE_OUT_DIR/$1/genhtml" \
             "$COVERAGE_OUT_DIR/$1/lcov.info"
 

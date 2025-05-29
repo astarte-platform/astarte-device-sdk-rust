@@ -32,6 +32,7 @@ use crate::{
         reference::{MappingRef, PropertyRef},
         InterfaceTypeDef,
     },
+    session::IntrospectionInterface,
     validate::UserValidationError,
     Error, Interface,
 };
@@ -252,6 +253,24 @@ impl Interfaces {
             .values()
             .filter(|i| !removed.contains_key(i.interface_name()))
     }
+
+    pub(crate) fn matches<S: AsRef<str>>(&self, stored: &[IntrospectionInterface<S>]) -> bool {
+        stored.len() == self.len()
+            && stored.iter().all(|stored_i| {
+                self.get(stored_i.name().as_ref()).is_some_and(|i| {
+                    i.version_major() == stored_i.version_major()
+                        && i.version_minor() == stored_i.version_minor()
+                })
+            })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.interfaces.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.interfaces.is_empty()
+    }
 }
 
 impl FromIterator<Interface> for Interfaces {
@@ -269,6 +288,12 @@ impl FromIterator<Interface> for Interfaces {
 pub(crate) struct Validated {
     interface: Interface,
     major_change: bool,
+}
+
+impl Validated {
+    pub(crate) fn interface(&self) -> &Interface {
+        &self.interface
+    }
 }
 
 impl Validated {
@@ -295,7 +320,6 @@ impl Deref for Validated {
 pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
 impl ValidatedCollection {
-    #[cfg(feature = "message-hub")]
     pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
         self.0.values().map(|v| &v.interface)
     }

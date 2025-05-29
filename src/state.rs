@@ -21,6 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use tokio::sync::RwLock;
+use tokio::sync::Semaphore;
 
 use crate::interfaces::Interfaces;
 use crate::retention;
@@ -31,6 +32,9 @@ use crate::retention::memory::VolatileStore;
 /// It's used to have a single allocation and dereference through a single [`Arc`].
 #[derive(Debug)]
 pub(crate) struct SharedState {
+    // should be locked during every action when modifying the introspection
+    // (adding or removing interfaces)
+    pub(crate) introspection: Semaphore,
     pub(crate) interfaces: RwLock<Interfaces>,
     pub(crate) volatile_store: VolatileStore,
     pub(crate) retention_ctx: retention::Context,
@@ -40,6 +44,7 @@ pub(crate) struct SharedState {
 impl SharedState {
     pub(crate) fn new(interfaces: Interfaces, volatile_store: VolatileStore) -> Self {
         Self {
+            introspection: Semaphore::new(1),
             interfaces: RwLock::new(interfaces),
             volatile_store,
             retention_ctx: retention::Context::new(),
@@ -67,9 +72,9 @@ pub(crate) struct ConnectionStatus {
 impl ConnectionStatus {
     pub(crate) fn new() -> Self {
         Self {
+            closed: AtomicBool::new(false),
             // Assume we are connected
             connected: AtomicBool::new(true),
-            closed: AtomicBool::new(false),
         }
     }
 

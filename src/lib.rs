@@ -30,6 +30,7 @@
     rustdoc::missing_crate_level_docs
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(__coverage, feature(coverage_attribute))]
 
 pub mod _docs;
 
@@ -46,6 +47,7 @@ pub mod prelude;
 pub mod properties;
 pub mod retention;
 mod retry;
+pub mod session;
 pub(crate) mod state;
 pub mod store;
 pub mod transport;
@@ -77,11 +79,15 @@ mod test {
     // Interfaces
     pub(crate) const DEVICE_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
+    pub(crate) const DEVICE_PROPERTIES_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     pub(crate) const SERVER_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.ServerDatastream.json");
     pub(crate) const SERVER_OBJECT_NAME: &str =
         "org.astarte-platform.rust.examples.object-datastream.ServerDatastream";
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
     pub(crate) const SERVER_INDIVIDUAL: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    pub(crate) const SERVER_INDIVIDUAL_NAME: &str =
+        "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream";
 
     // E2E Interfaces
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(

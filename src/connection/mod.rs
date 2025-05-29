@@ -180,6 +180,16 @@ where
     }
 }
 
+impl<C> Drop for DeviceConnection<C>
+where
+    C: Connection,
+{
+    fn drop(&mut self) {
+        self.state.introspection.close();
+        self.state.status.close();
+    }
+}
+
 impl<C> EventLoop for DeviceConnection<C>
 where
     C: Connection + Reconnect + Receive + 'static,
