@@ -262,7 +262,6 @@ fn encode_prop(
 
 #[cfg(test)]
 pub(crate) mod tests {
-
     use crate::client::tests::mock_client_with_store;
     use crate::interface::Ownership;
     use crate::store::memory::MemoryStore;
