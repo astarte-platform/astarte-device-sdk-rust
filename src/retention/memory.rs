@@ -323,7 +323,7 @@ mod tests {
         aggregate::AstarteObject,
         interface::{Reliability, Retention},
         retention::Context,
-        AstarteType,
+        AstarteData,
     };
 
     use super::*;
@@ -336,7 +336,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -357,7 +357,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -367,7 +367,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -393,7 +393,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info2 = ValidatedIndividual {
@@ -404,7 +404,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info3 = ValidatedIndividual {
@@ -413,7 +413,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -443,7 +443,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info2 = ValidatedIndividual {
@@ -454,7 +454,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info3 = ValidatedIndividual {
@@ -463,7 +463,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -490,7 +490,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Discard,
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -523,7 +523,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info2 = ValidatedIndividual {
@@ -534,7 +534,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info3 = ValidatedIndividual {
@@ -543,7 +543,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -571,7 +571,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info2 = ValidatedIndividual {
@@ -582,7 +582,7 @@ mod tests {
             retention: Retention::Volatile {
                 expiry: Some(Duration::from_nanos(1)),
             },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
         let info3 = ValidatedIndividual {
@@ -591,7 +591,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -621,7 +621,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Volatile { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -641,7 +641,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Stored { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 
@@ -676,7 +676,7 @@ mod tests {
             version_major: 0,
             reliability: Reliability::Unique,
             retention: Retention::Stored { expiry: None },
-            data: AstarteType::Integer(42),
+            data: AstarteData::Integer(42),
             timestamp: None,
         };
 

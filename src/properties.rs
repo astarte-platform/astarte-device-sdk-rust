@@ -30,7 +30,7 @@ use crate::{
     interface::mapping::path::MappingPath,
     store::{PropertyStore, StoredProp},
     transport::Connection,
-    types::AstarteType,
+    types::AstarteData,
 };
 
 /// Error handling the properties.
@@ -61,7 +61,7 @@ pub trait PropAccess {
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -75,7 +75,7 @@ pub trait PropAccess {
     ///         .connection(mqtt_config)
     ///         .build().await.unwrap();
     ///
-    ///     let property_value: Option<AstarteType> = device
+    ///     let property_value: Option<AstarteData> = device
     ///         .property("my.interface.name", "/endpoint/path")
     ///         .await
     ///         .unwrap();
@@ -85,7 +85,7 @@ pub trait PropAccess {
         &self,
         interface: &str,
         path: &str,
-    ) -> impl Future<Output = Result<Option<AstarteType>, Error>> + Send;
+    ) -> impl Future<Output = Result<Option<AstarteData>, Error>> + Send;
     /// Get all the properties of the given interface.
     fn interface_props(
         &self,
@@ -107,7 +107,7 @@ where
         &self,
         interface_name: &str,
         path: &str,
-    ) -> Result<Option<AstarteType>, Error> {
+    ) -> Result<Option<AstarteData>, Error> {
         let path = MappingPath::try_from(path)?;
 
         let interfaces = self.state.interfaces.read().await;
@@ -324,7 +324,7 @@ pub(crate) mod tests {
             .store_prop(StoredProp {
                 interface: "org.Foo",
                 path: "/bar",
-                value: &AstarteType::Boolean(true),
+                value: &AstarteData::Boolean(true),
                 interface_major: 1,
                 ownership: Ownership::Server,
             })
@@ -335,7 +335,7 @@ pub(crate) mod tests {
             .store_prop(StoredProp {
                 interface: "org.Bar",
                 path: "/foo",
-                value: &AstarteType::Integer(42),
+                value: &AstarteData::Integer(42),
                 interface_major: 1,
                 ownership: Ownership::Device,
             })
@@ -345,10 +345,10 @@ pub(crate) mod tests {
         let (sdk, _) = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], store);
 
         let prop = sdk.property("org.Foo", "/bar").await.unwrap();
-        assert_eq!(prop, Some(AstarteType::Boolean(true)));
+        assert_eq!(prop, Some(AstarteData::Boolean(true)));
 
         let prop = sdk.property("org.Bar", "/foo").await.unwrap();
-        assert_eq!(prop, Some(AstarteType::Integer(42)));
+        assert_eq!(prop, Some(AstarteData::Integer(42)));
 
         let mut props = sdk.all_props().await.unwrap();
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
@@ -356,14 +356,14 @@ pub(crate) mod tests {
             StoredProp::<&'static str> {
                 interface: "org.Bar",
                 path: "/foo",
-                value: AstarteType::Integer(42),
+                value: AstarteData::Integer(42),
                 interface_major: 1,
                 ownership: Ownership::Device,
             },
             StoredProp::<&'static str> {
                 interface: "org.Foo",
                 path: "/bar",
-                value: AstarteType::Boolean(true),
+                value: AstarteData::Boolean(true),
                 interface_major: 1,
                 ownership: Ownership::Server,
             },
@@ -374,7 +374,7 @@ pub(crate) mod tests {
         let expected = [StoredProp {
             interface: "org.Bar",
             path: "/foo",
-            value: AstarteType::Integer(42),
+            value: AstarteData::Integer(42),
             interface_major: 1,
             ownership: Ownership::Device,
         }];
@@ -387,7 +387,7 @@ pub(crate) mod tests {
         let expected = [StoredProp::<&'static str> {
             interface: "org.Foo",
             path: "/bar",
-            value: AstarteType::Boolean(true),
+            value: AstarteData::Boolean(true),
             interface_major: 1,
             ownership: Ownership::Server,
         }];
