@@ -18,7 +18,7 @@
 
 use std::fmt::Debug;
 
-use astarte_device_sdk::AstarteType;
+use astarte_device_sdk::AstarteData;
 use color_eyre::owo_colors::OwoColorize;
 use color_eyre::{Section, SectionExt};
 use eyre::{eyre, Context};
@@ -182,7 +182,7 @@ impl ApiClient {
         &self,
         interface: &str,
         path: &str,
-        data: &AstarteType,
+        data: &AstarteData,
     ) -> eyre::Result<()> {
         let value = convert_type_to_json(data);
 
