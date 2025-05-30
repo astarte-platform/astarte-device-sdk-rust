@@ -57,7 +57,7 @@ pub(crate) use include_query;
 pub(crate) struct WriteConnection {
     connection: Connection,
     // useful to perform eviction when the store is full
-    pub(crate) store_capacity: NonZeroUsize,
+    pub(crate) retention_capacity: NonZeroUsize,
 }
 
 impl WriteConnection {
@@ -79,7 +79,7 @@ impl WriteConnection {
 
         let connection = Self {
             connection,
-            store_capacity: DEFAULT_STORE_CAPACITY,
+            retention_capacity: DEFAULT_STORE_CAPACITY,
         };
 
         if db_created {
@@ -102,10 +102,6 @@ impl WriteConnection {
         connection.execute("VACUUM", [])?;
 
         Ok(connection)
-    }
-
-    pub(crate) fn store_capacity(&self) -> usize {
-        self.store_capacity.get()
     }
 
     /// Return db pages information
@@ -132,16 +128,12 @@ impl WriteConnection {
 
         let ownership = RecordOwnership::from(prop.ownership);
 
-        let capacity = self.store_capacity.get();
-
-        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
-
         // before storing the property, check if the max capacity is reached and
         // eventually evict the expired and the oldest properties.
-        Self::free_space(&transaction, capacity)?;
+        self.free_retention_items(1)?;
 
-        let res = wrap_sync_call(|| {
-            let mut statement = transaction
+        wrap_sync_call(|| {
+            let mut statement = self
                 .prepare_cached(include_query!("queries/properties/write/store_prop.sql"))
                 .map_err(SqliteError::Prepare)?;
 
@@ -154,12 +146,10 @@ impl WriteConnection {
                     prop.interface_major,
                     ownership,
                 ))
-                .map_err(SqliteError::Query)
-        });
+                .map_err(SqliteError::Query)?;
 
-        res?;
-
-        transaction.commit().map_err(SqliteError::Transaction)
+            Ok(())
+        })
     }
 
     pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), SqliteError> {
