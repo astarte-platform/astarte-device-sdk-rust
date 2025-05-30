@@ -133,7 +133,7 @@ impl ValidatedIndividual {
             )));
         }
 
-        if data != mapping.mapping_type() {
+        if !data.eq_mapping_type(mapping.mapping_type()) {
             return Err(UserValidationError::MappingType {
                 interface: interface.interface_name().to_string(),
                 path: path.as_str().to_string(),
@@ -204,7 +204,7 @@ impl ValidatedObject {
                 });
             };
 
-            if *value != mapping.mapping_type() {
+            if !value.eq_mapping_type(mapping.mapping_type()) {
                 return Err(UserValidationError::MappingType {
                     interface: interface.interface.interface_name().to_string(),
                     path: format!("{path}/{key}"),
@@ -278,7 +278,7 @@ impl ValidatedProperty {
             )));
         }
 
-        if data != mapping.mapping_type() {
+        if !data.eq_mapping_type(mapping.mapping_type()) {
             return Err(UserValidationError::MappingType {
                 interface: interface.interface_name().to_string(),
                 path: path.as_str().to_string(),
@@ -386,7 +386,7 @@ mod tests {
         let aggregate = AstarteObject::from_iter([
             (
                 "double_endpoint".to_string(),
-                AstarteType::Double(37.534543),
+                AstarteType::Double(37.534543.try_into().unwrap()),
             ),
             ("integer_endpoint".to_string(), AstarteType::Integer(45)),
             ("boolean_endpoint".to_string(), AstarteType::Boolean(true)),
