@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add the AstarteObject struct for Object Datastream [#430].
 - Allow setting the sqlite database size
   [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
+- Allow setting the maximum number of items for the retention
+  [#463](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/463).
 
 ### Changed
 
