@@ -27,9 +27,9 @@ use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
 use tracing::{instrument, warn};
 
 use crate::{
+    builder::DEFAULT_STORE_CAPACITY,
     store::{OptStoredProp, StoredProp},
     AstarteData,
-    builder::DEFAULT_STORE_CAPACITY,
 };
 
 use super::{
@@ -108,15 +108,15 @@ impl WriteConnection {
     ///
     /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
     pub(crate) fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, SqliteError>
-where
-T: FromSql,
-{
-wrap_sync_call(|| {
-self.connection
-.pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
-})
-.map_err(SqliteError::Query)
-}
+    where
+        T: FromSql,
+    {
+        wrap_sync_call(|| {
+            self.connection
+                .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
+        })
+        .map_err(SqliteError::Query)
+    }
 
     #[instrument(skip_all)]
     pub(super) fn store_prop(

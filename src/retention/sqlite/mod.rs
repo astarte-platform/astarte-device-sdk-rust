@@ -435,6 +435,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_max_retention_should_vacuum() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // initialize the store with 2 elements and then set the capacity to 1.
+        // this should cause the vacuum to be called, since the store is full and we are setting a lower capacity.
+        let ctx = Context::new();
+
+        let id1 = ctx.next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        let id2 = ctx.next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", None))
+            .await
+            .unwrap();
+
+        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
+
+        let capacity = NonZeroUsize::new(1).unwrap();
+        store.set_max_retention_items(capacity).await.unwrap();
+
+        assert_eq!(1, store.writer.lock().await.count_stored().unwrap());
+    }
+
+    #[tokio::test]
     async fn should_remove_expired_and_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 

@@ -600,4 +600,10 @@ mod test {
         .unwrap()
         .unwrap();
     }
+
+    #[test]
+    #[should_panic(expected = "value cannot be zero")]
+    fn const_non_zero_usize_should_panic() {
+        const_non_zero_usize(0);
+    }
 }

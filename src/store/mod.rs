@@ -19,7 +19,8 @@
 //! Provides functionality for instantiating an Astarte sqlite database.
 
 use std::{
-    collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, num::NonZeroUsize, };
+    collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, num::NonZeroUsize,
+};
 
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{Properties, Schema};
