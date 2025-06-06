@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -233,11 +233,11 @@ where
 mod tests {
     use std::time::Duration;
 
+    use astarte_interfaces::MappingPath;
     use mockall::{predicate, Sequence};
     use tempfile::TempDir;
 
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
-    use crate::interface::mapping::path::MappingPath;
     use crate::retention::{PublishInfo, RetentionId, StoredRetentionExt};
     use crate::store::{SqliteStore, StoreCapabilities};
     use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
@@ -285,7 +285,7 @@ mod tests {
             let mapping_path = MappingPath::try_from(path).unwrap();
             let interfaces = connection.state.interfaces.read().await;
             let mapping = interfaces
-                .interface_mapping(STORED_DEVICE_DATASTREAM_NAME, &mapping_path)
+                .get_individual(STORED_DEVICE_DATASTREAM_NAME, &mapping_path)
                 .unwrap();
 
             ValidatedIndividual::validate(mapping, value.clone(), None).unwrap()

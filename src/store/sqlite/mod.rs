@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,6 +20,10 @@
 
 use std::{cell::Cell, fmt::Debug, num::NonZeroU64, path::Path, sync::Arc, time::Duration};
 
+use astarte_interfaces::{
+    schema::{MappingType, Ownership},
+    Properties, Schema,
+};
 use futures::lock::Mutex;
 use rusqlite::{
     types::{FromSql, FromSqlError},
@@ -29,11 +33,8 @@ use serde::{Deserialize, Serialize};
 use statements::{include_query, ReadConnection, WriteConnection};
 use tracing::{debug, error, trace, warn};
 
-use super::{
-    OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
-};
+use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
-    interface::{MappingType, Ownership},
     transport::mqtt::payload::{Payload, PayloadError},
     types::{AstarteType, BsonConverter, TypeError},
 };
@@ -619,25 +620,27 @@ impl PropertyStore for SqliteStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-        interface_major: i32,
     ) -> Result<Option<AstarteType>, Self::Err> {
-        let opt_record =
-            self.with_reader(|reader| reader.load_prop(property.name(), property.path()))?;
+        let opt_record = self
+            .with_reader(|reader| reader.load_prop(property.interface_name(), property.path()))?;
 
         match opt_record {
             Some(record) => {
                 trace!(
                     "Loaded property {} {} in db {:?}",
-                    property.name,
-                    property.path,
+                    property.interface_name(),
+                    property.path(),
                     record
                 );
 
                 // if version mismatch, delete
-                if record.interface_major != interface_major {
+                if record.interface_major != property.version_major() {
                     error!(
                         "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                        property.name, property.path, record.interface_major, interface_major
+                        property.interface_name(),
+                        property.path(),
+                        record.interface_major,
+                        property.version_major()
                     );
 
                     self.delete_prop(property).await?;
@@ -655,7 +658,7 @@ impl PropertyStore for SqliteStore {
         self.writer
             .lock()
             .await
-            .unset_prop(property.name(), property.path())?;
+            .unset_prop(property.interface_name(), property.path())?;
 
         Ok(())
     }
@@ -664,7 +667,7 @@ impl PropertyStore for SqliteStore {
         self.writer
             .lock()
             .await
-            .delete_prop(property.name(), property.path())?;
+            .delete_prop(property.interface_name(), property.path())?;
 
         Ok(())
     }
@@ -687,14 +690,11 @@ impl PropertyStore for SqliteStore {
         self.with_reader(|reader| reader.props_with_ownership(Ownership::Server))
     }
 
-    async fn interface_props(
-        &self,
-        interface: &PropertyInterface<'_>,
-    ) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
         self.with_reader(|reader| reader.interface_props(interface.name()))
     }
 
-    async fn delete_interface(&self, interface: &PropertyInterface<'_>) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
         self.writer
             .lock()
             .await
@@ -785,12 +785,12 @@ mod tests {
                 interface_major: 1,
                 ownership: Ownership::Device,
             };
-            let prop_interface_data = (&prop).into();
+            let prop_interface_data = PropertyMapping::from(&prop);
 
             store.store_prop(prop).await.unwrap();
             assert_eq!(
                 store
-                    .load_prop(&prop_interface_data, 1)
+                    .load_prop(&prop_interface_data)
                     .await
                     .unwrap()
                     .unwrap(),

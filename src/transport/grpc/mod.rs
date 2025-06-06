@@ -27,6 +27,10 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use astarte_interfaces::schema::{Aggregation, InterfaceType};
+use astarte_interfaces::{
+    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties, Schema,
+};
 use astarte_message_hub_proto::prost::{DecodeError, Message};
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
@@ -52,21 +56,17 @@ use crate::aggregate::AstarteObject;
 use crate::builder::BuildConfig;
 use crate::client::RecvError;
 use crate::error::{AggregationError, InterfaceTypeError, Report};
-use crate::interface::{Aggregation, InterfaceTypeDef};
+use crate::interfaces::MappingRef;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
 use crate::{
     builder::{ConnectionConfig, DeviceTransport},
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-    },
     interfaces::{self, Interfaces},
     retention::StoredRetention,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Interface, Timestamp,
+    Error, Timestamp,
 };
 
 pub mod convert;
@@ -352,8 +352,8 @@ where
         removed_interfaces: &HashMap<&str, &Interface>,
     ) -> Result<(), Error> {
         let interfaces_name = removed_interfaces
-            .iter()
-            .map(|(iface_name, _iface)| iface_name.to_string())
+            .keys()
+            .map(|iface_name| iface_name.to_string())
             .collect();
 
         let interfaces_name = InterfacesName {
@@ -457,16 +457,16 @@ impl Receive for Grpc {
 
     fn deserialize_property(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError> {
         let ProtoPayload::PropertyIndividual(prop) = payload.data else {
             return Err(TransportError::Recv(RecvError::InterfaceType(
                 InterfaceTypeError::with_path(
-                    mapping.interface().interface_name(),
+                    mapping.interface().name(),
                     mapping.path().to_string(),
-                    InterfaceTypeDef::Properties,
-                    InterfaceTypeDef::Datastream,
+                    InterfaceType::Properties,
+                    InterfaceType::Datastream,
                 ),
             )));
         };
@@ -485,7 +485,7 @@ impl Receive for Grpc {
 
     fn deserialize_individual(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamIndividual(individual) = payload.data else {
@@ -510,14 +510,14 @@ impl Receive for Grpc {
 
     fn deserialize_object(
         &self,
-        object: &ObjectRef,
+        object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
         let ProtoPayload::DatastreamObject(data) = payload.data else {
             return Err(TransportError::Recv(RecvError::Aggregation(
                 AggregationError::new(
-                    object.interface.interface_name().to_string(),
+                    object.name(),
                     path.to_string(),
                     Aggregation::Object,
                     Aggregation::Individual,
@@ -682,8 +682,10 @@ mod test {
     use uuid::uuid;
 
     use crate::retention::memory::VolatileStore;
-    use crate::test::{DEVICE_OBJECT, E2E_SERVER_DATASTREAM};
-    use crate::transport::test::mock_validate_object;
+    use crate::test::{
+        DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, E2E_DEVICE_PROPERTY,
+        E2E_DEVICE_PROPERTY_NAME, E2E_SERVER_DATASTREAM,
+    };
     use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY};
 
     use super::*;
@@ -969,7 +971,7 @@ mod test {
             .times(1)
             .in_sequence(&mut seq)
             .with(predicate::function(|r: &Request<_>| {
-                r.match_interfaces(&[Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap()])
+                r.match_interfaces(&[Interface::from_str(DEVICE_PROPERTIES).unwrap()])
                     .unwrap()
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
@@ -978,7 +980,7 @@ mod test {
             .times(1)
             .in_sequence(&mut seq)
             .with(predicate::function(|r: &Request<_>| {
-                r.match_interfaces(&[Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap()])
+                r.match_interfaces(&[Interface::from_str(DEVICE_PROPERTIES).unwrap()])
                     .unwrap()
             }))
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
@@ -988,8 +990,8 @@ mod test {
             .in_sequence(&mut seq)
             .with(predicate::function(|r: &Request<_>| {
                 r.match_interfaces(&[
-                    Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-                    Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap(),
+                    Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+                    Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
                 ])
                 .unwrap()
             }))
@@ -1000,8 +1002,8 @@ mod test {
             .in_sequence(&mut seq)
             .with(predicate::function(|r: &Request<_>| {
                 r.match_interfaces(&[
-                    Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap(),
-                    Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap(),
+                    Interface::from_str(DEVICE_PROPERTIES).unwrap(),
+                    Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
                 ])
                 .unwrap()
             }))
@@ -1019,7 +1021,7 @@ mod test {
                 .unwrap();
 
         let interfaces = Interfaces::new();
-        let interface = Interface::from_str(crate::test::DEVICE_PROPERTIES).unwrap();
+        let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
         let validated = interfaces.validate(interface.clone()).unwrap().unwrap();
         client.add_interface(&interfaces, &validated).await.unwrap();
         client
@@ -1027,8 +1029,7 @@ mod test {
             .await
             .unwrap();
 
-        let additional_interface: Interface =
-            Interface::from_str(crate::test::E2E_DEVICE_PROPERTY).unwrap();
+        let additional_interface: Interface = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
         let list_to_add = Interfaces::new()
             .validate_many([interface.clone(), additional_interface.clone()])
             .unwrap();
@@ -1038,8 +1039,8 @@ mod test {
             .unwrap();
 
         let to_remove = HashMap::from([
-            (interface.interface_name(), &interface),
-            (additional_interface.interface_name(), &additional_interface),
+            (DEVICE_PROPERTIES_NAME, &interface),
+            (E2E_DEVICE_PROPERTY_NAME, &additional_interface),
         ]);
         client
             .remove_interfaces(&interfaces, &to_remove)
@@ -1100,9 +1101,7 @@ mod test {
 
         let path = MappingPath::try_from(PATH).unwrap();
         let interfaces = Interfaces::from_iter([interface]);
-        let mapping_ref = interfaces
-            .interface_mapping(&interface_name, &path)
-            .unwrap();
+        let mapping_ref = interfaces.get_individual(&interface_name, &path).unwrap();
         let validated = ValidatedIndividual::validate(
             mapping_ref,
             AstarteType::String(STRING_VALUE.to_string()),
@@ -1122,8 +1121,8 @@ mod test {
         let mut mock_client_rx = MsgHubClient::new();
 
         const PATH: &str = "/1";
-        let interface = Interface::from_str(DEVICE_OBJECT).unwrap();
-        let interface_name = interface.interface_name().to_owned();
+        let interface = DatastreamObject::from_str(DEVICE_OBJECT).unwrap();
+        let interface_name = interface.name().to_string();
 
         mock_client_rx
             .expect_attach::<Request<astarte_message_hub_proto::Node>>()
@@ -1139,14 +1138,14 @@ mod test {
             .expect_send::<Request<AstarteMessage>>()
             .times(1)
             .in_sequence(&mut seq)
-            .with(predicate::function(move |r: &Request<AstarteMessage>| {
+            .withf(move |r: &Request<AstarteMessage>| {
                 check_object_message(
                     r.get_ref(),
                     &interface_name_cl,
                     PATH,
                     MockDeviceObject::mock_object(),
                 )
-            }))
+            })
             .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
 
         let (mut client, _connection) =
@@ -1155,7 +1154,7 @@ mod test {
                 .unwrap();
 
         let path = MappingPath::try_from(PATH).unwrap();
-        let validated = mock_validate_object(
+        let validated = ValidatedObject::validate(
             &interface,
             &path,
             MockDeviceObject::mock_object(),

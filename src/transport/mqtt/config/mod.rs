@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -561,7 +561,7 @@ mod tests {
     fn test_redacted_credentials_secret() {
         let mqtt_config = MqttConfig::with_credential_secret("test", "test", "secret=", "test");
 
-        let debug_string = format!("{:?}", mqtt_config);
+        let debug_string = format!("{mqtt_config:?}");
 
         assert!(!debug_string.contains("secret="));
         assert!(debug_string.contains("REDACTED"));

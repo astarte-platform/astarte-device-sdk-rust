@@ -210,10 +210,11 @@ impl FromEventDerive {
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
-                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
-                    use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::MappingPath;
+                    use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::schema::{Aggregation, InterfaceType};
 
                     let interface = #interface;
                     let base_path = #path;
@@ -223,7 +224,9 @@ impl FromEventDerive {
                         return Err(FromEventError::Interface(event.interface.clone()));
                     }
 
-                    if !endpoint.eq_mapping(&event.path) {
+                    let path = MappingPath::try_from(event.path.as_str())?;
+
+                    if !endpoint.eq_mapping(&path) {
                         return Err(FromEventError::Path {
                             interface,
                             base_path: event.path.clone(),
@@ -244,8 +247,8 @@ impl FromEventDerive {
                             return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
                                 interface,
                                 event.path,
-                                InterfaceTypeDef::Datastream,
-                                InterfaceTypeDef::Properties,
+                                InterfaceType::Datastream,
+                                InterfaceType::Properties,
                             )));
                         },
                     };
@@ -303,8 +306,8 @@ impl FromEventDerive {
                             return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
                                 event.interface,
                                 event.path,
-                                InterfaceTypeDef::Datastream,
-                                InterfaceTypeDef::Properties,
+                                InterfaceType::Datastream,
+                                InterfaceType::Properties,
                             )));
                         },
                     };
@@ -320,12 +323,12 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
-                    use astarte_device_sdk::Value;
-                    use astarte_device_sdk::AstarteType;
-                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
+                    use astarte_device_sdk::{AstarteType, Value};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
-                    use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::schema::{Aggregation, InterfaceType};
+                    use astarte_device_sdk::astarte_interfaces::MappingPath;
 
                     const INTERFACE: &str = #interface;
 
@@ -335,8 +338,10 @@ impl FromEventDerive {
 
                     let endpoints = [ #(#endpoints),* ];
 
+                    let path = MappingPath::try_from(event.path.as_str())?;
+
                     let position = endpoints.iter()
-                        .position(|e| e.eq_mapping(&event.path))
+                        .position(|e| e.eq_mapping(&path))
                         .ok_or_else(|| FromEventError::Path {
                             interface: INTERFACE,
                             base_path: event.path.clone(),
@@ -394,8 +399,8 @@ impl FromEventDerive {
                             return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
                                 event.interface,
                                 event.path,
-                                InterfaceTypeDef::Properties,
-                                InterfaceTypeDef::Datastream,
+                                InterfaceType::Properties,
+                                InterfaceType::Datastream,
                             )));
                         },
                         Value::Property(Some(prop)) => {
@@ -416,12 +421,12 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
-                    use astarte_device_sdk::Value;
-                    use astarte_device_sdk::AstarteType;
-                    use astarte_device_sdk::interface::def::{Aggregation, InterfaceTypeDef};
+                    use astarte_device_sdk::{AstarteType, Value};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
-                    use astarte_device_sdk::interface::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::MappingPath;
+                    use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
+                    use astarte_device_sdk::astarte_interfaces::schema::{Aggregation, InterfaceType};
 
                     const INTERFACE: &str = #interface;
 
@@ -431,8 +436,10 @@ impl FromEventDerive {
 
                     let endpoints = [ #(#endpoints),* ];
 
+                    let path = MappingPath::try_from(event.path.as_str())?;
+
                     let position = endpoints.iter()
-                        .position(|e| e.eq_mapping(&event.path))
+                        .position(|e| e.eq_mapping(&path))
                         .ok_or_else(|| FromEventError::Path {
                             interface: INTERFACE,
                             base_path: event.path.clone(),

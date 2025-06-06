@@ -26,19 +26,19 @@
 
 use std::{collections::HashMap, future::Future};
 
+use astarte_interfaces::{
+    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+};
+
 use crate::{
     aggregate::AstarteObject,
     client::RecvError,
-    interface::{
-        mapping::path::MappingPath,
-        reference::{MappingRef, ObjectRef},
-    },
-    interfaces::{self, Interfaces},
+    interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
     store::StoreCapabilities,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
-    Interface, Timestamp,
+    Timestamp,
 };
 
 #[cfg(feature = "message-hub")]
@@ -161,21 +161,21 @@ pub(crate) trait Receive {
     /// Deserializes a received payload to an property.
     fn deserialize_property(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
     ) -> Result<Option<AstarteType>, TransportError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
-        mapping: &MappingRef<'_, &Interface>,
+        mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
     ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
         &self,
-        object: &ObjectRef,
+        object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
@@ -235,48 +235,4 @@ pub(crate) trait Register {
 pub(crate) trait Disconnect {
     /// Gracefully disconnect from the transport
     fn disconnect(&mut self) -> impl Future<Output = Result<(), crate::Error>> + Send;
-}
-
-#[cfg(test)]
-mod test {
-    use crate::aggregate::AstarteObject;
-    use crate::error::AggregationError;
-    use crate::{
-        interface::{mapping::path::MappingPath, reference::MappingRef},
-        types::{AstarteType, TypeError},
-        validate::{ValidatedIndividual, ValidatedObject},
-        Interface,
-    };
-
-    pub(crate) fn mock_validate_object<'a>(
-        interface: &'a Interface,
-        path: &'a MappingPath<'a>,
-        data: AstarteObject,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedObject, crate::Error> {
-        let object = interface.as_object_ref().ok_or_else(|| {
-            let aggr_err = AggregationError::new(
-                interface.interface_name(),
-                path.as_str(),
-                crate::interface::Aggregation::Object,
-                interface.aggregation(),
-            );
-            crate::Error::Aggregation(aggr_err)
-        })?;
-
-        ValidatedObject::validate(object, path, data, timestamp).map_err(|uve| uve.into())
-    }
-
-    pub(crate) fn mock_validate_individual<'a, D>(
-        mapping_ref: MappingRef<'a, &'a Interface>,
-        data: D,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<ValidatedIndividual, crate::Error>
-    where
-        D: TryInto<AstarteType> + Send,
-    {
-        let individual = data.try_into().map_err(|_| TypeError::Conversion)?;
-
-        ValidatedIndividual::validate(mapping_ref, individual, timestamp).map_err(|uve| uve.into())
-    }
 }

@@ -1,28 +1,27 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! Contains conversion traits to convert the Astarte types in the protobuf format to the
 //! Astarte types from the Astarte device SDK.
 
 use std::num::TryFromIntError;
 
+use astarte_interfaces::schema::Ownership;
 use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
 use astarte_message_hub_proto::message_hub_event::Event;
 use astarte_message_hub_proto::{astarte_message::Payload as ProtoPayload, pbjson_types};
@@ -34,7 +33,6 @@ use chrono::TimeZone;
 use itertools::Itertools;
 
 use crate::aggregate::AstarteObject;
-use crate::interface::Ownership;
 use crate::store::StoredProp;
 use crate::validate::ValidatedUnset;
 use crate::{
@@ -87,7 +85,10 @@ pub(crate) fn map_set_stored_properties(
         .properties
         .into_iter()
         .filter_map(|prop| {
-            let ownership = prop.ownership().into();
+            let ownership = match prop.ownership() {
+                astarte_message_hub_proto::Ownership::Device => Ownership::Device,
+                astarte_message_hub_proto::Ownership::Server => Ownership::Server,
+            };
 
             let value = match map_property_to_astarte_type(prop.clone()).transpose()? {
                 Ok(s) => s,
@@ -120,15 +121,6 @@ fn convert_timestamp(
         .timestamp_opt(val.seconds, nanos)
         .earliest()
         .ok_or_else(|| MessageHubProtoError::DateConversion(format!("{val:?}")))
-}
-
-impl From<astarte_message_hub_proto::Ownership> for Ownership {
-    fn from(value: astarte_message_hub_proto::Ownership) -> Self {
-        match value {
-            astarte_message_hub_proto::Ownership::Device => Ownership::Device,
-            astarte_message_hub_proto::Ownership::Server => Ownership::Server,
-        }
-    }
 }
 
 impl TryFrom<astarte_message_hub_proto::AstarteData> for AstarteType {

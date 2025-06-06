@@ -21,9 +21,10 @@
 
 use std::future::Future;
 
+use astarte_interfaces::Interface;
 use itertools::Itertools;
 
-use crate::{error::DynError, interfaces::Interfaces, Interface};
+use crate::{error::DynError, interfaces::Interfaces};
 
 mod sqlite;
 
@@ -170,12 +171,10 @@ pub trait StoredSession: Clone + Send + Sync {
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::Interface;
     use pretty_assertions::assert_eq;
 
-    use crate::{
-        test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
-        Interface,
-    };
+    use crate::test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL};
 
     use super::IntrospectionInterface;
 

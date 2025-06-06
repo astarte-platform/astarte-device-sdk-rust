@@ -1,3 +1,5 @@
+// This file is part of Astarte.
+//
 // Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,12 +20,12 @@
 
 use std::{future::Future, sync::Arc};
 
+use astarte_interfaces::{mapping::path::MappingPathError, MappingPath};
 use tracing::{error, trace};
 
 use crate::{
     aggregate::AstarteObject,
     error::{AggregationError, InterfaceTypeError},
-    interface::mapping::path::MappingError,
     retention::{RetentionId, StoredRetentionExt},
     state::SharedState,
     transport::{mqtt::error::MqttError, Connection, Publish},
@@ -32,7 +34,6 @@ use crate::{
 use crate::{error::DynError, transport::Disconnect};
 use crate::{
     event::DeviceEvent,
-    interface::{mapping::path::MappingPath, reference::MappingRef},
     store::wrapper::StoreWrapper,
     types::AstarteType,
     validate::{ValidatedIndividual, ValidatedObject},
@@ -53,18 +54,15 @@ pub enum RecvError {
     /// Should be downcasted to access the underling specific connection error.
     #[error("connection error, {0:?}")]
     Connection(#[source] DynError),
-
     /// Couldn't parse the mapping path.
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
-
+    #[error("invalid mapping path")]
+    InvalidEndpoint(#[from] MappingPathError),
     /// Couldn't find an interface with the given name.
     #[error("couldn't find interface '{name}'")]
     InterfaceNotFound {
         /// Name of the missing interface.
         name: String,
     },
-
     /// Couldn't find missing mapping in the interface.
     #[error("couldn't find mapping {mapping} in interface {interface}")]
     MappingNotFound {
@@ -477,6 +475,7 @@ where
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::Interface;
     use chrono::Utc;
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
@@ -488,7 +487,7 @@ pub(crate) mod tests {
     use crate::store::memory::MemoryStore;
     use crate::store::StoreCapabilities;
     use crate::transport::mock::{MockCon, MockSender};
-    use crate::{Interface, Value};
+    use crate::Value;
 
     use super::*;
 

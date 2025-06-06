@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,16 +18,14 @@
 
 //! Endpoint of an interface mapping.
 
-use std::{
-    borrow::Borrow, cmp::Ordering, fmt::Display, ops::Deref, slice::Iter as SliceIter, unreachable,
-};
+use std::{fmt::Display, slice::Iter as SliceIter, str::FromStr};
 
-use itertools::{EitherOrBoth, Itertools};
 use tracing::{error, trace};
 
-use crate::error::Report;
-
 use super::path::MappingPath;
+
+/// The maximum length of an endpoint must be 64 levels
+pub const ENDPOINT_MAX_LEN: usize = 64;
 
 /// A mapping endpoint.
 ///
@@ -37,59 +35,71 @@ use super::path::MappingPath;
 /// - Two endpoints are equal if they have the same path
 /// - The path must start with a slash (`/`)
 /// - The minimum length is 2 character
-/// - It cannot contain the `+` and `#` characters
+/// - Each level should start with an ascii letter `[a-zA-Z]`
+/// - A level or parameter can only container ascii alpha-numeric character or an underscore
+///   `[a-zA-Z0-9_]`
 /// - A parameter cannot contain the `/` character
 ///
 /// For more information see [Astarte - Docs](https://docs.astarte-platform.org/astarte/latest/030-interface.html#limitations)
 ///
 /// The endpoints uses Cow to not allocate the string if an error occurs.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Endpoint<T> {
-    pub(super) path: T,
-    pub(super) levels: Vec<Level<T>>,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+pub struct Endpoint<T = String> {
+    levels: Vec<Level<T>>,
 }
 
 impl<T> Endpoint<T> {
-    /// Check that the endpoint is equal to the given mapping
-    pub fn eq_mapping<S>(&self, mapping: S) -> bool
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        match MappingPath::try_from(mapping.as_ref()) {
-            Ok(mapping) => mapping.eq(self),
-            Err(err) => {
-                error!(error = %Report::new(&err), "failed to parse mapping");
-
-                false
-            }
-        }
-    }
-
     /// Iter the levels of the endpoint.
-    pub(crate) fn iter(&self) -> SliceIter<Level<T>> {
+    pub fn iter(&self) -> SliceIter<'_, Level<T>> {
         self.levels.iter()
     }
 
     /// Compare the levels with the one of the endpoint.
-    pub(crate) fn cmp_levels<U>(&self, levels: &[U]) -> Ordering
+    #[must_use]
+    pub fn eq_mapping<'a>(&self, mapping: &MappingPath<'a>) -> bool
     where
-        T: AsRef<str>,
-        U: AsRef<str>,
+        T: PartialEq<&'a str> + Eq,
     {
-        for element in self.iter().zip_longest(levels.iter()) {
-            let ordering = match element {
-                EitherOrBoth::Left(_) => Ordering::Greater,
-                EitherOrBoth::Right(_) => Ordering::Less,
-                EitherOrBoth::Both(lvl, o_lvl) => lvl.cmp_str(o_lvl.as_ref()),
-            };
-
-            if ordering != Ordering::Equal {
-                return ordering;
-            }
+        if self.len() != mapping.len() {
+            return false;
         }
 
-        Ordering::Equal
+        self.iter()
+            .zip(mapping.levels.iter())
+            .all(|(endpoint_level, path_level)| endpoint_level == path_level)
+    }
+
+    // Check if a path is the one of an object endpoint.
+    pub(crate) fn eq_object_field<'a>(&self, path: &'a str) -> bool
+    where
+        T: PartialEq<&'a str> + Eq,
+    {
+        let last = self.levels.last();
+        debug_assert!(
+            last.is_some(),
+            "an endpoint should always have at least an endpoint"
+        );
+
+        last.is_some_and(|endpoint_level| *endpoint_level == path)
+    }
+
+    // Check if a path is the one of an object endpoint.
+    pub(crate) fn is_object_path<'a>(&self, path: &MappingPath<'a>) -> bool
+    where
+        T: PartialEq<&'a str> + Eq,
+    {
+        // Must have the same size -1.
+        if self.len().saturating_sub(1) != path.len() {
+            return false;
+        }
+
+        // This will skip the last one for the endpoint for the check above
+        self.iter()
+            .zip(path.levels.iter())
+            .all(|(endpoint_level, path_level)| match endpoint_level {
+                Level::Simple(level) => level == path_level,
+                Level::Parameter(_) => true,
+            })
     }
 
     // Returns the number of levels in an endpoint
@@ -98,9 +108,11 @@ impl<T> Endpoint<T> {
     }
 
     /// Check that two endpoints are compatible with the same object.
+    ///
+    // https://docs.astarte-platform.org/astarte/latest/030-interface.html#endpoints-and-aggregation
     pub(crate) fn is_same_object(&self, endpoint: &Self) -> bool
     where
-        T: PartialEq,
+        T: PartialEq + Eq,
     {
         if self.len() != endpoint.len() {
             return false;
@@ -112,31 +124,7 @@ impl<T> Endpoint<T> {
             .zip(endpoint.levels.iter())
             .rev()
             .skip(1)
-            .all(|(level, other_level)| match (level, other_level) {
-                (Level::Simple(a), Level::Simple(b)) => a == b,
-                (Level::Simple(_), Level::Parameter(_))
-                | (Level::Parameter(_), Level::Simple(_)) => false,
-                // We do not care about the parameter name, we just need to know that it is a parameter.
-                (Level::Parameter(_), Level::Parameter(_)) => true,
-            })
-    }
-}
-
-impl<T> PartialOrd for Endpoint<T>
-where
-    T: Ord,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T> Ord for Endpoint<T>
-where
-    T: Ord,
-{
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.levels.cmp(&other.levels)
+            .all(|(level, other_level)| level == other_level)
     }
 }
 
@@ -156,32 +144,11 @@ impl TryFrom<&str> for Endpoint<String> {
     }
 }
 
-impl<T> Borrow<str> for Endpoint<T>
-where
-    T: Borrow<str>,
-{
-    fn borrow(&self) -> &str {
-        self.path.borrow()
-    }
-}
+impl FromStr for Endpoint<String> {
+    type Err = EndpointError;
 
-impl<T> Deref for Endpoint<T>
-where
-    T: Deref<Target = str>,
-{
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        &self.path
-    }
-}
-
-impl<T> PartialEq<str> for Endpoint<T>
-where
-    T: PartialEq<str>,
-{
-    fn eq(&self, other: &str) -> bool {
-        self.path.eq(other)
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s)
     }
 }
 
@@ -190,14 +157,17 @@ where
     T: Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.path)
+        for level in &self.levels {
+            write!(f, "/{level}")?;
+        }
+
+        Ok(())
     }
 }
 
 impl From<Endpoint<&str>> for Endpoint<String> {
     fn from(value: Endpoint<&str>) -> Self {
         Self {
-            path: value.path.into(),
             levels: value.levels.into_iter().map(Level::into).collect(),
         }
     }
@@ -205,46 +175,51 @@ impl From<Endpoint<&str>> for Endpoint<String> {
 
 impl<'a, T> PartialEq<MappingPath<'a>> for Endpoint<T>
 where
-    T: AsRef<str>,
+    T: for<'b> PartialEq<&'b str> + Eq,
 {
     fn eq(&self, other: &MappingPath<'a>) -> bool {
-        self.levels == other.levels
+        self.eq_mapping(other)
     }
 }
 
-impl<'a, T> PartialOrd<MappingPath<'a>> for Endpoint<T>
-where
-    T: AsRef<str>,
-{
-    fn partial_cmp(&self, other: &MappingPath<'a>) -> Option<Ordering> {
-        Some(self.cmp_levels(&other.levels))
+impl<'a, T> IntoIterator for &'a Endpoint<T> {
+    type Item = &'a Level<T>;
+    type IntoIter = std::slice::Iter<'a, Level<T>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum Level<T> {
+/// Level of an [`Endpoint`].
+///
+/// # Example
+///
+/// ```rust
+/// # use astarte_interfaces::{Endpoint, mapping::endpoint::Level};
+/// let endpoint = Endpoint::try_from("/sensor/%{name}/id").unwrap();
+/// let mut iter = endpoint.iter();
+///
+/// assert_eq!(iter.next(), Some(&Level::Simple("sensor")));
+/// assert_eq!(iter.next(), Some(&Level::Parameter("name")));
+/// assert_eq!(iter.next(), Some(&Level::Simple("id")));
+/// assert_eq!(iter.next(), None);
+/// ```
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub enum Level<T> {
+    /// Simple level without parameters
     Simple(T),
+    /// Parameter level enclosed in `%{bar}`.
     Parameter(T),
 }
 
 impl<T> Level<T> {
-    pub(crate) fn cmp_str(&self, other: &str) -> Ordering
+    /// This prevents mistakes for recursion in the PartialEq traits.
+    fn eq_str<'a>(&self, other: &'a str) -> bool
     where
-        T: AsRef<str>,
+        T: PartialEq<&'a str> + Eq,
     {
         match self {
-            Self::Simple(level) => level.as_ref().cmp(other),
-            Self::Parameter(_) => Ordering::Equal,
-        }
-    }
-
-    /// Check if the level is eq to the string
-    pub(crate) fn eq_str(&self, other: &str) -> bool
-    where
-        T: AsRef<str>,
-    {
-        match self {
-            Level::Simple(level) => level.as_ref() == other,
+            Level::Simple(level) => *level == other,
             Level::Parameter(_) => true,
         }
     }
@@ -256,69 +231,9 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Simple(level) => write!(f, "{}", level),
+            Self::Simple(level) => write!(f, "{level}"),
             // We want to print the parameter as `%{parameter}`. So we escape the `{` and `}`.
-            Self::Parameter(level) => write!(f, "%{{{}}}", level),
-        }
-    }
-}
-
-impl<T> PartialOrd for Level<T>
-where
-    T: Ord,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T> PartialEq<str> for Level<T>
-where
-    T: AsRef<str>,
-{
-    fn eq(&self, other: &str) -> bool {
-        self.eq_str(other)
-    }
-}
-
-impl<T> PartialOrd<str> for Level<T>
-where
-    T: AsRef<str>,
-{
-    fn partial_cmp(&self, other: &str) -> Option<Ordering> {
-        Some(self.cmp_str(other))
-    }
-}
-
-impl<T> PartialEq<&str> for Level<T>
-where
-    T: AsRef<str>,
-{
-    fn eq(&self, other: &&str) -> bool {
-        self.eq_str(other)
-    }
-}
-
-impl<T> PartialOrd<&str> for Level<T>
-where
-    T: AsRef<str>,
-{
-    fn partial_cmp(&self, other: &&str) -> Option<Ordering> {
-        Some(self.cmp_str(other))
-    }
-}
-
-impl<T> Ord for Level<T>
-where
-    T: Ord,
-{
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // This could be simplified in an if, but i kept it explicit for clarity.
-        match (self, other) {
-            (Self::Simple(a), Self::Simple(b)) => a.cmp(b),
-            // If any is a parameter, the two levels are equal.
-            (Self::Parameter(_) | Self::Simple(_), Self::Parameter(_))
-            | (Self::Parameter(_), Self::Simple(_)) => std::cmp::Ordering::Equal,
+            Self::Parameter(level) => write!(f, "%{{{level}}}"),
         }
     }
 }
@@ -329,6 +244,24 @@ impl From<Level<&str>> for Level<String> {
             Level::Simple(simple) => Level::Simple(simple.into()),
             Level::Parameter(param) => Level::Parameter(param.into()),
         }
+    }
+}
+
+impl<'a, T> PartialEq<&'a str> for Level<T>
+where
+    T: PartialEq<&'a str> + Eq,
+{
+    fn eq(&self, other: &&'a str) -> bool {
+        self.eq_str(other)
+    }
+}
+
+impl<'a, T> PartialEq<Level<T>> for &'a str
+where
+    T: PartialEq<&'a str> + Eq,
+{
+    fn eq(&self, other: &Level<T>) -> bool {
+        other.eq_str(self)
     }
 }
 
@@ -344,6 +277,9 @@ pub enum EndpointError {
     /// The empty endpoint is reserved.
     #[error("endpoint must contain at least a level: {0}")]
     Empty(String),
+    /// Endpoints must have at most 64 levels
+    #[error("endpoint must contain at most 64 levels, but it has {0}")]
+    MaxLen(usize),
     /// Couldn't parse the endpoint's level.
     #[error("endpoint contains invalid level: {input}")]
     Level {
@@ -362,9 +298,9 @@ pub enum LevelError {
     /// The level must contain at least one character, it cannot be `//`.
     #[error("levels must not be empty")]
     Empty,
-    /// Invalid character in the level (e.g. MQTT wild card character `+`).
-    #[error("levels must not contain MQTT wildcard: {0}")]
-    MQTTWildcard(char),
+    /// Invalid character in the level.
+    #[error("levels contain an invalid character {0}")]
+    InvalidCharacter(char),
     /// Mixed characters and parameter in level.
     ///
     /// A parameter should incapsulate the whole level (e.g. `/foo%{bar}` is invalid).
@@ -420,51 +356,49 @@ fn parse_endpoint(input: &str) -> Result<Endpoint<&str>, EndpointError> {
         return Err(EndpointError::Empty(input.to_string()));
     }
 
+    if levels.len() > ENDPOINT_MAX_LEN {
+        return Err(EndpointError::MaxLen(levels.len()));
+    }
+
     trace!("levels: {:?}", levels);
 
-    Ok(Endpoint {
-        path: input,
-        levels,
-    })
+    Ok(Endpoint { levels })
 }
 
 fn parse_level(input: &str) -> Result<Level<&str>, LevelError> {
     trace!("parsing level: {}", input);
 
-    let level = match parse_parameter(input)? {
-        Some(param) => {
-            trace!("level is a parameter: {}", param);
+    let level = if let Some(param) = parse_parameter(input)? {
+        trace!("level is a parameter: {}", param);
 
-            Level::Parameter(param)
-        }
-        None => {
-            let level = parse_simple(input)?;
+        Level::Parameter(param)
+    } else {
+        let level = parse_simple(input)?;
 
-            trace!("level is simple: {}", level);
+        trace!("level is simple: {}", level);
 
-            Level::Simple(level)
-        }
+        Level::Simple(level)
     };
 
     Ok(level)
 }
 
 fn parse_simple(input: &str) -> Result<&str, LevelError> {
-    if input.is_empty() {
-        return Err(LevelError::Empty);
+    let mut chars = input.chars().peekable();
+
+    match chars.next() {
+        Some('a'..='z' | 'A'..='Z') => {}
+        Some(c) => return Err(LevelError::InvalidCharacter(c)),
+        None => return Err(LevelError::Empty),
     }
 
-    let mut chars = input.chars().peekable();
     while let Some(chr) = chars.next() {
         match chr {
-            wildcard @ ('+' | '#') => {
-                return Err(LevelError::MQTTWildcard(wildcard));
-            }
             '%' if Some('{') == chars.peek().copied() => {
                 return Err(LevelError::Parameter);
             }
-            '/' => unreachable!("level shouldn't contain '/' since it is used as separator"),
-            _ => {}
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}
+            c => return Err(LevelError::InvalidCharacter(c)),
         }
     }
 
@@ -490,32 +424,22 @@ fn parse_parameter(input: &str) -> Result<Option<&str>, LevelError> {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    impl<T> Endpoint<T> {
-        pub(crate) fn eq_strict(&self, other: &Self) -> bool
-        where
-            T: PartialEq,
-        {
-            if self.path != other.path {
-                return false;
-            }
+    #[test]
+    fn endpoint_equals_to_mapping() {
+        let endpoint = Endpoint {
+            levels: vec![
+                Level::Parameter("sensor_id".to_string()),
+                Level::Simple("boolean_endpoint".to_string()),
+            ],
+        };
 
-            if self.levels.len() != other.levels.len() {
-                return false;
-            }
+        let path = MappingPath::try_from("/1/boolean_endpoint").unwrap();
 
-            for (level, other_level) in self.levels.iter().zip(other.levels.iter()) {
-                match (level, other_level) {
-                    (Level::Simple(a), Level::Simple(b))
-                    | (Level::Parameter(a), Level::Parameter(b))
-                        if a == b => {}
-                    _ => return false,
-                }
-            }
-
-            true
-        }
+        assert!(endpoint.eq_mapping(&path));
     }
 
     #[test]
@@ -535,15 +459,7 @@ mod tests {
 
     #[test]
     fn test_parse_level_parameter() {
-        let res = parse_level("%{test}");
-
-        assert!(
-            res.is_ok(),
-            "failed to parse level parameter: {}",
-            res.unwrap_err()
-        );
-
-        let level = res.unwrap();
+        let level = parse_level("%{test}").unwrap();
 
         assert_eq!(level, Level::Parameter("test"));
     }
@@ -561,7 +477,6 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/a/%{b}/c",
             levels: vec![
                 Level::Simple("a"),
                 Level::Parameter("b"),
@@ -569,12 +484,7 @@ mod tests {
             ],
         };
 
-        assert!(
-            endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
-        );
+        assert_eq!(endpoint, expected);
     }
 
     #[test]
@@ -590,7 +500,6 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/%{a}/b/c",
             levels: vec![
                 Level::Parameter("a"),
                 Level::Simple("b"),
@@ -598,12 +507,7 @@ mod tests {
             ],
         };
 
-        assert!(
-            endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
-        );
+        assert_eq!(endpoint, expected);
     }
 
     #[test]
@@ -619,7 +523,6 @@ mod tests {
         let endpoint = res.unwrap();
 
         let expected = Endpoint {
-            path: "/a/%{b}/c/%{d}/e",
             levels: vec![
                 Level::Simple("a"),
                 Level::Parameter("b"),
@@ -629,12 +532,7 @@ mod tests {
             ],
         };
 
-        assert!(
-            endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
-        );
+        assert_eq!(endpoint, expected);
     }
 
     #[test]
@@ -643,7 +541,6 @@ mod tests {
             (
                 "/%{sensor_id}/boolean_endpoint",
                 Endpoint {
-                    path: "/%{sensor_id}/boolean_endpoint",
                     levels: vec![
                         Level::Parameter("sensor_id"),
                         Level::Simple("boolean_endpoint"),
@@ -653,7 +550,6 @@ mod tests {
             (
                 "/%{sensor_id}/enable",
                 Endpoint {
-                    path: "/%{sensor_id}/enable",
                     levels: vec![Level::Parameter("sensor_id"), Level::Simple("enable")],
                 },
             ),
@@ -670,12 +566,50 @@ mod tests {
 
             let endpoint = res.unwrap();
 
-            assert!(
-                endpoint.eq_strict(&expected),
-                "endpoint: {:?} != {:?}",
-                endpoint,
-                expected
-            );
+            assert_eq!(endpoint, expected);
         }
+    }
+
+    #[test]
+    fn object_equality() {
+        let endpoint = Endpoint {
+            levels: vec![
+                Level::Parameter("sensor_id".to_string()),
+                Level::Simple("boolean_endpoint".to_string()),
+            ],
+        };
+
+        let path = MappingPath::try_from("/1/boolean_endpoint").unwrap();
+
+        assert!(!endpoint.is_object_path(&path));
+
+        let path = MappingPath::try_from("/1").unwrap();
+        assert!(endpoint.is_object_path(&path));
+    }
+
+    #[test]
+    fn object_field() {
+        let endpoint = Endpoint {
+            levels: vec![
+                Level::Parameter("sensor_id".to_string()),
+                Level::Simple("boolean_endpoint".to_string()),
+            ],
+        };
+
+        assert!(endpoint.eq_object_field("boolean_endpoint"));
+        assert!(!endpoint.eq_object_field("foo"));
+    }
+
+    #[test]
+    fn level_eq_str() {
+        let param = Level::Parameter("sensor_id".to_string());
+
+        assert_eq!(param, "some");
+        assert_eq!(param, "foo");
+
+        let simple = Level::Simple("boolean_endpoint".to_string());
+
+        assert_eq!(simple, "boolean_endpoint");
+        assert_ne!(simple, "foo");
     }
 }

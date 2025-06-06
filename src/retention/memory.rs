@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,12 +25,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use astarte_interfaces::interface::Retention;
 use tokio::sync::Mutex;
 use tracing::{error, trace};
 
 use crate::{
     builder::DEFAULT_VOLATILE_CAPACITY,
-    interface::Retention,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -269,8 +269,8 @@ pub(crate) enum ItemValue {
 impl ItemValue {
     fn expiry(&self) -> Option<Duration> {
         match self {
-            ItemValue::Individual(i) => i.retention.expiry(),
-            ItemValue::Object(o) => o.retention.expiry(),
+            ItemValue::Individual(i) => i.retention.as_expiry().copied(),
+            ItemValue::Object(o) => o.retention.as_expiry().copied(),
         }
     }
 
@@ -317,14 +317,11 @@ impl TryFrom<ValidatedObject> for ItemValue {
 mod tests {
     use std::time::Duration;
 
+    use astarte_interfaces::interface::Retention;
+    use astarte_interfaces::schema::Reliability;
     use pretty_assertions::assert_eq;
 
-    use crate::{
-        aggregate::AstarteObject,
-        interface::{Reliability, Retention},
-        retention::Context,
-        AstarteType,
-    };
+    use crate::{aggregate::AstarteObject, retention::Context, AstarteType};
 
     use super::*;
 

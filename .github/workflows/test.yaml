@@ -85,3 +85,4 @@ jobs:
           path: |
             pr_number
             coverage-astarte-device-sdk.info
+            coverage-astarte-interfaces.info

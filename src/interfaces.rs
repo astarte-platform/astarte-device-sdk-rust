@@ -21,21 +21,19 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 
+use astarte_interfaces::interface::InterfaceTypeAggregation;
+use astarte_interfaces::schema::{Aggregation, InterfaceType};
+use astarte_interfaces::{error::Error as InterfaceError, Interface};
+use astarte_interfaces::{
+    AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
+};
 use itertools::Itertools;
 use tracing::{debug, trace};
 
-use crate::{
-    error::InterfaceTypeError,
-    interface::{
-        error::InterfaceError,
-        mapping::path::MappingPath,
-        reference::{MappingRef, PropertyRef},
-        InterfaceTypeDef,
-    },
-    session::IntrospectionInterface,
-    validate::UserValidationError,
-    Error, Interface,
-};
+use crate::error::AggregationError;
+use crate::session::IntrospectionInterface;
+use crate::validate::UserValidationError;
+use crate::{error::InterfaceTypeError, Error};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -112,74 +110,136 @@ impl Interfaces {
     }
 
     pub(crate) fn get_introspection_string(&self) -> String {
-        Introspection::new(self.interfaces.values()).to_string()
+        DeviceIntrospection::new(self.interfaces.values()).to_string()
     }
 
     pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
-        self.interfaces
-            .get(interface_name)
-            .and_then(|interface| interface.is_property().then_some(PropertyRef(interface)))
-    }
-
-    /// Gets an interface and mapping given the name and path.
-    ///
-    /// # Errors
-    ///
-    /// Will return error if either the interface or the mapping is missing.
-    pub(crate) fn interface_mapping<'a>(
+    /// Retrieves a datastream individual mapping and checks that it's valid.
+    pub(crate) fn get_object<'a>(
         &'a self,
         interface_name: &str,
-        interface_path: &'a MappingPath,
-    ) -> Result<MappingRef<'a, &'a Interface>, Error> {
-        self.interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })
-            .and_then(|interface| {
-                MappingRef::new(interface, interface_path).ok_or_else(|| Error::MappingNotFound {
-                    interface: interface_name.to_string(),
-                    mapping: interface_path.to_string(),
-                })
-            })
+        path: &MappingPath<'_>,
+    ) -> Result<&'a DatastreamObject, Error> {
+        let interface =
+            self.interfaces
+                .get(interface_name)
+                .ok_or_else(|| Error::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })?;
+
+        let interface = match interface.inner() {
+            InterfaceTypeAggregation::DatastreamIndividual(_) => {
+                return Err(Error::Aggregation(AggregationError::new(
+                    interface_name,
+                    path.as_str(),
+                    Aggregation::Object,
+                    Aggregation::Individual,
+                )))
+            }
+            InterfaceTypeAggregation::DatastreamObject(datastream_object) => datastream_object,
+            InterfaceTypeAggregation::Properties(_) => {
+                return Err(Error::InterfaceType(InterfaceTypeError::with_path(
+                    interface_name,
+                    path.as_str(),
+                    InterfaceType::Datastream,
+                    InterfaceType::Properties,
+                )))
+            }
+        };
+
+        if !interface.is_object_path(path) {
+            return Err(Error::Validation(UserValidationError::ObjectPath {
+                interface: interface.interface_name().to_string(),
+                path: path.to_string(),
+            }));
+        }
+
+        Ok(interface)
     }
 
-    /// Gets a property and mapping given the name and path.
-    ///
-    /// # Errors
-    ///
-    /// Will return error if either the interface or the mapping is missing.
-    pub(crate) fn property_mapping<'a>(
+    /// Retrieves a datastream individual mapping and checks that it's valid.
+    pub(crate) fn get_individual<'a>(
         &'a self,
         interface_name: &str,
-        interface_path: &'a MappingPath,
-    ) -> Result<MappingRef<'a, PropertyRef<'a>>, Error> {
-        self.interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })
-            .and_then(|interface| {
-                interface.as_prop_ref().ok_or_else(|| {
-                    Error::Validation(UserValidationError::InterfaceType(InterfaceTypeError::new(
-                        interface_name,
-                        InterfaceTypeDef::Properties,
-                        interface.interface_type(),
-                    )))
-                })
-            })
-            .and_then(|interface| {
-                MappingRef::with_prop(interface, interface_path).ok_or_else(|| {
-                    Error::MappingNotFound {
-                        interface: interface_name.to_string(),
-                        mapping: interface_path.to_string(),
-                    }
-                })
-            })
+        path: &'a MappingPath<'_>,
+    ) -> Result<MappingRef<'a, DatastreamIndividual>, Error> {
+        let interface =
+            self.interfaces
+                .get(interface_name)
+                .ok_or_else(|| Error::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })?;
+
+        let interface = match interface.inner() {
+            InterfaceTypeAggregation::DatastreamIndividual(datastream_individual) => {
+                datastream_individual
+            }
+            InterfaceTypeAggregation::DatastreamObject(_) => {
+                return Err(Error::Aggregation(AggregationError::new(
+                    interface_name,
+                    path.as_str(),
+                    Aggregation::Individual,
+                    Aggregation::Object,
+                )))
+            }
+            InterfaceTypeAggregation::Properties(_) => {
+                return Err(Error::InterfaceType(InterfaceTypeError::with_path(
+                    interface_name,
+                    path.as_str(),
+                    InterfaceType::Datastream,
+                    InterfaceType::Properties,
+                )))
+            }
+        };
+
+        let mapping = interface
+            .mapping(path)
+            .ok_or_else(|| Error::MappingNotFound {
+                interface: interface_name.to_string(),
+                mapping: path.to_string(),
+            })?;
+
+        Ok(MappingRef {
+            interface,
+            mapping,
+            path,
+        })
+    }
+
+    /// Retrieves a property mapping and checks that it's valid.
+    pub(crate) fn get_property<'a>(
+        &'a self,
+        interface_name: &str,
+        path: &'a MappingPath<'_>,
+    ) -> Result<MappingRef<'a, Properties>, Error> {
+        let interface =
+            self.interfaces
+                .get(interface_name)
+                .ok_or_else(|| Error::InterfaceNotFound {
+                    name: interface_name.to_string(),
+                })?;
+
+        let prop = interface.as_properties().ok_or_else(|| {
+            InterfaceTypeError::new(
+                interface_name,
+                InterfaceType::Properties,
+                interface.interface_type(),
+            )
+        })?;
+
+        let mapping = prop.mapping(path).ok_or_else(|| Error::MappingNotFound {
+            interface: interface_name.to_string(),
+            mapping: path.to_string(),
+        })?;
+
+        Ok(MappingRef {
+            interface: prop,
+            mapping,
+            path,
+        })
     }
 
     /// Iterate over the interfaces
@@ -339,17 +399,17 @@ impl Deref for ValidatedCollection {
     }
 }
 
-pub(crate) struct Introspection<I> {
+pub(crate) struct DeviceIntrospection<I> {
     iter: I,
 }
 
-impl<I> Introspection<I> {
+impl<I> DeviceIntrospection<I> {
     pub(crate) fn new(iter: I) -> Self {
         Self { iter }
     }
 }
 
-impl<'a, I> Display for Introspection<I>
+impl<'a, I> Display for DeviceIntrospection<I>
 where
     I: Iterator<Item = &'a Interface> + Clone,
 {
@@ -360,7 +420,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, "{}:{}:{}", name, major, minor)?;
+            write!(f, "{name}:{major}:{minor}")?;
         } else {
             return Ok(());
         };
@@ -369,52 +429,77 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, ";{}:{}:{}", name, major, minor)?;
+            write!(f, ";{name}:{major}:{minor}")?;
         }
 
         Ok(())
     }
 }
 
+/// Reference to an [`Interface`] and a Mapping that is guaranty to belong to the interface.
+#[derive(Debug)]
+pub(crate) struct MappingRef<'a, I>
+where
+    I: astarte_interfaces::AggregationIndividual,
+{
+    interface: &'a I,
+    mapping: &'a I::Mapping,
+    path: &'a MappingPath<'a>,
+}
+
+impl<'a, I> MappingRef<'a, I>
+where
+    I: astarte_interfaces::AggregationIndividual,
+{
+    pub(crate) fn new(interface: &'a I, path: &'a MappingPath<'a>) -> Option<Self> {
+        interface.mapping(path).map(|mapping| Self {
+            interface,
+            mapping,
+            path,
+        })
+    }
+
+    pub(crate) fn interface(&self) -> &I {
+        self.interface
+    }
+
+    pub(crate) fn mapping(&self) -> &I::Mapping {
+        self.mapping
+    }
+
+    pub(crate) fn path(&self) -> &MappingPath<'_> {
+        self.path
+    }
+}
+
+/// Wrong derive trait bounds.
+impl<I> Clone for MappingRef<'_, I>
+where
+    I: astarte_interfaces::AggregationIndividual,
+{
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<I> Copy for MappingRef<'_, I> where I: astarte_interfaces::AggregationIndividual {}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::str::FromStr;
 
+    use astarte_interfaces::schema::MappingType;
+    use astarte_interfaces::{Endpoint, InterfaceMapping};
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    use crate::{
-        builder::DeviceBuilder,
-        interface::{mapping::path::tests::mapping, MappingType},
+    use crate::builder::DeviceBuilder;
+    use crate::test::{
+        E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_DATASTREAM,
+        E2E_DEVICE_DATASTREAM_NAME, E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME,
+        E2E_SERVER_PROPERTY,
     };
-
-    pub(crate) const PROPERTIES_SERVER: &str = r#"
-        {
-            "interface_name": "org.astarte-platform.test.test",
-            "version_major": 12,
-            "version_minor": 1,
-            "type": "properties",
-            "ownership": "server",
-            "mappings": [
-                {
-                    "endpoint": "/button",
-                    "type": "boolean"
-                },
-                {
-                    "endpoint": "/uptimeSeconds",
-                    "type": "integer"
-                },
-                {
-                    "endpoint": "/%{sensor_id}/enable",
-                    "type": "boolean",
-                    "allow_unset": true
-                },
-                {
-                    "endpoint": "/%{sensor_id}/samplingPeriod",
-                    "type": "integer",
-                    "allow_unset": true
-                }
-            ]
-        }"#;
 
     pub(crate) const DEVICE_OBJECT: &str = r#"
         {
@@ -464,109 +549,6 @@ pub(crate) mod tests {
                 .map(|i| (i.interface.interface_name().to_string(), i))
                 .collect(),
         )
-    }
-
-    pub(crate) fn create_interfaces(interfaces: &[&str]) -> Interfaces {
-        Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()))
-    }
-
-    pub(crate) struct CheckEndpoint<'a> {
-        interfaces: &'a Interfaces,
-        name: &'a str,
-        path: &'a str,
-        version_major: i32,
-        mapping_type: MappingType,
-        endpoint: &'a str,
-        explicit_timestamp: bool,
-        allow_unset: bool,
-    }
-
-    impl CheckEndpoint<'_> {
-        pub(crate) fn check(&self) {
-            let path = mapping(self.path);
-            let mapping = self.interfaces.interface_mapping(self.name, &path).unwrap();
-            assert_eq!(mapping.interface().interface_name(), self.name);
-            assert_eq!(mapping.interface().version_major(), self.version_major);
-            assert_eq!(mapping.mapping_type(), self.mapping_type);
-            assert_eq!(*mapping.endpoint(), self.endpoint);
-            assert_eq!(mapping.explicit_timestamp(), self.explicit_timestamp);
-            assert_eq!(mapping.allow_unset(), self.allow_unset);
-        }
-    }
-
-    #[test]
-    fn test_get_property_simple() {
-        let ifa = create_interfaces(&[PROPERTIES_SERVER]);
-
-        CheckEndpoint {
-            interfaces: &ifa,
-            name: "org.astarte-platform.test.test",
-            path: "/button",
-            version_major: 12,
-            mapping_type: MappingType::Boolean,
-            endpoint: "/button",
-            explicit_timestamp: false,
-            allow_unset: false,
-        }
-        .check();
-
-        CheckEndpoint {
-            interfaces: &ifa,
-            name: "org.astarte-platform.test.test",
-            path: "/uptimeSeconds",
-            version_major: 12,
-            mapping_type: MappingType::Integer,
-            endpoint: "/uptimeSeconds",
-            explicit_timestamp: false,
-            allow_unset: false,
-        }
-        .check();
-
-        assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/button/foo")),
-            Err(Error::MappingNotFound { .. })
-        ));
-        assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/foo/button")),
-            Err(Error::MappingNotFound { .. })
-        ));
-        assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/obj")),
-            Err(Error::MappingNotFound { .. })
-        ));
-    }
-
-    #[test]
-    fn test_get_property_endpoint() {
-        let ifa = create_interfaces(&[PROPERTIES_SERVER]);
-
-        let parameters = ["1", "999999", "foobar"];
-
-        for parameter in parameters {
-            CheckEndpoint {
-                interfaces: &ifa,
-                name: "org.astarte-platform.test.test",
-                path: &format!("/{parameter}/enable"),
-                version_major: 12,
-                mapping_type: MappingType::Boolean,
-                endpoint: "/%{sensor_id}/enable",
-                explicit_timestamp: false,
-                allow_unset: true,
-            }
-            .check();
-        }
-
-        assert!(matches!(
-            ifa.interface_mapping(
-                "org.astarte-platform.test.test",
-                &mapping("/foo/bar/enable")
-            ),
-            Err(Error::MappingNotFound { .. })
-        ));
-        assert!(matches!(
-            ifa.interface_mapping("org.astarte-platform.test.test", &mapping("/obj")),
-            Err(Error::MappingNotFound { .. })
-        ));
     }
 
     #[test]
@@ -674,17 +656,8 @@ pub(crate) mod tests {
 
     #[test]
     fn should_iter_without_removed() {
-        let r = Interface::from_str(include_str!(
-                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
-            ))
-            .unwrap();
-        let itfs = [
-            r.clone(),
-            Interface::from_str(include_str!(
-                "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerProperty.json"
-            ))
-            .unwrap()
-        ];
+        let r = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
+        let itfs = [r.clone(), Interface::from_str(E2E_SERVER_PROPERTY).unwrap()];
 
         let interfaces = Interfaces::from_iter(itfs);
 
@@ -697,5 +670,109 @@ pub(crate) mod tests {
 
         let ex = ["org.astarte-platform.rust.e2etest.ServerProperty"];
         assert_eq!(res, ex)
+    }
+
+    #[test]
+    fn get_individual() {
+        let exp = Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+        let interfaces = Interfaces::from_iter([
+            exp.clone(),
+            Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
+        ]);
+
+        let path = MappingPath::try_from("/double_endpoint").unwrap();
+
+        let mapping = interfaces
+            .get_individual(E2E_DEVICE_DATASTREAM_NAME, &path)
+            .unwrap();
+
+        let individual = DatastreamIndividual::from_str(E2E_DEVICE_DATASTREAM).unwrap();
+        assert_eq!(*mapping.path(), path);
+        assert_eq!(*mapping.interface(), individual);
+        assert_eq!(
+            *mapping.mapping().endpoint(),
+            Endpoint::from_str("/double_endpoint").unwrap()
+        );
+        assert_eq!(mapping.mapping().mapping_type(), MappingType::Double);
+
+        // Not found
+        let err = interfaces
+            .get_property(E2E_DEVICE_AGGREGATE_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        // Type
+        let err = interfaces
+            .get_property(E2E_DEVICE_DATASTREAM_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceType { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn get_property() {
+        let exp = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
+        let interfaces = Interfaces::from_iter([
+            exp.clone(),
+            Interface::from_str(E2E_DEVICE_DATASTREAM).unwrap(),
+        ]);
+
+        let path = MappingPath::try_from("/sensor1/double_endpoint").unwrap();
+
+        let prop_mapping = interfaces
+            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap();
+
+        assert_eq!(*prop_mapping.path(), path);
+        assert_eq!(*prop_mapping.interface(), *exp.as_properties().unwrap());
+        assert_eq!(prop_mapping.mapping().mapping_type(), MappingType::Double);
+
+        // Not found
+        let err = interfaces
+            .get_property(E2E_DEVICE_AGGREGATE_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        // Type
+        let err = interfaces
+            .get_property(E2E_DEVICE_DATASTREAM_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceType { .. }));
+    }
+
+    #[test]
+    fn get_object() {
+        let exp = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        let interfaces = Interfaces::from_iter([
+            exp.clone(),
+            Interface::from_str(E2E_DEVICE_PROPERTY).unwrap(),
+        ]);
+
+        let path = MappingPath::try_from("/sendor_1").unwrap();
+
+        let object = interfaces
+            .get_object(E2E_DEVICE_AGGREGATE_NAME, &path)
+            .unwrap();
+
+        let exp = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        assert_eq!(*object, exp);
+
+        // is object path
+        let wron_path = MappingPath::try_from("/foo/bar").unwrap();
+        let err = interfaces
+            .get_object(E2E_DEVICE_AGGREGATE_NAME, &wron_path)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Validation(UserValidationError::ObjectPath { .. })
+        ));
+
+        // Not found
+        let err = interfaces
+            .get_object(E2E_DEVICE_DATASTREAM_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        // Type
+        let err = interfaces
+            .get_object(E2E_DEVICE_PROPERTY_NAME, &path)
+            .unwrap_err();
+        assert!(matches!(err, Error::InterfaceType { .. }), "{err:?}");
     }
 }

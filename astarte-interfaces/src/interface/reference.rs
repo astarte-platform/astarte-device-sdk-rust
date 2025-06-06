@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,73 +18,20 @@
 
 //! Typed reference to an interface.
 
-use std::{borrow::Borrow, ops::Deref};
+use std::ops::Deref;
 
-use crate::Interface;
-
-use super::{mapping::path::MappingPath, DatastreamObject, Mapping};
-
-/// Struct to hold a reference to an [`Interface`], which is a property.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PropertyRef<'a>(pub(crate) &'a Interface);
-
-impl Borrow<Interface> for PropertyRef<'_> {
-    fn borrow(&self) -> &Interface {
-        self.0
-    }
-}
-
-impl Deref for PropertyRef<'_> {
-    type Target = Interface;
-
-    fn deref(&self) -> &Self::Target {
-        self.0
-    }
-}
-
-impl AsRef<Interface> for PropertyRef<'_> {
-    fn as_ref(&self) -> &Interface {
-        self.0
-    }
-}
-
-/// Reference to an [`Interface`] and a [`DatastreamObject`] that is guaranty to belong to the interface.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ObjectRef<'a> {
-    pub(crate) interface: &'a Interface,
-    pub(crate) object: &'a DatastreamObject,
-}
-
-impl<'a> ObjectRef<'a> {
-    /// Create a new reference only if the interface is an object.
-    pub(crate) fn new(interface: &'a Interface) -> Option<Self> {
-        match &interface.inner {
-            crate::interface::InterfaceType::DatastreamIndividual(_)
-            | crate::interface::InterfaceType::Properties(_) => None,
-            crate::interface::InterfaceType::DatastreamObject(object) => {
-                Some(Self { interface, object })
-            }
-        }
-    }
-}
-
-impl Deref for ObjectRef<'_> {
-    type Target = DatastreamObject;
-
-    fn deref(&self) -> &Self::Target {
-        self.object
-    }
-}
+use super::Interface;
+use crate::mapping::path::MappingPath;
 
 /// Reference to an [`Interface`] and a [`Mapping`] that is guaranty to belong to the interface.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MappingRef<'a, I: 'a> {
+pub(crate) struct MappingRef<'a, I, M> {
     path: &'a MappingPath<'a>,
-    mapping: Mapping<&'a str>,
-    interface: I,
+    interface: &'a I,
+    mapping: &'a M,
 }
 
-impl<'a> MappingRef<'a, &'a Interface> {
+impl<'a, M, I> MappingRef<'a, &'a Interface> {
     pub(crate) fn new(interface: &'a Interface, path: &'a MappingPath) -> Option<Self> {
         interface.mapping(path).map(|mapping| Self {
             interface,

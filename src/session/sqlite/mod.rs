@@ -301,7 +301,9 @@ mod tests {
             version_minor: 1,
         };
 
-        store.store_introspection(&[interface.clone()]).await;
+        store
+            .store_introspection(std::slice::from_ref(&interface))
+            .await;
         let stored = store.load_introspection().await.unwrap();
         assert_eq!(vec![interface.clone()], stored);
 
