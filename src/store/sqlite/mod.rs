@@ -98,6 +98,9 @@ pub enum SqliteError {
         /// Context of the error
         ctx: &'static str,
     },
+    /// Couldn't set store capacity
+    #[error("couldn't set store capacity to {0}")]
+    InvalidCapacity(usize),
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct.
@@ -747,7 +750,7 @@ fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteType, ValueErr
 }
 
 /// Necessary for rust 1.78 const compatibility
-const fn const_non_zero(v: u64) -> NonZeroU64 {
+pub(crate) const fn const_non_zero(v: u64) -> NonZeroU64 {
     let Some(v) = NonZeroU64::new(v) else {
         panic!("value cannot be zero");
     };
