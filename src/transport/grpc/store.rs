@@ -36,7 +36,7 @@ use crate::{
         OptStoredProp, PropertyInterface, PropertyMapping, PropertyStore, StoreCapabilities,
         StoredProp,
     },
-    AstarteType,
+    AstarteData,
 };
 
 use super::{
@@ -113,7 +113,7 @@ impl StoreCapabilities for GrpcStore {
 impl PropertyStore for GrpcStore {
     type Err = GrpcStoreError;
 
-    async fn store_prop(&self, _prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, _prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         // do not store properties locally when connected as a message hub node
         Ok(())
     }
@@ -122,7 +122,7 @@ impl PropertyStore for GrpcStore {
         &self,
         property: &PropertyMapping<'_>,
         _interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         let property = self
             .client
             .lock()
@@ -137,7 +137,7 @@ impl PropertyStore for GrpcStore {
 
         property
             .data
-            .map(|data| AstarteType::try_from(data).map_err(GrpcStoreError::from))
+            .map(|data| AstarteData::try_from(data).map_err(GrpcStoreError::from))
             .transpose()
     }
 
@@ -212,7 +212,7 @@ mod test {
     use crate::interface::Ownership;
     use crate::store::PropertyMapping;
     use crate::store::StoredProp;
-    use crate::AstarteType;
+    use crate::AstarteData;
     use crate::Interface;
 
     #[tokio::test]
@@ -348,7 +348,7 @@ mod test {
 
     #[tokio::test]
     async fn test_grpc_store_device_prop_not_stored() {
-        let inner_value = AstarteType::Integer(1);
+        let inner_value = AstarteData::Integer(1);
         const PATH: &str = "/path1";
         let server_interface = "com.server.interface";
         let server_prop = StoredProp {
