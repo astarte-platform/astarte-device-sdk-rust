@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.8.6] - Unreleased
-  
+
 ### Changed
 
 - Update documentation, examples and readme.
+  [#461](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/461)
+- Box the GrpcError::Status code since the object is too big to return on the stack
+  [#466](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/466)
 
 ## [0.8.5] - 2025-02-27
 
