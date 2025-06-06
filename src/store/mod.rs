@@ -252,10 +252,10 @@ mod tests {
         assert_eq!(props, expected);
 
         let dev_props = store.device_props().await.unwrap();
-        assert_eq!(dev_props, [device.clone()]);
+        assert_eq!(dev_props, std::slice::from_ref(&device));
 
         let serv_props = store.server_props().await.unwrap();
-        assert_eq!(serv_props, [server.clone()]);
+        assert_eq!(serv_props, std::slice::from_ref(&server));
 
         // props from interface
         let props = store.interface_props("com.test1").await.unwrap();

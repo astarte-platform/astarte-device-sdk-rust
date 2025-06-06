@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "ahash",
  "astarte-device-sdk-derive",
@@ -175,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -184,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-mock"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "astarte-device-sdk",
  "async-trait",
@@ -657,7 +657,7 @@ checksum = "1435fa1053d8b2fbbe9be7e97eca7f33d37b28409959813daefc1446a14247f1"
 
 [[package]]
 name = "e2e-test"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "astarte-device-sdk",
  "base64 0.22.0",

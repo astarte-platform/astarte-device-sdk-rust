@@ -91,7 +91,7 @@ impl Bundle {
 
     pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // The realm/device_id for the certificate
-        let subject = Name::from_str(&format!("CN={}/{}", realm, device_id))?;
+        let subject = Name::from_str(&format!("CN={realm}/{device_id}"))?;
 
         // Generate a random private key
         let private_key = SecretKey::random(&mut rand_core::OsRng);

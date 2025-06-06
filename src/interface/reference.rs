@@ -126,7 +126,7 @@ impl<I> MappingRef<'_, I> {
     }
 
     #[inline]
-    pub(crate) fn path(&self) -> &MappingPath {
+    pub(crate) fn path(&self) -> &MappingPath<'_> {
         self.path
     }
 }

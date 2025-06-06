@@ -402,8 +402,7 @@ mod test {
 
         assert!(
             res.is_ok(),
-            "Failed to load interfaces from directory: {:?}",
-            res
+            "Failed to load interfaces from directory: {res:?}"
         );
     }
 
@@ -416,8 +415,7 @@ mod test {
 
         assert!(
             res.is_ok(),
-            "Failed to load interfaces from directory: {:?}",
-            res
+            "Failed to load interfaces from directory: {res:?}"
         );
     }
 

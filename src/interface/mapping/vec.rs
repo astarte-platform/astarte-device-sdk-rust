@@ -65,7 +65,7 @@ impl<T> MappingVec<T> {
     }
 
     /// Iterate over the mappings.
-    pub(crate) fn iter(&self) -> ItemIter<T> {
+    pub(crate) fn iter(&self) -> ItemIter<'_, T> {
         ItemIter {
             items: self.mappings.iter(),
         }

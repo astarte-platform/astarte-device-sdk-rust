@@ -155,7 +155,7 @@ impl Interface {
     }
 
     /// Returns an iterator over the interface's mappings.
-    pub fn iter_mappings(&self) -> MappingIter {
+    pub fn iter_mappings(&self) -> MappingIter<'_> {
         MappingIter::new(&self.inner)
     }
 
@@ -190,7 +190,7 @@ impl Interface {
     }
 
     /// Returns a [`PropertyRef`] if the interface is a property.
-    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef> {
+    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef<'_>> {
         self.is_property().then_some(PropertyRef(self))
     }
 
@@ -200,7 +200,7 @@ impl Interface {
     }
 
     /// Returns a [`ObjectRef`] if the interface is an object.
-    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
+    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef<'_>> {
         ObjectRef::new(self)
     }
 
@@ -256,7 +256,7 @@ impl Interface {
 
     /// Returns a typed reference to a property, only if the interface is of type
     /// [`InterfaceTypeDef::Properties`].
-    pub fn as_prop(&self) -> Option<PropertyRef> {
+    pub fn as_prop(&self) -> Option<PropertyRef<'_>> {
         match self.inner {
             InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => None,
             InterfaceType::Properties(_) => Some(PropertyRef(self)),
@@ -381,7 +381,7 @@ pub struct DatastreamIndividual {
 
 impl DatastreamIndividual {
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> IndividualMappingIter {
+    pub fn iter_mappings(&self) -> IndividualMappingIter<'_> {
         IndividualMappingIter::new(&self.mappings)
     }
 
@@ -474,7 +474,7 @@ impl DatastreamObject {
     }
 
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> ObjectMappingIter {
+    pub fn iter_mappings(&self) -> ObjectMappingIter<'_> {
         ObjectMappingIter::new(self)
     }
 
@@ -615,7 +615,7 @@ pub struct Properties {
 
 impl Properties {
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> PropertiesMappingIter {
+    pub fn iter_mappings(&self) -> PropertiesMappingIter<'_> {
         PropertiesMappingIter::new(&self.mappings)
     }
 
@@ -979,7 +979,7 @@ mod tests {
         assert!(interface.is_err());
         // This is hacky but serde doesn't provide a way to check the error
         let err = format!("{:?}", interface.unwrap_err());
-        assert!(err.contains("no mappings"), "Unexpected error: {}", err);
+        assert!(err.contains("no mappings"), "Unexpected error: {err}");
     }
 
     #[test]

@@ -74,9 +74,10 @@ pub enum GrpcError {
     /// The gRPC connection returned an error.
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
-    /// Status code error.
-    #[error("Status error {0}")]
-    Status(#[from] tonic::Status),
+    /// Status code error that is not [`Ok`](tonic::Code::Ok)
+    // NOTE: the `Status` struct is to big to return as an erro, so we box it
+    #[error("recived an error status code with {0}")]
+    Status(Box<Status>),
     #[error("Error while serializing the interfaces")]
     /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
@@ -92,6 +93,12 @@ pub enum GrpcError {
     /// Failed to convert a proto message.
     #[error(transparent)]
     MessageHubProtoConversion(#[from] MessageHubProtoError),
+}
+
+impl From<Status> for GrpcError {
+    fn from(value: Status) -> Self {
+        Self::Status(Box::new(value))
+    }
 }
 
 type MessageHubClientWithInterceptor =
@@ -578,14 +585,14 @@ mod test {
     ) -> impl Future<Output = MessageHubClientWithInterceptor> {
         async move {
             let channel = loop {
-                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
+                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{addr}"))
                     .unwrap()
                     .connect()
                     .await;
 
                 match channel_res {
                     Ok(channel) => break channel,
-                    Err(err) => println!("Failed attempt of connecting with error: {}", err),
+                    Err(err) => println!("Failed attempt of connecting with error: {err}"),
                 }
             };
 
