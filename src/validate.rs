@@ -118,7 +118,7 @@ impl ValidatedIndividual {
             )));
         }
 
-        if data != mapping.mapping_type() {
+        if !data.eq_mapping_type(mapping.mapping_type()) {
             return Err(UserValidationError::MappingType {
                 interface: interface.interface_name().to_string(),
                 path: path.as_str().to_string(),
@@ -197,7 +197,7 @@ impl ValidatedObject {
                 });
             };
 
-            if *value != mapping.mapping_type() {
+            if !value.eq_mapping_type(mapping.mapping_type()) {
                 return Err(UserValidationError::MappingType {
                     interface: interface.interface_name().to_string(),
                     path: format!("{path}/{key}"),
@@ -249,7 +249,7 @@ impl ValidatedProperty {
             )));
         }
 
-        if data != mapping.mapping_type() {
+        if !data.eq_mapping_type(mapping.mapping_type()) {
             return Err(UserValidationError::MappingType {
                 interface: interface.interface_name().to_string(),
                 path: path.as_str().to_string(),
@@ -348,7 +348,10 @@ mod tests {
 
     fn initialize_aggregate() -> (DatastreamObject, AstarteObject) {
         let aggregate = AstarteObject::from_iter([
-            ("endpoint1".to_string(), AstarteType::Double(37.534543)),
+            (
+                "endpoint1".to_string(),
+                AstarteType::try_from(37.534543).unwrap(),
+            ),
             (
                 "endpoint2".to_string(),
                 AstarteType::String("Hello".to_string()),

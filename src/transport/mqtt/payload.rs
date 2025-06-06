@@ -221,6 +221,7 @@ mod test {
 
     use chrono::TimeZone;
 
+    use crate::types::Double;
     use crate::validate::ValidatedIndividual;
     use crate::validate::ValidatedObject;
 
@@ -254,14 +255,18 @@ mod test {
         let interface = interface.as_datastream_individual().unwrap();
 
         let alltypes = [
-            AstarteType::Double(4.5),
+            AstarteType::Double(4.5.try_into().unwrap()),
             AstarteType::Integer(-4),
             AstarteType::Boolean(true),
             AstarteType::LongInteger(45543543534_i64),
             AstarteType::String("hello".into()),
             AstarteType::BinaryBlob(b"hello".to_vec()),
             AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+            AstarteType::DoubleArray(
+                [1.2, 3.4, 5.6, 7.8]
+                    .map(|v| Double::try_from(v).unwrap())
+                    .to_vec(),
+            ),
             AstarteType::IntegerArray(vec![1, 3, 5, 7]),
             AstarteType::BooleanArray(vec![true, false, true, true]),
             AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
@@ -302,14 +307,14 @@ mod test {
         let interface = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
         let alltypes = [
-            AstarteType::Double(4.5),
+            AstarteType::try_from(4.5).unwrap(),
             AstarteType::Integer(-4),
             AstarteType::Boolean(true),
             AstarteType::LongInteger(45543543534_i64),
             AstarteType::String("hello".into()),
             AstarteType::BinaryBlob(b"hello".to_vec()),
             AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
+            AstarteType::try_from(vec![1.2, 3.4, 5.6, 7.8]).unwrap(),
             AstarteType::IntegerArray(vec![1, 3, 5, 7]),
             AstarteType::BooleanArray(vec![true, false, true, true]),
             AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),

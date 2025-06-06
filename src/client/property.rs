@@ -115,7 +115,7 @@ where
         let value = self.store.load_prop(&property_mapping).await?;
 
         let value = match value {
-            Some(value) if value != mapping.mapping_type() => {
+            Some(value) if !value.eq_mapping_type(mapping.mapping_type()) => {
                 error!(
                     ?value,
                     "stored property type mismatch, expected {}",

@@ -697,7 +697,7 @@ mod test {
     impl MockDeviceObject {
         fn mock_object() -> AstarteObject {
             AstarteObject::from_iter([
-                ("endpoint1".to_string(), AstarteType::Double(4.2)),
+                ("endpoint1".to_string(), AstarteType::try_from(4.2).unwrap()),
                 (
                     "endpoint2".to_string(),
                     AstarteType::String("obj".to_string()),
@@ -715,7 +715,10 @@ mod test {
     impl MockServerObject {
         fn mock_object() -> AstarteObject {
             AstarteObject::from_iter([
-                ("double_endpoint".to_string(), AstarteType::Double(4.2)),
+                (
+                    "double_endpoint".to_string(),
+                    AstarteType::try_from(4.2).unwrap(),
+                ),
                 (
                     "string_endpoint".to_string(),
                     AstarteType::String("obj".to_string()),
