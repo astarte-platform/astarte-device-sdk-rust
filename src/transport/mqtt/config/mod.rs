@@ -561,7 +561,7 @@ mod tests {
     fn test_redacted_credentials_secret() {
         let mqtt_config = MqttConfig::with_credential_secret("test", "test", "secret=", "test");
 
-        let debug_string = format!("{:?}", mqtt_config);
+        let debug_string = format!("{mqtt_config:?}");
 
         assert!(!debug_string.contains("secret="));
         assert!(debug_string.contains("REDACTED"));

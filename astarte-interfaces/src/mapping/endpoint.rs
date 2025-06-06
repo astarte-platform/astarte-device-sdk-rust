@@ -50,7 +50,7 @@ pub struct Endpoint<T = String> {
 
 impl<T> Endpoint<T> {
     /// Iter the levels of the endpoint.
-    pub fn iter(&self) -> SliceIter<Level<T>> {
+    pub fn iter(&self) -> SliceIter<'_, Level<T>> {
         self.levels.iter()
     }
 

@@ -102,7 +102,7 @@ impl Channel {
             .await?;
         let client = Arc::new(client);
 
-        let room = format!("rooms:{}:e2e_test_{}", realm, device_id);
+        let room = format!("rooms:{realm}:e2e_test_{device_id}");
 
         let rx = spawn_channel_recv(&client, tasks, cancel);
 

@@ -1892,10 +1892,8 @@ pub(crate) mod test {
             .in_sequence(&mut seq)
             .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
 
-        let expected: Vec<IntrospectionInterface> = to_add
-            .iter()
-            .map(|(_name, i)| i.interface().into())
-            .collect();
+        let expected: Vec<IntrospectionInterface> =
+            to_add.values().map(|i| i.interface().into()).collect();
 
         client
             .expect_publish::<String, String>()

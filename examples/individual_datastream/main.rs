@@ -130,8 +130,7 @@ async fn main() -> eyre::Result<()> {
                             Some("intensity") => {
                                 let value: f64 = data.try_into()?;
                                 println!(
-                            "Received new intensity datastream for LED number {}. LED intensity is now {}",
-                            led_id, value
+                            "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
                         );
                             }
                             item => {

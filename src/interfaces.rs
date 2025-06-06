@@ -420,7 +420,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, "{}:{}:{}", name, major, minor)?;
+            write!(f, "{name}:{major}:{minor}")?;
         } else {
             return Ok(());
         };
@@ -429,7 +429,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, ";{}:{}:{}", name, major, minor)?;
+            write!(f, ";{name}:{major}:{minor}")?;
         }
 
         Ok(())
@@ -467,7 +467,7 @@ where
         self.mapping
     }
 
-    pub(crate) fn path(&self) -> &MappingPath {
+    pub(crate) fn path(&self) -> &MappingPath<'_> {
         self.path
     }
 }

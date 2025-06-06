@@ -195,8 +195,7 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 
     debug_assert_eq!(
         bytes_read, size,
-        "Byte red and size mismatch: {} != {}",
-        bytes_read, size
+        "Byte red and size mismatch: {bytes_read} != {size}"
     );
     // Signal the error in production
     if bytes_read != size {

@@ -151,7 +151,7 @@ async fn main() -> eyre::Result<()> {
                             }
                             Some("samplingPeriod") => {
                                 let value: i32 = data.try_into()?;
-                                println!("Sampling period for sensor {} is {}", sensor_id, value);
+                                println!("Sampling period for sensor {sensor_id} is {value}");
                             }
                             _ => {}
                         }

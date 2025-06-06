@@ -81,7 +81,7 @@ pub enum MappingPathError {
 }
 
 /// Parses the MQTT levels structure of the topic received.
-fn parse_mapping(input: &str) -> Result<MappingPath, MappingPathError> {
+fn parse_mapping(input: &str) -> Result<MappingPath<'_>, MappingPathError> {
     let path = input
         .strip_prefix('/')
         .ok_or_else(|| MappingPathError::Prefix(input.to_string()))?;

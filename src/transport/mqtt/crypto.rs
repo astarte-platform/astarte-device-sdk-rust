@@ -47,7 +47,7 @@ impl Bundle {
     pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // The realm/device_id for the certificate
         let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
+        dn.push(DnType::CommonName, format!("{realm}/{device_id}"));
 
         // Generate a random private key
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
