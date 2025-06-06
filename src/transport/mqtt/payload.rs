@@ -51,8 +51,8 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
-    #[error("expected object, individual data deserialized instead {0}")]
-    Object(Bson),
+    #[error("expected object, individual data deserialized instead")]
+    Object(Box<Bson>),
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingError),
@@ -164,7 +164,7 @@ pub(super) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(data)),
+        data => return Err(PayloadError::Object(Box::new(data))),
     };
 
     trace!("base path {path}");

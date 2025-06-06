@@ -147,7 +147,7 @@ async fn main() -> Result<(), DynError> {
                             }
                             Some("samplingPeriod") => {
                                 let value: i32 = var.try_into().unwrap();
-                                println!("Sampling period for sensor {} is {}", sensor_id, value);
+                                println!("Sampling period for sensor {sensor_id} is {value}");
                             }
                             _ => {}
                         }

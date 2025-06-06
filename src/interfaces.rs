@@ -99,7 +99,7 @@ impl Interfaces {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef<'_>> {
         self.interfaces
             .get(interface_name)
             .and_then(|interface| interface.is_property().then_some(PropertyRef(interface)))
@@ -283,7 +283,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, "{}:{}:{}", name, major, minor)?;
+            write!(f, "{name}:{major}:{minor}")?;
         } else {
             return Ok(());
         };
@@ -292,7 +292,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, ";{}:{}:{}", name, major, minor)?;
+            write!(f, ";{name}:{major}:{minor}")?;
         }
 
         Ok(())

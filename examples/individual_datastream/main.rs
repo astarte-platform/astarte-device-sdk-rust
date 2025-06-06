@@ -120,8 +120,7 @@ async fn main() -> Result<(), Error> {
                             Some("intensity") => {
                                 let value: f64 = var.try_into().unwrap();
                                 println!(
-                            "Received new intensity datastream for LED number {}. LED intensity is now {}",
-                            led_id, value
+                            "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
                         );
                             }
                             _ => {}

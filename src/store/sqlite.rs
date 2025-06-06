@@ -155,7 +155,7 @@ impl Debug for PropRecord {
 
         f.debug_struct("PropRecord")
             .field("interface_major", &self.interface_major)
-            .field("value", &format_args!("{}", hex_value))
+            .field("value", &format_args!("{hex_value}"))
             .finish()
     }
 }

@@ -585,14 +585,14 @@ mod test {
     ) -> impl Future<Output = MessageHubClientWithInterceptor> {
         async move {
             let channel = loop {
-                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
+                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{addr}"))
                     .unwrap()
                     .connect()
                     .await;
 
                 match channel_res {
                     Ok(channel) => break channel,
-                    Err(err) => println!("Failed attempt of connecting with error: {}", err),
+                    Err(err) => println!("Failed attempt of connecting with error: {err}"),
                 }
             };
 
