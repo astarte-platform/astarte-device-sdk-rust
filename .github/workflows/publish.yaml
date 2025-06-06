@@ -36,8 +36,6 @@ concurrency:
   cancel-in-progress: false
 env:
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
 jobs:
   # Check that the create can be compiled with only the packaged files
   for-publish:
