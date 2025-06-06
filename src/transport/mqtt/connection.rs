@@ -531,7 +531,7 @@ impl Handshake {
 
             // NOTE set session synced to false since we are not synchronized
             // also clear the stored introspection so it can be updated
-            // set to true after a succesful handshake in [`WaitAcks`]
+            // set to true after a successful handshake in [`WaitAcks`]
             conn.set_session_synced(false);
             if let Some(session) = store.get_session() {
                 trace!("Clearing stored introspection before the full handshake");
@@ -740,7 +740,7 @@ impl Handshake {
 
                 let _logged_error = store.delete_prop(&prop.into()).await.inspect_err(|e| {
                     error!(error = %Report::new(e),
-                        "couldn't delete unset property, proceding anyways to ensure connection")
+                        "couldn't delete unset property, proceeding anyways to ensure connection")
                 });
             }
         }
@@ -961,7 +961,7 @@ mod tests {
         store::{memory::MemoryStore, mock::MockStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType, Interface,
+        AstarteData, Interface,
     };
 
     use super::*;
@@ -1129,9 +1129,9 @@ mod tests {
         let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
         let prop = StoredProp {
-            interface: interface.interface_name().to_owned(),
-            path: "/sensor1/name".to_owned(),
-            value: AstarteType::String("temperature".to_string()),
+            interface: interface.interface_name().to_string(),
+            path: "/sensor1/name".to_string(),
+            value: AstarteData::String("temperature".to_string()),
             interface_major: 0,
             ownership: interface.ownership(),
         };
@@ -1185,7 +1185,7 @@ mod tests {
         let store = StoreWrapper::new(MemoryStore::new());
 
         store
-            .store_prop(prop.as_ref())
+            .store_prop(prop.as_prop_ref())
             .await
             .expect("Error while storing test property");
 

@@ -243,7 +243,7 @@ mod tests {
     use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
     use crate::transport::mock::MockSender;
     use crate::validate::ValidatedIndividual;
-    use crate::AstarteType;
+    use crate::AstarteData;
 
     #[tokio::test]
     async fn reconnect_success_no_data() {
@@ -278,7 +278,7 @@ mod tests {
 
         let retention_id = connection.state.retention_ctx.next();
         let path = "/endpoint1";
-        let value = AstarteType::LongInteger(42);
+        let value = AstarteData::LongInteger(42);
         let bytes = [4, 2];
 
         let individual = {

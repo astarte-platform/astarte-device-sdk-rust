@@ -28,7 +28,7 @@ use crate::{
     },
     retention::{Id, PublishInfo, RetentionError, StoredInterface, StoredRetention},
     session::{IntrospectionInterface, SessionError, StoredSession},
-    types::AstarteType,
+    types::AstarteData,
     validate::ValidatedUnset,
     Interface,
 };
@@ -264,7 +264,7 @@ where
     /// Stores a property within the database.
     fn store_prop(
         &self,
-        prop: StoredProp<&str, &AstarteType>,
+        prop: StoredProp<&str, &AstarteData>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Load a property from the database.
     ///
@@ -274,7 +274,7 @@ where
         &self,
         property: &PropertyMapping<'_>,
         interface_major: i32,
-    ) -> impl Future<Output = Result<Option<AstarteType>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<Option<AstarteData>, Self::Err>> + Send;
     /// Unset a property from the database.
     fn unset_prop(
         &self,
@@ -312,10 +312,16 @@ where
     ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
 }
 
+/// A property that may be unset.
+///
+/// This is returned by getting all the properties (`load_all_props`) that have not been deleted
+/// yet, since they where not sent to Astarte.
+pub type OptStoredProp = StoredProp<String, Option<AstarteData>>;
+
 /// Data structure used to return stored properties by a database implementing the [`PropertyStore`]
 /// trait.
 #[derive(Debug, Clone, Copy, PartialOrd)]
-pub struct StoredProp<S = String, V = AstarteType> {
+pub struct StoredProp<S = String, V = AstarteData> {
     /// Interface name of the property.
     pub interface: S,
     /// Path of the property's mapping.
@@ -334,24 +340,18 @@ pub struct StoredProp<S = String, V = AstarteType> {
     pub ownership: Ownership,
 }
 
-/// A property that may be unset.
-///
-/// This is returned by getting all the properties (`load_all_props`) that have not been deleted
-/// yet, since they where not sent to Astarte.
-pub type OptStoredProp = StoredProp<String, Option<AstarteType>>;
-
 impl StoredProp {
     /// Coverts the stored property into a reference to its values.
-    pub fn as_ref(&self) -> StoredProp<&str, &AstarteType> {
+    pub fn as_prop_ref(&self) -> StoredProp<&str, &AstarteData> {
         self.into()
     }
 }
 
-impl<'a> StoredProp<&'a str, &'a AstarteType> {
+impl<'a> StoredProp<&'a str, &'a AstarteData> {
     /// Create a new with the given [`Interface`], path and value.
     pub(crate) fn from_mapping(
         mapping: &'a MappingRef<'a, PropertyRef>,
-        value: &'a AstarteType,
+        value: &'a AstarteData,
     ) -> Self {
         Self {
             interface: mapping.interface().interface_name(),
@@ -363,7 +363,7 @@ impl<'a> StoredProp<&'a str, &'a AstarteType> {
     }
 }
 
-impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteType> {
+impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteData> {
     fn from(value: &'a StoredProp) -> Self {
         Self {
             interface: &value.interface,
@@ -401,7 +401,7 @@ mod tests {
     where
         S: PropertyStore,
     {
-        let ty = AstarteType::Integer(23);
+        let ty = AstarteData::Integer(23);
         let prop = StoredProp {
             interface: "com.test",
             path: "/test",
@@ -475,8 +475,8 @@ mod tests {
         };
         let server_interface_data = (&server).into();
 
-        store.store_prop(device.as_ref()).await.unwrap();
-        store.store_prop(server.as_ref()).await.unwrap();
+        store.store_prop(device.as_prop_ref()).await.unwrap();
+        store.store_prop(server.as_prop_ref()).await.unwrap();
 
         let expected = [device.clone(), server.clone()];
 
@@ -509,20 +509,20 @@ mod tests {
 
         // test all types
         let all_types = [
-            AstarteType::Double(4.5),
-            AstarteType::Integer(-4),
-            AstarteType::Boolean(true),
-            AstarteType::LongInteger(45543543534_i64),
-            AstarteType::String("hello".into()),
-            AstarteType::BinaryBlob(b"hello".to_vec()),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(vec![1.2, 3.4, 5.6, 7.8]),
-            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
-            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
-            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
-            AstarteType::DateTimeArray(vec![
+            AstarteData::Double(4.5.try_into().unwrap()),
+            AstarteData::Integer(-4),
+            AstarteData::Boolean(true),
+            AstarteData::LongInteger(45543543534_i64),
+            AstarteData::String("hello".into()),
+            AstarteData::BinaryBlob(b"hello".to_vec()),
+            AstarteData::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteData::DoubleArray([1.2, 3.4, 5.6, 7.8].map(|v| v.try_into().unwrap()).to_vec()),
+            AstarteData::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteData::BooleanArray(vec![true, false, true, true]),
+            AstarteData::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteData::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteData::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteData::DateTimeArray(vec![
                 TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
@@ -554,7 +554,7 @@ mod tests {
     async fn error_should_compatible_with_tokio() {
         let mem = StoreWrapper::new(MemoryStore::new());
 
-        let exp = AstarteType::Integer(1);
+        let exp = AstarteData::Integer(1);
         let prop = StoredProp {
             interface: "com.test",
             path: "/test",

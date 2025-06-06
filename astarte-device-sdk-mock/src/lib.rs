@@ -24,7 +24,7 @@ use astarte_device_sdk::{
     properties::PropAccess,
     store::StoredProp,
     transport::Connection,
-    AstarteType, DeviceEvent, Error, Interface,
+    AstarteData, DeviceEvent, Error, Interface,
 };
 use mockall::mock;
 
@@ -51,7 +51,7 @@ pub trait Client {
         &mut self,
         interface_name: &str,
         interface_path: &str,
-        data: AstarteType,
+        data: AstarteData,
         timestamp: chrono::DateTime<chrono::Utc>,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
@@ -59,14 +59,14 @@ pub trait Client {
         &mut self,
         interface_name: &str,
         interface_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
     fn set_property(
         &mut self,
         interface_name: &str,
         interface_path: &str,
-        data: AstarteType,
+        data: AstarteData,
     ) -> impl Future<Output = Result<(), Error>> + Send;
 
     fn unset_property(
@@ -147,7 +147,7 @@ mock! {
             &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: AstarteType,
+            data: AstarteData,
             timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error>;
 
@@ -155,14 +155,14 @@ mock! {
             &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: AstarteType,
+            data: AstarteData,
         ) -> Result<(), Error>;
 
         async fn set_property(
             &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: AstarteType
+            data: AstarteData
         ) -> Result<(), Error>;
 
         async fn unset_property(&mut self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
@@ -199,7 +199,7 @@ mock! {
     }
 
     impl<C: Connection> PropAccess for DeviceClient<C> {
-        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteData>, Error>;
         async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
         async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
         async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
@@ -263,7 +263,7 @@ mod tests {
             &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: AstarteType,
+            data: AstarteData,
             timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error> {
             astarte_device_sdk::Client::send_individual_with_timestamp(
@@ -280,7 +280,7 @@ mod tests {
             &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: AstarteType,
+            data: AstarteData,
         ) -> Result<(), Error> {
             astarte_device_sdk::Client::send_individual(self, interface_name, interface_path, data)
                 .await
@@ -290,7 +290,7 @@ mod tests {
             &mut self,
             interface_name: &str,
             mapping_path: &str,
-            data: AstarteType,
+            data: AstarteData,
         ) -> Result<(), Error> {
             astarte_device_sdk::Client::set_property(self, interface_name, mapping_path, data).await
         }
@@ -332,7 +332,7 @@ mod tests {
             &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: AstarteType,
+            _data: AstarteData,
             _timestamp: chrono::DateTime<chrono::Utc>,
         ) -> Result<(), Error> {
             Ok(())
@@ -342,7 +342,7 @@ mod tests {
             &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: AstarteType,
+            _data: AstarteData,
         ) -> Result<(), Error> {
             Ok(())
         }
@@ -351,7 +351,7 @@ mod tests {
             &mut self,
             _interface_name: &str,
             _mapping_path: &str,
-            _data: AstarteType,
+            _data: AstarteData,
         ) -> Result<(), Error> {
             Ok(())
         }
