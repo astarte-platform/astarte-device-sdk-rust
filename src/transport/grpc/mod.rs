@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! # Astarte GRPC Transport Module
 //!
@@ -86,9 +84,10 @@ pub enum GrpcError {
     /// The gRPC connection returned an error.
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
-    /// Status code error.
-    #[error("Status error {0}")]
-    Status(#[from] tonic::Status),
+    /// Status code error that is not [`Ok`](tonic::Code::Ok)
+    // NOTE: the `Status` struct is to big to return as an error, so we box it
+    #[error("received an error status code with {0}")]
+    Status(Box<Status>),
     #[error("Error while serializing the interfaces")]
     /// Couldn't serialize interface to json.
     InterfacesSerialization(#[from] serde_json::Error),
@@ -101,6 +100,12 @@ pub enum GrpcError {
     /// Error returned by the message hub server
     #[error("error returned by the message hub server")]
     Server(#[from] MessageHubError),
+}
+
+impl From<Status> for GrpcError {
+    fn from(value: Status) -> Self {
+        Self::Status(Box::new(value))
+    }
 }
 
 type MsgHubClient = MessageHubClient<InterceptedService<Channel, NodeIdInterceptor>>;
@@ -281,7 +286,7 @@ where
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn extend_interfaces(
@@ -296,7 +301,7 @@ where
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn remove_interface(
@@ -312,7 +317,7 @@ where
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 
     async fn remove_interfaces(
@@ -333,7 +338,7 @@ where
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
             .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::Status(s)))
+            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
     }
 }
 
@@ -664,13 +669,15 @@ mod test {
 
     type ServerSenderValuesVec = Vec<Result<MessageHubEvent, tonic::Status>>;
 
-    fn get_node_id_from_metadata(request: &tonic::Request<Node>) -> Result<Uuid, tonic::Status> {
+    fn get_node_id_from_metadata(
+        request: &tonic::Request<Node>,
+    ) -> Result<Uuid, Box<tonic::Status>> {
         // check only node-id-bin since the Node does not insert node-id metadata in the request
         let Some(metadata_val) = request.metadata().get_bin("node-id-bin") else {
-            return Err(Status::new(
+            return Err(Box::new(Status::new(
                 tonic::Code::InvalidArgument,
                 "absent node id into metadata".to_string(),
-            ));
+            )));
         };
 
         let node_id_bytes = metadata_val
@@ -678,7 +685,7 @@ mod test {
             .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))?;
 
         Uuid::from_slice(&node_id_bytes)
-            .map_err(|e| Status::new(tonic::Code::InvalidArgument, e.to_string()))
+            .map_err(|e| Box::new(Status::new(tonic::Code::InvalidArgument, e.to_string())))
     }
 
     pub(crate) struct TestMessageHubServer {
@@ -714,7 +721,7 @@ mod test {
             request: tonic::Request<Node>,
         ) -> Result<tonic::Response<Self::AttachStream>, tonic::Status> {
             // retrieve the node id from the metadata request
-            let node_id = get_node_id_from_metadata(&request)?;
+            let node_id = get_node_id_from_metadata(&request).map_err(|e| *e)?;
 
             let inner = request.into_inner();
             println!("Client '{node_id}' attached");
@@ -789,14 +796,14 @@ mod test {
     ) -> impl Future<Output = MsgHubClient> {
         async move {
             let channel = loop {
-                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{}", addr))
+                let channel_res = tonic::transport::Endpoint::try_from(format!("http://{addr}"))
                     .unwrap()
                     .connect()
                     .await;
 
                 match channel_res {
                     Ok(channel) => break channel,
-                    Err(err) => println!("Failed attempt of connecting with error: {}", err),
+                    Err(err) => println!("Failed attempt of connecting with error: {err}"),
                 }
             };
 

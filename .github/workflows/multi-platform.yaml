@@ -17,7 +17,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Tests that don't run on linux
-name: multi-platfrom
+name: multi-platform
 on:
   workflow_call:
   workflow_dispatch:
@@ -27,22 +27,19 @@ env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
-  # Enable logging otherwise the logging lines will count as not covered in the test coverage
-  RUST_LOG: trace
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os }} / stable / test
+    name: ${{ matrix.os }} / test
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.12.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
       # Setup vcpkg binary cache
       # https://learn.microsoft.com/en-us/vcpkg/users/binarycaching#gha-quickstart
       - uses: actions/github-script@v7
@@ -53,9 +50,6 @@ jobs:
       - name: Set VCPKG_ROOT
         run: echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install dependencies
-        run: vcpkg install --binarysource="clear;x-gha,readwrite" openssl:x64-windows-static-md sqlite3:x64-windows-static-md
-      - name: cargo generate-lockfile
-        if: hashFiles('Cargo.lock') == ''
-        run: cargo generate-lockfile
+        run: vcpkg install openssl:x64-windows-static-md sqlite3:x64-windows-static-md
       - name: cargo test
-        run: cargo test --locked --all-features --all-targets --workspace
+        run: cargo test --locked --all-features --workspace

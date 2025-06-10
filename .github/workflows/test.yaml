@@ -29,57 +29,40 @@ env:
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
-  # Enable logging otherwise the logging lines will count as not covered in the test coverage
-  RUST_LOG: trace
 jobs:
-  required:
+  test:
     runs-on: ubuntu-24.04
-    name: ubuntu / ${{ matrix.toolchain }}
-    strategy:
-      matrix:
-        toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install ${{ matrix.toolchain }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.7
-      - name: cargo generate-lockfile
-        if: hashFiles('Cargo.lock') == ''
-        run: cargo generate-lockfile
-      - name: Run cargo test --locked
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.12.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: cargo test --locked
         run: cargo test --locked --all-features --all-targets --workspace
       # https://github.com/rust-lang/cargo/issues/6669
       - name: Run cargo test --doc
         run: cargo test --locked --all-features --doc --workspace
   coverage:
     runs-on: ubuntu-24.04
-    name: ubuntu / stable / coverage
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt-get -y install libsqlite3-dev libssl-dev
-      - name: Install stable
-        uses: dtolnay/rust-toolchain@stable
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.12.0
         with:
+          toolchain: nightly
           components: llvm-tools
-      - name: Install sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.7
-      - name: cargo install cargo-tarpaulin
-        uses: taiki-e/install-action@cargo-tarpaulin
-      - name: cargo generate-lockfile
-        if: hashFiles('Cargo.lock') == ''
-        run: cargo generate-lockfile
-      - name: Run cargo-tarpaulin with xml output
-        run: cargo +stable tarpaulin --engine llvm --locked --all-features --ignore-tests --lib --out xml -- --test-threads 1
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: install grcov
+        uses: taiki-e/install-action@grcov
+      - name: Generate coverage
+        run: |
+          EXPORT_FOR_CI=1 ./scripts/coverage.sh
       # Upload the coverage if we are not a PR from a fork, see ".github/workflows/coverage.yaml"
       - name: Upload to codecov.io
         if: ${{ github.event_name == 'push' }}
@@ -101,4 +84,4 @@ jobs:
           name: coverage
           path: |
             pr_number
-            cobertura.xml
+            coverage-astarte-device-sdk.info

@@ -18,35 +18,7 @@ limitations under the License.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Changelog
+# Message Hub Client
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [0.8.6] - 2025-06-06
-
-## [0.9.6] - 2025-03-06
-
-## [0.9.5] - 2025-03-04
-
-## [0.9.4] - 2025-02-27
-
-## [0.8.5] - 2025-02-27
-
-## [0.9.3] - 2025-01-24
-
-## [0.9.2] - 2024-11-04
-
-## [0.9.1] - 2024-09-25
-
-## [0.9.0] - 2024-09-24
-
-## [0.8.4] - 2024-09-11
-
-## [0.8.3] - 2024-08-22
-
-## [0.8.2] - 2024-05-29
-
-## [0.8.1] - 2024-05-03
+To follow this example read the step by step guide at
+[Connect to the Astarte MessageHub](https://docs.rs/astarte-device-sdk/latest/astarte_device_sdk/_docs/_connect_to_the_astarte_msghub/index.html).

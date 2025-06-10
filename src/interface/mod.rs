@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! Provides the functionalities to parse and validate an Astarte interface.
 
@@ -155,7 +153,7 @@ impl Interface {
     }
 
     /// Returns an iterator over the interface's mappings.
-    pub fn iter_mappings(&self) -> MappingIter {
+    pub fn iter_mappings(&self) -> MappingIter<'_> {
         MappingIter::new(&self.inner)
     }
 
@@ -190,7 +188,7 @@ impl Interface {
     }
 
     /// Returns a [`PropertyRef`] if the interface is a property.
-    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef> {
+    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef<'_>> {
         self.is_property().then_some(PropertyRef(self))
     }
 
@@ -200,7 +198,7 @@ impl Interface {
     }
 
     /// Returns a [`ObjectRef`] if the interface is an object.
-    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
+    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef<'_>> {
         ObjectRef::new(self)
     }
 
@@ -256,7 +254,7 @@ impl Interface {
 
     /// Returns a typed reference to a property, only if the interface is of type
     /// [`InterfaceTypeDef::Properties`].
-    pub fn as_prop(&self) -> Option<PropertyRef> {
+    pub fn as_prop(&self) -> Option<PropertyRef<'_>> {
         match self.inner {
             InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => None,
             InterfaceType::Properties(_) => Some(PropertyRef(self)),
@@ -381,7 +379,7 @@ pub struct DatastreamIndividual {
 
 impl DatastreamIndividual {
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> IndividualMappingIter {
+    pub fn iter_mappings(&self) -> IndividualMappingIter<'_> {
         IndividualMappingIter::new(&self.mappings)
     }
 
@@ -474,7 +472,7 @@ impl DatastreamObject {
     }
 
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> ObjectMappingIter {
+    pub fn iter_mappings(&self) -> ObjectMappingIter<'_> {
         ObjectMappingIter::new(self)
     }
 
@@ -620,7 +618,7 @@ pub struct Properties {
 
 impl Properties {
     /// Returns an iterator over the interface mappings.
-    pub fn iter_mappings(&self) -> PropertiesMappingIter {
+    pub fn iter_mappings(&self) -> PropertiesMappingIter<'_> {
         PropertiesMappingIter::new(&self.mappings)
     }
 
@@ -1023,7 +1021,7 @@ mod tests {
         assert!(interface.is_err());
         // This is hacky but serde doesn't provide a way to check the error
         let err = format!("{:?}", interface.unwrap_err());
-        assert!(err.contains("no mappings"), "Unexpected error: {}", err);
+        assert!(err.contains("no mappings"), "Unexpected error: {err}");
     }
 
     #[test]
