@@ -23,7 +23,7 @@ use std::str::FromStr;
 
 use astarte_device_sdk::astarte_interfaces::{error::Error as InterfaceError, Interface};
 use astarte_device_sdk::prelude::DynamicIntrospection;
-use astarte_device_sdk::AstarteType;
+use astarte_device_sdk::AstarteData;
 use eyre::ensure;
 use tracing::{debug, instrument};
 
@@ -43,9 +43,9 @@ impl InterfaceData for DeviceProperty01 {
         "org.astarte-platform.rust.e2etest.ForUpdateDeviceProperty".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = HashMap::from_iter(
-            [("/sensor_1/endpoint", AstarteType::try_from(42.1)?)].map(|(k, v)| (k.to_string(), v)),
+            [("/sensor_1/endpoint", AstarteData::try_from(42.1)?)].map(|(k, v)| (k.to_string(), v)),
         );
 
         Ok(data)
@@ -61,9 +61,9 @@ impl InterfaceData for DeviceProperty02 {
         "org.astarte-platform.rust.e2etest.ForUpdateDeviceProperty".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = HashMap::from_iter(
-            [("/sensor_1/endpoint", AstarteType::LongInteger(21))].map(|(k, v)| (k.to_string(), v)),
+            [("/sensor_1/endpoint", AstarteData::LongInteger(21))].map(|(k, v)| (k.to_string(), v)),
         );
 
         Ok(data)
@@ -79,11 +79,11 @@ impl InterfaceData for DeviceDatastream01 {
         "org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = HashMap::from_iter(
             [
-                ("/sensor_1/stored", AstarteType::try_from(42.1)?),
-                ("/sensor_1/volatile", AstarteType::try_from(42.1)?),
+                ("/sensor_1/stored", AstarteData::try_from(42.1)?),
+                ("/sensor_1/volatile", AstarteData::try_from(42.1)?),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -101,11 +101,11 @@ impl InterfaceData for DeviceDatastream02 {
         "org.astarte-platform.rust.e2etest.ForUpdateDeviceDatastream".to_string()
     }
 
-    fn data() -> eyre::Result<HashMap<String, AstarteType>> {
+    fn data() -> eyre::Result<HashMap<String, AstarteData>> {
         let data = HashMap::from_iter(
             [
-                ("/sensor_1/stored", AstarteType::LongInteger(21)),
-                ("/sensor_1/volatile", AstarteType::LongInteger(21)),
+                ("/sensor_1/stored", AstarteData::LongInteger(21)),
+                ("/sensor_1/volatile", AstarteData::LongInteger(21)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );

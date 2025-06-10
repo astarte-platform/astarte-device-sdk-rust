@@ -188,7 +188,7 @@ mod tests {
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_OBJECT,
         STORED_DEVICE_OBJECT_NAME, VOLATILE_DEVICE_OBJECT, VOLATILE_DEVICE_OBJECT_NAME,
     };
-    use crate::{AstarteType, Client};
+    use crate::{AstarteData, Client};
 
     #[tokio::test]
     async fn send_datastream_object_connected_discard() {
@@ -200,12 +200,12 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
-                ("integer_endpoint", AstarteType::Integer(42)),
-                ("boolean_endpoint", AstarteType::Boolean(false)),
+                ("double_endpoint", AstarteData::try_from(42.0).unwrap()),
+                ("integer_endpoint", AstarteData::Integer(42)),
+                ("boolean_endpoint", AstarteData::Boolean(false)),
                 (
                     "booleanarray_endpoint",
-                    AstarteType::BooleanArray(vec![true, false]),
+                    AstarteData::BooleanArray(vec![true, false]),
                 ),
             ]
             .map(|(n, v)| (n.to_string(), v)),
@@ -246,8 +246,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -295,8 +295,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -346,8 +346,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -425,12 +425,12 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
-                ("integer_endpoint", AstarteType::Integer(42)),
-                ("boolean_endpoint", AstarteType::Boolean(false)),
+                ("double_endpoint", AstarteData::try_from(42.0).unwrap()),
+                ("integer_endpoint", AstarteData::Integer(42)),
+                ("boolean_endpoint", AstarteData::Boolean(false)),
                 (
                     "booleanarray_endpoint",
-                    AstarteType::BooleanArray(vec![true, false]),
+                    AstarteData::BooleanArray(vec![true, false]),
                 ),
             ]
             .map(|(n, v)| (n.to_string(), v)),
@@ -452,8 +452,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -489,8 +489,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -529,8 +529,8 @@ mod tests {
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
             [
-                ("longinteger", AstarteType::LongInteger(42)),
-                ("boolean", AstarteType::Boolean(true)),
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
@@ -599,12 +599,12 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
-                ("integer_endpoint", AstarteType::Integer(42)),
-                ("boolean_endpoint", AstarteType::Boolean(false)),
+                ("double_endpoint", AstarteData::try_from(42.0).unwrap()),
+                ("integer_endpoint", AstarteData::Integer(42)),
+                ("boolean_endpoint", AstarteData::Boolean(false)),
                 (
                     "booleanarray_endpoint",
-                    AstarteType::BooleanArray(vec![true, false]),
+                    AstarteData::BooleanArray(vec![true, false]),
                 ),
             ]
             .map(|(n, v)| (n.to_string(), v)),
@@ -635,12 +635,12 @@ mod tests {
 
         let obj = AstarteObject::from_iter(
             [
-                ("double_endpoint", AstarteType::try_from(42.0).unwrap()),
-                ("integer_endpoint", AstarteType::Integer(42)),
-                ("boolean_endpoint", AstarteType::Boolean(false)),
+                ("double_endpoint", AstarteData::try_from(42.0).unwrap()),
+                ("integer_endpoint", AstarteData::Integer(42)),
+                ("boolean_endpoint", AstarteData::Boolean(false)),
                 (
                     "booleanarray_endpoint",
-                    AstarteType::BooleanArray(vec![true, false]),
+                    AstarteData::BooleanArray(vec![true, false]),
                 ),
             ]
             .map(|(n, v)| (n.to_string(), v)),

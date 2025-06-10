@@ -26,7 +26,7 @@ use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
 
 use crate::{
     store::{OptStoredProp, StoredProp},
-    AstarteType,
+    AstarteData,
 };
 
 use super::{
@@ -110,7 +110,7 @@ impl WriteConnection {
 
     pub(super) fn store_prop(
         &self,
-        prop: StoredProp<&str, &AstarteType>,
+        prop: StoredProp<&str, &AstarteData>,
         buf: &[u8],
     ) -> Result<(), SqliteError> {
         let mapping_type = into_stored_type(prop.value)?;

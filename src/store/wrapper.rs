@@ -22,13 +22,13 @@ use tracing::trace;
 
 use astarte_interfaces::Properties;
 
-use crate::types::AstarteType;
+use crate::types::AstarteData;
 
 use super::{
     error::StoreError, OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
 };
 
-/// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
+/// Wrapper for a generic [`PropertyStore`] to convert the error in [`Error`](crate::Error).
 #[derive(Debug, Clone)]
 pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
@@ -74,14 +74,14 @@ where
 {
     type Err = StoreError;
 
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         self.store
             .load_prop(property)
             .await

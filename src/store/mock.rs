@@ -21,7 +21,7 @@ use mockall::mock;
 
 use crate::{
     session::{IntrospectionInterface, SessionError, StoredSession},
-    AstarteType,
+    AstarteData,
 };
 
 use super::{
@@ -56,13 +56,13 @@ mock! {
 
         async fn store_prop<'a, 'b>(
             &self,
-            prop: StoredProp<&'a str, &'b AstarteType>,
+            prop: StoredProp<&'a str, &'b AstarteData>,
         ) -> Result<(), StoreError>;
 
         async fn load_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
-        ) -> Result<Option<AstarteType>, StoreError>;
+        ) -> Result<Option<AstarteData>, StoreError>;
 
         async fn unset_prop<'a>(
             &self,

@@ -23,6 +23,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Change the send_object client methods to receive an AstarteObject argument [#430].
 - Create a `Double` struct to make sure the `AstarteData::Double` is always a valid float.
   [#459](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/459)
+- Rename `AstarteType` into `AstarteData`.
+  [#460](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/460)
 
 [#430]: (https://github.com/astarte-platform/astarte-device-sdk-rust/pull/430)
 

@@ -106,7 +106,7 @@ impl std::future::Future for MqttRetentionFuture<'_> {
                 Poll::Pending => None,
                 Poll::Ready(Ok(_)) => Some((*id, Ok(*id))),
                 Poll::Ready(Err(TokenError::Waiting)) => {
-                    warn!(%id, "future returned Ready(Waiting), this should not happend and it could lead to errors on the next poll");
+                    warn!(%id, "future returned Ready(Waiting), this should not happen and it could lead to errors on the next poll");
 
                     // NOTE: we could return None here, but after some consideration it's safer to
                     //       error and drop the token instead of risking a panic if we poll the

@@ -217,7 +217,7 @@ mod tests {
         E2E_SERVER_DATASTREAM_NAME, E2E_SERVER_PROPERTY, E2E_SERVER_PROPERTY_NAME, SERVER_OBJECT,
         SERVER_OBJECT_NAME, SERVER_PROPERTIES_NO_UNSET, SERVER_PROPERTIES_NO_UNSET_NAME,
     };
-    use crate::AstarteType;
+    use crate::AstarteData;
 
     use super::*;
 
@@ -256,7 +256,7 @@ mod tests {
             .await
             .unwrap();
 
-        let exp = AstarteType::Integer(42);
+        let exp = AstarteData::Integer(42);
 
         // Timestamp cannot be checked
         let data = event.try_into_individual().unwrap().0;
@@ -313,9 +313,9 @@ mod tests {
         let timestamp = Utc::now();
         let obj = AstarteObject::from_iter(
             [
-                ("endpoint1", AstarteType::try_from(42.1).unwrap()),
-                ("endpoint2", AstarteType::String("value".to_string())),
-                ("endpoint3", AstarteType::BooleanArray(vec![true, false])),
+                ("endpoint1", AstarteData::try_from(42.1).unwrap()),
+                ("endpoint2", AstarteData::String("value".to_string())),
+                ("endpoint3", AstarteData::BooleanArray(vec![true, false])),
             ]
             .map(|(n, v)| (n.to_string(), v)),
         );
@@ -386,7 +386,7 @@ mod tests {
             .returning(|_mapping, payload| {
                 let value = *payload.downcast::<i32>().unwrap();
 
-                Ok(Some(AstarteType::Integer(value)))
+                Ok(Some(AstarteData::Integer(value)))
             });
 
         let event = connection
@@ -394,7 +394,7 @@ mod tests {
             .await
             .unwrap();
 
-        let exp = Value::Property(Some(AstarteType::Integer(42)));
+        let exp = Value::Property(Some(AstarteData::Integer(42)));
 
         assert_eq!(event, exp);
 
@@ -411,7 +411,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(prop, AstarteType::Integer(42));
+        assert_eq!(prop, AstarteData::Integer(42));
     }
 
     #[tokio::test]
@@ -426,7 +426,7 @@ mod tests {
             .store_prop(StoredProp {
                 interface: E2E_SERVER_PROPERTY_NAME,
                 path: endpoint,
-                value: &AstarteType::Integer(42),
+                value: &AstarteData::Integer(42),
                 interface_major: 0,
                 ownership: Ownership::Device,
             })
@@ -483,7 +483,7 @@ mod tests {
             .store_prop(StoredProp {
                 interface: SERVER_PROPERTIES_NO_UNSET_NAME,
                 path: endpoint,
-                value: &AstarteType::Integer(42),
+                value: &AstarteData::Integer(42),
                 interface_major: 0,
                 ownership: Ownership::Server,
             })
@@ -527,7 +527,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(prop, AstarteType::Integer(42));
+        assert_eq!(prop, AstarteData::Integer(42));
     }
 
     #[tokio::test]

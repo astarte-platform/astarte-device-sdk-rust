@@ -34,7 +34,7 @@ use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
 use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::store::StoreCapabilities;
-use crate::{AstarteType, Error, Timestamp};
+use crate::{AstarteData, Error, Timestamp};
 
 type GenericPayload = Box<dyn Any + Send + Sync>;
 
@@ -69,13 +69,13 @@ mock! {
             &self,
             mapping: &MappingRef<'a, Properties> ,
             payload: GenericPayload,
-        ) -> Result<Option<AstarteType>, TransportError>;
+        ) -> Result<Option<AstarteData>, TransportError>;
 
         fn deserialize_individual<'a>(
             &self,
             mapping: &MappingRef<'a, DatastreamIndividual> ,
             payload: GenericPayload,
-        ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
+        ) -> Result<(AstarteData, Option<Timestamp>), TransportError>;
 
         fn deserialize_object<'a>(
             &self,

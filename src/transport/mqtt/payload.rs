@@ -31,7 +31,7 @@ use tracing::{debug, trace};
 use crate::{
     aggregate::AstarteObject,
     interfaces::MappingRef,
-    types::{AstarteType, BsonConverter, TypeError},
+    types::{AstarteData, BsonConverter, TypeError},
     Timestamp,
 };
 
@@ -46,9 +46,9 @@ pub enum PayloadError {
     /// Couldn't deserialize the payload to bson.
     #[error("couldn't deserialize the payload")]
     Deserialize(#[from] bson::de::Error),
-    /// Couldn't convert the value to [`AstarteType`]
-    #[error("couldn't convert the value to AstarteType")]
-    AstarteType(#[from] TypeError),
+    /// Couldn't convert the value to [`AstarteData`]
+    #[error("couldn't convert the value to AstarteData")]
+    AstarteData(#[from] TypeError),
     /// Expected object, individual data deserialized
     #[error("expected object, individual data deserialized instead {0}")]
     Object(Bson),
@@ -110,9 +110,9 @@ impl<T> Payload<T> {
     }
 }
 
-/// Serialize an [`AstarteType`] to a [`Bson`] buffer
+/// Serialize an [`AstarteData`] to a [`Bson`] buffer
 pub(super) fn serialize_individual(
-    individual: &AstarteType,
+    individual: &AstarteData,
     timestamp: Option<Timestamp>,
 ) -> Result<Vec<u8>, PayloadError> {
     Payload::with_timestamp(individual, timestamp).to_vec()
@@ -126,11 +126,11 @@ pub(super) fn serialize_object(
     Payload::with_timestamp(aggregate, timestamp).to_vec()
 }
 
-/// Deserialize an individual [`AstarteType`]
+/// Deserialize an individual [`AstarteData`]
 pub(super) fn deserialize_property(
     mapping: &MappingRef<'_, Properties>,
     buf: &[u8],
-) -> Result<Option<AstarteType>, PayloadError> {
+) -> Result<Option<AstarteData>, PayloadError> {
     if buf.is_empty() {
         if !mapping.mapping().allow_unset() {
             return Err(PayloadError::Unset);
@@ -143,21 +143,21 @@ pub(super) fn deserialize_property(
 
     let hint = BsonConverter::new(mapping.mapping().mapping_type(), payload.value);
 
-    let ast_val = AstarteType::try_from(hint)?;
+    let ast_val = AstarteData::try_from(hint)?;
 
     Ok(Some(ast_val))
 }
 
-/// Deserialize an individual [`AstarteType`]
+/// Deserialize an individual [`AstarteData`]
 pub(super) fn deserialize_individual(
     mapping: &MappingRef<'_, DatastreamIndividual>,
     buf: &[u8],
-) -> Result<(AstarteType, Option<Timestamp>), PayloadError> {
+) -> Result<(AstarteData, Option<Timestamp>), PayloadError> {
     let payload = Payload::<Bson>::from_slice(buf)?;
 
     let hint = BsonConverter::new(mapping.mapping().mapping_type(), payload.value);
 
-    let ast_val = AstarteType::try_from(hint)?;
+    let ast_val = AstarteData::try_from(hint)?;
 
     Ok((ast_val, payload.timestamp))
 }
@@ -199,7 +199,7 @@ pub(super) fn deserialize_object(
 
             let hint = BsonConverter::new(mapping.mapping_type(), value);
 
-            let ast_val = match AstarteType::try_from(hint) {
+            let ast_val = match AstarteData::try_from(hint) {
                 Ok(t) => t,
                 Err(err) => return Some(Err(PayloadError::from(err))),
             };
@@ -230,22 +230,22 @@ mod test {
     use crate::test::E2E_DEVICE_AGGREGATE;
     use crate::test::E2E_DEVICE_DATASTREAM;
 
-    fn mapping_type(value: &AstarteType) -> MappingType {
+    fn mapping_type(value: &AstarteData) -> MappingType {
         match value {
-            AstarteType::Double(_) => MappingType::Double,
-            AstarteType::Integer(_) => MappingType::Integer,
-            AstarteType::Boolean(_) => MappingType::Boolean,
-            AstarteType::LongInteger(_) => MappingType::LongInteger,
-            AstarteType::String(_) => MappingType::String,
-            AstarteType::BinaryBlob(_) => MappingType::BinaryBlob,
-            AstarteType::DateTime(_) => MappingType::DateTime,
-            AstarteType::DoubleArray(_) => MappingType::DoubleArray,
-            AstarteType::IntegerArray(_) => MappingType::IntegerArray,
-            AstarteType::BooleanArray(_) => MappingType::BooleanArray,
-            AstarteType::LongIntegerArray(_) => MappingType::LongIntegerArray,
-            AstarteType::StringArray(_) => MappingType::StringArray,
-            AstarteType::BinaryBlobArray(_) => MappingType::BinaryBlobArray,
-            AstarteType::DateTimeArray(_) => MappingType::DateTimeArray,
+            AstarteData::Double(_) => MappingType::Double,
+            AstarteData::Integer(_) => MappingType::Integer,
+            AstarteData::Boolean(_) => MappingType::Boolean,
+            AstarteData::LongInteger(_) => MappingType::LongInteger,
+            AstarteData::String(_) => MappingType::String,
+            AstarteData::BinaryBlob(_) => MappingType::BinaryBlob,
+            AstarteData::DateTime(_) => MappingType::DateTime,
+            AstarteData::DoubleArray(_) => MappingType::DoubleArray,
+            AstarteData::IntegerArray(_) => MappingType::IntegerArray,
+            AstarteData::BooleanArray(_) => MappingType::BooleanArray,
+            AstarteData::LongIntegerArray(_) => MappingType::LongIntegerArray,
+            AstarteData::StringArray(_) => MappingType::StringArray,
+            AstarteData::BinaryBlobArray(_) => MappingType::BinaryBlobArray,
+            AstarteData::DateTimeArray(_) => MappingType::DateTimeArray,
         }
     }
 
@@ -255,24 +255,24 @@ mod test {
         let interface = interface.as_datastream_individual().unwrap();
 
         let alltypes = [
-            AstarteType::Double(4.5.try_into().unwrap()),
-            AstarteType::Integer(-4),
-            AstarteType::Boolean(true),
-            AstarteType::LongInteger(45543543534_i64),
-            AstarteType::String("hello".into()),
-            AstarteType::BinaryBlob(b"hello".to_vec()),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::DoubleArray(
+            AstarteData::Double(4.5.try_into().unwrap()),
+            AstarteData::Integer(-4),
+            AstarteData::Boolean(true),
+            AstarteData::LongInteger(45543543534_i64),
+            AstarteData::String("hello".into()),
+            AstarteData::BinaryBlob(b"hello".to_vec()),
+            AstarteData::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteData::DoubleArray(
                 [1.2, 3.4, 5.6, 7.8]
                     .map(|v| Double::try_from(v).unwrap())
                     .to_vec(),
             ),
-            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
-            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
-            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
-            AstarteType::DateTimeArray(vec![
+            AstarteData::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteData::BooleanArray(vec![true, false, true, true]),
+            AstarteData::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteData::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteData::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteData::DateTimeArray(vec![
                 TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
@@ -307,20 +307,20 @@ mod test {
         let interface = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
         let alltypes = [
-            AstarteType::try_from(4.5).unwrap(),
-            AstarteType::Integer(-4),
-            AstarteType::Boolean(true),
-            AstarteType::LongInteger(45543543534_i64),
-            AstarteType::String("hello".into()),
-            AstarteType::BinaryBlob(b"hello".to_vec()),
-            AstarteType::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
-            AstarteType::try_from(vec![1.2, 3.4, 5.6, 7.8]).unwrap(),
-            AstarteType::IntegerArray(vec![1, 3, 5, 7]),
-            AstarteType::BooleanArray(vec![true, false, true, true]),
-            AstarteType::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
-            AstarteType::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
-            AstarteType::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
-            AstarteType::DateTimeArray(vec![
+            AstarteData::try_from(4.5).unwrap(),
+            AstarteData::Integer(-4),
+            AstarteData::Boolean(true),
+            AstarteData::LongInteger(45543543534_i64),
+            AstarteData::String("hello".into()),
+            AstarteData::BinaryBlob(b"hello".to_vec()),
+            AstarteData::DateTime(TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap()),
+            AstarteData::try_from(vec![1.2, 3.4, 5.6, 7.8]).unwrap(),
+            AstarteData::IntegerArray(vec![1, 3, 5, 7]),
+            AstarteData::BooleanArray(vec![true, false, true, true]),
+            AstarteData::LongIntegerArray(vec![45543543534_i64, 45543543535_i64, 45543543536_i64]),
+            AstarteData::StringArray(vec!["hello".to_owned(), "world".to_owned()]),
+            AstarteData::BinaryBlobArray(vec![b"hello".to_vec(), b"world".to_vec()]),
+            AstarteData::DateTimeArray(vec![
                 TimeZone::timestamp_opt(&Utc, 1627580808, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap(),
                 TimeZone::timestamp_opt(&Utc, 1627580810, 0).unwrap(),
@@ -369,7 +369,7 @@ mod test {
 
         let (res, _) = deserialize_individual(&mapping, &longinteger_b).unwrap();
 
-        assert_eq!(res, AstarteType::LongInteger(3600i64));
+        assert_eq!(res, AstarteData::LongInteger(3600i64));
     }
 
     #[test]
@@ -378,7 +378,7 @@ mod test {
         let path = MappingPath::try_from("/longinteger_endpoint").unwrap();
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
-        let og_value = AstarteType::LongInteger(3600);
+        let og_value = AstarteData::LongInteger(3600);
         let validated = ValidatedIndividual::validate(
             mapping,
             og_value.clone(),
@@ -414,7 +414,7 @@ mod test {
 
         let (at, _) = deserialize_individual(&mapping, &buf).unwrap();
 
-        let expected = AstarteType::LongIntegerArray(vec![45543543534, 10, 0, 45543543534]);
+        let expected = AstarteData::LongIntegerArray(vec![45543543534, 10, 0, 45543543534]);
 
         assert_eq!(at, expected);
     }
@@ -430,7 +430,7 @@ mod test {
 
         let (at, _) = deserialize_individual(&mapping, &buf).unwrap();
 
-        let expected = AstarteType::LongIntegerArray(vec![]);
+        let expected = AstarteData::LongIntegerArray(vec![]);
 
         assert_eq!(at, expected);
     }

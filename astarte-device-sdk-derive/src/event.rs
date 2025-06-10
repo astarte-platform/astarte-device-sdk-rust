@@ -168,7 +168,7 @@ impl FromEventDerive {
         for param in &mut generics.params {
             if let GenericParam::Type(ref mut type_param) = *param {
                 type_param.bounds.push(parse_quote!(
-                    std::convert::TryFrom<astarte_device_sdk::types::AstarteType, Error =  >
+                    std::convert::TryFrom<astarte_device_sdk::types::AstarteData, Error =  >
                 ));
             }
         }
@@ -323,7 +323,7 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
-                    use astarte_device_sdk::{AstarteType, Value};
+                    use astarte_device_sdk::{AstarteData, Value};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
@@ -421,7 +421,7 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
-                    use astarte_device_sdk::{AstarteType, Value};
+                    use astarte_device_sdk::{AstarteData, Value};
                     use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::astarte_interfaces::MappingPath;

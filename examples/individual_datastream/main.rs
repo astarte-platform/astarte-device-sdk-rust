@@ -18,7 +18,7 @@
 
 use std::time::{Duration, SystemTime};
 
-use astarte_device_sdk::{AstarteType, Value};
+use astarte_device_sdk::{AstarteData, Value};
 use chrono::Utc;
 use eyre::OptionExt;
 use serde::Deserialize;
@@ -99,7 +99,7 @@ async fn main() -> eyre::Result<()> {
                 .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint2",
-                    AstarteType::try_from(elapsed)?,
+                    AstarteData::try_from(elapsed)?,
                     Utc::now(),
                 )
                 .await?;

@@ -163,7 +163,7 @@ impl ObjectDerive {
                 // TODO *Temporarily* ignore this new lint will be fixed in a new pr
                 #[allow(unknown_lints)]
                 #[allow(clippy::unnecessary_fallible_conversions)]
-                let v: astarte_device_sdk::types::AstarteType = ::std::convert::TryInto::try_into(value.#i)?;
+                let v: astarte_device_sdk::types::AstarteData = ::std::convert::TryInto::try_into(value.#i)?;
                 object.insert(#name.to_string(), v);
             }
         });
@@ -185,7 +185,7 @@ impl ObjectDerive {
         for param in &mut generics.params {
             if let GenericParam::Type(ref mut type_param) = *param {
                 type_param.bounds.push(parse_quote!(
-                    std::convert::TryInto<astarte_device_sdk::types::AstarteType, Error = astarte_device_sdk::error::Error>
+                    std::convert::TryInto<astarte_device_sdk::types::AstarteData, Error = astarte_device_sdk::error::Error>
                 ));
             }
         }

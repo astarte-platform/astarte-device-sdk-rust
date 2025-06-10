@@ -36,7 +36,7 @@ use crate::{
     interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
     store::StoreCapabilities,
-    types::AstarteType,
+    types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
     Timestamp,
 };
@@ -163,14 +163,14 @@ pub(crate) trait Receive {
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteType>, TransportError>;
+    ) -> Result<Option<AstarteData>, TransportError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteData, Option<Timestamp>), TransportError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(

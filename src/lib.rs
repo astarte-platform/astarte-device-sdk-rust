@@ -59,7 +59,7 @@ pub use crate::connection::{DeviceConnection, EventLoop};
 pub use crate::error::Error;
 pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
-pub use crate::types::AstarteType;
+pub use crate::types::AstarteData;
 
 // Re-export rumqttc since we return its types in some methods
 pub use astarte_interfaces;

@@ -73,7 +73,7 @@ use crate::{
     state::SharedState,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteType, Error, Timestamp,
+    AstarteData, Error, Timestamp,
 };
 use crate::{retention::RetentionError, store::OptStoredProp};
 
@@ -711,7 +711,7 @@ where
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteType>, TransportError> {
+    ) -> Result<Option<AstarteData>, TransportError> {
         payload::deserialize_property(mapping, &payload).map_err(|err| {
             TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
         })
@@ -721,7 +721,7 @@ where
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteType, Option<Timestamp>), TransportError> {
+    ) -> Result<(AstarteData, Option<Timestamp>), TransportError> {
         payload::deserialize_individual(mapping, &payload).map_err(|err| {
             TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
         })
@@ -1925,7 +1925,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_send_individual_sucess() {
+    async fn should_send_individual_success() {
         let mut client = AsyncClient::default();
         let eventloop = EventLoop::default();
 
@@ -1935,7 +1935,7 @@ pub(crate) mod test {
         let interface = DatastreamIndividual::from_str(E2E_DEVICE_DATASTREAM).unwrap();
         let mapping = MappingRef::new(&interface, &path).unwrap();
         let timestamp = Utc::now();
-        let value = AstarteType::Integer(42);
+        let value = AstarteData::Integer(42);
 
         client
             .expect_clone()

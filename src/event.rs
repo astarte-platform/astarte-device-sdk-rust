@@ -24,7 +24,7 @@ use astarte_interfaces::mapping::path::MappingPathError;
 use crate::aggregate::AstarteObject;
 use crate::error::{AggregationError, InterfaceTypeError};
 use crate::types::TypeError;
-use crate::{AstarteType, Timestamp};
+use crate::{AstarteData, Timestamp};
 
 /// Astarte device event data structure.
 ///
@@ -79,8 +79,8 @@ pub enum FromEventError {
         /// Path of the endpoint in error
         path: &'static str,
     },
-    /// couldn't convert from [`AstarteType`]
-    #[error("couldn't convert from AstarteType")]
+    /// couldn't convert from [`AstarteData`]
+    #[error("couldn't convert from AstarteData")]
     Conversion(#[from] TypeError),
     /// couldn't parse the [`crate::astarte_interfaces::mapping::endpoint::Endpoint`]
     #[error("couldn't parse the endpoint")]
@@ -173,7 +173,7 @@ pub enum Value {
     /// Data from an Individual Datastream interface.
     Individual {
         ///  The data publish on the endpoint.
-        data: AstarteType,
+        data: AstarteData,
         /// The timestamp of the data.
         ///
         /// If the interface has `explicit_timestamp` set to true, then this is the value we
@@ -191,7 +191,7 @@ pub enum Value {
         timestamp: Timestamp,
     },
     /// Property data, can also be an unset ,
-    Property(Option<AstarteType>),
+    Property(Option<AstarteData>),
 }
 
 impl Value {
@@ -203,10 +203,10 @@ impl Value {
         matches!(self, Self::Individual { .. })
     }
 
-    /// Get a reference to the [`AstarteType`] if the aggregate is
+    /// Get a reference to the [`AstarteData`] if the aggregate is
     /// [`Individual`](Value::Individual).
     #[must_use]
-    pub fn as_individual(&self) -> Option<(&AstarteType, &Timestamp)> {
+    pub fn as_individual(&self) -> Option<(&AstarteData, &Timestamp)> {
         if let Self::Individual { data, timestamp } = self {
             Some((data, timestamp))
         } else {
@@ -214,9 +214,9 @@ impl Value {
         }
     }
 
-    /// Take out of the enum an [`AstarteType`] if the aggregate is
+    /// Take out of the enum an [`AstarteData`] if the aggregate is
     /// [`Individual`](Value::Individual).
-    pub fn try_into_individual(self) -> Result<(AstarteType, Timestamp), Self> {
+    pub fn try_into_individual(self) -> Result<(AstarteData, Timestamp), Self> {
         if let Self::Individual { data, timestamp } = self {
             Ok((data, timestamp))
         } else {
@@ -259,9 +259,9 @@ impl Value {
         matches!(self, Self::Property(_))
     }
 
-    /// Get a reference to the [`AstarteType`] if the type is [`Property`](Value::Property).
+    /// Get a reference to the [`AstarteData`] if the type is [`Property`](Value::Property).
     #[must_use]
-    pub fn as_property(&self) -> Option<&Option<AstarteType>> {
+    pub fn as_property(&self) -> Option<&Option<AstarteData>> {
         if let Self::Property(v) = self {
             Some(v)
         } else {
@@ -269,8 +269,8 @@ impl Value {
         }
     }
 
-    /// Take out of the enum an [`AstarteType`] if the type is [`Property`](Value::Property).
-    pub fn try_into_property(self) -> Result<Option<AstarteType>, Self> {
+    /// Take out of the enum an [`AstarteData`] if the type is [`Property`](Value::Property).
+    pub fn try_into_property(self) -> Result<Option<AstarteData>, Self> {
         if let Self::Property(v) = self {
             Ok(v)
         } else {
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn should_increase_coverage() {
         let timestamp = Utc::now();
-        let individual = AstarteType::Integer(42);
+        let individual = AstarteData::Integer(42);
         let val = Value::Individual {
             data: individual.clone(),
             timestamp,
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(val.clone().try_into_individual(), Err(val.clone()));
         assert_eq!(val.clone().try_into_property(), Err(val));
 
-        let prop = Some(AstarteType::Integer(42));
+        let prop = Some(AstarteData::Integer(42));
         let val = Value::Property(prop.clone());
         assert!(val.is_property());
         assert_eq!(val.as_property(), Some(&prop));
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     #[cfg(feature = "derive")]
     fn should_derive_form_event_individual() {
-        use crate::{AstarteType, DeviceEvent, FromEvent, Value};
+        use crate::{AstarteData, DeviceEvent, FromEvent, Value};
 
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk};
@@ -410,7 +410,7 @@ mod tests {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor/temperature".to_string(),
             data: Value::Individual {
-                data: AstarteType::try_from(3.0).unwrap(),
+                data: AstarteData::try_from(3.0).unwrap(),
                 timestamp: Utc::now(),
             },
         };
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     #[cfg(feature = "derive")]
     fn should_derive_form_event_property() {
-        use crate::{AstarteType, DeviceEvent, FromEvent, Value};
+        use crate::{AstarteData, DeviceEvent, FromEvent, Value};
 
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk};
@@ -456,7 +456,7 @@ mod tests {
         let event = DeviceEvent {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor/temperature".to_string(),
-            data: Value::Property(Some(AstarteType::try_from(3.0).unwrap())),
+            data: Value::Property(Some(AstarteData::try_from(3.0).unwrap())),
         };
 
         let temperature = Sensor::from_event(event).expect("couldn't parse the event");
@@ -468,7 +468,7 @@ mod tests {
         let event = DeviceEvent {
             interface: "com.example.Sensor".to_string(),
             path: "/sensor/unsettable".to_string(),
-            data: Value::Property(Some(AstarteType::Boolean(true))),
+            data: Value::Property(Some(AstarteData::Boolean(true))),
         };
 
         let temperature = Sensor::from_event(event).expect("couldn't parse the event");

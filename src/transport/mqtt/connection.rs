@@ -962,7 +962,7 @@ mod tests {
         store::{memory::MemoryStore, mock::MockStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteType,
+        AstarteData,
     };
 
     use super::*;
@@ -1132,7 +1132,7 @@ mod tests {
         let prop = StoredProp {
             interface: DEVICE_PROPERTIES_NAME.to_string(),
             path: "/sensor1/name".to_string(),
-            value: AstarteType::String("temperature".to_string()),
+            value: AstarteData::String("temperature".to_string()),
             interface_major: 0,
             ownership: interface.ownership(),
         };
@@ -1186,7 +1186,7 @@ mod tests {
         let store = StoreWrapper::new(MemoryStore::new());
 
         store
-            .store_prop(prop.as_ref())
+            .store_prop(prop.as_prop_ref())
             .await
             .expect("Error while storing test property");
 

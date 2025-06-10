@@ -27,7 +27,7 @@ use tracing::error;
 
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::store::MissingCapability;
-use crate::types::AstarteType;
+use crate::types::AstarteData;
 
 /// Error from the memory store.
 ///
@@ -78,7 +78,7 @@ impl PropertyStore for MemoryStore {
             value,
             interface_major,
             ownership,
-        }: StoredProp<&str, &AstarteType>,
+        }: StoredProp<&str, &AstarteData>,
     ) -> Result<(), Self::Err> {
         let key = Key::new(interface, path);
         let value = Value {
@@ -97,7 +97,7 @@ impl PropertyStore for MemoryStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         let key = Key::new(property.interface_name(), property.path());
 
         // We need to drop the lock before calling delete_prop
@@ -259,7 +259,7 @@ impl Display for Key {
 /// Value for the memory store
 #[derive(Debug, Clone)]
 struct Value {
-    value: Option<AstarteType>,
+    value: Option<AstarteData>,
     interface_major: i32,
     ownership: Ownership,
 }

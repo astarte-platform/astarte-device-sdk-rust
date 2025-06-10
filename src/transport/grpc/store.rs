@@ -33,7 +33,7 @@ use tokio::sync::Mutex;
 use crate::{
     store::MissingCapability,
     store::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp},
-    AstarteType,
+    AstarteData,
 };
 
 use super::{
@@ -110,7 +110,7 @@ impl StoreCapabilities for GrpcStore {
 impl PropertyStore for GrpcStore {
     type Err = GrpcStoreError;
 
-    async fn store_prop(&self, _prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, _prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         // do not store properties locally when connected as a message hub node
         Ok(())
     }
@@ -118,7 +118,7 @@ impl PropertyStore for GrpcStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Self::Err> {
         let property = self
             .client
             .lock()
@@ -133,7 +133,7 @@ impl PropertyStore for GrpcStore {
 
         property
             .data
-            .map(|data| AstarteType::try_from(data).map_err(GrpcStoreError::from))
+            .map(|data| AstarteData::try_from(data).map_err(GrpcStoreError::from))
             .transpose()
     }
 
@@ -217,7 +217,7 @@ mod test {
     use crate::test::E2E_SERVER_PROPERTY_NAME;
     use crate::test::SERVER_PROPERTIES;
     use crate::test::SERVER_PROPERTIES_NAME;
-    use crate::AstarteType;
+    use crate::AstarteData;
 
     #[tokio::test]
     async fn test_grpc_store_grpc_client_calls() {
@@ -353,7 +353,7 @@ mod test {
         let device_itf = Properties::from_str(E2E_DEVICE_PROPERTY).unwrap();
         let server_itf = Properties::from_str(E2E_SERVER_PROPERTY).unwrap();
 
-        let value = AstarteType::Integer(1);
+        let value = AstarteData::Integer(1);
         const PATH: &str = "/sensor_1/integer_endpoint";
 
         let server_prop = StoredProp {
