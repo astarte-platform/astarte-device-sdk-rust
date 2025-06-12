@@ -36,7 +36,7 @@ use tracing::{debug, error, trace, warn};
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteData, BsonConverter, TypeError},
+    types::{de::BsonConverter, AstarteData, TypeError},
 };
 
 pub(crate) mod statements;

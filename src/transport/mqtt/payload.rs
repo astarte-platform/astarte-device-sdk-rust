@@ -31,7 +31,7 @@ use tracing::{debug, trace};
 use crate::{
     aggregate::AstarteObject,
     interfaces::MappingRef,
-    types::{AstarteData, BsonConverter, TypeError},
+    types::{de::BsonConverter, AstarteData, TypeError},
     Timestamp,
 };
 
