@@ -325,6 +325,7 @@ These must also be saved as `JSON` files (in the format `<INTERFACE_NAME>.json`)
 which will then be used when building th SDK. Thus:
 
 1. Create an `interface` directory
+
    ```sh
    mkdir interfaces
    ```

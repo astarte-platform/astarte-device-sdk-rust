@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -52,8 +52,8 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteType")]
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
-    #[error("expected object, individual data deserialized instead {0}")]
-    Object(Bson),
+    #[error("expected object, individual data deserialized instead")]
+    Object(Box<Bson>),
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingError),
@@ -165,7 +165,7 @@ pub(super) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(data)),
+        data => return Err(PayloadError::Object(Box::new(data))),
     };
 
     trace!("base path {path}");

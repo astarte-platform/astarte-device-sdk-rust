@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -67,7 +67,7 @@ impl<T> Endpoint<T> {
     }
 
     /// Iter the levels of the endpoint.
-    pub(crate) fn iter(&self) -> SliceIter<Level<T>> {
+    pub(crate) fn iter(&self) -> SliceIter<'_, Level<T>> {
         self.levels.iter()
     }
 
@@ -256,9 +256,9 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Simple(level) => write!(f, "{}", level),
+            Self::Simple(level) => write!(f, "{level}"),
             // We want to print the parameter as `%{parameter}`. So we escape the `{` and `}`.
-            Self::Parameter(level) => write!(f, "%{{{}}}", level),
+            Self::Parameter(level) => write!(f, "%{{{level}}}"),
         }
     }
 }
@@ -571,9 +571,7 @@ mod tests {
 
         assert!(
             endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
+            "endpoint: {endpoint:?} != {expected:?}"
         );
     }
 
@@ -600,9 +598,7 @@ mod tests {
 
         assert!(
             endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
+            "endpoint: {endpoint:?} != {expected:?}"
         );
     }
 
@@ -631,9 +627,7 @@ mod tests {
 
         assert!(
             endpoint.eq_strict(&expected),
-            "endpoint: {:?} != {:?}",
-            endpoint,
-            expected
+            "endpoint: {endpoint:?} != {expected:?}"
         );
     }
 
@@ -672,9 +666,7 @@ mod tests {
 
             assert!(
                 endpoint.eq_strict(&expected),
-                "endpoint: {:?} != {:?}",
-                endpoint,
-                expected
+                "endpoint: {endpoint:?} != {expected:?}"
             );
         }
     }

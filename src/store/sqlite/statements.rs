@@ -197,8 +197,10 @@ impl ReadConnection {
     pub(crate) fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
-        let mut connection =
+        let connection =
             Connection::open_with_flags(db_file, flags).map_err(SqliteError::Connection)?;
+        #[cfg(feature = "sqlite-trace")]
+        let mut connection = connection;
 
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));

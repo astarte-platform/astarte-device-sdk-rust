@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -117,7 +115,7 @@ impl Interfaces {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef<'_>> {
         self.interfaces
             .get(interface_name)
             .and_then(|interface| interface.is_property().then_some(PropertyRef(interface)))
@@ -332,7 +330,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, "{}:{}:{}", name, major, minor)?;
+            write!(f, "{name}:{major}:{minor}")?;
         } else {
             return Ok(());
         };
@@ -341,7 +339,7 @@ where
             let name = interface.interface_name();
             let major = interface.version_major();
             let minor = interface.version_minor();
-            write!(f, ";{}:{}:{}", name, major, minor)?;
+            write!(f, ";{name}:{major}:{minor}")?;
         }
 
         Ok(())

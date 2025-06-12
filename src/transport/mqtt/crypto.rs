@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! Crypto module to generate the CSR to authenticate the device to the Astarte.
 
@@ -68,7 +66,7 @@ impl Bundle {
     pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
         // The realm/device_id for the certificate
         let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, format!("{}/{}", realm, device_id));
+        dn.push(DnType::CommonName, format!("{realm}/{device_id}"));
 
         // Generate a random private key
         let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
