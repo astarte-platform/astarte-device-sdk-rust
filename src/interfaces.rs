@@ -755,9 +755,9 @@ pub(crate) mod tests {
         assert_eq!(*object, exp);
 
         // is object path
-        let wron_path = MappingPath::try_from("/foo/bar").unwrap();
+        let wrong_path = MappingPath::try_from("/foo/bar").unwrap();
         let err = interfaces
-            .get_object(E2E_DEVICE_AGGREGATE_NAME, &wron_path)
+            .get_object(E2E_DEVICE_AGGREGATE_NAME, &wrong_path)
             .unwrap_err();
         assert!(matches!(
             err,
