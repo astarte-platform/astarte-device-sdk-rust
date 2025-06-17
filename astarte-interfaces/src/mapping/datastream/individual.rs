@@ -180,7 +180,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn getters_succes() {
+    fn getters_success() {
         let mapping_type = MappingType::Boolean;
         let reliability = Reliability::Guaranteed;
         let retention_expiry = Duration::from_secs(420);

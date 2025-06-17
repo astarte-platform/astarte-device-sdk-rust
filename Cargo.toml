@@ -24,16 +24,16 @@ documentation = "https://docs.rs/astarte-device-sdk"
 edition = { workspace = true }
 homepage = { workspace = true }
 include = [
-  "/LICENSES",
-  "/examples",
-  "/migrations",
-  "/docs",
-  "/queries",
-  "/src",
+  "!*.sqlite*",
   "/CHANGELOG.md",
   "/LICENSE",
+  "/LICENSES",
   "/README.md",
-  "!*.sqlite*",
+  "/docs",
+  "/examples",
+  "/migrations",
+  "/queries",
+  "/src",
 ]
 keywords = ["sdk", "iot", "astarte"]
 license = { workspace = true }
@@ -54,7 +54,7 @@ members = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.package]
-version = "0.9.6"
+version = "0.9.7"
 edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
@@ -110,8 +110,9 @@ mockito = { workspace = true }
 pretty_assertions = { workspace = true }
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 # Transitive dependencies
@@ -137,8 +138,8 @@ all-features = true
 rustc-args = ["--cfg=docsrs"]
 
 [workspace.dependencies]
-astarte-device-sdk = { path = "./", version = "=0.9.6" }
-astarte-device-sdk-derive = { version = "=0.9.6", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk = { path = "./", version = "=0.9.7" }
+astarte-device-sdk-derive = { version = "=0.9.7", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = { path = "./astarte-interfaces", version = "=0.1.0-alpha.1" }
 astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
 astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
