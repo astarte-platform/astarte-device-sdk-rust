@@ -19,7 +19,7 @@
 use std::{borrow::Cow, collections::HashSet, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use tracing::{trace, warn};
+use tracing::{instrument, trace, warn};
 
 use crate::{
     retention::{Id, PublishInfo, StoredInterface},
@@ -32,6 +32,7 @@ use crate::{
 use super::{RetentionMapping, RetentionPublish, RetentionReliability, TimestampSecs};
 
 impl WriteConnection {
+    #[instrument(skip_all)]
     pub(super) fn store(
         &mut self,
         mapping: &RetentionMapping<'_>,
@@ -48,6 +49,9 @@ impl WriteConnection {
                 true
             }
         });
+
+        self.free_retention_items(1)?;
+
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
 
         wrap_sync_call(|| {
@@ -116,6 +120,32 @@ impl WriteConnection {
             .map_err(SqliteError::Query)?;
 
         Ok(())
+    }
+
+    /// Retrieve the number of stored properties
+    pub(crate) fn count_stored(&self) -> Result<usize, SqliteError> {
+        wrap_sync_call(|| {
+            let mut statement = self
+                .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
+                .map_err(SqliteError::Prepare)?;
+
+            statement
+                .query_row((), |row| row.get::<_, usize>(0))
+                .map_err(SqliteError::Query)
+        })
+    }
+
+    /// Remove the N oldest elements from the store
+    pub(crate) fn remove_oldest(&self, to_remove: usize) -> Result<usize, SqliteError> {
+        wrap_sync_call(|| {
+            let mut statement = self
+                .prepare_cached(include_query!(
+                    "queries/retention/write/delete_n_oldest.sql"
+                ))
+                .map_err(SqliteError::Prepare)?;
+
+            statement.execute([to_remove]).map_err(SqliteError::Query)
+        })
     }
 
     pub(super) fn update_publish_sent_flag(&self, id: &Id, sent: bool) -> Result<(), SqliteError> {
@@ -191,7 +221,7 @@ impl WriteConnection {
         Ok(())
     }
 
-    pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<(), SqliteError> {
+    pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<usize, SqliteError> {
         wrap_sync_call(|| {
             let mut statement = self
                 .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
@@ -200,9 +230,7 @@ impl WriteConnection {
             let timestamp = now.to_bytes();
             let timestamp = timestamp.as_slice();
 
-            statement.execute([timestamp])?;
-
-            Ok(())
+            statement.execute([timestamp]).map_err(SqliteError::Query)
         })
     }
 
@@ -338,7 +366,9 @@ pub(crate) mod tests {
     use itertools::Itertools;
 
     use crate::{
-        retention::{Context, StoredRetention, TimestampMillis},
+        retention::{
+            sqlite::tests::publish_with_expiry, Context, StoredRetention, TimestampMillis,
+        },
         store::SqliteStore,
     };
 
@@ -1058,5 +1088,80 @@ pub(crate) mod tests {
         });
 
         assert_eq!(expected, res);
+    }
+
+    #[tokio::test]
+    async fn should_count_stored() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let id1 = Context::new().next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        let count = {
+            let connection = store.writer.lock().await;
+            connection.count_stored().unwrap()
+        };
+
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn should_remove_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // insert 3 elements and check removal properly works
+        let ctx = Context::new();
+
+        let id1 = ctx.next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        let id2 = ctx.next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", None))
+            .await
+            .unwrap();
+
+        let id3 = ctx.next();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", None))
+            .await
+            .unwrap();
+
+        let connection = store.writer.lock().await;
+
+        let removed = connection.remove_oldest(0).unwrap();
+        assert_eq!(removed, 0);
+
+        let removed = connection.remove_oldest(2).unwrap();
+        assert_eq!(removed, 2);
+
+        // check that the remaining publish is the last one
+        let res = fetch_publish(&store, &id3).unwrap();
+
+        let publish3 = RetentionPublish {
+            id: id3,
+            interface: "com.Foo".into(),
+            path: "/path3".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish3);
+
+        // try removing more elements than available
+        let removed = connection.remove_oldest(2).unwrap();
+        // only 1 element remains from the previous removal
+        assert_eq!(removed, 1);
     }
 }

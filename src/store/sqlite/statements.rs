@@ -17,14 +17,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    num::NonZeroUsize,
     ops::{Deref, DerefMut},
     path::Path,
 };
 
 use astarte_interfaces::schema::Ownership;
 use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
+use tracing::{instrument, warn};
 
 use crate::{
+    builder::DEFAULT_STORE_CAPACITY,
     store::{OptStoredProp, StoredProp},
     AstarteData,
 };
@@ -51,7 +54,11 @@ macro_rules! include_query {
 pub(crate) use include_query;
 
 #[derive(Debug)]
-pub(crate) struct WriteConnection(Connection);
+pub(crate) struct WriteConnection {
+    connection: Connection,
+    // useful to perform eviction when the store is full
+    pub(crate) retention_capacity: NonZeroUsize,
+}
 
 impl WriteConnection {
     pub(crate) async fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
@@ -70,7 +77,10 @@ impl WriteConnection {
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
 
-        let connection = Self(connection);
+        let connection = Self {
+            connection,
+            retention_capacity: DEFAULT_STORE_CAPACITY,
+        };
 
         if db_created {
             let page_size: u64 = connection.get_pragma("page_size")?;
@@ -102,14 +112,15 @@ impl WriteConnection {
         T: FromSql,
     {
         wrap_sync_call(|| {
-            self.0
+            self.connection
                 .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
         })
         .map_err(SqliteError::Query)
     }
 
+    #[instrument(skip_all)]
     pub(super) fn store_prop(
-        &self,
+        &mut self,
         prop: StoredProp<&str, &AstarteData>,
         buf: &[u8],
     ) -> Result<(), SqliteError> {
@@ -200,13 +211,13 @@ impl Deref for WriteConnection {
     type Target = Connection;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.connection
     }
 }
 
 impl DerefMut for WriteConnection {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.connection
     }
 }
 

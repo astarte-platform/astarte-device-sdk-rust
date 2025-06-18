@@ -24,6 +24,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::future::Future;
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -37,6 +38,8 @@ use crate::connection::DeviceConnection;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
 use crate::retention::memory::VolatileStore;
+use crate::retention::RetentionError;
+use crate::retention::StoredRetention;
 use crate::state::SharedState;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
@@ -55,6 +58,18 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
+
+/// Default capacity for the number of packets w ith retention store to store in memory.
+pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
+
+/// Necessary for rust 1.78 const compatibility
+pub(crate) const fn const_non_zero_usize(v: usize) -> NonZeroUsize {
+    let Some(v) = NonZeroUsize::new(v) else {
+        panic!("value cannot be zero");
+    };
+
+    v
+}
 
 /// Astarte builder error.
 ///
@@ -89,6 +104,9 @@ pub enum BuilderError {
     /// Couldn't connect to the SQLite store
     #[error("couldn't connect to the SQLite store")]
     Sqlite(#[from] SqliteError),
+    /// Couldn't set the maximum number of items in the store
+    #[error("couldn't set the maximum number of items in the store")]
+    Retention(#[from] RetentionError),
 }
 
 /// Marker struct to identify a builder with no store configured
@@ -113,6 +131,7 @@ pub struct BuildConfig<S> {
 pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
+    pub(crate) stored_retention: NonZeroUsize,
     pub(crate) store: S,
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
@@ -138,6 +157,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
+            stored_retention: DEFAULT_STORE_CAPACITY,
             writable_dir: None,
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
@@ -240,6 +260,13 @@ impl<S, C> DeviceBuilder<S, C> {
 
         Ok(self)
     }
+
+    /// Set the maximum number of elements that will be kept in memory
+    pub fn max_volatile_retention(mut self, items: NonZeroUsize) -> Self {
+        self.volatile_retention = items.get();
+
+        self
+    }
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
@@ -271,10 +298,23 @@ impl<C> DeviceBuilder<C, NoStore> {
             interfaces: self.interfaces,
             connection_config: self.connection_config,
             store,
+            stored_retention: self.stored_retention,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
         }
+    }
+}
+
+impl<S> DeviceBuilder<NoConnect, S>
+where
+    S: StoredRetention,
+{
+    /// Set the maximum number of elements that will be kept in the store
+    pub fn max_stored_retention(mut self, items: NonZeroUsize) -> Self {
+        self.stored_retention = items;
+
+        self
     }
 }
 
@@ -298,6 +338,7 @@ where
             store: self.store,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
+            stored_retention: self.stored_retention,
             writable_dir: self.writable_dir,
         }
     }
@@ -345,6 +386,13 @@ where
             sender,
             store,
         } = self.connection_config.connect(config).await?;
+
+        // set max retention items in the store
+        if let Some(retention) = store.get_retention() {
+            retention
+                .set_max_retention_items(self.stored_retention)
+                .await?;
+        }
 
         let client =
             DeviceClient::new(sender.clone(), rx_client, store.clone(), Arc::clone(&state));
@@ -556,5 +604,11 @@ mod test {
         .await
         .unwrap()
         .unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "value cannot be zero")]
+    fn const_non_zero_usize_should_panic() {
+        const_non_zero_usize(0);
     }
 }
