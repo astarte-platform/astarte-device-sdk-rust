@@ -240,8 +240,9 @@ dependencies = [
 
 [[package]]
 name = "astarte-message-hub-proto"
-version = "0.7.0"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=87e9b3937cd563576de4bcb801a91c700bf196bb#87e9b3937cd563576de4bcb801a91c700bf196bb"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14c7df149705864c91657e41852fb0df5970d4510285c41c2367e2ad328bc424"
 dependencies = [
  "chrono",
  "pbjson-types",
@@ -255,8 +256,9 @@ dependencies = [
 
 [[package]]
 name = "astarte-message-hub-proto-mock"
-version = "0.7.0"
-source = "git+https://github.com/astarte-platform/astarte-message-hub-proto?rev=87e9b3937cd563576de4bcb801a91c700bf196bb#87e9b3937cd563576de4bcb801a91c700bf196bb"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42799f9e6682d1dc4fdb80f3977a213764c5535c6fac47b0f8e6244fc50c02e8"
 dependencies = [
  "astarte-message-hub-proto",
  "mockall",

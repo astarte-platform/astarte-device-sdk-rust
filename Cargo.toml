@@ -141,8 +141,8 @@ rustc-args = ["--cfg=docsrs"]
 astarte-device-sdk = { path = "./", version = "=0.9.7" }
 astarte-device-sdk-derive = { version = "=0.9.7", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = { path = "./astarte-interfaces", version = "=0.1.0-alpha.1" }
-astarte-message-hub-proto = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
-astarte-message-hub-proto-mock = { git = "https://github.com/astarte-platform/astarte-message-hub-proto", rev = "87e9b3937cd563576de4bcb801a91c700bf196bb" }
+astarte-message-hub-proto = "0.8.0"
+astarte-message-hub-proto-mock = "0.8.0"
 async-channel = "2.0.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
