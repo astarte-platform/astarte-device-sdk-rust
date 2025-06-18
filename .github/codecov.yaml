@@ -55,10 +55,6 @@ component_management:
       paths:
         - src/**
         - src/*
-      statuses: # the core component has its own statuses
-        - type: project
-          target: auto
-        - type: patch
     - component_id: astarte-interfaces
       name: interfaces
       paths:
