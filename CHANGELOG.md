@@ -31,6 +31,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Introduce `webpki` feature to use Mozilla webpki root certificates rather than the native ones
   [#396](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/396).
+- Implement PropertyAccess using the Astarte MessageHub
+  [#399](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/399)
 - Add the AstarteObject struct for Object Datastream [#430].
 - Allow setting the sqlite database size
   [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
@@ -42,9 +44,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Bump MSRV to 1.78.0 [#395](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/395).
+- Update MessageHub proto definition to be compatible with the Astarte MessageHub v0.8
+  [#429](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/429)
 - Rename the AstarteAggregate derive macro to IntoAstarteObject [#430].
 - Remove the AstarteAggregate trait in favor of the AstarteObject [#430].
 - Change the send_object client methods to receive an AstarteObject argument [#430].
+- Return the timestamp received from the Astarte MessageHub
+  [#439](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/439)
 - Create a `Double` struct to make sure the `AstarteData::Double` is always a valid float.
   [#459](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/459)
 - Rename `AstarteType` into `AstarteData`.
