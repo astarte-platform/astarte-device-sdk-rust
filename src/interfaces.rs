@@ -28,7 +28,7 @@ use astarte_interfaces::{
     AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
 };
 use itertools::Itertools;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::error::AggregationError;
 use crate::session::IntrospectionInterface;
@@ -65,7 +65,7 @@ impl Interfaces {
     ) -> Result<Option<Validated>, InterfaceError> {
         let mut major_change = false;
 
-        match self.interfaces.get(interface.interface_name()) {
+        match self.get(interface.interface_name()) {
             Some(prev) => {
                 trace!(
                     "Interface {} already present, validating new version",
@@ -114,6 +114,11 @@ impl Interfaces {
     }
 
     pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
+        #[cfg(debug_assertions)]
+        if interface_name.ends_with(".json") {
+            warn!(interface_name, "the interface name passed ends in .json, this is commonly a BUG when the extension is copied from the interface file and should probably be removed");
+        }
+
         self.interfaces.get(interface_name)
     }
 
@@ -123,12 +128,11 @@ impl Interfaces {
         interface_name: &str,
         path: &MappingPath<'_>,
     ) -> Result<&'a DatastreamObject, Error> {
-        let interface =
-            self.interfaces
-                .get(interface_name)
-                .ok_or_else(|| Error::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })?;
+        let interface = self
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
         let interface = match interface.inner() {
             InterfaceTypeAggregation::DatastreamIndividual(_) => {
@@ -166,12 +170,11 @@ impl Interfaces {
         interface_name: &str,
         path: &'a MappingPath<'_>,
     ) -> Result<MappingRef<'a, DatastreamIndividual>, Error> {
-        let interface =
-            self.interfaces
-                .get(interface_name)
-                .ok_or_else(|| Error::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })?;
+        let interface = self
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
         let interface = match interface.inner() {
             InterfaceTypeAggregation::DatastreamIndividual(datastream_individual) => {
@@ -215,12 +218,11 @@ impl Interfaces {
         interface_name: &str,
         path: &'a MappingPath<'_>,
     ) -> Result<MappingRef<'a, Properties>, Error> {
-        let interface =
-            self.interfaces
-                .get(interface_name)
-                .ok_or_else(|| Error::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })?;
+        let interface = self
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
         let prop = interface.as_properties().ok_or_else(|| {
             InterfaceTypeError::new(
