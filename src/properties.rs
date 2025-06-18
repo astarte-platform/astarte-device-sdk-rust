@@ -272,11 +272,11 @@ fn encode_prop(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use astarte_interfaces::schema::Ownership;
 
     use crate::client::tests::mock_client_with_store;
     use crate::store::memory::MemoryStore;
     use crate::store::{SqliteStore, StoreCapabilities};
-    use astarte_interfaces::schema::Ownership;
 
     use super::*;
 

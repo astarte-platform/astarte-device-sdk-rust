@@ -32,7 +32,6 @@ use std::sync::Arc;
 
 use astarte_interfaces::Interface;
 use tracing::debug;
-use tracing::instrument;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
@@ -61,7 +60,7 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
-pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1000);
+pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
 
 /// Necessary for rust 1.78 const compatibility
 pub(crate) const fn const_non_zero_usize(v: usize) -> NonZeroUsize {
@@ -261,6 +260,13 @@ impl<S, C> DeviceBuilder<S, C> {
 
         Ok(self)
     }
+
+    /// Set the maximum number of elements that will be kept in memory
+    pub fn max_volatile_retention(mut self, items: NonZeroUsize) -> Self {
+        self.volatile_retention = items.get();
+
+        self
+    }
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
@@ -305,9 +311,8 @@ where
     S: StoredRetention,
 {
     /// Set the maximum number of elements that will be kept in the store
-    #[instrument(skip(self))]
-    pub fn max_retention_items(mut self, size: NonZeroUsize) -> Self {
-        self.stored_retention = size;
+    pub fn max_stored_retention(mut self, items: NonZeroUsize) -> Self {
+        self.stored_retention = items;
 
         self
     }

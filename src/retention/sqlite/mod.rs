@@ -30,7 +30,7 @@ use tracing::{debug, error, instrument, trace};
 use crate::{
     error::Report,
     store::{
-        sqlite::{statements::WriteConnection, SqliteError},
+        sqlite::{statements::WriteConnection, wrap_sync_call, SqliteError},
         SqliteStore,
     },
 };
@@ -307,7 +307,7 @@ impl StoredRetention for SqliteStore {
             .map_err(|err| RetentionError::set_capacity(size, err))?;
 
         if removed > 0 {
-            if let Err(err) = connection.execute("VACUUM", []) {
+            if let Err(err) = wrap_sync_call(|| connection.execute("VACUUM", [])) {
                 error!(error = %Report::new(err), "failed to vacuum the database");
             }
         }
@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_max_retention_should_vacuum() {
+    async fn set_max_retention_exec_vacuum() {
         let dir = tempfile::tempdir().unwrap();
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
@@ -486,9 +486,8 @@ mod tests {
 
         // create a publish already expired, so it will be removed when a new publish is stored.
         // the publish must be expiref from at least 1sec since the expiration check is performed over seconds (not ms nor ns)
-        let Id { timestamp, counter } = ctx.next();
-        let timestamp = TimestampMillis(timestamp.0.saturating_sub(1000));
-        let id2 = Id { timestamp, counter };
+        let mut id2 = ctx.next();
+        id2.timestamp = TimestampMillis(id2.timestamp.0.saturating_sub(1000));
 
         store
             .store_publish(&id2, publish_with_expiry("/path2", Some(Duration::ZERO)))
@@ -530,10 +529,13 @@ mod tests {
         };
 
         assert_eq!(res, publish3);
+
+        //check that the store count is still 2
+        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
     }
 
     #[tokio::test]
-    async fn should_free_space_and_store_publish() {
+    async fn should_remove_oldest_and_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
@@ -595,6 +597,9 @@ mod tests {
         };
 
         assert_eq!(res, publish3);
+
+        //check that the store count is still 2
+        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
     }
 
     #[tokio::test]
