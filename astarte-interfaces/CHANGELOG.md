@@ -18,9 +18,13 @@ limitations under the License.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Astarte Interfaces
+# Changelog
 
-Interfaces used by Astarte to define how data is exchange with a Device.
+All notable changes to this project will be documented in this file.
 
-See [Astarte Device Sdk](https://github.com/astarte-platform/astarte-device-sdk-rust) for more
-informations.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2025-06-20
+
+- Initial release

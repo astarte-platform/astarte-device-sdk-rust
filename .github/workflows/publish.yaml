@@ -68,6 +68,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         # Publish the crates in order of dependency
         run: |
+          cargo publish --locked -p astarte-interfaces
           cargo publish --locked -p astarte-device-sdk-derive
           cargo publish --locked -p astarte-device-sdk
           cargo publish --locked -p astarte-device-sdk-mock
