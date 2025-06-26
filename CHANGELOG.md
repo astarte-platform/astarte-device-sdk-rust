@@ -32,6 +32,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Maintain same mappings order when creating an Interface object
   [#477](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/477).
 
+### Fixed
+
+- Avoid panicking when modifying the capacity for volatile retention memory
+  [#478](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/478).
+
 ## [0.10.0] - 2025-06-20
 
 ### Added

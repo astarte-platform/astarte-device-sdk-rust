@@ -169,17 +169,15 @@ impl State {
         let current = self.store.capacity();
 
         if capacity < current {
-            let diff = current.saturating_sub(capacity);
-            // Remove first elements
+            let diff = self.store.len().saturating_sub(capacity);
             self.store.drain(..diff);
-
             self.store.shrink_to_fit();
-        } else {
-            // Number of elements that needed to be reserved
-            let additional = capacity.saturating_sub(self.store.len());
-
-            self.store.reserve_exact(additional);
         }
+
+        // Number of elements that needed to be reserved
+        let additional = capacity.saturating_sub(self.store.len());
+
+        self.store.reserve_exact(additional);
     }
 
     fn delete_interface(&mut self, interface_name: &str) -> usize {
@@ -694,5 +692,26 @@ mod tests {
         assert_eq!(store.delete_interface(interface), 2);
 
         assert_eq!(store.pop_next().unwrap(), ItemValue::Object(object));
+    }
+
+    #[cfg(feature = "message-hub")]
+    #[tokio::test]
+    async fn test_modify_store_capacity() {
+        let store = VolatileStore::with_capacity(10);
+
+        store.set_capacity(20).await;
+        assert_eq!(store.store.lock().await.store.capacity(), 20);
+
+        store.set_capacity(4).await;
+        assert_eq!(store.store.lock().await.store.capacity(), 4);
+    }
+
+    #[cfg(feature = "message-hub")]
+    #[tokio::test]
+    async fn should_allow_zero_capacity() {
+        let store = VolatileStore::default();
+
+        store.set_capacity(0).await;
+        assert_eq!(store.store.lock().await.store.capacity(), 0);
     }
 }
