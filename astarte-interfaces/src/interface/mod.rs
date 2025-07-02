@@ -611,7 +611,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::str::FromStr;
 
     use pretty_assertions::assert_eq;
@@ -626,7 +626,7 @@ mod tests {
 
     const E2E_DEVICE_PROPERTY: &str= include_str!("../../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json");
     const E2E_DEVICE_PROPERTY_NAME: &str = "org.astarte-platform.rust.e2etest.DeviceProperty";
-    const E2E_DEVICE_AGGREGATE: &str = include_str!(
+    pub(crate) const E2E_DEVICE_AGGREGATE: &str = include_str!(
         "../../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceAggregate.json"
     );
     const E2E_DEVICE_AGGREGATE_NAME: &str = "org.astarte-platform.rust.e2etest.DeviceAggregate";

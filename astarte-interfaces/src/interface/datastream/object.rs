@@ -198,8 +198,8 @@ impl Schema for DatastreamObject {
         self.iter_mappings().map(|mapping| {
             cfg_if! {
                 if #[cfg(feature = "doc-fields")] {
-                    let description = self.description().map(Cow::Borrowed);
-                    let doc = self.doc().map(Cow::Borrowed);
+                    let description = mapping.description().map(Cow::Borrowed);
+                    let doc = mapping.doc().map(Cow::Borrowed);
                 } else {
                     let description = None;
                     let doc = None;
@@ -276,29 +276,22 @@ where
         #[cfg(feature = "server-fields")]
         let database_retention = first.database_retention_with_ttl()?;
 
-        // Convert the mappings
-        let mut iter = value.mappings.into_iter();
-        let first = iter
-            .next()
-            .ok_or(MappingError::Empty)
-            .and_then(DatastreamObjectMapping::try_from)?;
-
-        let mut mappings = iter
-            .map(|mapping| {
-                let mapping = DatastreamObjectMapping::try_from(mapping)?;
-
-                if !mapping.endpoint().is_same_object(first.endpoint()) {
-                    return Err(Error::Object(ObjectError::Endpoint {
-                        endpoint: mapping.endpoint().to_string(),
-                    }));
-                }
-
-                Ok(mapping)
-            })
+        let mappings = value
+            .mappings
+            .into_iter()
+            .map(|mapping| DatastreamObjectMapping::try_from(mapping).map_err(Error::Mapping))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        // Push the first
-        mappings.push(first);
+        let first = mappings.first().ok_or(MappingError::Empty)?;
+
+        mappings.iter().skip(1).try_for_each(|other| {
+            if !first.endpoint().is_same_object(other.endpoint()) {
+                return Err(Error::Object(ObjectError::Endpoint {
+                    endpoint: other.endpoint().to_string(),
+                }));
+            }
+            Ok(())
+        })?;
 
         let mappings = MappingVec::try_from(mappings)?;
 
@@ -382,6 +375,7 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
+    use crate::interface::tests::E2E_DEVICE_AGGREGATE;
     use crate::schema::MappingType;
     use crate::Endpoint;
 
@@ -483,9 +477,9 @@ mod tests {
             expiry: object.retention.as_expiry_seconds(),
             allow_unset: None,
             #[cfg(feature = "doc-fields")]
-            description: object.description.as_ref().map(Cow::from),
+            description: exp_mapping.description.as_ref().map(Cow::from),
             #[cfg(feature = "doc-fields")]
-            doc: object.doc.as_ref().map(Cow::from),
+            doc: exp_mapping.doc.as_ref().map(Cow::from),
             #[cfg(not(feature = "doc-fields"))]
             description: None,
             #[cfg(not(feature = "doc-fields"))]
@@ -505,5 +499,44 @@ mod tests {
         );
 
         assert_eq!(object.to_string(), format!("{}:{}", exp.name, exp.version));
+    }
+
+    #[test]
+    fn should_maintain_mapping_order_serde() {
+        let original = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized = DatastreamObject::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, original);
+    }
+
+    #[test]
+    fn should_check_same_object_endpoint() {
+        let err = DatastreamObject::from_str(
+            r#"{
+                "interface_name": "com.example.Example",
+                "version_major": 0,
+                "version_minor": 1,
+                "type": "datastream",
+                "ownership": "server",
+                "aggregation": "object",
+                "mappings": [{
+                    "endpoint": "/prefix/path",
+                    "type": "boolean"
+                },{
+                    "endpoint": "/wrong/path",
+                    "type": "boolean"
+                }]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+            &err,
+            Error::Object(ObjectError::Endpoint { endpoint } ) if endpoint == "/wrong/path"),
+            "{err:?}"
+        );
     }
 }
