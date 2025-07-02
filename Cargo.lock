@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.9.7"
+version = "0.10.1"
 dependencies = [
  "astarte-device-sdk-derive",
  "astarte-interfaces",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.9.7"
+version = "0.10.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-mock"
-version = "0.9.7"
+version = "0.10.1"
 dependencies = [
  "astarte-device-sdk",
  "chrono",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-interfaces"
-version = "0.1.0-alpha.1"
+version = "0.1.1"
 dependencies = [
  "cfg-if",
  "pretty_assertions",
@@ -240,9 +240,9 @@ dependencies = [
 
 [[package]]
 name = "astarte-message-hub-proto"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c7df149705864c91657e41852fb0df5970d4510285c41c2367e2ad328bc424"
+checksum = "dc8da34d9e91ea231b49d99daffed280d593695b991181a5086ad6f5187844de"
 dependencies = [
  "chrono",
  "pbjson-types",
@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "astarte-message-hub-proto-mock"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42799f9e6682d1dc4fdb80f3977a213764c5535c6fac47b0f8e6244fc50c02e8"
+checksum = "5cfaa8fb3701cb4363e493cac363fc57d7f889f7f8484fca19a2715d7bac5cb6"
 dependencies = [
  "astarte-message-hub-proto",
  "mockall",
@@ -824,7 +824,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e2e-test"
-version = "0.9.7"
+version = "0.10.1"
 dependencies = [
  "astarte-device-sdk",
  "async-channel",
