@@ -85,6 +85,10 @@ async fn main() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .try_init()?;
 
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
+
     let realm = get_env("ASTARTE_REALM")?;
     let device_id = get_env("ASTARTE_DEVICE_ID")?;
     let credentials_secret = get_env("ASTARTE_CREDENTIALS_SECRET")?;

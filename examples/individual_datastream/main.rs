@@ -46,6 +46,10 @@ async fn main() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .try_init()?;
 
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
+
     let now = SystemTime::now();
 
     // Load configuration

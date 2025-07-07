@@ -1,0 +1,153 @@
+# This file is part of Astarte.
+#
+# Copyright 2025 SECO Mind Srl
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: run-examples
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  # astarte config
+  ASTARTE_REALM: "test"
+  ASTARTE_PAIRING_URL: "https://api.autotest.astarte-platform.org/pairing"
+  ASTARTE_SECURE_TRANSPORT: "true"
+jobs:
+  run-examples:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create Astarte Cluster
+        id: astarte
+        uses: astarte-platform/astarte-cluster-action@v1.2.0
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt-get -y install libsqlite3-dev
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Install example interfaces
+        run: |
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/docs/interfaces/*.json --non-interactive
+          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/examples/**/interfaces/*.json --non-interactive
+          astartectl realm-management interfaces ls
+      # registration
+      - name: Configure registartion
+        run: |
+          ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+          ASTARTE_PAIRING_TOKEN=$(astartectl utils gen-jwt pairing)
+          tee $GITHUB_WORKSPACE/examples/registration/configuration.json << END
+          {
+              "realm": "$ASTARTE_REALM",
+              "device_id": "$ASTARTE_DEVICE_ID",
+              "pairing_token": "$ASTARTE_PAIRING_TOKEN",
+              "pairing_url": "$ASTARTE_PAIRING_URL"
+          }
+          END
+      - name: Run registration
+        # use the full command to use the sccache
+        run: |
+          cargo run --locked --example registration
+      # retention
+      - name: Configure and build retention
+        run: |
+          ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+          echo "ASTARTE_DEVICE_ID=$ASTARTE_DEVICE_ID" >> $GITHUB_ENV
+          echo "ASTARTE_CREDENTIALS_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")" >> $GITHUB_ENV
+          # prebuild retention example so that the runtime is not build time
+          # FIXME fix the problem with the non unique retention ids and remove the disabled debug assertions
+          RUSTFLAGS="-C debug-assertions=off" cargo build --locked --example retention --features="derive"
+      - name: Run retention
+        # use the full command to use the sccache
+        run: |
+          # FIXME fix the problem with the non unique retention ids and remove the disabled debug assertions
+          RUSTFLAGS="-C debug-assertions=off" cargo run --locked --example retention --features="derive" &
+          pid=$!
+          sleep 10
+          kill -SIGINT $pid
+      # individual datastream  
+      - name: Configure and build individual datastream
+        run: |
+          ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+          ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+          tee $GITHUB_WORKSPACE/examples/individual_datastream/configuration.json << END
+          {
+              "realm": "$ASTARTE_REALM",
+              "device_id": "$ASTARTE_DEVICE_ID",
+              "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+              "pairing_url": "$ASTARTE_PAIRING_URL"
+          }
+          END
+          cargo build --locked --example individual_datastream
+      - name: Run individual datastream
+        # use the full command to use the sccache
+        run: |
+          cargo run --locked --example individual_datastream &
+          pid=$!
+          sleep 10
+          kill -SIGINT $pid
+      # object datastream  
+      - name: Configure and build object datastream
+        run: |
+          ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+          ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+          tee $GITHUB_WORKSPACE/examples/object_datastream/configuration.json << END
+          {
+              "realm": "$ASTARTE_REALM",
+              "device_id": "$ASTARTE_DEVICE_ID",
+              "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+              "pairing_url": "$ASTARTE_PAIRING_URL"
+          }
+          END
+          cargo build --locked --example object_datastream --features="derive"
+      - name: Run object datastream
+        # use the full command to use the sccache
+        run: |
+          cargo run --locked --example object_datastream --features="derive" &
+          pid=$!
+          sleep 10
+          kill -SIGINT $pid
+      # individual properties  
+      - name: Configure and build individual properties
+        run: |
+          ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+          ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+          tee $GITHUB_WORKSPACE/examples/individual_properties/configuration.json << END
+          {
+              "realm": "$ASTARTE_REALM",
+              "device_id": "$ASTARTE_DEVICE_ID",
+              "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+              "pairing_url": "$ASTARTE_PAIRING_URL"
+          }
+          END
+          cargo build --locked --example individual_properties
+      - name: Run individual properties
+        # use the full command to use the sccache
+        run: |
+          cargo run --locked --example individual_properties &
+          pid=$!
+          sleep 10
+          kill -SIGINT $pid
+      # still missing message hub test
+

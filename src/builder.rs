@@ -329,8 +329,6 @@ where
     pub fn connection<C>(self, connection_config: C) -> DeviceBuilder<C, S>
     where
         C: ConnectionConfig<S>,
-        // required to call [`DeviceBuilder::build`]
-        Error: From<C::Err>,
     {
         DeviceBuilder {
             interfaces: self.interfaces,
