@@ -157,7 +157,7 @@ async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
             .await?;
         // Set the Property
         client
-            .send_individual(
+            .set_property(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
                 42.0.try_into()?,
