@@ -56,10 +56,7 @@ async fn get_name_for_sensor(
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()?;
-
+    init_tracing()?;
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
@@ -186,6 +183,19 @@ async fn main() -> eyre::Result<()> {
             Err(err) => return Err(err.into()),
         }
     }
+
+    Ok(())
+}
+
+fn init_tracing() -> eyre::Result<()> {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
+                .from_env_lossy(),
+        )
+        .try_init()?;
 
     Ok(())
 }

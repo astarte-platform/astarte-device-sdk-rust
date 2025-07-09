@@ -171,10 +171,7 @@ async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()?;
-
+    init_tracing()?;
     let (client, connection) = init().await?;
 
     info!("connected to the MessageHub");
@@ -225,6 +222,19 @@ async fn main() -> eyre::Result<()> {
     }
 
     info!("device disconnected");
+
+    Ok(())
+}
+
+fn init_tracing() -> eyre::Result<()> {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
+                .from_env_lossy(),
+        )
+        .try_init()?;
 
     Ok(())
 }

@@ -33,6 +33,7 @@ env:
   ASTARTE_REALM: "test"
   ASTARTE_PAIRING_URL: "https://api.autotest.astarte-platform.org/pairing"
   ASTARTE_SECURE_TRANSPORT: "true"
+  RUST_LOG: "trace"
 jobs:
   run-examples:
     runs-on: ubuntu-24.04
