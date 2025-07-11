@@ -180,7 +180,7 @@ pub enum ValueError {
 
 /// Dimension of the database
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(tag = "unit")]
+#[serde(tag = "unit", content = "value")]
 pub enum Size {
     /// Dimension expressed in KiloBytes
     #[serde(rename = "kb")]
@@ -994,5 +994,18 @@ mod tests {
     #[should_panic(expected = "value cannot be zero")]
     fn const_non_zero_should_panic() {
         const_non_zero(0);
+    }
+
+    #[test]
+    fn should_serialize_deserialize_size() {
+        let expected = r#"{"unit":"gb","value":2}"#;
+
+        let size = Size::Gb(2.try_into().unwrap());
+        let out = serde_json::to_string(&size).unwrap();
+
+        let deser_size: Size = serde_json::from_str(&out).unwrap();
+
+        assert_eq!(out, expected);
+        assert_eq!(size, deser_size);
     }
 }
