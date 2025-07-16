@@ -23,8 +23,8 @@ use std::{
 };
 
 use astarte_interfaces::schema::Ownership;
-use rusqlite::{types::FromSql, Connection, OpenFlags, OptionalExtension};
-use tracing::{instrument, warn};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use tracing::instrument;
 
 use crate::{
     builder::DEFAULT_STORE_CAPACITY,
@@ -34,8 +34,7 @@ use crate::{
 
 use super::{
     into_stored_type, set_pragma, wrap_sync_call, PropRecord, RecordOwnership, SqliteError,
-    StoredRecord, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE, SQLITE_DEFAULT_DB_MAX_SIZE,
-    SQLITE_JOURNAL_SIZE_LIMIT,
+    SqlitePragmas, StoredRecord, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE,
 };
 
 #[cfg(feature = "sqlite-trace")]
@@ -66,8 +65,6 @@ impl WriteConnection {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
-        let db_created = !db_file.as_ref().exists();
-
         let connection = wrap_sync_call(|| Connection::open_with_flags(&db_file, flags))
             .map_err(SqliteError::Connection)?;
 
@@ -82,12 +79,6 @@ impl WriteConnection {
             retention_capacity: DEFAULT_STORE_CAPACITY,
         };
 
-        if db_created {
-            let page_size: u64 = connection.get_pragma("page_size")?;
-            let pages = SQLITE_DEFAULT_DB_MAX_SIZE.calculate_max_page_count(page_size);
-            set_pragma(&connection, "max_page_count", pages)?;
-        }
-
         set_pragma(&connection, "foreign_keys", true)?;
         set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
         set_pragma(&connection, "synchronous", "NORMAL")?;
@@ -96,26 +87,11 @@ impl WriteConnection {
         set_pragma(&connection, "temp_store", "MEMORY")?;
         set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
         set_pragma(&connection, "journal_mode", "WAL")?;
-        set_pragma(&connection, "journal_size_limit", SQLITE_JOURNAL_SIZE_LIMIT)?;
 
         // perform vacuum
         connection.execute("VACUUM", [])?;
 
         Ok(connection)
-    }
-
-    /// Return db pages information
-    ///
-    /// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
-    pub(crate) fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, SqliteError>
-    where
-        T: FromSql,
-    {
-        wrap_sync_call(|| {
-            self.connection
-                .pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
-        })
-        .map_err(SqliteError::Query)
     }
 
     #[instrument(skip_all)]
@@ -225,7 +201,10 @@ impl DerefMut for WriteConnection {
 pub(crate) struct ReadConnection(Connection);
 
 impl ReadConnection {
-    pub(crate) fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
+    pub(crate) fn connect(
+        db_file: impl AsRef<Path>,
+        pragmas: &SqlitePragmas,
+    ) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
         let connection =
@@ -241,6 +220,7 @@ impl ReadConnection {
         set_pragma(&connection, "temp_store", "MEMORY")?;
         set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
         set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
+        pragmas.apply_pragmas(&connection)?;
 
         Ok(Self(connection))
     }
@@ -427,7 +407,7 @@ impl Deref for ReadConnection {
 #[cfg(test)]
 mod tests {
     use crate::store::{
-        sqlite::{const_non_zero, Size},
+        sqlite::{const_non_zero, get_pragma, Size, SQLITE_JOURNAL_SIZE_LIMIT},
         SqliteStore,
     };
 
@@ -440,11 +420,11 @@ mod tests {
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;
-            connection.get_pragma("journal_size_limit").unwrap()
+            get_pragma(&connection, "journal_size_limit").unwrap()
         };
 
         // check that journal size has been set to default
-        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT);
+        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT.to_bytes());
 
         let new_journal_size = Size::MiB(const_non_zero(100)).to_bytes();
 
@@ -461,9 +441,9 @@ mod tests {
 
         let journal_size: u64 = {
             let connection = db.writer.lock().await;
-            connection.get_pragma("journal_size_limit").unwrap()
+            get_pragma(&connection, "journal_size_limit").unwrap()
         };
 
-        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT);
+        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT.to_bytes());
     }
 }
