@@ -18,20 +18,21 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{cell::Cell, fmt::Debug, num::NonZeroU64, path::Path, sync::Arc, time::Duration};
+use std::{fmt::Debug, num::NonZeroU64, path::Path, sync::Arc, time::Duration};
 
 use astarte_interfaces::{
     schema::{MappingType, Ownership},
     Properties, Schema,
 };
-use futures::lock::Mutex;
 use rusqlite::{
     types::{FromSql, FromSqlError},
-    Connection, OptionalExtension, ToSql,
+    Connection, ToSql,
 };
 use serde::{Deserialize, Serialize};
-use statements::{include_query, ReadConnection, WriteConnection};
+use statements::include_query;
 use tracing::{debug, error, trace, warn};
+
+use self::pool::Connections;
 
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
@@ -39,6 +40,7 @@ use crate::{
     types::{de::BsonConverter, AstarteData, TypeError},
 };
 
+pub(crate) mod pool;
 pub(crate) mod statements;
 
 /// Milliseconds for the busy timeout
@@ -73,10 +75,10 @@ pub enum SqliteError {
     #[error("could not connect to database")]
     Connection(#[source] rusqlite::Error),
     /// Couldn't set SQLite option.
-    #[error("could not connect to database")]
+    #[error("couldn't set database option")]
     Option(#[source] rusqlite::Error),
     /// Couldn't prepare the SQLite statement.
-    #[error("could not connect to database")]
+    #[error("couldn't prepare sqlite statement")]
     Prepare(#[source] rusqlite::Error),
     /// Couldn't start a transaction.
     #[error("could not start a transaction database")]
@@ -99,6 +101,12 @@ pub enum SqliteError {
         /// Context of the error
         ctx: &'static str,
     },
+    /// Couldn't acquire a reader permit
+    #[error("couldn't acquire a reader permit")]
+    Reader,
+    /// Couldn't join the connection task
+    #[error("couldn't join the connection task")]
+    Join,
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct.
@@ -361,17 +369,6 @@ fn from_stored_type(value: u8) -> Result<MappingType, ValueError> {
     Ok(mapping_type)
 }
 
-thread_local! {
-    /// Read only connection to the SQLite database.
-    ///
-    /// Since SQLite supports multiple readers concurrently to an exclusive writer, guarantied that
-    /// a connection is used by a single thread at a time. We create a thread local read only
-    /// connection and share the read handle behind a [`Mutex`].
-    ///
-    /// This is a [`Vec`] of connection to allow multiple connections with different paths.
-    static READER: Cell<Vec<ReadConnection>> = const { Cell::new(Vec::new()) };
-}
-
 pub(crate) fn set_pragma<V>(
     connection: &Connection,
     pragma_name: &str,
@@ -380,7 +377,8 @@ pub(crate) fn set_pragma<V>(
 where
     V: ToSql,
 {
-    wrap_sync_call(|| connection.pragma_update(None, pragma_name, pragma_value))
+    connection
+        .pragma_update(None, pragma_name, pragma_value)
         .map_err(SqliteError::Option)
 }
 
@@ -397,19 +395,14 @@ where
 ///
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
-    pub(crate) db_file: Arc<Path>,
-    pub(crate) writer: Arc<Mutex<WriteConnection>>,
+    pub(crate) pool: Arc<Connections>,
 }
 
 impl SqliteStore {
     /// Creates a sqlite database for the Astarte device.
-    async fn new(
-        db_path: impl AsRef<Path>,
-        connection: WriteConnection,
-    ) -> Result<Self, SqliteError> {
+    async fn new(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
         let sqlite_store = SqliteStore {
-            db_file: db_path.as_ref().into(),
-            writer: Arc::new(Mutex::new(connection)),
+            pool: Arc::new(Connections::new(db_file.as_ref().into())),
         };
 
         sqlite_store.migrate().await?;
@@ -449,50 +442,7 @@ impl SqliteStore {
     /// }
     /// ```
     pub async fn connect_db(database_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        let connection = WriteConnection::connect(&database_file).await?;
-
-        Self::new(database_file, connection).await
-    }
-
-    /// Pass the thread local reference to the read only connection.
-    pub(crate) fn with_reader<F, O>(&self, f: F) -> Result<O, SqliteError>
-    where
-        F: FnOnce(&ReadConnection) -> Result<O, SqliteError>,
-    {
-        wrap_sync_call(|| {
-            READER.with(|tlv| {
-                let mut v = tlv.take();
-
-                let res = self.get_or_init_reader(&mut v).and_then(f);
-
-                tlv.set(v);
-
-                res
-            })
-        })
-    }
-
-    fn get_or_init_reader<'a: 'b, 'b>(
-        &self,
-        v: &'a mut Vec<ReadConnection>,
-    ) -> Result<&'b ReadConnection, SqliteError> {
-        // get the index instead of the element to solve NLL error
-        let idx = v.iter().enumerate().find_map(|(i, r)| {
-            r.path()
-                .is_some_and(|p| p == self.db_file.to_string_lossy())
-                .then_some(i)
-        });
-
-        if let Some(idx) = idx {
-            return Ok(&v[idx]);
-        }
-
-        let new_connection = ReadConnection::connect(&self.db_file)?;
-
-        let idx = v.len();
-        v.push(new_connection);
-
-        Ok(&v[idx])
+        Self::new(database_file).await
     }
 
     async fn migrate(&self) -> Result<(), SqliteError> {
@@ -502,41 +452,37 @@ impl SqliteStore {
             include_query!("migrations/0003_session.sql"),
         ];
 
-        let writer = self.writer.lock().await;
+        self.pool
+            .acquire_writer(|writer| -> Result<(), SqliteError> {
+                let version = writer.get_pragma("user_version").unwrap_or(0usize);
 
-        wrap_sync_call(|| -> Result<(), SqliteError> {
-            let version = writer
-                .query_row("PRAGMA user_version;", [], |row| row.get(0))
-                .optional()
-                .map_err(SqliteError::Query)?
-                .unwrap_or(0usize);
+                debug!(
+                    current = version,
+                    migrations = MIGRATIONS.len(),
+                    "checking migrations"
+                );
 
-            debug!(
-                current = version,
-                migrations = MIGRATIONS.len(),
-                "checking migrations"
-            );
+                if version >= MIGRATIONS.len() {
+                    trace!("no migration to run");
 
-            if version >= MIGRATIONS.len() {
-                trace!("no migration to run");
+                    return Ok(());
+                }
 
-                return Ok(());
-            }
+                for migration in &MIGRATIONS[version..] {
+                    writer
+                        .execute_batch(migration)
+                        .map_err(SqliteError::Migration)?;
+                }
 
-            for migration in &MIGRATIONS[version..] {
+                debug!(version = MIGRATIONS.len(), "setting new database version");
+
                 writer
-                    .execute_batch(migration)
-                    .map_err(SqliteError::Migration)?;
-            }
+                    .pragma_update(None, "user_version", MIGRATIONS.len())
+                    .map_err(SqliteError::Option)?;
 
-            debug!(version = MIGRATIONS.len(), "setting new database version");
-
-            writer
-                .pragma_update(None, "user_version", MIGRATIONS.len())
-                .map_err(SqliteError::Option)?;
-
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(())
     }
@@ -551,34 +497,39 @@ impl SqliteStore {
             });
         }
 
-        let writer = self.writer.lock().await;
+        self.pool
+            .acquire_writer(move |writer| {
+                // check if the number of pages provided in input is the same as the maximum one
+                let current_max: u32 = writer.get_pragma("max_page_count")?;
 
-        // check if the number of pages provided in input is the same as the maximum one
-        let current_max: u32 = writer.get_pragma("max_page_count")?;
+                if max == current_max {
+                    return Ok(());
+                }
 
-        if max == current_max {
-            return Ok(());
-        }
+                // check if the new database size is lower than the actual one
+                let current_pages: u32 = writer.get_pragma("page_count")?;
 
-        // check if the new database size is lower than the actual one
-        let current_pages: u32 = writer.get_pragma("page_count")?;
+                if max < current_pages {
+                    return Err(SqliteError::InvalidMaxSize {
+                        ctx: "cannot shrink the database",
+                    });
+                }
 
-        if max < current_pages {
-            return Err(SqliteError::InvalidMaxSize {
-                ctx: "cannot shrink the database",
-            });
-        }
+                set_pragma(writer, "max_page_count", max)?;
 
-        set_pragma(&writer, "max_page_count", max)
+                Ok(())
+            })
+            .await?;
+
+        Ok(())
     }
 
     /// Set the maximum number of pages based on the actual maximum size of the db file
     pub async fn set_db_max_size(&mut self, size: Size) -> Result<(), SqliteError> {
-        let page_size: u64 = {
-            let writer = self.writer.lock().await;
-
-            writer.get_pragma("page_size")?
-        };
+        let page_size: u64 = self
+            .pool
+            .acquire_writer(|writer| writer.get_pragma("page_size"))
+            .await?;
 
         // perform euclidean division to retrieve the correct number of pages
         // no need to perform checked div since the minimum page size is 512 bytes
@@ -592,9 +543,9 @@ impl SqliteStore {
     ///
     /// <https://www.sqlite.org/pragma.html#pragma_journal_size_limit>
     pub async fn set_journal_size_limit(&mut self, size: Size) -> Result<(), SqliteError> {
-        let writer = self.writer.lock().await;
-
-        set_pragma(&writer, "journal_size_limit", size.to_bytes())
+        self.pool
+            .acquire_writer(move |writer| set_pragma(writer, "journal_size_limit", size.to_bytes()))
+            .await
     }
 }
 
@@ -624,7 +575,10 @@ impl PropertyStore for SqliteStore {
             .to_vec()
             .map_err(ValueError::Encode)?;
 
-        self.writer.lock().await.store_prop(prop, &buf)?;
+        let prop = StoredProp::<String, AstarteData>::from(prop);
+        self.pool
+            .acquire_writer(move |writer| writer.store_prop((&prop).into(), &buf))
+            .await?;
 
         Ok(())
     }
@@ -633,8 +587,13 @@ impl PropertyStore for SqliteStore {
         &self,
         property: &PropertyMapping<'_>,
     ) -> Result<Option<AstarteData>, Self::Err> {
+        let interface_name = property.interface_name().to_string();
+        let path = property.path().to_string();
+
         let opt_record = self
-            .with_reader(|reader| reader.load_prop(property.interface_name(), property.path()))?;
+            .pool
+            .acquire_reader(move |reader| reader.load_prop(&interface_name, &path))
+            .await?;
 
         match opt_record {
             Some(record) => {
@@ -667,84 +626,65 @@ impl PropertyStore for SqliteStore {
     }
 
     async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        self.writer
-            .lock()
+        let interface_name = property.interface_name().to_string();
+        let path = property.path().to_string();
+        self.pool
+            .acquire_writer(move |writer| writer.unset_prop(&interface_name, &path))
             .await
-            .unset_prop(property.interface_name(), property.path())?;
-
-        Ok(())
     }
 
     async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        self.writer
-            .lock()
+        let interface_name = property.interface_name().to_string();
+        let path = property.path().to_string();
+        self.pool
+            .acquire_writer(move |writer| writer.delete_prop(&interface_name, &path))
             .await
-            .delete_prop(property.interface_name(), property.path())?;
-
-        Ok(())
     }
 
     async fn clear(&self) -> Result<(), Self::Err> {
-        self.writer.lock().await.clear_props()?;
-
-        Ok(())
+        self.pool
+            .acquire_writer(|writer| writer.clear_props())
+            .await
     }
 
     async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.load_all_props())
+        self.pool
+            .acquire_reader(|reader| reader.load_all_props())
+            .await
     }
 
     async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.props_with_ownership(Ownership::Device))
+        self.pool
+            .acquire_reader(|reader| reader.props_with_ownership(Ownership::Device))
+            .await
     }
 
     async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.props_with_ownership(Ownership::Server))
+        self.pool
+            .acquire_reader(|reader| reader.props_with_ownership(Ownership::Server))
+            .await
     }
 
     async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.interface_props(interface.name()))
+        let interface_name = interface.name().to_string();
+
+        self.pool
+            .acquire_reader(move |reader| reader.interface_props(&interface_name))
+            .await
     }
 
     async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
-        self.writer
-            .lock()
-            .await
-            .delete_interface_props(interface.name())?;
+        let interface_name = interface.name().to_string();
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.delete_interface_props(&interface_name))
+            .await
     }
 
     async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
-        self.with_reader(|reader| reader.props_with_unset(Ownership::Device))
-    }
-}
-
-#[cfg(not(feature = "tokio-multi-thread"))]
-/// Functions to wrap the sync calls to the database and not starve the other tasks.
-pub(crate) fn wrap_sync_call<F, O>(f: F) -> O
-where
-    F: FnOnce() -> O,
-{
-    (f)()
-}
-
-#[cfg(feature = "tokio-multi-thread")]
-/// Functions to wrap the sync calls to the database and not starve the other tasks.
-pub(crate) fn wrap_sync_call<F, O>(f: F) -> O
-where
-    F: FnOnce() -> O,
-{
-    let Ok(current) = tokio::runtime::Handle::try_current() else {
-        return (f)();
-    };
-
-    match current.runtime_flavor() {
-        // We cannot block in place, so we execute the call directly
-        tokio::runtime::RuntimeFlavor::CurrentThread => (f)(),
-        tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
-        // Matches tokio-unstable MultiThreadAlt
-        _ => tokio::task::block_in_place(f),
+        self.pool
+            .acquire_reader(|reader| reader.props_with_unset(Ownership::Device))
+            .await
     }
 }
 
@@ -837,10 +777,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        {
-            let connection = db.writer.lock().await;
-            set_pragma(&connection, "max_page_count", 1000).unwrap();
-        }
+        db.pool
+            .acquire_writer(|writer| set_pragma(writer, "max_page_count", 1000))
+            .await
+            .unwrap();
 
         assert!(db.set_max_pages(1000).await.is_ok());
     }
@@ -850,10 +790,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let page_size: usize = {
-            let connection = db.writer.lock().await;
-            connection.get_pragma("page_size").unwrap()
-        };
+        let page_size: usize = db
+            .pool
+            .acquire_writer(|writer| writer.get_pragma("page_size"))
+            .await
+            .unwrap();
 
         db.store_prop(StoredProp {
             interface: "interface",
@@ -880,13 +821,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let (page_size, page_count): (u32, u32) = {
-            let connection = db.writer.lock().await;
-            (
-                connection.get_pragma("page_size").unwrap(),
-                connection.get_pragma("page_count").unwrap(),
-            )
-        };
+        let (page_size, page_count): (u32, u32) = db
+            .pool
+            .acquire_writer(|writer| -> Result<_, SqliteError> {
+                let size = writer.get_pragma("page_size")?;
+                let count = writer.get_pragma("page_count")?;
+                Ok((size, count))
+            })
+            .await
+            .unwrap();
 
         db.set_max_pages(page_count).await.unwrap();
 
@@ -916,7 +859,12 @@ mod tests {
 
         assert!(db.set_max_pages(10).await.is_ok());
 
-        let page_count: u32 = db.writer.lock().await.get_pragma("max_page_count").unwrap();
+        let page_count: u32 = db
+            .pool
+            .acquire_writer(|writer| writer.get_pragma("max_page_count"))
+            .await
+            .unwrap();
+
         let exp_count = 10;
 
         assert_eq!(page_count, exp_count);
@@ -932,7 +880,11 @@ mod tests {
         // set the max size considering the default page size of 4096 bytes
         assert!(db.set_db_max_size(size).await.is_ok());
 
-        let page_count: u32 = db.writer.lock().await.get_pragma("max_page_count").unwrap();
+        let page_count: u32 = db
+            .pool
+            .acquire_writer(|writer| writer.get_pragma("max_page_count"))
+            .await
+            .unwrap();
         let exp_count = 1024; // 4MiB / 4096B = 1024 pages
 
         assert_eq!(page_count, exp_count);
@@ -955,10 +907,9 @@ mod tests {
         assert!(db.set_journal_size_limit(size).await.is_ok());
 
         let journal_size: u32 = db
-            .writer
-            .lock()
+            .pool
+            .acquire_writer(|writer| writer.get_pragma("journal_size_limit"))
             .await
-            .get_pragma("journal_size_limit")
             .unwrap();
 
         let exp_size: u32 = size.to_bytes().try_into().unwrap();
