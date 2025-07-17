@@ -21,13 +21,9 @@ use std::{borrow::Cow, collections::HashSet, time::Duration};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use tracing::{instrument, trace, warn};
 
-use crate::{
-    retention::{Id, PublishInfo, StoredInterface},
-    store::sqlite::{
-        statements::{include_query, ReadConnection, WriteConnection},
-        wrap_sync_call, SqliteError,
-    },
-};
+use crate::retention::{Id, PublishInfo, StoredInterface};
+use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
+use crate::store::sqlite::{statements::include_query, SqliteError};
 
 use super::{RetentionMapping, RetentionPublish, RetentionReliability, TimestampSecs};
 
@@ -54,19 +50,17 @@ impl WriteConnection {
 
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
 
-        wrap_sync_call(|| {
-            if !exists {
-                Self::store_mapping(&transaction, mapping)?;
-                trace!("mapping stored");
-            }
+        if !exists {
+            Self::store_mapping(&transaction, mapping)?;
+            trace!("mapping stored");
+        }
 
-            Self::store_publish(&transaction, publish)?;
-            trace!("publish stored");
+        Self::store_publish(&transaction, publish)?;
+        trace!("publish stored");
 
-            transaction.commit()?;
+        transaction.commit()?;
 
-            Ok(())
-        })
+        Ok(())
     }
 
     pub(super) fn store_mapping(
@@ -124,76 +118,66 @@ impl WriteConnection {
 
     /// Retrieve the number of stored properties
     pub(crate) fn count_stored(&self) -> Result<usize, SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            statement
-                .query_row((), |row| row.get::<_, usize>(0))
-                .map_err(SqliteError::Query)
-        })
+        statement
+            .query_row((), |row| row.get::<_, usize>(0))
+            .map_err(SqliteError::Query)
     }
 
     /// Remove the N oldest elements from the store
     pub(crate) fn remove_oldest(&self, to_remove: usize) -> Result<usize, SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!(
-                    "queries/retention/write/delete_n_oldest.sql"
-                ))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!(
+                "queries/retention/write/delete_n_oldest.sql"
+            ))
+            .map_err(SqliteError::Prepare)?;
 
-            statement.execute([to_remove]).map_err(SqliteError::Query)
-        })
+        statement.execute([to_remove]).map_err(SqliteError::Query)
     }
 
     pub(super) fn update_publish_sent_flag(&self, id: &Id, sent: bool) -> Result<(), SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/write/update_sent.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/write/update_sent.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            let timestamp = id.timestamp.to_bytes();
-            let timestamp = timestamp.as_slice();
+        let timestamp = id.timestamp.to_bytes();
+        let timestamp = timestamp.as_slice();
 
-            let changed = statement.execute((sent, timestamp, id.counter))?;
+        let changed = statement.execute((sent, timestamp, id.counter))?;
 
-            // If we remove an interface before the ACK is received the publish will also be deleted
-            debug_assert!((0..=1).contains(&changed));
+        // If we remove an interface before the ACK is received the publish will also be deleted
+        debug_assert!((0..=1).contains(&changed));
 
-            Ok(())
-        })
+        Ok(())
     }
 
     pub(super) fn delete_publish_by_id(&self, id: &Id) -> Result<(), SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/write/delete_publish.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/write/delete_publish.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            let timestamp = id.timestamp.to_bytes();
-            let timestamp = timestamp.as_slice();
+        let timestamp = id.timestamp.to_bytes();
+        let timestamp = timestamp.as_slice();
 
-            let changed = statement.execute((timestamp, id.counter))?;
+        let changed = statement.execute((timestamp, id.counter))?;
 
-            // If remove an interface before the ACK is received the publish will also be deleted
-            debug_assert!((0..=1).contains(&changed));
+        // If remove an interface before the ACK is received the publish will also be deleted
+        debug_assert!((0..=1).contains(&changed));
 
-            Ok(())
-        })
+        Ok(())
     }
 
     pub(super) fn delete_interface(&mut self, interface: &str) -> Result<(), SqliteError> {
         let transaction = self.transaction().map_err(SqliteError::Transaction)?;
 
-        wrap_sync_call(move || {
-            Self::delete_interface_transaction(&transaction, interface)?;
+        Self::delete_interface_transaction(&transaction, interface)?;
 
-            transaction.commit().map_err(SqliteError::Transaction)?;
+        transaction.commit().map_err(SqliteError::Transaction)?;
 
-            Ok(())
-        })
+        Ok(())
     }
 
     fn delete_interface_transaction(
@@ -222,104 +206,96 @@ impl WriteConnection {
     }
 
     pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<usize, SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            let timestamp = now.to_bytes();
-            let timestamp = timestamp.as_slice();
+        let timestamp = now.to_bytes();
+        let timestamp = timestamp.as_slice();
 
-            statement.execute([timestamp]).map_err(SqliteError::Query)
-        })
+        statement.execute([timestamp]).map_err(SqliteError::Query)
     }
 
     pub(super) fn reset_all_sent(&self) -> Result<(), SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/write/reset_all_sent.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/write/reset_all_sent.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            statement.execute([])?;
+        statement.execute([])?;
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 
 impl ReadConnection {
     pub(super) fn all_interfaces(&self) -> Result<HashSet<StoredInterface>, SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!("queries/retention/read/all_interfaces.sql"))
-                .map_err(SqliteError::Prepare)?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/retention/read/all_interfaces.sql"))
+            .map_err(SqliteError::Prepare)?;
 
-            let interfaces = statement
-                .query_map([], |row| {
-                    Ok(StoredInterface {
-                        name: row.get(0)?,
-                        version_major: row.get(1)?,
-                    })
+        let interfaces = statement
+            .query_map([], |row| {
+                Ok(StoredInterface {
+                    name: row.get(0)?,
+                    version_major: row.get(1)?,
                 })
-                .map_err(SqliteError::Query)?
-                .collect::<Result<HashSet<StoredInterface>, rusqlite::Error>>()
-                .map_err(SqliteError::Query)?;
+            })
+            .map_err(SqliteError::Query)?
+            .collect::<Result<HashSet<StoredInterface>, rusqlite::Error>>()
+            .map_err(SqliteError::Query)?;
 
-            Ok(interfaces)
-        })
+        Ok(interfaces)
     }
 
-    pub(super) fn unset_publishes(
+    pub(super) fn unsent_publishes(
         &self,
         buf: &mut Vec<(Id, PublishInfo<'static>)>,
         now: &TimestampSecs,
         limit: usize,
     ) -> Result<usize, SqliteError> {
-        wrap_sync_call(|| {
-            let mut statement = self
-                .prepare_cached(include_query!(
-                    "queries/retention/read/unsent_publishes.sql"
+        let mut statement = self
+            .prepare_cached(include_query!(
+                "queries/retention/read/unsent_publishes.sql"
+            ))
+            .map_err(SqliteError::Prepare)?;
+
+        let now = now.to_bytes();
+        let now = now.as_slice();
+
+        // Cap to max
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+
+        let (count, _) = statement
+            .query_map((now, limit), |row| {
+                let id = Id {
+                    timestamp: row.get(0)?,
+                    counter: row.get(1)?,
+                };
+
+                Ok((
+                    id,
+                    PublishInfo {
+                        interface: Cow::Owned(row.get(2)?),
+                        path: Cow::Owned(row.get(3)?),
+                        sent: row.get(4)?,
+                        value: Cow::Owned(row.get(5)?),
+                        reliability: row.get::<_, RetentionReliability>(6)?.into(),
+                        version_major: row.get(7)?,
+                        expiry: expiry_from_sql(row.get(8)?),
+                    },
                 ))
-                .map_err(SqliteError::Prepare)?;
+            })
+            .map_err(SqliteError::Query)?
+            .try_fold((0usize, buf), |(count, buf), res| {
+                let res = res?;
 
-            let now = now.to_bytes();
-            let now = now.as_slice();
+                buf.push(res);
 
-            // Cap to max
-            let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+                Ok((count.saturating_add(1), buf))
+            })
+            .map_err(SqliteError::Query)?;
 
-            let (count, _) = statement
-                .query_map((now, limit), |row| {
-                    let id = Id {
-                        timestamp: row.get(0)?,
-                        counter: row.get(1)?,
-                    };
-
-                    Ok((
-                        id,
-                        PublishInfo {
-                            interface: Cow::Owned(row.get(2)?),
-                            path: Cow::Owned(row.get(3)?),
-                            sent: row.get(4)?,
-                            value: Cow::Owned(row.get(5)?),
-                            reliability: row.get::<_, RetentionReliability>(6)?.into(),
-                            version_major: row.get(7)?,
-                            expiry: expiry_from_sql(row.get(8)?),
-                        },
-                    ))
-                })
-                .map_err(SqliteError::Query)?
-                .try_fold((0usize, buf), |(count, buf), res| {
-                    let res = res?;
-
-                    buf.push(res);
-
-                    Ok((count.saturating_add(1), buf))
-                })
-                .map_err(SqliteError::Query)?;
-
-            Ok(count)
-        })
+        Ok(count)
     }
 }
 
@@ -405,32 +381,57 @@ pub(crate) mod tests {
     }
 
     async fn store_mapping(store: &SqliteStore, mapping: &RetentionMapping<'_>) {
-        let mut writer = store.writer.lock().await;
-        let t = writer.transaction().unwrap();
-        WriteConnection::store_mapping(&t, mapping).unwrap();
-        t.commit().unwrap();
+        let mapping = mapping.clone().into_owned();
+        store
+            .pool
+            .acquire_writer(move |writer| -> Result<_, SqliteError> {
+                let t = writer.transaction()?;
+                WriteConnection::store_mapping(&t, &mapping)?;
+                t.commit()?;
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 
     async fn store_publish(store: &SqliteStore, publish: &RetentionPublish<'_>) {
-        let mut writer = store.writer.lock().await;
-        let t = writer.transaction().unwrap();
-        WriteConnection::store_publish(&t, publish).unwrap();
-        t.commit().unwrap();
+        let publish = publish.clone().into_owned();
+        store
+            .pool
+            .acquire_writer(move |writer| -> Result<_, SqliteError> {
+                let t = writer.transaction().unwrap();
+                WriteConnection::store_publish(&t, &publish).unwrap();
+                t.commit().unwrap();
+
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 
-    pub(crate) fn fetch_publish(store: &SqliteStore, id: &Id) -> Option<RetentionPublish<'static>> {
+    pub(crate) async fn fetch_publish(
+        store: &SqliteStore,
+        id: &Id,
+    ) -> Option<RetentionPublish<'static>> {
+        let id = *id;
         store
-            .with_reader(|reader| reader.publish(id))
+            .pool
+            .acquire_reader(move |reader| reader.publish(&id))
+            .await
             .expect("failed to fetch publish")
     }
 
-    pub(crate) fn fetch_mapping(
+    pub(crate) async fn fetch_mapping(
         store: &SqliteStore,
         interface: &str,
         path: &str,
     ) -> Option<RetentionMapping<'static>> {
+        let interface = interface.to_string();
+        let path = path.to_string();
         store
-            .with_reader(|reader| read_mapping(reader, interface, path))
+            .pool
+            .acquire_reader(move |reader| read_mapping(reader, &interface, &path))
+            .await
             .unwrap()
     }
 
@@ -450,7 +451,9 @@ pub(crate) mod tests {
 
         store_mapping(&store, &mapping).await;
 
-        let res = fetch_mapping(&store, &mapping.interface, &mapping.path).unwrap();
+        let res = fetch_mapping(&store, &mapping.interface, &mapping.path)
+            .await
+            .unwrap();
 
         assert_eq!(res, mapping);
     }
@@ -472,7 +475,12 @@ pub(crate) mod tests {
         store_mapping(&store, &mapping).await;
 
         let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap()
             .unwrap();
 
@@ -483,7 +491,12 @@ pub(crate) mod tests {
         store_mapping(&store, &mapping).await;
 
         let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap()
             .unwrap();
 
@@ -507,7 +520,13 @@ pub(crate) mod tests {
         store_mapping(&store, &mapping).await;
 
         let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap()
             .unwrap();
 
@@ -551,7 +570,7 @@ pub(crate) mod tests {
 
         store_publish(&store, &publish).await;
 
-        let res = fetch_publish(&store, &publish.id).unwrap();
+        let res = fetch_publish(&store, &publish.id).await.unwrap();
 
         assert_eq!(res, publish);
     }
@@ -575,7 +594,13 @@ pub(crate) mod tests {
         store_mapping(&store, &mapping).await;
 
         let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap()
             .unwrap();
 
@@ -595,14 +620,29 @@ pub(crate) mod tests {
             expiry_time: None,
         };
 
-        store.writer.lock().await.store(&mapping, &publish).unwrap();
+        store
+            .pool
+            .acquire_writer({
+                let mapping = mapping.clone();
+                let publish = publish.clone();
 
-        let res = fetch_publish(&store, &publish.id).unwrap();
+                move |writer| writer.store(&mapping, &publish)
+            })
+            .await
+            .unwrap();
+
+        let res = fetch_publish(&store, &publish.id).await.unwrap();
 
         assert_eq!(res, publish);
 
         let res = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap()
             .unwrap();
 
@@ -643,7 +683,7 @@ pub(crate) mod tests {
 
         store.update_sent_flag(&publish.id, true).await.unwrap();
 
-        let res = fetch_publish(&store, &publish.id).unwrap();
+        let res = fetch_publish(&store, &publish.id).await.unwrap();
 
         publish.sent = true;
 
@@ -651,7 +691,7 @@ pub(crate) mod tests {
 
         store.update_sent_flag(&publish.id, false).await.unwrap();
 
-        let res = fetch_publish(&store, &publish.id).unwrap();
+        let res = fetch_publish(&store, &publish.id).await.unwrap();
 
         publish.sent = false;
 
@@ -693,7 +733,7 @@ pub(crate) mod tests {
 
         store.delete_publish(&id).await.unwrap();
 
-        let publish = fetch_publish(&store, &exp.id);
+        let publish = fetch_publish(&store, &exp.id).await;
 
         assert_eq!(publish, None);
     }
@@ -733,12 +773,18 @@ pub(crate) mod tests {
 
         store.delete_interface(interface).await.unwrap();
 
-        let publish = fetch_publish(&store, &id);
+        let publish = fetch_publish(&store, &id).await;
 
         assert_eq!(publish, None);
 
         let mapping = store
-            .with_reader(|reader| read_mapping(reader, &mapping.interface, &mapping.path))
+            .pool
+            .acquire_reader({
+                let mapping = mapping.clone();
+
+                move |reader| read_mapping(reader, &mapping.interface, &mapping.path)
+            })
+            .await
             .unwrap();
 
         assert_eq!(mapping, None);
@@ -860,13 +906,13 @@ pub(crate) mod tests {
         };
         store_publish(&store, &publish).await;
 
-        let res = fetch_publish(&store, &publish.id).unwrap();
+        let res = fetch_publish(&store, &publish.id).await.unwrap();
 
         assert_eq!(res, publish);
 
         store.delete_publish(&publish.id).await.unwrap();
 
-        let res = fetch_publish(&store, &publish.id);
+        let res = fetch_publish(&store, &publish.id).await;
 
         assert!(res.is_none());
     }
@@ -1075,7 +1121,11 @@ pub(crate) mod tests {
         store_mapping(&store, &mapping1).await;
         store_mapping(&store, &mapping2).await;
 
-        let res = store.with_reader(|reader| reader.all_interfaces()).unwrap();
+        let res = store
+            .pool
+            .acquire_reader(|reader| reader.all_interfaces())
+            .await
+            .unwrap();
 
         let mut expected = HashSet::new();
         expected.insert(StoredInterface {
@@ -1102,10 +1152,11 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let count = {
-            let connection = store.writer.lock().await;
-            connection.count_stored().unwrap()
-        };
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
 
         assert_eq!(count, 1);
     }
@@ -1137,16 +1188,22 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let connection = store.writer.lock().await;
+        store
+            .pool
+            .acquire_writer(|writer| -> Result<_, SqliteError> {
+                let removed = writer.remove_oldest(0).unwrap();
+                assert_eq!(removed, 0);
 
-        let removed = connection.remove_oldest(0).unwrap();
-        assert_eq!(removed, 0);
+                let removed = writer.remove_oldest(2).unwrap();
+                assert_eq!(removed, 2);
 
-        let removed = connection.remove_oldest(2).unwrap();
-        assert_eq!(removed, 2);
+                Ok(())
+            })
+            .await
+            .unwrap();
 
         // check that the remaining publish is the last one
-        let res = fetch_publish(&store, &id3).unwrap();
+        let res = fetch_publish(&store, &id3).await.unwrap();
 
         let publish3 = RetentionPublish {
             id: id3,
@@ -1160,7 +1217,12 @@ pub(crate) mod tests {
         assert_eq!(res, publish3);
 
         // try removing more elements than available
-        let removed = connection.remove_oldest(2).unwrap();
+        let removed = store
+            .pool
+            .acquire_writer(|writer| writer.remove_oldest(2))
+            .await
+            .unwrap();
+
         // only 1 element remains from the previous removal
         assert_eq!(removed, 1);
     }

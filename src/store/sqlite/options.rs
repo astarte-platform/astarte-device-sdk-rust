@@ -21,42 +21,95 @@
 //! This module provides structures to configure some sqlite options.
 //! It defines the `SqliteStoreOptions` struct which holds the editable options.
 
-use rusqlite::Connection;
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 
+use serde::{Deserialize, Serialize};
+use tracing::{error, instrument, trace};
+
+use crate::error::Report;
+
+use super::connection::SqliteConnection;
 use super::{
-    get_pragma, set_pragma, Size, SqliteError, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE,
-    SQLITE_DEFAULT_DB_MAX_SIZE, SQLITE_JOURNAL_SIZE_LIMIT, SQLITE_WAL_AUTOCHECKPOINT,
+    Size, SqliteError, DEFAULT_MAX_READERS, SQLITE_DEFAULT_DB_MAX_SIZE, SQLITE_JOURNAL_SIZE_LIMIT,
 };
 
 /// Choices of limit of the size of the sqlite database
-#[derive(Clone, Debug, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SizeLimit {
     /// Set a size limit based on the number of pages
-    Pages(u32),
+    MaxPageCount(NonZeroU32),
     /// Set a size limit based on the actual size of the db file
     ///
-    /// This value will be approxymated if it's not a multiple of the databse page size
-    Size(Size),
+    /// This value will be approximated if it's not a multiple of the database page size.
+    DbMaxSize(Size),
 }
 
-/// Sqlite options that can be set externally to tweak the behaviour of sqlite.
-#[derive(Clone, Debug)]
-pub struct SqliteStoreOptions {
-    // Maximum number of pages in the sqlite db file
-    pub(crate) db_size_limit: SizeLimit,
-    /// Since we use WAL mode the size of our journal controls the size of the WAL
-    /// Without the autocheckpoint set the journal still grows until an autocheckpoint is performed.
-    /// The size limit only applies when the WAL journal is truncated. We set both options to
-    /// correctly limit the size of the WAL file.
-    pub(crate) journal_size_limit: Size,
+/// SQLite options that can be set externally to tweak the behaviour of the connections.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
+pub(crate) struct SqliteOptions {
+    // Maximum number of read connection to open
+    max_readers: Option<NonZeroUsize>,
+    // Maximum size of the database file.
+    //
+    // This can be in pages or an actual file size.
+    #[serde(flatten)]
+    db_size_limit: Option<SizeLimit>,
+    /// Maximum size of the journal file.
+    ///
+    /// Since we use WAL mode the size of our journal controls the size of the WAL Without the
+    /// autocheckpoint set the journal still grows until an autocheckpoint is performed. The size
+    /// limit only applies when the WAL journal is truncated. We set both options to correctly limit
+    /// the size of the WAL file.
+    journal_size_limit: Option<Size>,
 }
 
-impl Default for SqliteStoreOptions {
-    fn default() -> Self {
-        Self {
-            db_size_limit: SizeLimit::Size(SQLITE_DEFAULT_DB_MAX_SIZE),
-            journal_size_limit: SQLITE_JOURNAL_SIZE_LIMIT,
+impl SqliteOptions {
+    /// Get the max number of readers.
+    ///
+    /// If the value is not set, it uses [`std::thread::available_parallelism`]  defaulting to
+    /// [`DEFAULT_MAX_READERS`] on error.
+    ///
+    /// This is the max number of readers and they are lazily created, so this number it's safe to
+    /// be more than the actual available_parallelism.
+    #[instrument]
+    pub(crate) fn max_readers(&self) -> NonZeroUsize {
+        match self.max_readers {
+            Some(readers) => readers,
+            None => {
+                std::thread::available_parallelism().unwrap_or_else(|err| {
+                    error!(err = %Report::new(err), "couldn't get available_parallelism, defaulting to {DEFAULT_MAX_READERS}");
+
+                    DEFAULT_MAX_READERS
+                })
+            }
         }
+    }
+
+    /// Returns the db_size_limit or the default one
+    pub(crate) fn db_size_limit(&self) -> SizeLimit {
+        self.db_size_limit
+            .unwrap_or(SizeLimit::DbMaxSize(SQLITE_DEFAULT_DB_MAX_SIZE))
+    }
+
+    /// Returns the journal_size_limit or the default one
+    fn journal_size_limit(&self) -> Size {
+        self.journal_size_limit.unwrap_or(SQLITE_JOURNAL_SIZE_LIMIT)
+    }
+
+    /// Sets the database size limit
+    pub(crate) fn set_db_max_size(&mut self, db_size_limit: Size) {
+        self.db_size_limit = Some(SizeLimit::DbMaxSize(db_size_limit));
+    }
+
+    /// Sets the database size limit
+    pub(crate) fn set_max_page_count(&mut self, max_page_count: NonZeroU32) {
+        self.db_size_limit = Some(SizeLimit::MaxPageCount(max_page_count));
+    }
+
+    /// Sets the journal size limit
+    pub(crate) fn set_journal_size_limit(&mut self, journal_size_limit: Size) {
+        self.journal_size_limit = Some(journal_size_limit);
     }
 }
 
@@ -67,104 +120,67 @@ impl Default for SqliteStoreOptions {
 #[derive(Clone, Debug)]
 pub(crate) struct SqlitePragmas {
     /// Maximum number of pages in the sqlite db file
-    max_page_count: u32,
-    /// Maximum size of the sqlite WAL journal   
-    journal_size_limit: u64,
+    pub(crate) max_page_count: NonZeroU32,
+    /// Maximum size of the SQLite WAL journal
+    pub(crate) journal_size_limit: NonZeroU64,
     /// Limit of number of pages to wait before committing the WAL
-    wal_autocheckpoint: u32,
+    pub(crate) wal_autocheckpoint: NonZeroU32,
 }
 
 impl SqlitePragmas {
-    pub(crate) fn try_from_options(
-        connection: &Connection,
-        options: &SqliteStoreOptions,
-    ) -> Result<Self, SqliteError> {
-        let max_page_count = match options.db_size_limit {
-            SizeLimit::Pages(pages) => pages,
-            SizeLimit::Size(size) => Self::compute_max_page_count(connection, size)?,
+    #[instrument(skip_all)]
+    pub(crate) fn try_from_options<C>(
+        connection: &C,
+        options: &SqliteOptions,
+    ) -> Result<Self, SqliteError>
+    where
+        C: SqliteConnection,
+    {
+        let page_size = connection.get_pragma("page_size").and_then(|page_size| {
+            NonZeroU64::new(page_size).ok_or(SqliteError::InvalidMaxSize {
+                ctx: "couldn't read the db page size (0)",
+            })
+        })?;
+
+        trace!(page_size, "pragma page_size");
+
+        let max_page_count = match options.db_size_limit() {
+            SizeLimit::MaxPageCount(pages) => pages,
+            SizeLimit::DbMaxSize(size) => size.into_page_count(page_size),
         };
-        Self::validate_max_page_count(connection, max_page_count)?;
 
-        let wal_autocheckpoint =
-            Self::compute_autocheckpoint_pages(connection, options.journal_size_limit)?;
+        let journal_size_limit = options.journal_size_limit();
 
-        Ok(Self {
+        let wal_autocheckpoint = journal_size_limit.into_wall_autocheckpoint(page_size);
+
+        let pragma = Self {
             max_page_count,
-            journal_size_limit: options.journal_size_limit.to_bytes(),
+            journal_size_limit: journal_size_limit.to_bytes(),
             wal_autocheckpoint,
-        })
+        };
+
+        pragma.validate(connection)
     }
 
-    fn compute_max_page_count(connection: &Connection, max_size: Size) -> Result<u32, SqliteError> {
-        let page_size: u64 = get_pragma(connection, "page_size")?;
-
-        // perform euclidean division to retrieve the correct number of pages
-        // no need to perform checked div since the minimum page size is 512 bytes
-        // <https://www.sqlite.org/pragma.html#pragma_page_size>
-        // we limit the lower bound to 1 page since we don't want a 0 page db
-        Ok(max_size.calculate_max_page_count(page_size).max(1))
-    }
-
-    fn validate_max_page_count(connection: &Connection, max: u32) -> Result<(), SqliteError> {
-        if max == 0 {
-            return Err(SqliteError::InvalidMaxSize {
-                ctx: "max page count cannot be 0",
-            });
-        }
-
+    /// Check if the PRAGMA are valid
+    ///
+    /// # Errors
+    ///
+    /// If the page count is less than the current page_count this call will fail.
+    #[instrument(skip_all)]
+    fn validate<C>(self, connection: &C) -> Result<Self, SqliteError>
+    where
+        C: SqliteConnection,
+    {
         // check if the new database size is lower than the actual one
-        let current_pages: u32 = get_pragma(connection, "page_count")?;
+        let current_pages: u32 = connection.get_pragma("page_count")?;
 
-        if max < current_pages {
+        if self.max_page_count.get() < current_pages {
             return Err(SqliteError::InvalidMaxSize {
                 ctx: "cannot shrink the database",
             });
         }
 
-        Ok(())
-    }
-
-    fn compute_autocheckpoint_pages(
-        connection: &Connection,
-        journal_size_limit: Size,
-    ) -> Result<u32, SqliteError> {
-        let page_size: u64 = get_pragma(connection, "page_size")?;
-        // we want a number of pages for autocheckpointing currently we divide by 10
-        // to get a sensible number lower than the size limit
-        // we also set a maximum of 1000 to avoid exceeding the default value for sqlite
-        // and a minimum of 1 page to avoid setting a 0 page autocheckpoint that would
-        // turn off the autocheckpoints
-        Ok(journal_size_limit
-            .calculate_max_page_count(page_size)
-            .div_euclid(10)
-            .clamp(1, SQLITE_WAL_AUTOCHECKPOINT))
-    }
-
-    /// Applies default and configured pragmas to the passed connection.
-    ///
-    /// Set journal size limit to the limit configured.
-    /// Set also the wal autocheckpoint to a value of pages lower than the
-    /// size limit (in pages) so that the commit happens before surpassing the size.
-    ///
-    /// <https://www.sqlite.org/pragma.html#pragma_journal_size_limit>
-    /// <https://www.sqlite.org/pragma.html#pragma_wal_autocheckpoint>
-    ///
-    /// Applies also max pages database limit to the passsed connection
-    ///
-    /// <https://www.sqlite.org/pragma.html#pragma_max_page_count>
-    pub(crate) fn apply_pragmas(&self, connection: &Connection) -> Result<(), SqliteError> {
-        set_pragma(connection, "journal_mode", "WAL")?;
-        set_pragma(connection, "max_page_count", self.max_page_count)?;
-        set_pragma(connection, "journal_size_limit", self.journal_size_limit)?;
-        set_pragma(connection, "wal_autocheckpoint", self.wal_autocheckpoint)?;
-        set_pragma(connection, "foreign_keys", true)?;
-        set_pragma(connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
-        set_pragma(connection, "synchronous", "NORMAL")?;
-        // Reduces the size of the database
-        set_pragma(connection, "auto_vacuum", "INCREMENTAL")?;
-        set_pragma(connection, "temp_store", "MEMORY")?;
-        set_pragma(connection, "cache_size", SQLITE_CACHE_SIZE)?;
-
-        Ok(())
+        Ok(self)
     }
 }

@@ -121,12 +121,19 @@ zerofrom = { workspace = true }
 
 [features]
 default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
+# Enable and exports the derive macros
 derive = ["dep:astarte-device-sdk-derive"]
+# Deprecated: Add the documentation and description to the interfaces
 interface-doc = []
+# Deprecated: Add stricter checks to the interfaces
 interface-strict = []
+# gRPC connection through the Astarte MessageHub
 message-hub = ["dep:astarte-message-hub-proto"]
+# Logs the SQLite queries and features
 sqlite-trace = ["rusqlite/trace"]
-tokio-multi-thread = ["tokio/rt-multi-thread"]
+# Deprecated: this features should be activated by the user
+tokio-multi-thread = []
+# Uses the webpki-roots the Mozilla CA bundle for TLS
 webpki = ["dep:webpki-roots"]
 
 [lints.rust]

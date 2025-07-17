@@ -47,6 +47,7 @@ use crate::store::PropertyStore;
 use crate::store::SqliteStore;
 use crate::store::StoreCapabilities;
 use crate::transport::Connection;
+use crate::utils::const_conv::const_non_zero_usize;
 use crate::Error;
 
 /// Default capacity of the channels
@@ -61,15 +62,6 @@ pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
 pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
-
-/// Necessary for rust 1.78 const compatibility
-pub(crate) const fn const_non_zero_usize(v: usize) -> NonZeroUsize {
-    let Some(v) = NonZeroUsize::new(v) else {
-        panic!("value cannot be zero");
-    };
-
-    v
-}
 
 /// Astarte builder error.
 ///
@@ -604,11 +596,5 @@ mod test {
         .await
         .unwrap()
         .unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "value cannot be zero")]
-    fn const_non_zero_usize_should_panic() {
-        const_non_zero_usize(0);
     }
 }

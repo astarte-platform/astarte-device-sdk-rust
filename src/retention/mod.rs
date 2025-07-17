@@ -35,6 +35,7 @@ use tracing::{error, warn};
 use crate::{
     error::{DynError, Report},
     interfaces::Interfaces,
+    store::sqlite::SqliteError,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -125,6 +126,9 @@ pub enum RetentionError {
         #[source]
         backtrace: DynError,
     },
+    /// Couldn't acquire the store connection
+    #[error("couldn't acquire store connection")]
+    Connection(#[source] DynError),
 }
 
 impl RetentionError {
@@ -190,6 +194,12 @@ impl RetentionError {
     }
 }
 
+impl From<SqliteError> for RetentionError {
+    fn from(value: SqliteError) -> Self {
+        RetentionError::Connection(value.into())
+    }
+}
+
 /// Publish information to be stored.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PublishInfo<'a> {
@@ -251,6 +261,19 @@ impl<'a> PublishInfo<'a> {
             sent,
             value,
         )
+    }
+
+    /// Returns an owned version of the PublishInfo
+    fn into_owned(self) -> PublishInfo<'static> {
+        PublishInfo {
+            interface: self.interface.into_owned().into(),
+            path: self.path.into_owned().into(),
+            version_major: self.version_major,
+            reliability: self.reliability,
+            expiry: self.expiry,
+            sent: self.sent,
+            value: self.value.into_owned().into(),
+        }
     }
 }
 
