@@ -26,33 +26,48 @@ mod statement;
 
 impl StoredSession for SqliteStore {
     async fn store_introspection(&self, interfaces: &[IntrospectionInterface]) {
-        let _error_logged = self.writer
-            .lock()
-            .await
-            .add_interfaces(interfaces)
-            .inspect_err(|e|
-                error!(error = %Report::new(&e), "Unexpected error in sqlite store introspection"));
+        let interfaces = interfaces.to_vec();
+
+        let res = self
+            .pool
+            .acquire_writer(move |writer| writer.add_interfaces(&interfaces))
+            .await;
+
+        if let Err(err) = res {
+            error!(error = %Report::new(&err), "Unexpected error in sqlite store introspection");
+        }
     }
 
     async fn clear_introspection(&self) {
-        let _error_logged = self.writer.lock().await.clear_introspection().inspect_err(
-            |e| error!(error = %Report::new(&e), "Unexpected error in sqlite clear introspection"),
-        );
+        let res = self
+            .pool
+            .acquire_writer(|writer| writer.clear_introspection())
+            .await;
+
+        if let Err(err) = res {
+            error!(error = %Report::new(err), "Unexpected error in sqlite clear introspection");
+        }
     }
 
     async fn add_interfaces(
         &self,
         interfaces: &[IntrospectionInterface<&str>],
     ) -> Result<(), SessionError> {
-        self.writer
-            .lock()
+        let interfaces: Vec<IntrospectionInterface> = interfaces
+            .iter()
+            .map(|i| IntrospectionInterface::from(*i))
+            .collect();
+
+        self.pool
+            .acquire_writer(move |writer| writer.add_interfaces(&interfaces))
             .await
-            .add_interfaces(interfaces)
             .map_err(SessionError::add_interfaces)
     }
 
     async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
-        self.with_reader(|r| r.load_introspection())
+        self.pool
+            .acquire_reader(|reader| reader.load_introspection())
+            .await
             .map_err(SessionError::load_introspection)
     }
 
@@ -60,10 +75,14 @@ impl StoredSession for SqliteStore {
         &self,
         interfaces: &[IntrospectionInterface<&str>],
     ) -> Result<(), SessionError> {
-        self.writer
-            .lock()
+        let interfaces: Vec<IntrospectionInterface> = interfaces
+            .iter()
+            .map(|i| IntrospectionInterface::from(*i))
+            .collect();
+
+        self.pool
+            .acquire_writer(move |writer| writer.remove_interfaces(&interfaces))
             .await
-            .remove_interfaces(interfaces)
             .map_err(SessionError::remove_interfaces)
     }
 }

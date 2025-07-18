@@ -323,6 +323,18 @@ impl<'a> StoredProp<&'a str, &'a AstarteData> {
     }
 }
 
+impl<'a> From<StoredProp<&'a str, &'a AstarteData>> for StoredProp {
+    fn from(value: StoredProp<&'a str, &'a AstarteData>) -> Self {
+        Self {
+            interface: value.interface.to_string(),
+            path: value.path.to_string(),
+            value: value.value.clone(),
+            interface_major: value.interface_major,
+            ownership: value.ownership,
+        }
+    }
+}
+
 impl<'a> From<&'a StoredProp> for StoredProp<&'a str, &'a AstarteData> {
     fn from(value: &'a StoredProp) -> Self {
         Self {
