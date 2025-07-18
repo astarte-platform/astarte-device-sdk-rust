@@ -33,8 +33,8 @@ use crate::{
 };
 
 use super::{
-    into_stored_type, set_pragma, wrap_sync_call, PropRecord, RecordOwnership, SqliteError,
-    SqlitePragmas, StoredRecord, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE,
+    into_stored_type, wrap_sync_call, PropRecord, RecordOwnership, SqliteError, SqlitePragmas,
+    StoredRecord,
 };
 
 #[cfg(feature = "sqlite-trace")]
@@ -78,15 +78,6 @@ impl WriteConnection {
             connection,
             retention_capacity: DEFAULT_STORE_CAPACITY,
         };
-
-        set_pragma(&connection, "foreign_keys", true)?;
-        set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
-        set_pragma(&connection, "synchronous", "NORMAL")?;
-        // Reduces the size of the database
-        set_pragma(&connection, "auto_vacuum", "INCREMENTAL")?;
-        set_pragma(&connection, "temp_store", "MEMORY")?;
-        set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
-        set_pragma(&connection, "journal_mode", "WAL")?;
 
         // perform vacuum
         connection.execute("VACUUM", [])?;
@@ -215,11 +206,6 @@ impl ReadConnection {
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
 
-        // init read pragma
-        set_pragma(&connection, "foreign_keys", true)?;
-        set_pragma(&connection, "temp_store", "MEMORY")?;
-        set_pragma(&connection, "busy_timeout", SQLITE_BUSY_TIMEOUT)?;
-        set_pragma(&connection, "cache_size", SQLITE_CACHE_SIZE)?;
         pragmas.apply_pragmas(&connection)?;
 
         Ok(Self(connection))
@@ -407,11 +393,9 @@ impl Deref for ReadConnection {
 #[cfg(test)]
 mod tests {
     use crate::store::{
-        sqlite::{const_non_zero, get_pragma, Size, SQLITE_JOURNAL_SIZE_LIMIT},
+        sqlite::{const_non_zero, get_pragma, set_pragma, Size, SQLITE_JOURNAL_SIZE_LIMIT},
         SqliteStore,
     };
-
-    use super::*;
 
     #[tokio::test]
     async fn custom_journal_size_unchanged() {
