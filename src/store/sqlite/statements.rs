@@ -33,8 +33,8 @@ use crate::{
 };
 
 use super::{
-    into_stored_type, wrap_sync_call, PropRecord, RecordOwnership, SqliteError, SqlitePragmas,
-    StoredRecord,
+    into_stored_type, options::SqliteStoreOptions, wrap_sync_call, PropRecord, RecordOwnership,
+    SqliteError, SqlitePragmas, StoredRecord,
 };
 
 #[cfg(feature = "sqlite-trace")]
@@ -60,7 +60,10 @@ pub(crate) struct WriteConnection {
 }
 
 impl WriteConnection {
-    pub(crate) async fn connect(db_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
+    pub(crate) async fn connect(
+        db_file: impl AsRef<Path>,
+        options: &SqliteStoreOptions,
+    ) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
@@ -82,7 +85,16 @@ impl WriteConnection {
         // perform vacuum
         connection.execute("VACUUM", [])?;
 
+        let pragmas = SqlitePragmas::try_from_options(&connection.connection, options)?;
+        pragmas.apply_pragmas(&connection)?;
+
         Ok(connection)
+    }
+
+    pub(super) fn apply_pragmas(&self, options: &SqliteStoreOptions) -> Result<(), SqliteError> {
+        let pragmas = SqlitePragmas::try_from_options(&self.connection, options)?;
+        pragmas.apply_pragmas(&self.connection)?;
+        Ok(())
     }
 
     #[instrument(skip_all)]
@@ -194,7 +206,7 @@ pub(crate) struct ReadConnection(Connection);
 impl ReadConnection {
     pub(crate) fn connect(
         db_file: impl AsRef<Path>,
-        pragmas: &SqlitePragmas,
+        options: &SqliteStoreOptions,
     ) -> Result<Self, SqliteError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
@@ -206,6 +218,7 @@ impl ReadConnection {
         #[cfg(feature = "sqlite-trace")]
         connection.trace(Some(trace_sqlite));
 
+        let pragmas = SqlitePragmas::try_from_options(&connection, options)?;
         pragmas.apply_pragmas(&connection)?;
 
         Ok(Self(connection))
