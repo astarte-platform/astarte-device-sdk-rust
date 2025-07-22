@@ -16,11 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
-use eyre::Context;
+use clap::Parser;
+use futures::future::Either;
+use serde::{Deserialize, Serialize};
+use tracing::info;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const INDIVIDUAL_STORED: &str = include_str!(
@@ -59,10 +65,6 @@ const OBJECT_UNIQ_VOLATILE: &str = include_str!(
 const OBJECT_UNIQ_VOLATILE_NAME: &str =
     "org.astarte-platform.rust.examples.individual-datastream.VolatileUniqDeviceObject";
 
-fn get_env(name: &'static str) -> eyre::Result<String> {
-    std::env::var(name).wrap_err_with(|| format!("couldn't get environment variable {name}"))
-}
-
 #[derive(Debug, Clone, IntoAstarteObject)]
 struct ObjectDatastream {
     longinteger: i64,
@@ -78,6 +80,24 @@ impl ObjectDatastream {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct Config {
+    realm: String,
+    device_id: String,
+    credentials_secret: String,
+    pairing_url: String,
+}
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to the config file for the example
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+    /// Limit run time of the transmission of the example (in seconds)
+    #[arg(short, long)]
+    transmission_timeout_sec: Option<NonZeroU32>,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -86,10 +106,26 @@ async fn main() -> eyre::Result<()> {
         .install_default()
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
-    let realm = get_env("ASTARTE_REALM")?;
-    let device_id = get_env("ASTARTE_DEVICE_ID")?;
-    let credentials_secret = get_env("ASTARTE_CREDENTIALS_SECRET")?;
-    let pairing_url = get_env("ASTARTE_PAIRING_URL")?;
+    let Args {
+        config,
+        transmission_timeout_sec,
+    } = Args::parse();
+
+    let transmission_timeout =
+        transmission_timeout_sec.map(|s| Duration::from_secs(s.get().into()));
+
+    let file_path = config
+        .map(|p| p.into_os_string().into_string())
+        .transpose()
+        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
+        .unwrap_or_else(|| "./examples/retention/configuration.json".to_string());
+    let file = std::fs::read_to_string(file_path).unwrap();
+    let Config {
+        realm,
+        device_id,
+        credentials_secret,
+        pairing_url,
+    } = serde_json::from_str(&file)?;
 
     let mut mqtt_config =
         MqttConfig::with_credential_secret(&realm, &device_id, &credentials_secret, &pairing_url);
@@ -162,8 +198,29 @@ async fn main() -> eyre::Result<()> {
         }
     });
 
-    while let Some(res) = tasks.join_next().await {
-        res??;
+    if let Some(timeout) = transmission_timeout {
+        let out = futures::future::select(
+            Box::pin(tasks.join_next()),
+            Box::pin(tokio::time::sleep(timeout)),
+        )
+        .await;
+
+        match out {
+            Either::Left((o, _)) => info!(o = ?o, "Task exited"),
+            Either::Right(_) => info!("Reached timeout"),
+        }
+    } else {
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(res) => {
+                    res?;
+
+                    tasks.abort_all();
+                }
+                Err(err) if err.is_cancelled() => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
     }
 
     Ok(())
@@ -175,7 +232,8 @@ fn init_tracing() -> eyre::Result<()> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
         )
         .try_init()?;
 

@@ -16,9 +16,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Utc;
+use clap::Parser;
+use futures::future::Either;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::IntoAstarteObject;
@@ -27,6 +31,7 @@ use astarte_device_sdk::{
 };
 use tokio::task::JoinSet;
 use tracing::info;
+use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize)]
@@ -44,6 +49,16 @@ struct DataObject {
     endpoint3: Vec<bool>,
 }
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to the config file for the example
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+    /// Limit run time of the transmission of the example (in seconds)
+    #[arg(short, long)]
+    transmission_timeout_sec: Option<NonZeroU32>,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -52,8 +67,21 @@ async fn main() -> eyre::Result<()> {
         .install_default()
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
+    let Args {
+        config,
+        transmission_timeout_sec,
+    } = Args::parse();
+
+    let transmission_timeout =
+        transmission_timeout_sec.map(|s| Duration::from_secs(s.get().into()));
+
     // Load configuration
-    let file = std::fs::read_to_string("./examples/object_datastream/configuration.json")?;
+    let file_path = config
+        .map(|p| p.into_os_string().into_string())
+        .transpose()
+        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
+        .unwrap_or_else(|| "./examples/object_datastream/configuration.json".to_string());
+    let file = std::fs::read_to_string(file_path)?;
     let cfg: Config = serde_json::from_str(&file)?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
@@ -65,6 +93,7 @@ async fn main() -> eyre::Result<()> {
 
     mqtt_config.ignore_ssl_errors();
 
+    info!("looping");
     // Create an Astarte Device (also performs the connection)
     let (client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
@@ -104,7 +133,7 @@ async fn main() -> eyre::Result<()> {
         }
     });
 
-    // Create a thread to receive
+    // Spawn a task to receive
     tasks.spawn(async move {
         loop {
             let event = client.recv().await?;
@@ -113,22 +142,38 @@ async fn main() -> eyre::Result<()> {
         }
     });
 
-    // Use the current thread to handle the connection (no incoming messages are expected in this example)
+    // Spawn a task to handle the event loop
     tasks.spawn(async move {
         connection.handle_events().await?;
 
         Ok(())
     });
 
-    while let Some(res) = tasks.join_next().await {
-        match res {
-            Ok(res) => {
-                res?;
+    if let Some(timeout) = transmission_timeout {
+        let out = futures::future::select(
+            Box::pin(tasks.join_next()),
+            Box::pin(tokio::time::sleep(timeout)),
+        )
+        .await;
 
-                tasks.abort_all();
+        match out {
+            Either::Left((res, _)) => {
+                info!(res = ?res, "Task exited");
             }
-            Err(err) if err.is_cancelled() => {}
-            Err(err) => return Err(err.into()),
+            Either::Right(_) => info!("Reached timeout"),
+        }
+    } else {
+        info!("looping");
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(res) => {
+                    res?;
+
+                    tasks.abort_all();
+                }
+                Err(err) if err.is_cancelled() => {}
+                Err(err) => return Err(err.into()),
+            }
         }
     }
 
@@ -141,7 +186,8 @@ fn init_tracing() -> eyre::Result<()> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
         )
         .try_init()?;
 

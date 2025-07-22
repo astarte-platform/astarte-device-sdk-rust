@@ -16,7 +16,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{num::NonZeroU32, path::PathBuf, time::Duration};
+
+use clap::Parser;
 use eyre::OptionExt;
+use futures::future::Either;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
@@ -24,7 +28,7 @@ use astarte_device_sdk::{
     transport::mqtt::MqttConfig, Value,
 };
 use tokio::task::JoinSet;
-use tracing::{error, info};
+use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -33,6 +37,16 @@ struct Config {
     device_id: String,
     credentials_secret: String,
     pairing_url: String,
+}
+
+#[derive(Parser, Debug)]
+struct Args {
+    /// Path to the config file for the example
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+    /// Limit run time of the transmission of the example (in seconds)
+    #[arg(short, long)]
+    transmission_timeout_sec: Option<NonZeroU32>,
 }
 
 // Getter function for the property "name" of a sensor.
@@ -62,7 +76,21 @@ async fn main() -> eyre::Result<()> {
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
     // Load configuration
-    let file = std::fs::read_to_string("./examples/individual_properties/configuration.json")?;
+    let Args {
+        config,
+        transmission_timeout_sec,
+    } = Args::parse();
+
+    let transmission_timeout =
+        transmission_timeout_sec.map(|s| Duration::from_secs(s.get().into()));
+
+    // Load configuration
+    let file_path = config
+        .map(|p| p.into_os_string().into_string())
+        .transpose()
+        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
+        .unwrap_or_else(|| "./examples/individual_properties/configuration.json".to_string());
+    let file = std::fs::read_to_string(file_path)?;
     let cfg: Config = serde_json::from_str(&file)?;
 
     // Open the database, create it if it does not exists
@@ -172,15 +200,28 @@ async fn main() -> eyre::Result<()> {
         Ok(())
     });
 
-    while let Some(res) = tasks.join_next().await {
-        match res {
-            Ok(res) => {
-                res?;
+    if let Some(timeout) = transmission_timeout {
+        let out = futures::future::select(
+            Box::pin(tasks.join_next()),
+            Box::pin(tokio::time::sleep(timeout)),
+        )
+        .await;
 
-                tasks.abort_all();
+        match out {
+            Either::Left((o, _)) => info!(o = ?o, "Task exited"),
+            Either::Right(_) => info!("Reached timeout"),
+        }
+    } else {
+        while let Some(res) = tasks.join_next().await {
+            match res {
+                Ok(res) => {
+                    res?;
+
+                    tasks.abort_all();
+                }
+                Err(err) if err.is_cancelled() => {}
+                Err(err) => return Err(err.into()),
             }
-            Err(err) if err.is_cancelled() => {}
-            Err(err) => return Err(err.into()),
         }
     }
 
@@ -193,7 +234,8 @@ fn init_tracing() -> eyre::Result<()> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
         )
         .try_init()?;
 

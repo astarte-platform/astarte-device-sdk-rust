@@ -29,7 +29,7 @@ use astarte_device_sdk::{
 };
 use eyre::OptionExt;
 use tokio::task::JoinSet;
-use tracing::{error, info, warn};
+use tracing::{error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
@@ -232,7 +232,8 @@ fn init_tracing() -> eyre::Result<()> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
         )
         .try_init()?;
 

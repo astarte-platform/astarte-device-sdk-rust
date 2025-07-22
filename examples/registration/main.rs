@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+
+use clap::Parser;
 /*
  * This file is part of Astarte.
  *
@@ -18,7 +21,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -29,6 +32,13 @@ struct Config {
     pairing_url: String,
 }
 
+#[derive(clap::Parser, Debug)]
+struct Args {
+    /// Path to the config file for the example
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -37,9 +47,17 @@ async fn main() -> eyre::Result<()> {
         .install_default()
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
+    let args = Args::parse();
+
     // Load configuration
-    let file = std::fs::read_to_string("./examples/registration/configuration.json").unwrap();
-    let cfg: Config = serde_json::from_str(&file).unwrap();
+    let file_path = args
+        .config
+        .map(|p| p.into_os_string().into_string())
+        .transpose()
+        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
+        .unwrap_or_else(|| "./examples/registration/configuration.json".to_string());
+    let file = std::fs::read_to_string(file_path)?;
+    let cfg: Config = serde_json::from_str(&file)?;
 
     info!(%cfg.device_id, "attempting to register the device");
 
@@ -49,8 +67,7 @@ async fn main() -> eyre::Result<()> {
         &cfg.realm,
         &cfg.device_id,
     )
-    .await
-    .unwrap();
+    .await?;
 
     info!(
         credentials_secret,
@@ -66,7 +83,8 @@ fn init_tracing() -> eyre::Result<()> {
         .with(
             tracing_subscriber::EnvFilter::builder()
                 .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
-                .from_env_lossy(),
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
         )
         .try_init()?;
 
