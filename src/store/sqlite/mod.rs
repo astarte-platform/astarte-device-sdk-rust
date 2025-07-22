@@ -25,6 +25,7 @@ use astarte_interfaces::{
     Properties, Schema,
 };
 use futures::lock::Mutex;
+use options::{SizeLimit, SqlitePragmas, SqliteStoreOptions};
 use rusqlite::{
     types::{FromSql, FromSqlError},
     Connection, OptionalExtension, ToSql,
@@ -39,6 +40,7 @@ use crate::{
     types::{de::BsonConverter, AstarteData, TypeError},
 };
 
+pub(crate) mod options;
 pub(crate) mod statements;
 
 /// Milliseconds for the busy timeout
@@ -55,7 +57,7 @@ pub const SQLITE_CACHE_SIZE: i16 = -(Size::MiB(const_non_zero(2)).to_kibibytes_c
 ///
 /// The default value specidfied in <https://www.sqlite.org/pragma.html#pragma_journal_size_limit> is -1
 /// which does not set an effective limit, therefore we assume a default size of 64 mebibytes
-pub const SQLITE_JOURNAL_SIZE_LIMIT: u64 = Size::MiB(const_non_zero(64)).to_bytes();
+pub const SQLITE_JOURNAL_SIZE_LIMIT: Size = Size::MiB(const_non_zero(64));
 
 /// Default database size
 pub const SQLITE_DEFAULT_DB_MAX_SIZE: Size = Size::GiB(const_non_zero(1));
@@ -64,6 +66,12 @@ pub const SQLITE_DEFAULT_DB_MAX_SIZE: Size = Size::GiB(const_non_zero(1));
 ///
 /// <https://www.sqlite.org/limits.html>
 pub const SQLITE_MAX_PAGE_COUNT: u32 = 4294967294;
+
+/// SQLite auto checkpoint limit, a checkpoint will run whenever the log
+/// is equal or above this size.
+///
+/// <https://www.sqlite.org/pragma.html#pragma_wal_autocheckpoint>
+pub const SQLITE_WAL_AUTOCHECKPOINT: u32 = 1000;
 
 /// Error returned by the [`SqliteStore`].
 #[non_exhaustive]
@@ -372,6 +380,17 @@ thread_local! {
     static READER: Cell<Vec<ReadConnection>> = const { Cell::new(Vec::new()) };
 }
 
+/// Return db pages information
+///
+/// Useful to retrieve data assocuiated to PRAGMA page_size, page_count, max_page_count
+pub(crate) fn get_pragma<T>(connection: &Connection, pragma_name: &str) -> Result<T, SqliteError>
+where
+    T: FromSql,
+{
+    wrap_sync_call(|| connection.pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0)))
+        .map_err(SqliteError::Query)
+}
+
 pub(crate) fn set_pragma<V>(
     connection: &Connection,
     pragma_name: &str,
@@ -393,12 +412,11 @@ where
 /// respective [`AstarteData`].
 ///
 /// The retention is stored as a BLOB serialized by the connection.
-///
-///
 #[derive(Clone, Debug)]
 pub struct SqliteStore {
     pub(crate) db_file: Arc<Path>,
     pub(crate) writer: Arc<Mutex<WriteConnection>>,
+    pub(crate) options: SqliteStoreOptions,
 }
 
 impl SqliteStore {
@@ -406,10 +424,12 @@ impl SqliteStore {
     async fn new(
         db_path: impl AsRef<Path>,
         connection: WriteConnection,
+        options: SqliteStoreOptions,
     ) -> Result<Self, SqliteError> {
         let sqlite_store = SqliteStore {
             db_file: db_path.as_ref().into(),
             writer: Arc::new(Mutex::new(connection)),
+            options,
         };
 
         sqlite_store.migrate().await?;
@@ -429,6 +449,9 @@ impl SqliteStore {
     ///     let store = SqliteStore::connect("/val/lib/astarte/").await.unwrap();
     /// }
     /// ```
+    // FIXME in a later version we could accept SqliteStoreOptions here instead on relying on setters
+    // this is to avoid setting the default pragmas before the user overrides them by using
+    // the setters
     pub async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
         // TODO: rename the database to store.db since it doesn't contain only  properties
         let db = writable_path.as_ref().join("prop-cache.db");
@@ -449,9 +472,9 @@ impl SqliteStore {
     /// }
     /// ```
     pub async fn connect_db(database_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        let connection = WriteConnection::connect(&database_file).await?;
-
-        Self::new(database_file, connection).await
+        let options = SqliteStoreOptions::default();
+        let connection = WriteConnection::connect(&database_file, &options).await?;
+        Self::new(database_file, connection, options).await
     }
 
     /// Pass the thread local reference to the read only connection.
@@ -487,7 +510,7 @@ impl SqliteStore {
             return Ok(&v[idx]);
         }
 
-        let new_connection = ReadConnection::connect(&self.db_file)?;
+        let new_connection = ReadConnection::connect(&self.db_file, &self.options)?;
 
         let idx = v.len();
         v.push(new_connection);
@@ -544,57 +567,45 @@ impl SqliteStore {
     /// Set the maximum number of pages
     ///
     /// The new database size cannot be lower than the actual one.
+    // FIXME this method should be removed and this option should be configurable only during object construction
     pub async fn set_max_pages(&mut self, max: u32) -> Result<(), SqliteError> {
-        if max == 0 {
-            return Err(SqliteError::InvalidMaxSize {
-                ctx: "max page count cannot be 0",
-            });
-        }
-
         let writer = self.writer.lock().await;
 
-        // check if the number of pages provided in input is the same as the maximum one
-        let current_max: u32 = writer.get_pragma("max_page_count")?;
+        let mut modified_options = self.options.clone();
+        modified_options.db_size_limit = SizeLimit::Pages(max);
+        writer.apply_pragmas(&modified_options)?;
+        self.options = modified_options;
 
-        if max == current_max {
-            return Ok(());
-        }
-
-        // check if the new database size is lower than the actual one
-        let current_pages: u32 = writer.get_pragma("page_count")?;
-
-        if max < current_pages {
-            return Err(SqliteError::InvalidMaxSize {
-                ctx: "cannot shrink the database",
-            });
-        }
-
-        set_pragma(&writer, "max_page_count", max)
+        Ok(())
     }
 
     /// Set the maximum number of pages based on the actual maximum size of the db file
+    // FIXME this method should be removed and this option should be configurable only during object construction
     pub async fn set_db_max_size(&mut self, size: Size) -> Result<(), SqliteError> {
-        let page_size: u64 = {
-            let writer = self.writer.lock().await;
+        let writer = self.writer.lock().await;
 
-            writer.get_pragma("page_size")?
-        };
+        let mut modified_options = self.options.clone();
+        modified_options.db_size_limit = SizeLimit::Size(size);
+        writer.apply_pragmas(&modified_options)?;
+        self.options = modified_options;
 
-        // perform euclidean division to retrieve the correct number of pages
-        // no need to perform checked div since the minimum page size is 512 bytes
-        // <https://www.sqlite.org/pragma.html#pragma_page_size>
-        let max_pages = size.calculate_max_page_count(page_size);
-
-        self.set_max_pages(max_pages).await
+        Ok(())
     }
 
     /// Set journal size limit for the current database connection.
-    ///
-    /// <https://www.sqlite.org/pragma.html#pragma_journal_size_limit>
+    /// This will allow to set the limit a value as low as 1KB however
+    /// the wal_autocheckpoint will be set to 1 page (4096 bytes) even if
+    /// this is larger than the journal size.
+    // FIXME this method should be removed and this option should be configurable only during object construction
     pub async fn set_journal_size_limit(&mut self, size: Size) -> Result<(), SqliteError> {
         let writer = self.writer.lock().await;
 
-        set_pragma(&writer, "journal_size_limit", size.to_bytes())
+        let mut modified_options = self.options.clone();
+        modified_options.journal_size_limit = size;
+        writer.apply_pragmas(&modified_options)?;
+        self.options = modified_options;
+
+        Ok(())
     }
 }
 
@@ -852,7 +863,7 @@ mod tests {
 
         let page_size: usize = {
             let connection = db.writer.lock().await;
-            connection.get_pragma("page_size").unwrap()
+            get_pragma(&connection, "page_size").unwrap()
         };
 
         db.store_prop(StoredProp {
@@ -883,8 +894,8 @@ mod tests {
         let (page_size, page_count): (u32, u32) = {
             let connection = db.writer.lock().await;
             (
-                connection.get_pragma("page_size").unwrap(),
-                connection.get_pragma("page_count").unwrap(),
+                get_pragma(&connection, "page_size").unwrap(),
+                get_pragma(&connection, "page_count").unwrap(),
             )
         };
 
@@ -916,7 +927,8 @@ mod tests {
 
         assert!(db.set_max_pages(10).await.is_ok());
 
-        let page_count: u32 = db.writer.lock().await.get_pragma("max_page_count").unwrap();
+        let lock = db.writer.lock().await;
+        let page_count: u32 = get_pragma(&lock, "max_page_count").unwrap();
         let exp_count = 10;
 
         assert_eq!(page_count, exp_count);
@@ -930,12 +942,29 @@ mod tests {
         let size = Size::MiB(NonZeroU64::new(4).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
-        assert!(db.set_db_max_size(size).await.is_ok());
+        db.set_db_max_size(size).await.unwrap();
 
-        let page_count: u32 = db.writer.lock().await.get_pragma("max_page_count").unwrap();
+        let lock = db.writer.lock().await;
+        let page_count: u32 = get_pragma(&lock, "max_page_count").unwrap();
         let exp_count = 1024; // 4MiB / 4096B = 1024 pages
 
         assert_eq!(page_count, exp_count);
+    }
+
+    #[tokio::test]
+    async fn set_db_max_size_min() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+
+        // set the max size considering the default page size of 4096 bytes
+        // NOTE since the limit is set after the database is created we can't shrink an
+        // already created database this means that settin a 1KB limit is currently not supported
+        // even a 1 page limit (4096B) would not work
+        let res = db.set_db_max_size(size).await;
+
+        assert!(res.is_err());
     }
 
     #[test]
@@ -954,16 +983,38 @@ mod tests {
         // set the max size considering the default page size of 4096 bytes
         assert!(db.set_journal_size_limit(size).await.is_ok());
 
-        let journal_size: u32 = db
-            .writer
-            .lock()
-            .await
-            .get_pragma("journal_size_limit")
-            .unwrap();
-
+        let lock = db.writer.lock().await;
+        let journal_size: u32 = get_pragma(&lock, "journal_size_limit").unwrap();
         let exp_size: u32 = size.to_bytes().try_into().unwrap();
-
         assert_eq!(journal_size, exp_size);
+
+        let wal_autocheckpoint: u32 = get_pragma(&lock, "wal_autocheckpoint").unwrap();
+        // autocheckpoin is set to a fraction of the journal_size in pages (pages / 10)
+        // in this case 1MiB / 4096 / 10 = 25
+        let exp_autocheckpoint = 25;
+        assert_eq!(wal_autocheckpoint, exp_autocheckpoint);
+    }
+
+    #[tokio::test]
+    async fn set_journal_size_limit_min() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+
+        // set the max size considering the default page size of 4096 bytes
+        assert!(db.set_journal_size_limit(size).await.is_ok());
+
+        let lock = db.writer.lock().await;
+        let journal_size: u32 = get_pragma(&lock, "journal_size_limit").unwrap();
+        let exp_size: u32 = size.to_bytes().try_into().unwrap();
+        assert_eq!(journal_size, exp_size);
+
+        let wal_autocheckpoint: u32 = get_pragma(&lock, "wal_autocheckpoint").unwrap();
+        // autocheckpoin is set to a fraction of the journal_size in pages
+        // in this case the size in pages is 0 (1KB / 4096 = 0) but the minimum we allow is 1
+        let exp_autocheckpoint = 1;
+        assert_eq!(wal_autocheckpoint, exp_autocheckpoint);
     }
 
     #[test]
