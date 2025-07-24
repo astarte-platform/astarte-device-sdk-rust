@@ -67,3 +67,9 @@ jobs:
         # use the full command to use the sccache
         run: |
           cargo run --locked -p e2e-test -- run
+      - name: Run examples
+        uses: ./.github/actions/run-examples
+        with:
+          sdk_path: ${{ github.workspace }}
+          astarte_realm: ${{ env.E2E_REALM }}
+          astarte_pairing_url: https://api.${{ env.E2E_BASE_DOMAIN }}/pairing

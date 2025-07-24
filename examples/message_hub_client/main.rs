@@ -29,7 +29,7 @@ use astarte_device_sdk::{
 };
 use eyre::OptionExt;
 use tokio::task::JoinSet;
-use tracing::{error, info, warn};
+use tracing::{error, info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
@@ -157,7 +157,7 @@ async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
             .await?;
         // Set the Property
         client
-            .send_individual(
+            .set_property(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
                 42.0.try_into()?,
@@ -171,10 +171,7 @@ async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()?;
-
+    init_tracing()?;
     let (client, connection) = init().await?;
 
     info!("connected to the MessageHub");
@@ -225,6 +222,20 @@ async fn main() -> eyre::Result<()> {
     }
 
     info!("device disconnected");
+
+    Ok(())
+}
+
+fn init_tracing() -> eyre::Result<()> {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
+                .from_env_lossy()
+                .add_directive(LevelFilter::INFO.into()),
+        )
+        .try_init()?;
 
     Ok(())
 }
