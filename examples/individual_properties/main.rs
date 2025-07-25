@@ -47,8 +47,55 @@ struct Args {
     /// Limit run time of the transmission of the example (in seconds)
     #[arg(short, long)]
     transmission_timeout_sec: Option<NonZeroU32>,
+    /// Limit number of iteration of the send loop
+    #[arg(short, long)]
+    loop_times: Option<NonZeroU32>,
 }
 
+async fn send_loop<C, I>(mut client: C, iter: I) -> eyre::Result<()>
+where
+    C: Client + PropAccess,
+    I: IntoIterator<Item = u32>,
+{
+    let mut i: u32 = 0;
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+    println!("Properties values at startup:");
+    // Check the value of the name property for sensors 1
+    if let Ok(name) = get_name_for_sensor(&client, 1).await {
+        info!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
+        if name != *"None" {
+            i = name
+                .strip_prefix("name number ")
+                .ok_or_eyre("couldn't strip prefix")?
+                .parse()?;
+        }
+    }
+    // Check the value of the name property for sensors 2
+    if let Ok(name) = get_name_for_sensor(&client, 2).await {
+        println!("  - Property \"name\" for sensor 2 has value: \"{name}\"");
+    }
+
+    // Wait for a couple of seconds for a nicer print order
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Send in a loop the change of the property "name" of sensor 1
+    for _ in iter {
+        client
+            .set_property(
+                "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
+                "/1/name",
+                format!("name number {i}").into(),
+            )
+            .await?;
+
+        println!("Sent property \"name\" for sensor 1 with new value \"name number {i}\"");
+        i += 1;
+        interval.tick().await;
+    }
+
+    Ok(())
+}
 // Getter function for the property "name" of a sensor.
 async fn get_name_for_sensor(
     device: &impl PropAccess,
@@ -79,6 +126,7 @@ async fn main() -> eyre::Result<()> {
     let Args {
         config,
         transmission_timeout_sec,
+        loop_times,
     } = Args::parse();
 
     let transmission_timeout =
@@ -107,91 +155,63 @@ async fn main() -> eyre::Result<()> {
     mqtt_config.ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .interface_directory("./examples/individual_properties/interfaces")?
         .store(db)
         .connection(mqtt_config)
         .build()
         .await?;
-    let mut client_cl = client.clone();
 
     println!("Connection to Astarte established.");
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create a thread to transmit
-    tasks.spawn(async move {
-        let mut i: u32 = 0;
-
-        println!("Properties values at startup:");
-        // Check the value of the name property for sensors 1
-        if let Ok(name) = get_name_for_sensor(&client_cl, 1).await {
-            info!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
-            if name != *"None" {
-                i = name
-                    .strip_prefix("name number ")
-                    .ok_or_eyre("couldn't strip prefix")?
-                    .parse()?;
-            }
-        }
-        // Check the value of the name property for sensors 2
-        if let Ok(name) = get_name_for_sensor(&client_cl, 2).await {
-            println!("  - Property \"name\" for sensor 2 has value: \"{name}\"");
-        }
-
-        // Wait for a couple of seconds for a nicer print order
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-        // Send in a loop the change of the property "name" of sensor 1
-        loop {
-            client_cl
-                .set_property(
-                    "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
-                    "/1/name",
-                    format!("name number {i}").into(),
-                )
-                .await?;
-
-            println!("Sent property \"name\" for sensor 1 with new value \"name number {i}\"");
-            i += 1;
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    });
+    // Create a task to transmit
+    if let Some(c) = loop_times {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0..c.get()));
+    } else {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0u32..));
+    }
 
     // Use the current thread to receive changes in the server owned properties
-    tasks.spawn(async move {
-        loop {
-            match client.recv().await {
-                Ok(event) => {
-                    if let Value::Individual { data, timestamp: _ } = event.data {
-                        let mut iter = event.path.splitn(3, '/').skip(1);
-                        let sensor_id = iter
-                            .next()
-                            .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or_eyre("Incorrect error received.")?;
+    tasks.spawn({
+        let client = client.clone();
+        async move {
+            loop {
+                match client.recv().await {
+                    Ok(event) => {
+                        if let Value::Individual { data, timestamp: _ } = event.data {
+                            let mut iter = event.path.splitn(3, '/').skip(1);
+                            let sensor_id = iter
+                                .next()
+                                .and_then(|id| id.parse::<u16>().ok())
+                                .ok_or_eyre("Incorrect error received.")?;
 
-                        match iter.next() {
-                            Some("enable") => {
-                                println!(
-                                    "Sensor number {} has been {}",
-                                    sensor_id,
-                                    if data == true { "ENABLED" } else { "DISABLED" }
-                                );
+                            match iter.next() {
+                                Some("enable") => {
+                                    println!(
+                                        "Sensor number {} has been {}",
+                                        sensor_id,
+                                        if data == true { "ENABLED" } else { "DISABLED" }
+                                    );
+                                }
+                                Some("samplingPeriod") => {
+                                    let value: i32 = data.try_into()?;
+                                    println!("Sampling period for sensor {sensor_id} is {value}");
+                                }
+                                _ => {}
                             }
-                            Some("samplingPeriod") => {
-                                let value: i32 = data.try_into()?;
-                                println!("Sampling period for sensor {sensor_id} is {value}");
-                            }
-                            _ => {}
                         }
                     }
+                    Err(RecvError::Disconnected) => break,
+                    Err(err) => error!(error = %err, "error returned by the client"),
                 }
-                Err(RecvError::Disconnected) => break,
-                Err(err) => error!(error = %err, "error returned by the client"),
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     });
 
     tasks.spawn(async move {
@@ -216,14 +236,16 @@ async fn main() -> eyre::Result<()> {
             match res {
                 Ok(res) => {
                     res?;
-
-                    tasks.abort_all();
+                    break;
                 }
                 Err(err) if err.is_cancelled() => {}
                 Err(err) => return Err(err.into()),
             }
         }
     }
+
+    client.disconnect().await?;
+    tasks.shutdown().await;
 
     Ok(())
 }
