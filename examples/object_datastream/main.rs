@@ -57,6 +57,38 @@ struct Args {
     /// Limit run time of the transmission of the example (in seconds)
     #[arg(short, long)]
     transmission_timeout_sec: Option<NonZeroU32>,
+    /// Limit number of iteration of the send loop
+    #[arg(short, long)]
+    loop_times: Option<NonZeroU32>,
+}
+
+async fn send_loop<I>(mut client: impl Client, iter: I) -> eyre::Result<()>
+where
+    I: IntoIterator<Item = u32>,
+{
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    for _ in iter {
+        let data = DataObject {
+            endpoint1: 1.34,
+            endpoint2: "Hello world.".to_string(),
+            endpoint3: vec![true, false, true, false],
+        };
+
+        info!(?data, "sending");
+
+        client
+            .send_object_with_timestamp(
+                "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
+                "/23",
+                data.try_into().unwrap(),
+                Utc::now(),
+            )
+            .await?;
+
+        interval.tick().await;
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -70,6 +102,7 @@ async fn main() -> eyre::Result<()> {
     let Args {
         config,
         transmission_timeout_sec,
+        loop_times,
     } = Args::parse();
 
     let transmission_timeout =
@@ -95,7 +128,7 @@ async fn main() -> eyre::Result<()> {
 
     info!("looping");
     // Create an Astarte Device (also performs the connection)
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connection(mqtt_config)
@@ -104,41 +137,25 @@ async fn main() -> eyre::Result<()> {
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create a thread to transmit
-    tasks.spawn({
-        let mut client = client.clone();
-
-        async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                let data = DataObject {
-                    endpoint1: 1.34,
-                    endpoint2: "Hello world.".to_string(),
-                    endpoint3: vec![true, false, true, false],
-                };
-
-                info!(?data, "sending");
-
-                client
-                    .send_object_with_timestamp(
-                        "org.astarte-platform.rust.examples.object-datastream.DeviceDatastream",
-                        "/23",
-                        data.try_into().unwrap(),
-                        Utc::now(),
-                    )
-                    .await?;
-
-                interval.tick().await;
-            }
-        }
-    });
+    // Create a task to transmit
+    if let Some(c) = loop_times {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0..c.get()));
+    } else {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0u32..));
+    }
 
     // Spawn a task to receive
-    tasks.spawn(async move {
-        loop {
-            let event = client.recv().await?;
+    tasks.spawn({
+        let client = client.clone();
 
-            info!(?event, "received");
+        async move {
+            loop {
+                let event = client.recv().await?;
+
+                info!(?event, "received");
+            }
         }
     });
 
@@ -168,14 +185,16 @@ async fn main() -> eyre::Result<()> {
             match res {
                 Ok(res) => {
                     res?;
-
-                    tasks.abort_all();
+                    break;
                 }
                 Err(err) if err.is_cancelled() => {}
                 Err(err) => return Err(err.into()),
             }
         }
     }
+
+    client.disconnect().await?;
+    tasks.shutdown().await;
 
     Ok(())
 }

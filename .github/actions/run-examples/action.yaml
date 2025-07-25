@@ -65,8 +65,7 @@ runs:
       # use the full command to use the sccache
       run: |
         cargo run --locked --example registration
-    # retention
-    - name: Configure and build retention
+    - name: Configure and run retention
       shell: bash
       run: |
         ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
@@ -79,17 +78,9 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        # prebuild retention example so that the runtime is not build time
         # FIXME fix the problem with the non unique retention ids and remove the disabled debug assertions
-        RUSTFLAGS="-C debug-assertions=off" cargo build --locked --example retention --features="derive"
-    - name: Run retention
-      shell: bash
-      # use the full command to use the sccache
-      run: |
-        # FIXME fix the problem with the non unique retention ids and remove the disabled debug assertions
-        RUSTFLAGS="-C debug-assertions=off" cargo run --locked --example retention --features="derive" -- -t 10
-    # individual datastream  
-    - name: Configure and build individual datastream
+        RUSTFLAGS="-C debug-assertions=off" cargo run --locked --example retention --features="derive" -- -l 10
+    - name: Configure and run individual datastream
       shell: bash
       run: |
         ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
@@ -102,14 +93,8 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        cargo build --locked --example individual_datastream
-    - name: Run individual datastream
-      shell: bash
-      # use the full command to use the sccache
-      run: |
-        cargo run --locked --example individual_datastream -- -t 10
-    # object datastream  
-    - name: Configure and build object datastream
+        cargo run --locked --example individual_datastream -- -l 10
+    - name: Configure and run object datastream
       shell: bash
       run: |
         ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
@@ -122,14 +107,8 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        cargo build --locked --example object_datastream --features="derive"
-    - name: Run object datastream
-      shell: bash
-      # use the full command to use the sccache
-      run: |
-        cargo run --locked --example object_datastream --features="derive" -- -t 10
-    # individual properties  
-    - name: Configure and build individual properties
+        cargo run --locked --example object_datastream --features="derive" -- -l 10
+    - name: Configure and run individual properties
       shell: bash
       run: |
         ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
@@ -142,9 +121,4 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        cargo build --locked --example individual_properties
-    - name: Run individual properties
-      shell: bash
-      # use the full command to use the sccache
-      run: |
-        cargo run --locked --example individual_properties -- -t 10
+        cargo run --locked --example individual_properties -- -l 10

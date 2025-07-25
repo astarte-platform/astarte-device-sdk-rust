@@ -96,6 +96,57 @@ struct Args {
     /// Limit run time of the transmission of the example (in seconds)
     #[arg(short, long)]
     transmission_timeout_sec: Option<NonZeroU32>,
+    /// Limit number of iteration of the send loop
+    #[arg(short, long)]
+    loop_times: Option<NonZeroU32>,
+}
+
+async fn send_loop<I>(mut client: impl Client, iter: I) -> Result<(), astarte_device_sdk::Error>
+where
+    I: IntoIterator<Item = u32>,
+{
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+    let mut counter: i32 = 0;
+    let mut flag: bool = false;
+
+    for _ in iter {
+        client
+            .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint1", counter.into())
+            .await?;
+        client
+            .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint2", flag.into())
+            .await?;
+        client
+            .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint1", counter.into())
+            .await?;
+        client
+            .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint2", flag.into())
+            .await?;
+
+        let object = ObjectDatastream::new(flag.into(), flag);
+        let object = AstarteObject::try_from(object)?;
+
+        client
+            .send_object(OBJECT_STORED_NAME, "/endpoint", object.clone())
+            .await?;
+        client
+            .send_object(OBJECT_UNIQ_STORED_NAME, "/endpoint", object.clone())
+            .await?;
+        client
+            .send_object(OBJECT_VOLATILE_NAME, "/endpoint", object.clone())
+            .await?;
+        client
+            .send_object(OBJECT_UNIQ_VOLATILE_NAME, "/endpoint", object)
+            .await?;
+
+        counter = counter.wrapping_add(1);
+        flag = !flag;
+
+        interval.tick().await;
+    }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -109,6 +160,7 @@ async fn main() -> eyre::Result<()> {
     let Args {
         config,
         transmission_timeout_sec,
+        loop_times,
     } = Args::parse();
 
     let transmission_timeout =
@@ -155,48 +207,14 @@ async fn main() -> eyre::Result<()> {
     let mut tasks = tokio::task::JoinSet::new();
 
     tasks.spawn(async move { connection.handle_events().await });
-    tasks.spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
 
-        let mut counter: i32 = 0;
-        let mut flag: bool = false;
-
-        loop {
-            client
-                .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint1", counter.into())
-                .await?;
-            client
-                .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint2", flag.into())
-                .await?;
-            client
-                .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint1", counter.into())
-                .await?;
-            client
-                .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint2", flag.into())
-                .await?;
-
-            let object = ObjectDatastream::new(flag.into(), flag);
-            let object = AstarteObject::try_from(object)?;
-
-            client
-                .send_object(OBJECT_STORED_NAME, "/endpoint", object.clone())
-                .await?;
-            client
-                .send_object(OBJECT_UNIQ_STORED_NAME, "/endpoint", object.clone())
-                .await?;
-            client
-                .send_object(OBJECT_VOLATILE_NAME, "/endpoint", object.clone())
-                .await?;
-            client
-                .send_object(OBJECT_UNIQ_VOLATILE_NAME, "/endpoint", object)
-                .await?;
-
-            counter += 1;
-            flag = !flag;
-
-            interval.tick().await;
-        }
-    });
+    if let Some(c) = loop_times {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0..c.get()));
+    } else {
+        let client = client.clone();
+        tasks.spawn(send_loop(client, 0u32..));
+    }
 
     if let Some(timeout) = transmission_timeout {
         let out = futures::future::select(
@@ -214,14 +232,16 @@ async fn main() -> eyre::Result<()> {
             match res {
                 Ok(res) => {
                     res?;
-
-                    tasks.abort_all();
+                    break;
                 }
                 Err(err) if err.is_cancelled() => {}
                 Err(err) => return Err(err.into()),
             }
         }
     }
+
+    client.disconnect().await?;
+    tasks.shutdown().await;
 
     Ok(())
 }
