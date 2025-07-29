@@ -225,18 +225,35 @@ impl<S> MqttClient<S> {
         Ok(())
     }
 
-    async fn mark_as_sent(&self, id: &RetentionId) -> Result<(), Error>
+    async fn mark_sent(
+        &self,
+        id: RetentionId,
+        reliability: Reliability,
+        notice: Token<AckOfPub>,
+    ) -> Result<(), crate::Error>
     where
         S: StoreCapabilities,
     {
-        match id {
-            RetentionId::Volatile(id) => {
-                self.volatile.mark_sent(id, true).await;
+        match reliability {
+            // Since it's Unreliable we will never know the broker received it
+            Reliability::Unreliable => {
+                self.mark_received(&id).await?;
             }
-            RetentionId::Stored(id) => {
-                if let Some(retention) = self.store.get_retention() {
-                    retention.mark_as_sent(id).await?;
+            Reliability::Guaranteed | Reliability::Unique => {
+                match id {
+                    RetentionId::Volatile(id) => {
+                        self.volatile.mark_sent(&id, true).await;
+                    }
+                    RetentionId::Stored(id) => {
+                        if let Some(retention) = self.store.get_retention() {
+                            retention.mark_sent(&id).await?;
+                        }
+                    }
                 }
+
+                self.retention
+                    .send((id, notice))
+                    .map_err(|_| Error::Disconnected)?;
             }
         }
 
@@ -301,19 +318,7 @@ where
             "send stored called for retention discard"
         );
 
-        match validated.reliability {
-            // Since it's Unreliable we will never know the broker received it
-            Reliability::Unreliable => {
-                self.mark_received(&id).await?;
-            }
-            Reliability::Guaranteed | Reliability::Unique => {
-                self.mark_as_sent(&id).await?;
-
-                self.retention
-                    .send((id, notice))
-                    .map_err(|_| Error::Disconnected)?;
-            }
-        }
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -335,9 +340,7 @@ where
             )
             .await?;
 
-        self.retention
-            .send((id, notice))
-            .map_err(|_| Error::Disconnected)?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -360,19 +363,8 @@ where
             self.store.get_retention().is_some(),
             "resend stored called without store that supports retention"
         );
-        match data.reliability {
-            // Since it's Unreliable we will never know the broker received it
-            Reliability::Unreliable => {
-                self.mark_received(&id).await?;
-            }
-            Reliability::Guaranteed | Reliability::Unique => {
-                self.mark_as_sent(&id).await?;
 
-                self.retention
-                    .send((id, notice))
-                    .map_err(|_| Error::Disconnected)?;
-            }
-        }
+        self.mark_sent(id, data.reliability, notice).await?;
 
         Ok(())
     }
