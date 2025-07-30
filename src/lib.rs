@@ -104,6 +104,10 @@ mod test {
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
 
     pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    // Retention interfaces
+    pub(crate) const STORED_INDIVIDUAL_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json");
+    pub(crate) const STORED_OBJECT_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject.json");
+
     // E2E Interfaces
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
         "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
