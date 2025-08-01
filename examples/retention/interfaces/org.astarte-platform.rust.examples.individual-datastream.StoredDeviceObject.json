@@ -1,0 +1,24 @@
+{
+  "interface_name": "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "aggregation": "object",
+  "ownership": "device",
+  "mappings": [
+    {
+      "endpoint": "/endpoint/longinteger",
+      "type": "longinteger",
+      "retention": "stored",
+      "reliability": "guaranteed",
+      "expiry": 30
+    },
+    {
+      "endpoint": "/endpoint/boolean",
+      "type": "boolean",
+      "retention": "stored",
+      "reliability": "guaranteed",
+      "expiry": 30
+    }
+  ]
+}

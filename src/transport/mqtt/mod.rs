@@ -225,18 +225,35 @@ impl<S> MqttClient<S> {
         Ok(())
     }
 
-    async fn mark_as_sent(&self, id: &RetentionId) -> Result<(), Error>
+    async fn mark_sent(
+        &self,
+        id: RetentionId,
+        reliability: Reliability,
+        notice: Token<AckOfPub>,
+    ) -> Result<(), crate::Error>
     where
         S: StoreCapabilities,
     {
-        match id {
-            RetentionId::Volatile(id) => {
-                self.volatile.mark_sent(id, true).await;
+        match reliability {
+            // Since it's Unreliable we will never know the broker received it
+            Reliability::Unreliable => {
+                self.mark_received(&id).await?;
             }
-            RetentionId::Stored(id) => {
-                if let Some(retention) = self.store.get_retention() {
-                    retention.mark_as_sent(id).await?;
+            Reliability::Guaranteed | Reliability::Unique => {
+                match id {
+                    RetentionId::Volatile(id) => {
+                        self.volatile.mark_sent(&id, true).await;
+                    }
+                    RetentionId::Stored(id) => {
+                        if let Some(retention) = self.store.get_retention() {
+                            retention.mark_sent(&id).await?;
+                        }
+                    }
                 }
+
+                self.retention
+                    .send((id, notice))
+                    .map_err(|_| Error::Disconnected)?;
             }
         }
 
@@ -301,19 +318,7 @@ where
             "send stored called for retention discard"
         );
 
-        match validated.reliability {
-            // Since it's Unreliable we will never know the broker received it
-            Reliability::Unreliable => {
-                self.mark_received(&id).await?;
-            }
-            Reliability::Guaranteed | Reliability::Unique => {
-                self.mark_as_sent(&id).await?;
-
-                self.retention
-                    .send((id, notice))
-                    .map_err(|_| Error::Disconnected)?;
-            }
-        }
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -335,9 +340,7 @@ where
             )
             .await?;
 
-        self.retention
-            .send((id, notice))
-            .map_err(|_| Error::Disconnected)?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -360,19 +363,8 @@ where
             self.store.get_retention().is_some(),
             "resend stored called without store that supports retention"
         );
-        match data.reliability {
-            // Since it's Unreliable we will never know the broker received it
-            Reliability::Unreliable => {
-                self.mark_received(&id).await?;
-            }
-            Reliability::Guaranteed | Reliability::Unique => {
-                self.mark_as_sent(&id).await?;
 
-                self.retention
-                    .send((id, notice))
-                    .map_err(|_| Error::Disconnected)?;
-            }
-        }
+        self.mark_sent(id, data.reliability, notice).await?;
 
         Ok(())
     }
@@ -889,7 +881,9 @@ pub(crate) mod test {
 
     use crate::{
         builder::{ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
-        store::memory::MemoryStore,
+        retention::Context,
+        store::{memory::MemoryStore, SqliteStore},
+        AstarteAggregate,
     };
 
     use self::{
@@ -1300,5 +1294,252 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_not_enque_sent_individual() {
+        let dir = TempDir::new().unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let interface =
+            Interface::from_str(crate::test::STORED_INDIVIDUAL_DEVICE_DATASTREAM).unwrap();
+
+        let context = Context::new();
+
+        client.expect_clone().once().returning(AsyncClient::default);
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream/endpoint1".to_string()),
+                predicate::eq(QoS::AtLeastOnce),
+                predicate::always(),
+                predicate::always(),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let (mut client, mut mqtt_connection) =
+            mock_mqtt_connection(client, eventl, store.clone()).await;
+
+        let endpoint = "/endpoint1";
+        let mapping_path = MappingPath::try_from(endpoint).unwrap();
+        //let mapping = interface.mapping(&mapping_path);
+        let mapping_ref = MappingRef::new(&interface, &mapping_path).unwrap();
+        let validated_individual = ValidatedIndividual::validate(
+            mapping_ref,
+            &mapping_path,
+            AstarteType::LongInteger(10),
+            None,
+        )
+        .unwrap();
+        let id = context.next();
+        let store_id = RetentionId::Stored(id);
+        let buf = payload::serialize_individual(
+            &validated_individual.data,
+            validated_individual.timestamp,
+        )
+        .unwrap();
+        let publish = PublishInfo::from_ref(
+            interface.interface_name(),
+            endpoint,
+            interface.version_major(),
+            mapping_ref.reliability(),
+            mapping_ref.retention(),
+            false,
+            &buf,
+        );
+        // force a store
+        store.store_publish(&id, publish.clone()).await.unwrap();
+        // should mark the message as sent
+        client
+            .send_individual_stored(store_id, validated_individual)
+            .await
+            .unwrap();
+        // resend not sent (should not do anything)
+        let mut unsent = Vec::with_capacity(1);
+        store.unsent_publishes(1, &mut unsent).await.unwrap();
+        for (id, publish) in unsent {
+            client
+                .resend_stored(RetentionId::Stored(id), publish)
+                .await
+                .unwrap();
+        }
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            // this panics if the send_individual_stored didn't mark the publish as sent
+            mqtt_connection.retention.into_future(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    struct SampleAggregate;
+
+    impl AstarteAggregate for SampleAggregate {
+        fn astarte_aggregate(self) -> Result<HashMap<String, AstarteType>, Error> {
+            Ok([
+                ("longinteger".to_string(), AstarteType::LongInteger(10)),
+                ("boolean".to_string(), AstarteType::Boolean(false)),
+            ]
+            .into_iter()
+            .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn should_not_enque_sent_object() {
+        let dir = TempDir::new().unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let interface = Interface::from_str(crate::test::STORED_OBJECT_DEVICE_DATASTREAM).unwrap();
+
+        let context = Context::new();
+
+        client.expect_clone().once().returning(AsyncClient::default);
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject/endpoint".to_string()),
+                predicate::eq(QoS::AtLeastOnce),
+                predicate::always(),
+                predicate::always(),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let (mut client, mut mqtt_connection) =
+            mock_mqtt_connection(client, eventl, store.clone()).await;
+
+        let endpoint = "/endpoint";
+        let mapping_path = MappingPath::try_from(endpoint).unwrap();
+        //let mapping = interface.mapping(&mapping_path);
+        let mapping_ref = ObjectRef::new(&interface).unwrap();
+        let validated_object = ValidatedObject::validate(
+            mapping_ref,
+            &mapping_path,
+            SampleAggregate.astarte_aggregate().unwrap(),
+            None,
+        )
+        .unwrap();
+
+        let id = context.next();
+        let stored_id = RetentionId::Stored(id);
+        let buf =
+            payload::serialize_object(&validated_object.data, validated_object.timestamp).unwrap();
+        let publish = PublishInfo::from_ref(
+            interface.interface_name(),
+            endpoint,
+            interface.version_major(),
+            mapping_ref.reliability(),
+            mapping_ref.retention(),
+            false,
+            &buf,
+        );
+        // force a store
+        store.store_publish(&id, publish).await.unwrap();
+        // send object (should mark message as sent)
+        client
+            .send_object_stored(stored_id, validated_object)
+            .await
+            .unwrap();
+        // resend stored objects (this shouldn't do anything)
+        let mut unsent = Vec::with_capacity(1);
+        store.unsent_publishes(1, &mut unsent).await.unwrap();
+        for (id, publish) in unsent {
+            client
+                .resend_stored(RetentionId::Stored(id), publish)
+                .await
+                .unwrap();
+        }
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            // this panics if the send_individual_stored already marked the publish as sent
+            mqtt_connection.retention.into_future(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn message_enqueued_twice_panics() {
+        let dir = TempDir::new().unwrap();
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let eventl = EventLoop::default();
+        let mut client = AsyncClient::default();
+
+        let interface = Interface::from_str(crate::test::STORED_OBJECT_DEVICE_DATASTREAM).unwrap();
+
+        let context = Context::new();
+
+        client.expect_clone().once().returning(AsyncClient::default);
+
+        client
+            .expect_publish::<String, Vec<u8>>()
+            .with(
+                predicate::eq("realm/device_id/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject/endpoint".to_string()),
+                predicate::eq(QoS::AtLeastOnce),
+                predicate::always(),
+                predicate::always(),
+            )
+            .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+        let (mut client, mut mqtt_connection) =
+            mock_mqtt_connection(client, eventl, store.clone()).await;
+
+        let endpoint = "/endpoint";
+        let mapping_path = MappingPath::try_from(endpoint).unwrap();
+        //let mapping = interface.mapping(&mapping_path);
+        let mapping_ref = ObjectRef::new(&interface).unwrap();
+        let validated_object = ValidatedObject::validate(
+            mapping_ref,
+            &mapping_path,
+            SampleAggregate.astarte_aggregate().unwrap(),
+            None,
+        )
+        .unwrap();
+
+        let id = context.next();
+        let stored_id = RetentionId::Stored(id);
+        let buf =
+            payload::serialize_object(&validated_object.data, validated_object.timestamp).unwrap();
+        let publish = PublishInfo::from_ref(
+            interface.interface_name(),
+            endpoint,
+            interface.version_major(),
+            mapping_ref.reliability(),
+            mapping_ref.retention(),
+            false,
+            &buf,
+        );
+        // force a store
+        store.store_publish(&id, publish.clone()).await.unwrap();
+        // send object (should mark message as sent)
+        client
+            .send_object_stored(stored_id, validated_object)
+            .await
+            .unwrap();
+        // force resend stored objects
+        client.resend_stored(stored_id, publish).await.unwrap();
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            // this panics because two messages where enqueued
+            mqtt_connection.retention.into_future(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
     }
 }
