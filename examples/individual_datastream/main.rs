@@ -18,6 +18,9 @@
 
 use std::time::{Duration, SystemTime};
 
+use astarte_device_sdk::{AstarteData, Value};
+use chrono::Utc;
+use eyre::OptionExt;
 use serde::Deserialize;
 
 use astarte_device_sdk::{
@@ -26,8 +29,7 @@ use astarte_device_sdk::{
 };
 use tokio::task::JoinSet;
 use tracing::error;
-
-type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Deserialize)]
 struct Config {
@@ -38,14 +40,17 @@ struct Config {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
+
     let now = SystemTime::now();
 
     // Load configuration
-    let file =
-        std::fs::read_to_string("./examples/individual_datastream/configuration.json").unwrap();
-    let cfg: Config = serde_json::from_str(&file).unwrap();
+    let file = std::fs::read_to_string("./examples/individual_datastream/configuration.json")?;
+    let cfg: Config = serde_json::from_str(&file)?;
 
     let mut mqtt_config = MqttConfig::with_credential_secret(
         &cfg.realm,
@@ -55,18 +60,17 @@ async fn main() -> Result<(), DynError> {
     );
     mqtt_config.ignore_ssl_errors();
 
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
-        .connect(mqtt_config)
-        .await?
+        .connection(mqtt_config)
         .build()
-        .await;
+        .await?;
 
-    let client_cl = client.clone();
+    let mut client_cl = client.clone();
     println!("Connection to Astarte established.");
 
-    let mut tasks = JoinSet::<Result<(), DynError>>::new();
+    let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
     // Create a task to transmit
     tasks.spawn(async move {
@@ -79,22 +83,24 @@ async fn main() -> Result<(), DynError> {
             // Send endpoint 1
             let elapsed: i64 = now.elapsed()?.as_secs().try_into()?;
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint1",
-                    elapsed,
+                    elapsed.into(),
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 1, content: {elapsed}");
             // Sleep 1 sec
             tokio::time::sleep(Duration::from_secs(1)).await;
             // Send endpoint 2
-            let elapsed: f64 = now.elapsed()?.as_secs_f64();
+            let elapsed = now.elapsed()?.as_secs_f64();
             client_cl
-                .send(
+                .send_individual_with_timestamp(
                     "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream",
                     "/endpoint2",
-                    elapsed,
+                    AstarteData::try_from(elapsed)?,
+                    Utc::now(),
                 )
                 .await?;
             println!("Data sent on endpoint 2, content: {elapsed}");
@@ -106,24 +112,23 @@ async fn main() -> Result<(), DynError> {
     tasks.spawn(async move {
         loop {
             match client_cl.recv().await {
-                Ok(data) => {
-                    if let astarte_device_sdk::Value::Individual(var) = data.data {
-                        let mut iter = data.path.splitn(3, '/').skip(1);
+                Ok(event) => {
+                    if let Value::Individual{data, timestamp: _ } = event.data {
+                        let mut iter = event.path.splitn(3, '/').skip(1);
+
                         let led_id = iter
                             .next()
                             .and_then(|id| id.parse::<u16>().ok())
-                            .ok_or("Incorrect error received.")?;
+                            .ok_or_eyre("Incorrect error received.")?;
 
                         match iter.next() {
                             Some("enable") => {
-                                println!(
-                            "Received new enable datastream for LED number {}. LED status is now {}",
-                            led_id,
-                            if var == true { "ON" } else { "OFF" }
-                        );
+                                 let status = if data == true { "ON" } else { "OFF" };
+
+                                println!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
                             }
                             Some("intensity") => {
-                                let value: f64 = var.try_into().unwrap();
+                                let value: f64 = data.try_into()?;
                                 println!(
                             "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
                         );

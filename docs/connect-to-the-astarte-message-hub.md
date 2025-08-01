@@ -160,9 +160,8 @@ program.
 ```no_run
 use astarte_device_sdk::{
     builder::DeviceBuilder,
-    store::SqliteStore,
     prelude::*,
-    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
+    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
     DeviceClient, DeviceConnection,
 };
 use tokio::task::JoinSet;
@@ -178,8 +177,8 @@ const MESSAGE_HUB_URL: &str = "http://127.0.0.1:50051";
 const STORE_DIRECTORY: &str = "./store-dir";
 
 async fn init() -> eyre::Result<(
-    DeviceClient<SqliteStore>,
-    DeviceConnection<SqliteStore, Grpc<SqliteStore>>,
+    DeviceClient<Grpc>,
+    DeviceConnection<Grpc>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -189,10 +188,9 @@ async fn init() -> eyre::Result<(
     let (client, connection) = DeviceBuilder::new()
         .store_dir(STORE_DIRECTORY)
         .await?
-        .connect(grpc_config)
-        .await?
+        .connection(grpc_config)
         .build()
-        .await;
+        .await?;
 
     Ok((client, connection))
 }
@@ -204,7 +202,7 @@ async fn main() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .try_init()?;
 
-    let (_client, mut connection) = init().await?;
+    let (_client, connection) = init().await?;
 
     info!("connected to the MessageHub");
 
@@ -300,9 +298,8 @@ function that we declared previously.
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder,
 #     prelude::*,
-#     store::SqliteStore,
-#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
-#     DeviceClient, DeviceConnection
+#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
+#     DeviceClient, DeviceConnection,
 # };
 #
 # const NODE_UUID: uuid::Uuid = uuid::uuid!("0444d8c3-f3f1-4b89-9e68-6ffb50ec1839");
@@ -316,8 +313,8 @@ const INDIVIDUAL_SERVER: &str = include_str!("../../docs/interfaces/org.astarte-
 const PROPERTY_DEVICE: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Property.json");
 
 async fn init() -> eyre::Result<(
-    DeviceClient<SqliteStore>,
-    DeviceConnection<SqliteStore, Grpc<SqliteStore>>,
+    DeviceClient<Grpc>,
+    DeviceConnection<Grpc>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -331,10 +328,9 @@ async fn init() -> eyre::Result<(
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?
         .interface_str(PROPERTY_DEVICE)?
-        .connect(grpc_config)
-        .await?
+        .connection(grpc_config)
         .build()
-        .await;
+        .await?;
 
     Ok((client, connection))
 }
@@ -350,10 +346,9 @@ We can now spawn a task to receive data from Astarte. Using the
 
 ```no_run
 # use astarte_device_sdk::{
-#     store::SqliteStore,
 #     builder::DeviceBuilder,
 #     prelude::*,
-#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
+#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
 # #[cfg(not(feature = "derive"))]
@@ -364,7 +359,20 @@ use astarte_device_sdk::client::RecvError;
 use eyre::OptionExt;
 use tracing::{info, error, warn};
 
-async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+/// Used to receive the IndividualDevice data.
+///
+/// This need to be an enum because we deserialize each endpoint in it's own variables
+#[derive(Debug, FromEvent)]
+#[from_event(
+    interface = "org.astarte-platform.rust.get-started.IndividualServer",
+    aggregation = "individual"
+)]
+enum ServerIndividual {
+    #[mapping(endpoint = "/%{id}/data")]
+    Boolean(bool),
+}
+
+async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -389,7 +397,9 @@ async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
                     .ok_or_eyre("couldn't get endpoint id parameter")?
                     .to_string();
 
-                info!(?event, id, "received new datastream on IndividualServer/");
+                let ServerIndividual::Boolean(event) = ServerIndividual::from_event(event)?;
+
+                info!(event, id, "received new datastream on IndividualServer/");
             }
             interface => {
                 warn!(interface, "unhandled interface event received");
@@ -403,7 +413,7 @@ async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<SqliteStore> { todo!() }
+# fn client() -> DeviceClient<Grpc> { todo!() }
 # let client = client();
   // ...
 
@@ -438,44 +448,43 @@ introspection.
 Finally, we can send data to the MessageHub. We implement a task similar to the receive one, in a
 loop every 2 seconds we send the data to all the interfaces. The property one will set and save the
 value, and will only send it once to the Server since it doesn't change. While for the `Aggregated`
-interface we create a struct and derive the [`AstarteAggregate`](crate::AstarteAggregate) that will
+interface we create a struct and derive the [`IntoAstarteObject`](crate::IntoAstarteObject) that will
 convert the Rust struct in an Object Aggregate to send.
 
 ```no_run
 # use astarte_device_sdk::{
-#     store::SqliteStore,
 #     builder::DeviceBuilder,
 #     prelude::*,
-#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
+#     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
 #
 use std::time::Duration;
 
 # #[cfg(feature = "derive")]
-use astarte_device_sdk::AstarteAggregate;
+use astarte_device_sdk::IntoAstarteObject;
 # #[cfg(not(feature = "derive"))]
-# use astarte_device_sdk_derive::AstarteAggregate;
+# use astarte_device_sdk_derive::IntoAstarteObject;
 
 /// Aggregated object
-#[derive(Debug, AstarteAggregate)]
+#[derive(Debug, IntoAstarteObject)]
 struct AggregatedDevice {
     double_endpoint: f64,
     string_endpoint: String,
 }
 
 /// Send data after an interval to every interface
-async fn send_data(mut client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
     loop {
         // Publish on the IndividualDevice
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
-                3.14,
+                3.14.try_into()?,
             )
             .await?;
         // Publish on the Aggregaed
@@ -487,15 +496,15 @@ async fn send_data(mut client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
             .send_object(
                 "org.astarte-platform.rust.get-started.Aggregated",
                 "/group_data",
-                obj_data,
+                obj_data.try_into()?,
             )
             .await?;
         // Set the Property
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
-                42.0,
+                42.0.try_into()?,
             )
             .await?;
 
@@ -506,7 +515,7 @@ async fn send_data(mut client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<SqliteStore> { todo!() }
+# fn client() -> DeviceClient<Grpc> { todo!() }
 # let client = client();
   // ...
 

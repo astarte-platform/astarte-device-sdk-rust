@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,13 +18,17 @@
 
 //! Provides functionality to wrap a generic Store to convert the error in Error.
 
-use async_trait::async_trait;
+use tracing::trace;
 
-use crate::types::AstarteType;
+use astarte_interfaces::Properties;
 
-use super::{error::StoreError, OptStoredProp, PropertyStore, StoreCapabilities, StoredProp};
+use crate::types::AstarteData;
 
-/// Wrapper for a generic [`AstarteDatabase`] to convert the error in [`Error`].
+use super::{
+    error::StoreError, OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
+};
+
+/// Wrapper for a generic [`PropertyStore`] to convert the error in [`Error`](crate::Error).
 #[derive(Debug, Clone)]
 pub(crate) struct StoreWrapper<S> {
     pub(crate) store: S,
@@ -41,45 +45,59 @@ where
     S: StoreCapabilities,
 {
     type Retention = S::Retention;
+    type Session = S::Session;
 
     fn get_retention(&self) -> Option<&Self::Retention> {
-        self.store.get_retention()
+        let retention = self.store.get_retention();
+
+        if retention.is_none() {
+            trace!("no stored retention");
+        }
+
+        retention
+    }
+
+    fn get_session(&self) -> Option<&Self::Session> {
+        let session = self.store.get_session();
+
+        if session.is_none() {
+            trace!("no persistent session");
+        }
+
+        session
     }
 }
 
-#[async_trait]
 impl<S> PropertyStore for StoreWrapper<S>
 where
     S: PropertyStore,
 {
     type Err = StoreError;
 
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteType>) -> Result<(), Self::Err> {
+    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
         self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
     async fn load_prop(
         &self,
-        interface: &str,
-        path: &str,
-        interface_major: i32,
-    ) -> Result<Option<AstarteType>, Self::Err> {
+        property: &PropertyMapping<'_>,
+    ) -> Result<Option<AstarteData>, Self::Err> {
         self.store
-            .load_prop(interface, path, interface_major)
+            .load_prop(property)
             .await
             .map_err(StoreError::load)
     }
 
-    async fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
         self.store
-            .unset_prop(interface, path)
+            .unset_prop(property)
             .await
             .map_err(StoreError::unset)
     }
 
-    async fn delete_prop(&self, interface: &str, path: &str) -> Result<(), Self::Err> {
+    async fn delete_prop(&self, interface: &PropertyMapping<'_>) -> Result<(), Self::Err> {
         self.store
-            .delete_prop(interface, path)
+            .delete_prop(interface)
             .await
             .map_err(StoreError::delete)
     }
@@ -109,14 +127,14 @@ where
             .map_err(StoreError::device_props)
     }
 
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
         self.store
             .interface_props(interface)
             .await
             .map_err(StoreError::interface_props)
     }
 
-    async fn delete_interface(&self, interface: &str) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
         self.store
             .delete_interface(interface)
             .await

@@ -60,12 +60,14 @@ impl TopicError {
 }
 
 #[derive(Debug)]
-pub(crate) struct ParsedTopic<'a> {
-    pub(crate) interface: &'a str,
-    pub(crate) path: &'a str,
+pub(crate) enum ParsedTopic<'a> {
+    PurgeProperties,
+    InterfacePath { interface: &'a str, path: &'a str },
 }
 
 impl<'a> ParsedTopic<'a> {
+    const PURGE_PROPERTIES_TOPIC: &'static str = "control/consumer/properties";
+
     pub(crate) fn try_parse(client_id: ClientId<&str>, topic: &'a str) -> Result<Self, TopicError> {
         if topic.is_empty() {
             return Err(TopicError::Empty);
@@ -86,6 +88,10 @@ impl<'a> ParsedTopic<'a> {
 
         trace!("rest: {}", rest);
 
+        if rest == Self::PURGE_PROPERTIES_TOPIC {
+            return Ok(Self::PurgeProperties);
+        }
+
         let idx = rest
             .find('/')
             .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
@@ -101,7 +107,7 @@ impl<'a> ParsedTopic<'a> {
             return Err(TopicError::Malformed(topic.to_string()));
         }
 
-        Ok(ParsedTopic { interface, path })
+        Ok(Self::InterfacePath { interface, path })
     }
 }
 
@@ -117,10 +123,37 @@ mod tests {
     #[test]
     fn test_parse_topic() {
         let topic = "test/u-WraCwtK_G_fjJf63TiAw/com.interface.test/led/red".to_owned();
-        let ParsedTopic { interface, path } = ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap();
+        let ParsedTopic::InterfacePath { interface, path } =
+            ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap()
+        else {
+            panic!("Wrong variant parsed");
+        };
 
         assert_eq!(interface, "com.interface.test");
         assert_eq!(path, "/led/red");
+    }
+
+    #[test]
+    fn test_parse_purge_properties_topic() {
+        let topic = "test/u-WraCwtK_G_fjJf63TiAw/control/consumer/properties".to_owned();
+        let parsed_topic = ParsedTopic::try_parse(CLIENT_ID, &topic);
+
+        assert!(matches!(parsed_topic, Ok(ParsedTopic::PurgeProperties)));
+    }
+
+    // currently we won't fail if the topic after the client id contains a sting that starts
+    // with the purge properties topic
+    #[test]
+    fn test_parse_almost_purge_properties_topic() {
+        let topic = "test/u-WraCwtK_G_fjJf63TiAw/control/consumer/properties/another".to_owned();
+        let ParsedTopic::InterfacePath { interface, path } =
+            ParsedTopic::try_parse(CLIENT_ID, &topic).unwrap()
+        else {
+            panic!("Wrong variant parsed");
+        };
+
+        assert_eq!(interface, "control");
+        assert_eq!(path, "/consumer/properties/another");
     }
 
     #[test]

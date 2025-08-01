@@ -24,7 +24,6 @@ use astarte_device_sdk::{
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
-    store::SqliteStore,
     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
     DeviceClient, DeviceConnection,
 };
@@ -52,10 +51,20 @@ const INDIVIDUAL_SERVER: &str = include_str!(
 const PROPERTY_DEVICE: &str =
     include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Property.json");
 
-async fn init() -> eyre::Result<(
-    DeviceClient<SqliteStore>,
-    DeviceConnection<SqliteStore, Grpc<SqliteStore>>,
-)> {
+/// Used to receive the IndividualDevice data.
+///
+/// This need to be an enum because we deserialize each endpoint in it's own variables
+#[derive(Debug, FromEvent)]
+#[from_event(
+    interface = "org.astarte-platform.rust.get-started.IndividualServer",
+    aggregation = "individual"
+)]
+enum ServerIndividual {
+    #[mapping(endpoint = "/%{id}/data")]
+    Double(f64),
+}
+
+async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(MESSAGE_HUB_URL);
@@ -68,15 +77,14 @@ async fn init() -> eyre::Result<(
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?
         .interface_str(PROPERTY_DEVICE)?
-        .connect(grpc_config)
-        .await?
+        .connection(grpc_config)
         .build()
-        .await;
+        .await?;
 
     Ok((client, connection))
 }
 
-async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -101,12 +109,9 @@ async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
                     .ok_or_eyre("couldn't get endpoint id parameter")?
                     .to_string();
 
-                let astarte_device_sdk::Value::Individual(value) = event.data else {
-                    error!(?event, "invalid data aggregation");
-                    continue;
-                };
+                let ServerIndividual::Double(value) = ServerIndividual::from_event(event)?;
 
-                info!(id, ?value, "received new datastream on IndividualServer");
+                info!(id, value, "received new datastream on IndividualServer");
             }
             interface => {
                 warn!(interface, "unhandled interface event received");
@@ -118,24 +123,24 @@ async fn receive_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
 }
 
 /// Aggregated object
-#[derive(Debug, AstarteAggregate)]
+#[derive(Debug, IntoAstarteObject)]
 struct AggregatedDevice {
     double_endpoint: f64,
     string_endpoint: String,
 }
 
 /// Send data after an interval to every interface
-async fn send_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
+async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
     loop {
         // Publish on the IndividualDevice
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
-                42.6,
+                42.6.try_into()?,
             )
             .await?;
         // Publish on the Aggregaed
@@ -147,15 +152,15 @@ async fn send_data(client: DeviceClient<SqliteStore>) -> eyre::Result<()> {
             .send_object(
                 "org.astarte-platform.rust.get-started.Aggregated",
                 "/group_data",
-                obj_data,
+                obj_data.try_into()?,
             )
             .await?;
         // Set the Property
         client
-            .send(
+            .send_individual(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
-                42.0,
+                42.0.try_into()?,
             )
             .await?;
 

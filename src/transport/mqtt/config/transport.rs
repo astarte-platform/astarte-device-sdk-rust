@@ -19,11 +19,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rumqttc::Transport;
-use rustls::{pki_types::PrivatePkcs8KeyDer, RootCertStore};
+use rustls::pki_types::PrivatePkcs8KeyDer;
+use rustls::RootCertStore;
 use tokio::fs;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument};
 use url::Url;
 
+use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
     error::Report,
     transport::mqtt::{
@@ -32,11 +35,6 @@ use crate::{
         pairing::ApiClient,
         PairingError,
     },
-};
-
-use super::{
-    tls::{read_root_cert_store, ClientAuth},
-    CertificateFile, PrivateKeyFile,
 };
 
 /// Structure to create an authenticated [`Transport`]
@@ -50,12 +48,14 @@ pub(crate) struct TransportProvider {
 }
 
 impl TransportProvider {
+    #[instrument(skip_all)]
     pub(crate) async fn configure(
         pairing_url: Url,
         credential_secret: String,
         store_dir: Option<PathBuf>,
         insecure_ssl: bool,
     ) -> Result<Self, PairingError> {
+        debug!("reading root cert store from native certs");
         let root_certs = read_root_cert_store().await?;
 
         Ok(Self {
@@ -84,7 +84,7 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
     ) -> Result<(Bundle, String), PairingError> {
-        let bundle = Bundle::new(client.realm, client.device_id)?;
+        let bundle = Bundle::generate_key(client.realm, client.device_id)?;
 
         let certificate = client.create_certificate(&bundle.csr).await?;
 

@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023-2024 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! Proc macro helpers for the [Astarte Device SDK](https://crates.io/crates/astarte-device-sdk)
 
@@ -39,24 +37,24 @@ use crate::{case::RenameRule, event::FromEventDerive};
 mod case;
 mod event;
 
-/// Handle for the `#[astarte_aggregate(..)]` attribute.
+/// Handle for the `#[astarte_object(..)]` attribute.
 ///
 /// ### Example
 ///
 /// ```no_compile
-/// #[derive(AstarteAggregate)]
-/// #[astarte_aggregate(rename_all = "camelCase")]
+/// #[derive(IntoAstarteObject)]
+/// #[astarte_object(rename_all = "camelCase")]
 /// struct Foo {
 ///     bar_v: String
 /// }
 /// ```
 #[derive(Debug, Default)]
-struct AggregateAttributes {
+struct ObjectAttributes {
     /// Rename the fields in the resulting HashMap, see the [`RenameRule`] variants.
     rename_all: Option<RenameRule>,
 }
 
-impl AggregateAttributes {
+impl ObjectAttributes {
     /// Merge the Astarte attributes from the other struct into self.
     fn merge(self, other: Self) -> Self {
         let rename_all = other.rename_all.or(self.rename_all);
@@ -65,11 +63,11 @@ impl AggregateAttributes {
     }
 }
 
-impl Parse for AggregateAttributes {
+impl Parse for ObjectAttributes {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut vars = parse_name_value_attrs(input)?;
+        let mut attrs = parse_name_value_attrs(input)?;
 
-        let rename_all = vars
+        let rename_all = attrs
             .remove("rename_all")
             .map(|expr| {
                 parse_str_lit(&expr).and_then(|rename| {
@@ -78,6 +76,10 @@ impl Parse for AggregateAttributes {
                 })
             })
             .transpose()?;
+
+        if let Some((_, expr)) = attrs.iter().next() {
+            return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
+        }
 
         Ok(Self { rename_all })
     }
@@ -130,29 +132,30 @@ fn parse_bool_lit(expr: &Expr) -> syn::Result<bool> {
     }
 }
 
-/// Handle for the `#[derive(AstarteAggregate)]` derive macro.
+/// Handle for the `#[derive(IntoAstarteObject)]` derive macro.
 ///
 /// ### Example
 ///
 /// ```no_compile
-/// #[derive(AstarteAggregate)]
+/// #[derive(IntoAstarteObject)]
 /// struct Foo {
 ///     bar: String
 /// }
 /// ```
-struct AggregateDerive {
+struct ObjectDerive {
     name: Ident,
-    attrs: AggregateAttributes,
+    attrs: ObjectAttributes,
     fields: Vec<Ident>,
     generics: Generics,
 }
 
-impl AggregateDerive {
+impl ObjectDerive {
     fn quote(&self) -> proc_macro2::TokenStream {
         let rename_rule = self.attrs.rename_all.unwrap_or_default();
 
         let name = &self.name;
         let (impl_generics, ty_generics, where_clause) = self.generics.split_for_impl();
+        let capacity = self.fields.len();
         let fields = self.fields.iter().map(|i| {
             let name = i.to_string();
             let name = rename_rule.apply_to_field(&name);
@@ -160,22 +163,19 @@ impl AggregateDerive {
                 // TODO *Temporarily* ignore this new lint will be fixed in a new pr
                 #[allow(unknown_lints)]
                 #[allow(clippy::unnecessary_fallible_conversions)]
-                let value: astarte_device_sdk::types::AstarteType = std::convert::TryInto::try_into(self.#i)?;
-                result.insert(#name.to_string(), value);
+                let v: astarte_device_sdk::types::AstarteData = ::std::convert::TryInto::try_into(value.#i)?;
+                object.insert(#name.to_string(), v);
             }
         });
 
         quote! {
-            impl #impl_generics astarte_device_sdk::AstarteAggregate for #name #ty_generics #where_clause {
-                fn astarte_aggregate(
-                    self,
-                ) -> ::std::result::Result<
-                    std::collections::HashMap<String, astarte_device_sdk::types::AstarteType>,
-                    astarte_device_sdk::error::Error,
-                > {
-                    let mut result = std::collections::HashMap::new();
+            impl #impl_generics ::std::convert::TryFrom<#name #ty_generics> for astarte_device_sdk::aggregate::AstarteObject #where_clause {
+                type Error = astarte_device_sdk::error::Error;
+
+                fn try_from(value: #name #ty_generics) -> ::std::result::Result<Self, Self::Error> {
+                    let mut object = Self::with_capacity(#capacity);
                     #(#fields)*
-                    Ok(result)
+                    Ok(object)
                 }
             }
         }
@@ -185,7 +185,7 @@ impl AggregateDerive {
         for param in &mut generics.params {
             if let GenericParam::Type(ref mut type_param) = *param {
                 type_param.bounds.push(parse_quote!(
-                    std::convert::TryInto<astarte_device_sdk::types::AstarteType, Error = astarte_device_sdk::error::Error>
+                    std::convert::TryInto<astarte_device_sdk::types::AstarteData, Error = astarte_device_sdk::error::Error>
                 ));
             }
         }
@@ -193,7 +193,7 @@ impl AggregateDerive {
     }
 }
 
-impl Parse for AggregateDerive {
+impl Parse for ObjectDerive {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ast = syn::DeriveInput::parse(input)?;
 
@@ -201,7 +201,7 @@ impl Parse for AggregateDerive {
         let attrs = ast
             .attrs
             .iter()
-            .filter_map(|a| parse_attribute_list::<AggregateAttributes>(a, "astarte_aggregate"))
+            .filter_map(|a| parse_attribute_list::<ObjectAttributes>(a, "astarte_object"))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .reduce(|first, second| first.merge(second))
@@ -277,21 +277,21 @@ where
     }
 }
 
-/// Derive macro `#[derive(AstarteAggregate)]` to implement AstarteAggregate.
+/// Derive macro `#[derive(IntoAstarteObject)]` to implement IntoAstarteObject.
 ///
 /// ### Example
 ///
 /// ```no_compile
-/// #[derive(AstarteAggregate)]
+/// #[derive(IntoAstarteObject)]
 /// struct Foo {
 ///     bar: String
 /// }
 /// ```
-#[proc_macro_derive(AstarteAggregate, attributes(astarte_aggregate))]
+#[proc_macro_derive(IntoAstarteObject, attributes(astarte_object))]
 pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
     // Construct a representation of Rust code as a syntax tree
     // that we can manipulate
-    let aggregate = parse_macro_input!(input as AggregateDerive);
+    let aggregate = parse_macro_input!(input as ObjectDerive);
 
     // Build the trait implementation
     aggregate.quote().into()
@@ -301,25 +301,39 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 ///
 /// ### Example
 ///
+/// To derive the trait for an individual.
+///
+/// ```no_compile
+/// #[derive(FromEvent)]
+/// #[from_event(interface = "com.example.Sensor")]
+/// enum Sensor {
+///     #[mapping(endpoint = "/sensor/luminosity")]
+///     Luminosity(i32),
+///     #[mapping(endpoint = "/sensor/temerature")]
+///     Temperature(Option<f64>),
+/// }
+/// ```
+///
 /// To derive the trait it for an object.
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Foo", path = "/obj")]
+/// #[from_event(interface = "com.example.Foo", path = "/obj", aggregation = "object")]
 /// struct Foo {
 ///     bar: String
 /// }
 /// ```
 ///
-/// To derive the trait it for an individual.
+///
+/// To derive the trait it for a property.
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Sensor", aggregation = "individual")]
+/// #[from_event(interface = "com.example.Sensor", interface_type = "property", aggregation = "individual")]
 /// enum Sensor {
 ///     #[mapping(endpoint = "/sensor/luminosity")]
 ///     Luminosity(i32),
-///     #[mapping(endpoint = "/sensor/temerature", allow_unset = true)]
+///     #[mapping(endpoint = "/sensor/temerature")]
 ///     Temperature(Option<f64>),
 /// }
 /// ```

@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,13 +20,17 @@
 
 use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duration};
 
-use async_trait::async_trait;
+use astarte_interfaces::schema::Reliability;
 use rusqlite::{
     types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
     ToSql,
 };
+use tracing::{debug, error, instrument, trace};
 
-use crate::{interface::Reliability, store::SqliteStore};
+use crate::error::Report;
+use crate::store::sqlite::connection::WriteConnection;
+use crate::store::sqlite::SqliteError;
+use crate::store::SqliteStore;
 
 use super::{
     duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
@@ -53,7 +57,7 @@ pub(crate) struct RetentionMapping<'a> {
     pub(crate) interface: Cow<'a, str>,
     pub(crate) path: Cow<'a, str>,
     pub(crate) version_major: i32,
-    pub(crate) reliability: Reliability,
+    pub(crate) reliability: RetentionReliability,
     pub(crate) expiry: Option<Duration>,
 }
 
@@ -65,6 +69,18 @@ impl RetentionMapping<'_> {
             exp.as_secs().try_into().ok()
         })
     }
+
+    #[cfg(test)]
+    /// Returns an owned version of the value
+    pub(crate) fn into_owned(self) -> RetentionMapping<'static> {
+        RetentionMapping {
+            interface: self.interface.into_owned().into(),
+            path: self.path.into_owned().into(),
+            version_major: self.version_major,
+            reliability: self.reliability,
+            expiry: self.expiry,
+        }
+    }
 }
 
 impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
@@ -73,7 +89,7 @@ impl<'a> From<&'a PublishInfo<'a>> for RetentionMapping<'a> {
             interface: Cow::Borrowed(&value.interface),
             path: Cow::Borrowed(&value.path),
             version_major: value.version_major,
-            reliability: value.reliability,
+            reliability: RetentionReliability(value.reliability),
             expiry: value.expiry,
         }
     }
@@ -112,11 +128,40 @@ impl<'a> RetentionPublish<'a> {
             payload: Cow::Borrowed(&info.value),
         })
     }
+
+    #[cfg(test)]
+    /// Returns an owned version of the value
+    pub(crate) fn into_owned(self) -> RetentionPublish<'static> {
+        RetentionPublish {
+            id: self.id,
+            interface: self.interface.into_owned().into(),
+            path: self.path.into_owned().into(),
+            expiry_time: self.expiry_time,
+            sent: self.sent,
+            payload: self.payload.into_owned().into(),
+        }
+    }
 }
 
-impl ToSql for Reliability {
+/// New type to impl traits on [`Reliability`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct RetentionReliability(Reliability);
+
+impl From<RetentionReliability> for Reliability {
+    fn from(value: RetentionReliability) -> Self {
+        value.0
+    }
+}
+
+impl From<Reliability> for RetentionReliability {
+    fn from(value: Reliability) -> Self {
+        RetentionReliability(value)
+    }
+}
+
+impl ToSql for RetentionReliability {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        let value: u8 = match self {
+        let value: u8 = match self.0 {
             Reliability::Unreliable => 0,
             Reliability::Guaranteed => 1,
             Reliability::Unique => 2,
@@ -126,12 +171,12 @@ impl ToSql for Reliability {
     }
 }
 
-impl FromSql for Reliability {
+impl FromSql for RetentionReliability {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_i64()? {
-            0 => Ok(Reliability::Unreliable),
-            1 => Ok(Reliability::Guaranteed),
-            2 => Ok(Reliability::Unique),
+            0 => Ok(RetentionReliability(Reliability::Unreliable)),
+            1 => Ok(RetentionReliability(Reliability::Guaranteed)),
+            2 => Ok(RetentionReliability(Reliability::Unique)),
             err => Err(FromSqlError::OutOfRange(err)),
         }
     }
@@ -174,75 +219,58 @@ impl FromSql for TimestampSecs {
     }
 }
 
-#[async_trait]
 impl StoredRetention for SqliteStore {
     async fn store_publish(&self, id: &Id, info: PublishInfo<'_>) -> Result<(), RetentionError> {
-        let mapping = RetentionMapping::from(&info);
-        let publish = RetentionPublish::from_info(*id, &info)
-            .map_err(|err| RetentionError::store(&info, err))?;
+        let id = *id;
+        let info = info.into_owned();
+        self.pool
+            .acquire_writer(move |writer| {
+                let mapping = RetentionMapping::from(&info);
+                let publish = RetentionPublish::from_info(id, &info)
+                    .map_err(|err| RetentionError::store(&info, err))?;
 
-        self.writer
-            .lock()
+                writer
+                    .store(&mapping, &publish)
+                    .map_err(|err| RetentionError::store(&info, err))
+            })
             .await
-            .store(&mapping, &publish)
-            .map_err(|err| RetentionError::store(&info, err))?;
-
-        Ok(())
     }
 
     async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .update_publish_sent_flag(id, sent)
-            .map_err(|err| RetentionError::update_sent(*id, sent, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.update_publish_sent_flag(&id, sent))
+            .await
+            .map_err(|err| RetentionError::update_sent(id, sent, err))
     }
 
     async fn mark_received(&self, id: &Id) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .delete_publish_by_id(id)
-            .map_err(|err| RetentionError::received(*id, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
+            .await
+            .map_err(|err| RetentionError::received(id, err))
     }
 
     async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .delete_publish_by_id(id)
-            .map_err(|err| RetentionError::delete_publish(*id, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
+            .await
+            .map_err(|err| RetentionError::delete_publish(id, err))
     }
 
     async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
+        self.pool
+            .acquire_writer({
+                let interface = interface.to_string();
+                move |writer| writer.delete_interface(&interface)
+            })
             .await
-            .delete_interface(interface)
-            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))?;
-
-        Ok(())
-    }
-
-    async fn delete_interface_many<I, S>(&self, interfaces: I) -> Result<(), RetentionError>
-    where
-        I: IntoIterator<Item = S> + Send,
-        <I as IntoIterator>::IntoIter: Send,
-        S: AsRef<str> + Send + Sync,
-    {
-        self.writer
-            .lock()
-            .await
-            .delete_interface_many(interfaces)
-            .map_err(RetentionError::delete_interface_many)?;
-
-        Ok(())
+            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))
     }
 
     async fn unsent_publishes(
@@ -252,18 +280,25 @@ impl StoredRetention for SqliteStore {
     ) -> Result<usize, RetentionError> {
         let now = TimestampSecs::now();
 
-        // Prefer the two different queries, so we can free the writer
-        {
-            self.writer
-                .lock()
-                .await
-                .delete_expired(&now)
-                .map_err(RetentionError::unsent)?;
-        }
+        // This is to move the vec to another thread
+        let mut buf_take = std::mem::take(buf);
 
-        let count = self
-            .with_reader(|reader| reader.unset_publishes(buf, &now, limit))
+        self.pool
+            .acquire_writer(move |writer| writer.delete_expired(&now))
+            .await
             .map_err(RetentionError::unsent)?;
+
+        let (buf_ret, count) = self
+            .pool
+            .acquire_reader(move |reader| -> Result<_, SqliteError> {
+                let count = reader.unsent_publishes(&mut buf_take, &now, limit)?;
+
+                Ok((buf_take, count))
+            })
+            .await
+            .map_err(RetentionError::unsent)?;
+
+        *buf = buf_ret;
 
         Ok(count)
     }
@@ -271,30 +306,129 @@ impl StoredRetention for SqliteStore {
     async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
         let now = TimestampSecs::now();
 
-        let writer = self.writer.lock().await;
-
-        writer
-            .delete_expired(&now)
+        self.pool
+            .acquire_writer(move |writer| writer.delete_expired(&now))
+            .await
             .map_err(RetentionError::unsent)?;
 
-        writer.reset_all_sent().map_err(RetentionError::reset)?;
+        self.pool
+            .acquire_writer(|writer| writer.reset_all_sent())
+            .await
+            .map_err(RetentionError::reset)?;
 
         Ok(())
     }
 
     async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
-        self.with_reader(|reader| reader.all_interfaces())
+        self.pool
+            .acquire_reader(|reader| reader.all_interfaces())
+            .await
             .map_err(RetentionError::fetch_interfaces)
+    }
+
+    async fn set_max_retention_items(
+        &self,
+        size: std::num::NonZeroUsize,
+    ) -> Result<(), RetentionError> {
+        self.pool
+            .acquire_writer(move |writer| writer.set_max_retention_items(size))
+            .await
+            .map_err(|err| RetentionError::set_capacity(size, err))
+    }
+}
+
+impl WriteConnection {
+    /// Empty space when the database is full to allow storing newer elements
+    ///
+    /// In sequence
+    /// - first we check the occupied space is greater than the capacity
+    /// - if so, remove the expired elements from the store
+    /// - if the available space is still insufficient, remove the oldest elements
+    ///
+    /// Return the number of removed elements.
+    #[instrument(skip(self))]
+    pub(crate) fn free_retention_items(&mut self, to_store: usize) -> Result<usize, SqliteError> {
+        let max_items = self.retention_capacity.get();
+
+        debug!("remove elements from store if it's full");
+
+        let count_stored = self.count_stored()?;
+
+        trace!(count_stored, "initial count");
+
+        let stored = count_stored.saturating_add(to_store);
+
+        if stored <= max_items {
+            return Ok(0);
+        }
+
+        trace!("store is full, evicting expired retention items");
+        let expired = self.delete_expired(&TimestampSecs::now())?;
+
+        trace!(expired, "removed expired items");
+
+        let stored = stored.saturating_sub(expired);
+
+        if stored <= max_items {
+            return Ok(expired);
+        }
+
+        let to_remove = stored.saturating_sub(max_items);
+
+        trace!(
+            to_remove,
+            "store is still full, evicting the oldest elements"
+        );
+
+        let removed = self.remove_oldest(to_remove)?;
+
+        debug!(removed, "removed elements");
+
+        Ok(removed.saturating_add(expired))
+    }
+
+    /// Sets max retention items
+    fn set_max_retention_items(&mut self, size: std::num::NonZeroUsize) -> Result<(), SqliteError> {
+        self.retention_capacity = size;
+
+        let removed = self.free_retention_items(0)?;
+
+        if removed > 0 {
+            if let Err(err) = self.execute("VACUUM", []) {
+                error!(error = %Report::new(err), "failed to vacuum the database");
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
+    use astarte_interfaces::interface::Retention;
+    use pretty_assertions::assert_eq;
     use statements::tests::{fetch_mapping, fetch_publish};
 
     use crate::retention::Context;
 
     use super::*;
+
+    pub(crate) fn publish_with_expiry(
+        path: &'static str,
+        expiry: Option<Duration>,
+    ) -> PublishInfo<'static> {
+        PublishInfo::from_ref(
+            "com.Foo",
+            path,
+            1,
+            Reliability::Unique,
+            Retention::Stored { expiry },
+            false,
+            &[],
+        )
+    }
 
     #[tokio::test]
     async fn should_store_publish() {
@@ -305,21 +439,13 @@ mod tests {
         let interface = "com.Foo";
         let path = "/bar";
 
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry(path, None);
 
         let mapping = RetentionMapping {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Unique,
+            reliability: Reliability::Unique.into(),
             expiry: None,
         };
 
@@ -336,13 +462,201 @@ mod tests {
 
         store.store_publish(&id, publish_info).await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
 
         assert_eq!(res, publish);
 
-        let res = fetch_mapping(&store, interface, path).unwrap();
+        let res = fetch_mapping(&store, interface, path).await.unwrap();
 
         assert_eq!(res, mapping)
+    }
+
+    #[tokio::test]
+    async fn set_max_retention_exec_vacuum() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // initialize the store with 2 elements and then set the capacity to 1.
+        // this should cause the vacuum to be called, since the store is full and we are setting a lower capacity.
+        let ctx = Context::new();
+
+        let id1 = ctx.next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        let id2 = ctx.next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", None))
+            .await
+            .unwrap();
+
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let capacity = NonZeroUsize::new(1).unwrap();
+        store.set_max_retention_items(capacity).await.unwrap();
+
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn should_remove_expired_and_store_publish() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // suppose we can only store 2 publishes and we try storing 3 publishes: the new one should replace the expired one
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_retention_items(capacity).await.unwrap();
+
+        let interface = "com.Foo";
+
+        let ctx = Context::new();
+
+        let id1 = ctx.next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        // create a publish already expired, so it will be removed when a new publish is stored.
+        // the publish must be expiref from at least 1sec since the expiration check is performed over seconds (not ms nor ns)
+        let mut id2 = ctx.next();
+        id2.timestamp = TimestampMillis(id2.timestamp.0.saturating_sub(1000));
+
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", Some(Duration::ZERO)))
+            .await
+            .unwrap();
+
+        // this will cause publish1 to be removed since the store is full
+        let id3 = ctx.next();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", None))
+            .await
+            .unwrap();
+
+        let res = fetch_publish(&store, &id1).await.unwrap();
+
+        let publish1 = RetentionPublish {
+            id: id1,
+            interface: interface.into(),
+            path: "/path1".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish1);
+
+        let res = fetch_publish(&store, &id2).await;
+        assert!(res.is_none());
+
+        let res = fetch_publish(&store, &id3).await.unwrap();
+
+        let publish3 = RetentionPublish {
+            id: id3,
+            interface: interface.into(),
+            path: "/path3".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish3);
+
+        //check that the store count is still 2
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn should_remove_oldest_and_store_publish() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        // create a store which can only store 2 publishes.
+        // try storing 3 publishes: a new one should replace the oldest one.
+        let capacity = NonZeroUsize::new(2).unwrap();
+        store.set_max_retention_items(capacity).await.unwrap();
+
+        let interface = "com.Foo";
+
+        let ctx = Context::new();
+
+        // first publish to be inserted. This will be removed
+        let id1 = ctx.next();
+        store
+            .store_publish(&id1, publish_with_expiry("/path1", None))
+            .await
+            .unwrap();
+
+        let id2 = ctx.next();
+        store
+            .store_publish(&id2, publish_with_expiry("/path2", None))
+            .await
+            .unwrap();
+
+        // this will cause publish1 to be removed since the store is full
+        let id3 = ctx.next();
+        store
+            .store_publish(&id3, publish_with_expiry("/path3", None))
+            .await
+            .unwrap();
+
+        let res = fetch_publish(&store, &id1).await;
+        assert!(res.is_none());
+
+        let res = fetch_publish(&store, &id2).await.unwrap();
+
+        let publish2 = RetentionPublish {
+            id: id2,
+            interface: interface.into(),
+            path: "/path2".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish2);
+
+        let res = fetch_publish(&store, &id3).await.unwrap();
+
+        let publish3 = RetentionPublish {
+            id: id3,
+            interface: interface.into(),
+            path: "/path3".into(),
+            payload: [].as_slice().into(),
+            sent: false,
+            expiry_time: None,
+        };
+
+        assert_eq!(res, publish3);
+
+        //check that the store count is still 2
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[tokio::test]
@@ -354,21 +668,13 @@ mod tests {
         let interface = "com.Foo";
         let path = "/bar";
 
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry(path, None);
 
         let mapping = RetentionMapping {
             interface: interface.into(),
             path: path.into(),
             version_major: 1,
-            reliability: Reliability::Unique,
+            reliability: Reliability::Unique.into(),
             expiry: None,
         };
 
@@ -378,11 +684,11 @@ mod tests {
 
         store.mark_received(&id).await.unwrap();
 
-        let res = fetch_publish(&store, &id);
+        let res = fetch_publish(&store, &id).await;
 
         assert_eq!(res, None);
 
-        let res = fetch_mapping(&store, interface, path).unwrap();
+        let res = fetch_mapping(&store, interface, path).await.unwrap();
 
         assert_eq!(res, mapping)
     }
@@ -393,18 +699,7 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let interface = "com.Foo";
-        let path = "/bar";
-
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry("/bar", None);
 
         let id = Context::new().next();
 
@@ -413,7 +708,7 @@ mod tests {
         let res = store.fetch_all_interfaces().await.unwrap();
 
         let exp = StoredInterface {
-            name: interface.into(),
+            name: "com.Foo".into(),
             version_major: 1,
         };
 
@@ -427,18 +722,7 @@ mod tests {
 
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let interface = "com.Foo";
-        let path = "/bar";
-
-        let publish_info = PublishInfo::from_ref(
-            interface,
-            path,
-            1,
-            Reliability::Unique,
-            crate::interface::Retention::Stored { expiry: None },
-            false,
-            &[],
-        );
+        let publish_info = publish_with_expiry("/bar", None);
 
         let id = Context::new().next();
 
@@ -446,12 +730,12 @@ mod tests {
 
         store.update_sent_flag(&id, true).await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
         assert!(res.sent);
 
         store.reset_all_publishes().await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
         assert!(!res.sent);
     }
 }

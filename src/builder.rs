@@ -22,28 +22,33 @@
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs;
+use std::future::Future;
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
+use astarte_interfaces::Interface;
 use tracing::debug;
 
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
-use crate::interface::Interface;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
-use crate::retention::memory::SharedVolatileStore;
+use crate::retention::memory::VolatileStore;
+use crate::retention::RetentionError;
+use crate::retention::StoredRetention;
+use crate::state::SharedState;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
+use crate::store::StoreCapabilities;
 use crate::transport::Connection;
+use crate::utils::const_conv::const_non_zero_usize;
+use crate::Error;
 
 /// Default capacity of the channels
 ///
@@ -54,6 +59,9 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
+
+/// Default capacity for the number of packets w ith retention store to store in memory.
+pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
 
 /// Astarte builder error.
 ///
@@ -88,76 +96,41 @@ pub enum BuilderError {
     /// Couldn't connect to the SQLite store
     #[error("couldn't connect to the SQLite store")]
     Sqlite(#[from] SqliteError),
+    /// Couldn't set the maximum number of items in the store
+    #[error("couldn't set the maximum number of items in the store")]
+    Retention(#[from] RetentionError),
 }
 
-/// Declares the conclusive operation of the device builder.
-///
-/// This trait is already implemented generically for the [`DeviceBuilder`]
-/// and implementing it should be avoided since it has no practical use.
-#[async_trait]
-pub trait DeviceSdkBuild<S, C>
-where
-    C: Connection + Send,
-{
-    /// Method that consumes the builder and returns a working [`DeviceClient`] and
-    /// [`DeviceConnection`] with the specified settings.
-    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>);
-}
+/// Marker struct to identify a builder with no store configured
+#[derive(Debug, Clone, Copy)]
+pub struct NoStore;
+/// Marker struct to identify a builder with no connection configured
+#[derive(Debug, Clone, Copy)]
+pub struct NoConnect;
 
-#[async_trait]
-impl<S, C> DeviceSdkBuild<S, C> for DeviceBuilder<S, C>
-where
-    S: PropertyStore,
-    C: Connection + Send,
-{
-    async fn build(self) -> (DeviceClient<S>, DeviceConnection<S, C>) {
-        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
-        let (tx_connection, rx_client) = flume::bounded(self.channel_size);
-        let (tx_client, rx_connection) = mpsc::channel(self.channel_size);
-
-        let interfaces = Arc::new(RwLock::new(self.interfaces));
-
-        let client = DeviceClient::new(
-            Arc::clone(&interfaces),
-            rx_client,
-            tx_client,
-            self.store.clone(),
-        );
-
-        self.volatile.set_capacity(self.volatile_retention).await;
-
-        let connection = DeviceConnection::new(
-            interfaces,
-            tx_connection,
-            rx_connection,
-            self.volatile,
-            self.store,
-            self.connection,
-            self.sender,
-        );
-
-        (client, connection)
-    }
+/// Struct used to pass the connection configuration to the [`ConnectionConfig`]
+#[derive(Debug)]
+pub struct BuildConfig<S> {
+    pub(crate) channel_size: usize,
+    pub(crate) writable_dir: Option<PathBuf>,
+    pub(crate) store: S,
+    pub(crate) state: Arc<SharedState>,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
 /// [`DeviceConnection`].
-#[derive(Clone)]
-pub struct DeviceBuilder<S, C>
-where
-    C: Connection,
-{
+#[derive(Debug)]
+pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
+    pub(crate) stored_retention: NonZeroUsize,
+    pub(crate) store: S,
+    pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
-    pub(crate) connection: C,
-    pub(crate) sender: C::Sender,
-    pub(crate) store: StoreWrapper<S>,
-    pub(crate) volatile: SharedVolatileStore,
     pub(crate) writable_dir: Option<PathBuf>,
 }
 
-impl DeviceBuilder<(), ()> {
+impl DeviceBuilder<NoConnect, NoStore> {
     /// Create a new instance of the DeviceBuilder.
     /// Has a default [`DeviceBuilder::channel_size`] that equals to [`crate::builder::DEFAULT_CHANNEL_SIZE`].
     ///
@@ -176,20 +149,16 @@ impl DeviceBuilder<(), ()> {
         Self {
             channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
-            interfaces: Interfaces::new(),
-            connection: (),
-            sender: (),
-            store: StoreWrapper::new(()),
-            volatile: SharedVolatileStore::new(),
+            stored_retention: DEFAULT_STORE_CAPACITY,
             writable_dir: None,
+            interfaces: Interfaces::new(),
+            connection_config: NoConnect,
+            store: NoStore,
         }
     }
 }
 
-impl<S, C> DeviceBuilder<S, C>
-where
-    C: Connection,
-{
+impl<S, C> DeviceBuilder<S, C> {
     /// Add a single interface from the provided `.json` file.
     ///
     /// If an interface with the same name is present, the code will validate
@@ -258,14 +227,6 @@ where
         self
     }
 
-    /// Sets the number of elements with retention volatile that will be kept in memory if
-    /// disconnected.
-    pub fn volatile_retention(mut self, items: usize) -> Self {
-        self.volatile_retention = items;
-
-        self
-    }
-
     /// Configure a writable directory for the device.
     pub fn writable_dir<P>(mut self, path: P) -> Result<Self, BuilderError>
     where
@@ -292,11 +253,20 @@ where
         Ok(self)
     }
 
+    /// Set the maximum number of elements that will be kept in memory
+    pub fn max_volatile_retention(mut self, items: NonZeroUsize) -> Self {
+        self.volatile_retention = items.get();
+
+        self
+    }
+}
+
+impl<C> DeviceBuilder<C, NoStore> {
     /// Configure a writable directory and initializes the [`SqliteStore`] in it.
     pub async fn store_dir<P>(
         mut self,
         path: P,
-    ) -> Result<DeviceBuilder<SqliteStore, C>, BuilderError>
+    ) -> Result<DeviceBuilder<C, SqliteStore>, BuilderError>
     where
         P: AsRef<Path>,
     {
@@ -312,77 +282,139 @@ where
     /// Set the backing storage for the device.
     ///
     /// This will store and retrieve the device's properties.
-    pub fn store<T>(self, store: T) -> DeviceBuilder<T, C>
+    pub fn store<S>(self, store: S) -> DeviceBuilder<C, S>
     where
-        T: PropertyStore,
+        S: PropertyStore,
     {
         DeviceBuilder {
+            interfaces: self.interfaces,
+            connection_config: self.connection_config,
+            store,
+            stored_retention: self.stored_retention,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
-            interfaces: self.interfaces,
-            connection: self.connection,
-            sender: self.sender,
-            store: StoreWrapper::new(store),
-            volatile: self.volatile,
             writable_dir: self.writable_dir,
         }
     }
+}
 
-    /// Establishes the connection using the passed [`ConnectionConfig`].
+impl<S> DeviceBuilder<NoConnect, S>
+where
+    S: StoredRetention,
+{
+    /// Set the maximum number of elements that will be kept in the store
+    pub fn max_stored_retention(mut self, items: NonZeroUsize) -> Self {
+        self.stored_retention = items;
+
+        self
+    }
+}
+
+impl<S> DeviceBuilder<NoConnect, S>
+where
+    S: PropertyStore,
+{
+    /// Configure the connection using the passed [`ConnectionConfig`].
     ///
     /// If the connection gets established correctly, the caller can than construct
-    /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceSdkBuild::build`] method.
-    pub async fn connect<T>(self, config: T) -> Result<DeviceBuilder<S, T::Conn>, crate::Error>
+    /// the [`DeviceClient`] and [`DeviceConnection`] using the [`DeviceBuilder::build`] method.
+    pub fn connection<C>(self, connection_config: C) -> DeviceBuilder<C, S>
     where
-        S: PropertyStore,
-        T: ConnectionConfig<S>,
-        crate::Error: From<<T as ConnectionConfig<S>>::Err>,
-        C: Send + Sync,
+        C: ConnectionConfig<S>,
+        // required to call [`DeviceBuilder::build`]
+        Error: From<C::Err>,
     {
-        let (sender, connection) = config.connect(&self).await?;
-
-        Ok(DeviceBuilder {
+        DeviceBuilder {
+            interfaces: self.interfaces,
+            connection_config,
+            store: self.store,
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
-            interfaces: self.interfaces,
+            stored_retention: self.stored_retention,
+            writable_dir: self.writable_dir,
+        }
+    }
+}
+
+// NOTE: Currently volatile retention is not supported for the Grpc connection.
+// Currently messages won't be retained or stored (see [`crate::transport::store::GrpcStore`])
+impl<S> DeviceBuilder<S, crate::transport::mqtt::MqttConfig> {
+    /// Sets the number of elements with retention volatile that will be kept in memory if
+    /// disconnected.
+    pub fn volatile_retention(mut self, items: usize) -> Self {
+        self.volatile_retention = items;
+
+        self
+    }
+}
+
+type BuildRes<C> = (DeviceClient<C>, DeviceConnection<C>);
+
+impl<C, S> DeviceBuilder<C, S>
+where
+    S: StoreCapabilities,
+    C: ConnectionConfig<S>,
+    Error: From<C::Err>,
+{
+    /// Method that consumes the builder and returns a working [`DeviceClient`] and
+    /// [`DeviceConnection`] with the specified settings.
+    pub async fn build(self) -> Result<BuildRes<C::Conn>, Error> {
+        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
+        let (tx_connection, rx_client) = flume::bounded(self.channel_size);
+
+        let volatile_store = VolatileStore::with_capacity(self.volatile_retention);
+
+        let state = Arc::new(SharedState::new(self.interfaces, volatile_store));
+
+        let config = BuildConfig {
+            store: self.store,
+            channel_size: self.channel_size,
+            writable_dir: self.writable_dir,
+            state: Arc::clone(&state),
+        };
+
+        let DeviceTransport {
             connection,
             sender,
-            store: self.store,
-            volatile: self.volatile,
-            writable_dir: self.writable_dir,
-        })
+            store,
+        } = self.connection_config.connect(config).await?;
+
+        // set max retention items in the store
+        if let Some(retention) = store.get_retention() {
+            retention
+                .set_max_retention_items(self.stored_retention)
+                .await?;
+        }
+
+        let client =
+            DeviceClient::new(sender.clone(), rx_client, store.clone(), Arc::clone(&state));
+
+        let connection = DeviceConnection::new(tx_connection, store, state, connection, sender);
+
+        Ok((client, connection))
     }
 }
 
-impl<S, C> Debug for DeviceBuilder<S, C>
-where
-    C: Connection,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AstarteOptions")
-            .field("channel_size", &self.channel_size)
-            .field("interfaces", &self.interfaces)
-            .field("writable_dir", &self.writable_dir)
-            // We manually implement Debug for the store, so we can avoid have a trait bound on
-            // `S` to implement [Display].
-            .finish_non_exhaustive()
-    }
-}
-
-impl Default for DeviceBuilder<(), ()> {
+impl Default for DeviceBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Generic connection configuration that enables the builder
-/// to work with different types of transport.
-/// You can pass types implementing this trait to the [`DeviceBuilder::connect`] method.
-///
-/// This trait is already implemented internally
-/// and implementing it should be avoided since it has no practical use.
-#[async_trait]
+/// Structure that stores a successfully established connection
+pub struct DeviceTransport<C>
+where
+    C: Connection,
+{
+    pub(crate) connection: C,
+    pub(crate) sender: C::Sender,
+    pub(crate) store: StoreWrapper<C::Store>,
+}
+
+/// Crate private connection implementation.
 pub trait ConnectionConfig<S> {
+    /// Type of the store used by the connection
+    type Store: StoreCapabilities;
     /// Type of the constructed Connection
     type Conn: Connection;
     /// Type of the error got while opening the connection
@@ -390,13 +422,12 @@ pub trait ConnectionConfig<S> {
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
-    async fn connect<C>(
+    fn connect(
         self,
-        builder: &DeviceBuilder<S, C>,
-    ) -> Result<(<Self::Conn as Connection>::Sender, Self::Conn), Self::Err>
+        config: BuildConfig<S>,
+    ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, Self::Err>> + Send
     where
-        S: PropertyStore,
-        C: Connection + Send + Sync;
+        S: PropertyStore;
 }
 
 /// Walks a directory returning an array of json files
@@ -430,20 +461,11 @@ where
 mod test {
     use std::time::Duration;
 
-    use mockall::predicate;
-    use mockito::Server;
-    use rumqttc::{AckOfPub, ConnAck, ConnectReturnCode, Event, Packet, QoS, SubAck};
+    use mockall::Sequence;
     use tempfile::TempDir;
 
-    use crate::{
-        properties::extract_set_properties,
-        transport::mqtt::{
-            client::{AsyncClient, EventLoop, NEW_LOCK},
-            pairing::tests::{mock_create_certificate, mock_get_broker_url},
-            test::notify_success,
-            MqttConfig,
-        },
-    };
+    use crate::test::DEVICE_PROPERTIES;
+    use crate::transport::mock::{MockCon, MockConfig, MockSender};
 
     use super::*;
 
@@ -524,124 +546,41 @@ mod test {
 
     #[tokio::test]
     async fn should_build() {
-        let _m = NEW_LOCK.lock().await;
-
         let dir = TempDir::new().unwrap();
 
-        let ctx = AsyncClient::new_context();
-        ctx.expect().once().returning(move |_, _| {
-            let mut client = AsyncClient::default();
-            let mut ev_loop = EventLoop::default();
+        // TODO: add expectations
+        let mut config = MockConfig::<SqliteStore>::new();
+        let mut seq = Sequence::new();
 
-            let mut seq = mockall::Sequence::new();
+        let tmp_path = Some(dir.path().to_path_buf());
 
-            ev_loop
-                .expect_set_network_options()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|_| EventLoop::default());
+        config
+            .expect_connect()
+            .once()
+            .in_sequence(&mut seq)
+            .withf(
+                move |BuildConfig {
+                          channel_size,
+                          writable_dir,
+                          store: _,
+                          state,
+                      }| {
+                    channel_size == channel_size
+                        && *writable_dir == tmp_path
+                        && state.interfaces.try_read().unwrap().get("org.astarte-platform.rust.examples.individual-properties.DeviceProperties").is_some()
+                },
+            )
+            .returning(|config| {
+                let mut sender = MockSender::new();
+                let mut seq = Sequence::new();
+                sender.expect_clone().once().in_sequence(&mut seq).returning(MockSender::new);
 
-            client
-                .expect_clone()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    let mut client = AsyncClient::default();
-
-                    let mut seq = mockall::Sequence::new();
-
-                    client
-                        .expect_clone()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .returning(|| {
-                            let mut client = AsyncClient::default();
-
-                            let mut seq = mockall::Sequence::new();
-
-                            client
-                                .expect_subscribe::<String>()
-                                .with(
-                                    predicate::eq(
-                                        "realm/device_id/control/consumer/properties".to_string(),
-                                    ),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                )
-                                .once()
-                                .in_sequence(&mut seq)
-                                .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
-
-                            client
-                                .expect_publish::<String, String>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .with(
-                                    predicate::eq("realm/device_id".to_string()),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                    predicate::eq(false),
-                                    predicate::eq(String::new()),
-                                )
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, &str>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/emptyCache"
-                                        && *qos == QoS::ExactlyOnce
-                                        && *payload == "1"
-                                })
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, Vec<u8>>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .withf(|topic, qos, _, payload| {
-                                    topic == "realm/device_id/control/producer/properties"
-                                        && *qos == QoS::ExactlyOnce
-                                        && extract_set_properties(payload).unwrap().is_empty()
-                                })
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                        });
-
-                    client
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        tokio::task::yield_now().await;
-
-                        Ok(Event::Incoming(Packet::ConnAck(ConnAck {
-                            session_present: false,
-                            code: ConnectReturnCode::Success,
-                        })))
-                    })
-                });
-
-            // catch other calls to pool
-            ev_loop.expect_poll().once().returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-
-                    Ok(Event::Incoming(Packet::PingReq))
+                Ok(DeviceTransport {
+                    connection: MockCon::new(),
+                    sender,
+                    store: StoreWrapper::new(config.store),
                 })
             });
-
-            (client, ev_loop)
-        });
-
-        let mut server = Server::new_async().await;
-
-        let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server).create_async().await;
 
         let (_client, _connection) = tokio::time::timeout(
             Duration::from_secs(3),
@@ -649,20 +588,13 @@ mod test {
                 .store_dir(dir.path())
                 .await
                 .unwrap()
-                .connect(MqttConfig::with_credential_secret(
-                    "realm",
-                    "device_id",
-                    "secret",
-                    server.url(),
-                )),
+                .interface_str(DEVICE_PROPERTIES)
+                .unwrap()
+                .connection(config)
+                .build(),
         )
         .await
         .unwrap()
-        .unwrap()
-        .build()
-        .await;
-
-        mock_url.assert_async().await;
-        mock_cert.assert_async().await;
+        .unwrap();
     }
 }

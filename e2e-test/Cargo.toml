@@ -30,14 +30,27 @@ rust-version = { workspace = true }
 
 [dependencies]
 astarte-device-sdk = { workspace = true, features = ["derive"] }
+async-channel = { workspace = true }
 base64 = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive", "env"] }
 color-eyre = { workspace = true }
 eyre = { workspace = true }
+flume = { workspace = true, features = ["async"] }
+futures = { workspace = true }
 itertools = { workspace = true }
-reqwest = { workspace = true }
+phoenix-chan = { workspace = true }
+reqwest = { workspace = true, default-features = false }
 rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }
+
+[target.'cfg(macos)'.dependencies]
+reqwest = { workspace = true, features = ["macos-system-configuration"] }

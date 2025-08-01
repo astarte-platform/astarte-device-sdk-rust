@@ -127,6 +127,19 @@ impl ClientAuth {
     }
 }
 
+#[cfg(feature = "webpki")]
+#[instrument]
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+    debug!("reading root cert store from webpki");
+
+    let root_cert_store = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    Ok(root_cert_store)
+}
+
+#[cfg(not(feature = "webpki"))]
 #[instrument]
 pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
     debug!("reading root cert store from native certs");

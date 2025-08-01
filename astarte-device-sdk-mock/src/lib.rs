@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,210 +16,164 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::Path;
+use std::{future::Future, path::Path};
 
-use astarte_device_sdk::{
-    client::{ClientDisconnect, RecvError},
-    properties::PropAccess,
-    store::StoredProp,
-    AstarteAggregate, AstarteType, DeviceEvent, Error, Interface,
-};
-use async_trait::async_trait;
+use astarte_device_sdk::aggregate::AstarteObject;
+use astarte_device_sdk::astarte_interfaces::Interface;
+use astarte_device_sdk::client::{ClientDisconnect, RecvError};
+use astarte_device_sdk::properties::PropAccess;
+use astarte_device_sdk::store::StoredProp;
+use astarte_device_sdk::transport::Connection;
+use astarte_device_sdk::{AstarteData, DeviceEvent, Error};
 use mockall::mock;
 
 // Export public facing dependencies
 pub use mockall;
 
-#[async_trait]
-pub trait Client {
-    async fn send_object_with_timestamp<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
-    where
-        D: AstarteAggregate + Send + 'static;
+// FIXME: remove, still present for backwards compatibility
+pub use astarte_device_sdk::Client;
 
-    async fn send_object<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-    ) -> Result<(), Error>
-    where
-        D: AstarteAggregate + Send + 'static;
-
-    async fn send_with_timestamp<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), Error>
-    where
-        D: TryInto<AstarteType> + Send + 'static;
-
-    async fn send<D>(
-        &self,
-        interface_name: &str,
-        interface_path: &str,
-        data: D,
-    ) -> Result<(), Error>
-    where
-        D: TryInto<AstarteType> + Send + 'static;
-
-    async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
-
-    async fn recv(&self) -> Result<DeviceEvent, RecvError>;
-}
-
-#[async_trait]
 pub trait DeviceIntrospection {
-    async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
+    fn get_interface<F, O>(&self, interface_name: &str, f: F) -> impl Future<Output = O> + Send
     where
         F: FnMut(Option<&Interface>) -> O + Send + 'static,
         O: 'static;
 }
 
-#[async_trait]
 pub trait DynamicIntrospection {
-    async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
+    fn add_interface(
+        &mut self,
+        interface: Interface,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
-    async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
+    fn extend_interfaces<I>(
+        &mut self,
+        interfaces: I,
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
     where
         I: IntoIterator<Item = Interface> + Send + 'static;
 
-    async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>)
-        -> Result<Vec<String>, Error>;
-
-    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
+    fn add_interface_from_file<P>(
+        &mut self,
+        file_path: P,
+    ) -> impl Future<Output = Result<bool, Error>> + Send
     where
         P: AsRef<Path> + Send + Sync + 'static;
 
-    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
+    fn add_interface_from_str(
+        &mut self,
+        json_str: &str,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
-    async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+    fn remove_interface(
+        &mut self,
+        interface_name: &str,
+    ) -> impl Future<Output = Result<bool, Error>> + Send;
 
-    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+    fn remove_interfaces<I>(
+        &mut self,
+        interfaces_name: I,
+    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
     where
         I: IntoIterator<Item = String> + Send + 'static,
         I::IntoIter: Send;
-
-    async fn remove_interfaces_vec(
-        &self,
-        interfaces_name: Vec<String>,
-    ) -> Result<Vec<String>, Error>;
 }
 
 mock! {
-    pub DeviceClient<S: 'static> { }
+    pub DeviceClient<C: Connection + 'static> { }
 
-    #[async_trait]
-    impl<S: Send + Sync> Client for DeviceClient<S> {
-        async fn send_object_with_timestamp<D>(
-            &self,
+    impl<C: Connection> Clone for DeviceClient<C> {
+        fn clone(&self) -> Self;
+    }
+
+    impl<C: Connection> Client for DeviceClient<C> {
+        async fn send_object_with_timestamp(
+            &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: D,
+            data: AstarteObject,
             timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send + 'static;
+        ) -> Result<(), Error>;
 
-        async fn send_object<D>(
-            &self,
+        async fn send_object(
+            &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: D,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send + 'static;
+            data: AstarteObject,
+        ) -> Result<(), Error>;
 
-        async fn send_with_timestamp<D>(
-            &self,
+        async fn send_individual_with_timestamp(
+            &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: D,
+            data: AstarteData,
             timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send + 'static;
+        ) -> Result<(), Error>;
 
-        async fn send<D>(
-            &self,
+        async fn send_individual(
+            &mut self,
             interface_name: &str,
             interface_path: &str,
-            data: D,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send + 'static;
+            data: AstarteData,
+        ) -> Result<(), Error>;
 
-        async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
+        async fn set_property(
+            &mut self,
+            interface_name: &str,
+            interface_path: &str,
+            data: AstarteData
+        ) -> Result<(), Error>;
+
+        async fn unset_property(&mut self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
 
         async fn recv(&self) -> Result<DeviceEvent, RecvError>;
     }
 
-
-    #[async_trait]
-    impl<S: Send + Sync> DeviceIntrospection for DeviceClient<S> {
+    impl<C: Connection> DeviceIntrospection for DeviceClient<C> {
         async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
         where
             F: FnMut(Option<&Interface>) -> O + Send + 'static,
             O: 'static;
     }
 
-    #[async_trait]
-    impl<S: Send + Sync> DynamicIntrospection for DeviceClient<S> {
-        async fn add_interface(&self, interface: Interface) -> Result<bool, Error>;
+    impl<C: Connection> DynamicIntrospection for DeviceClient<C> {
+        async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>;
 
-        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send + 'static;
 
-        async fn extend_interfaces_vec(&self, interfaces: Vec<Interface>) -> Result<Vec<String>, Error>;
-
-        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync + 'static;
 
-        async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error>;
+        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, Error>;
 
-        async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error>;
+        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error>;
 
-        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
             where
                 I: IntoIterator<Item = String> + Send + 'static,
                 I::IntoIter: Send;
-
-        async fn remove_interfaces_vec(&self, interfaces_name: Vec<String>) -> Result<Vec<String>, Error>;
     }
 
-    #[async_trait]
-    impl<S: Send + Sync> PropAccess for DeviceClient<S> {
-        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+    impl<C: Connection> PropAccess for DeviceClient<C> {
+        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteData>, Error>;
         async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
         async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
         async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
         async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
     }
 
-    #[async_trait]
-    impl<S: Send + Sync> ClientDisconnect for DeviceClient<S> {
-        async fn disconnect(&self) -> Result<(), Error>;
-    }
-
-    impl<S> Clone for DeviceClient<S> {
-        fn clone(&self) -> Self {}
+    impl<C: Connection> ClientDisconnect for DeviceClient<C> {
+        async fn disconnect(&mut self) -> Result<(), Error>;
     }
 }
 
 mock! {
-    pub DeviceConnection<S: 'static, C: 'static> {}
+    pub DeviceConnection<C: Connection + 'static> {}
 
-    #[async_trait]
-    impl<S: Send, C: Send> astarte_device_sdk::EventLoop for DeviceConnection<S,C> {
+    impl<C: Connection> astarte_device_sdk::EventLoop for DeviceConnection<C> {
         async fn handle_events(self) -> Result<(), crate::Error>;
     }
 }
@@ -229,137 +183,62 @@ mod tests {
     use super::*;
 
     /// Struct to keep the traits and mock consistent
+    #[derive(Debug, Clone)]
     struct CheckMocks {}
 
-    #[async_trait]
-    impl Client for CheckMocks {
-        async fn send_object_with_timestamp<D>(
-            &self,
-            interface_name: &str,
-            interface_path: &str,
-            data: D,
-            timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send + 'static,
-        {
-            astarte_device_sdk::Client::send_object_with_timestamp(
-                self,
-                interface_name,
-                interface_path,
-                data,
-                timestamp,
-            )
-            .await
-        }
-
-        async fn send_object<D>(
-            &self,
-            interface_name: &str,
-            interface_path: &str,
-            data: D,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send + 'static,
-        {
-            astarte_device_sdk::Client::send_object(self, interface_name, interface_path, data)
-                .await
-        }
-
-        async fn send_with_timestamp<D>(
-            &self,
-            interface_name: &str,
-            interface_path: &str,
-            data: D,
-            timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send + 'static,
-        {
-            astarte_device_sdk::Client::send_with_timestamp(
-                self,
-                interface_name,
-                interface_path,
-                data,
-                timestamp,
-            )
-            .await
-        }
-
-        async fn send<D>(
-            &self,
-            interface_name: &str,
-            interface_path: &str,
-            data: D,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send + 'static,
-        {
-            astarte_device_sdk::Client::send(self, interface_name, interface_path, data).await
-        }
-
-        async fn unset(&self, interface_name: &str, interface_path: &str) -> Result<(), Error> {
-            astarte_device_sdk::Client::unset(self, interface_name, interface_path).await
-        }
-
-        async fn recv(&self) -> Result<DeviceEvent, RecvError> {
-            astarte_device_sdk::Client::recv(self).await
-        }
-    }
-
-    #[async_trait]
     impl astarte_device_sdk::Client for CheckMocks {
-        async fn send_object_with_timestamp<D>(
-            &self,
+        async fn send_object_with_timestamp(
+            &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: D,
+            _data: AstarteObject,
             _timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send,
-        {
+        ) -> Result<(), Error> {
             Ok(())
         }
 
-        async fn send_object<D>(
-            &self,
+        async fn send_object(
+            &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: D,
-        ) -> Result<(), Error>
-        where
-            D: AstarteAggregate + Send,
-        {
+            _data: AstarteObject,
+        ) -> Result<(), Error> {
             Ok(())
         }
 
-        async fn send_with_timestamp<D>(
-            &self,
+        async fn send_individual_with_timestamp(
+            &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: D,
+            _data: AstarteData,
             _timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send,
-        {
+        ) -> Result<(), Error> {
             Ok(())
         }
 
-        async fn send<D>(
-            &self,
+        async fn send_individual(
+            &mut self,
             _interface_name: &str,
             _interface_path: &str,
-            _data: D,
-        ) -> Result<(), Error>
-        where
-            D: TryInto<AstarteType> + Send,
-        {
+            _data: AstarteData,
+        ) -> Result<(), Error> {
             Ok(())
         }
 
-        async fn unset(&self, _interface_name: &str, _interface_path: &str) -> Result<(), Error> {
+        async fn set_property(
+            &mut self,
+            _interface_name: &str,
+            _mapping_path: &str,
+            _data: AstarteData,
+        ) -> Result<(), Error> {
+            Ok(())
+        }
+
+        async fn unset_property(
+            &mut self,
+            _interface_name: &str,
+            _mapping_path: &str,
+        ) -> Result<(), Error> {
             Ok(())
         }
 
@@ -367,12 +246,11 @@ mod tests {
             Ok(DeviceEvent {
                 interface: Default::default(),
                 path: Default::default(),
-                data: astarte_device_sdk::Value::Unset,
+                data: astarte_device_sdk::Value::Property(None),
             })
         }
     }
 
-    #[async_trait]
     impl DeviceIntrospection for CheckMocks {
         async fn get_interface<F, O>(&self, interface_name: &str, f: F) -> O
         where
@@ -387,7 +265,6 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl astarte_device_sdk::introspection::DeviceIntrospection for CheckMocks {
         async fn get_interface<F, O>(&self, _interface_name: &str, mut f: F) -> O
         where
@@ -397,14 +274,13 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl DynamicIntrospection for CheckMocks {
-        async fn add_interface(&self, interface: Interface) -> Result<bool, Error> {
+        async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface(self, interface)
                 .await
         }
 
-        async fn extend_interfaces<I>(&self, interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send + 'static,
         {
@@ -414,17 +290,7 @@ mod tests {
             .await
         }
 
-        async fn extend_interfaces_vec(
-            &self,
-            interfaces: Vec<Interface>,
-        ) -> Result<Vec<String>, Error> {
-            astarte_device_sdk::introspection::DynamicIntrospection::extend_interfaces_vec(
-                self, interfaces,
-            )
-            .await
-        }
-
-        async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync + 'static,
         {
@@ -434,14 +300,14 @@ mod tests {
             .await
         }
 
-        async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, Error> {
+        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface_from_str(
                 self, json_str,
             )
             .await
         }
 
-        async fn remove_interface(&self, interface_name: &str) -> Result<bool, Error> {
+        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error> {
             astarte_device_sdk::introspection::DynamicIntrospection::remove_interface(
                 self,
                 interface_name,
@@ -449,7 +315,7 @@ mod tests {
             .await
         }
 
-        async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = String> + Send + 'static,
             I::IntoIter: Send,
@@ -460,66 +326,40 @@ mod tests {
             )
             .await
         }
-
-        async fn remove_interfaces_vec(
-            &self,
-            interfaces_name: Vec<String>,
-        ) -> Result<Vec<String>, Error> {
-            astarte_device_sdk::introspection::DynamicIntrospection::remove_interfaces_vec(
-                self,
-                interfaces_name,
-            )
-            .await
-        }
     }
 
-    #[async_trait]
     impl astarte_device_sdk::introspection::DynamicIntrospection for CheckMocks {
-        async fn add_interface(&self, _interface: Interface) -> Result<bool, Error> {
+        async fn add_interface(&mut self, _interface: Interface) -> Result<bool, Error> {
             Ok(Default::default())
         }
 
-        async fn extend_interfaces<I>(&self, _interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(&mut self, _interfaces: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = Interface> + Send,
         {
             Ok(Default::default())
         }
 
-        async fn extend_interfaces_vec(
-            &self,
-            _interfaces: Vec<Interface>,
-        ) -> Result<Vec<String>, Error> {
-            Ok(Default::default())
-        }
-
-        async fn add_interface_from_file<P>(&self, _file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, _file_path: P) -> Result<bool, Error>
         where
             P: AsRef<Path> + Send + Sync,
         {
             Ok(Default::default())
         }
 
-        async fn add_interface_from_str(&self, _json_str: &str) -> Result<bool, Error> {
+        async fn add_interface_from_str(&mut self, _json_str: &str) -> Result<bool, Error> {
             Ok(Default::default())
         }
 
-        async fn remove_interface(&self, _interface_name: &str) -> Result<bool, Error> {
+        async fn remove_interface(&mut self, _interface_name: &str) -> Result<bool, Error> {
             Ok(Default::default())
         }
 
-        async fn remove_interfaces<I>(&self, _interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(&mut self, _interfaces_name: I) -> Result<Vec<String>, Error>
         where
             I: IntoIterator<Item = String> + Send,
             I::IntoIter: Send,
         {
-            Ok(Default::default())
-        }
-
-        async fn remove_interfaces_vec(
-            &self,
-            _interfaces_name: Vec<String>,
-        ) -> Result<Vec<String>, Error> {
             Ok(Default::default())
         }
     }

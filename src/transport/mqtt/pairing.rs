@@ -1,28 +1,29 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021 - 2025 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
 use std::{io, path::PathBuf};
 
-use reqwest::{StatusCode, Url};
+use reqwest::{
+    header::{HeaderMap, HeaderValue},
+    StatusCode, Url,
+};
 use serde::{Deserialize, Serialize};
 use url::ParseError;
 
@@ -41,6 +42,9 @@ pub enum PairingError {
     /// The pairing request failed.
     #[error("error while sending or receiving request")]
     Request(#[from] reqwest::Error),
+    /// Invalid credential secret
+    #[error("couldn't set bearer header, invalid credential secret")]
+    Header(#[from] reqwest::header::InvalidHeaderValue),
     /// The API returned an error.
     #[error("API returned an error code {status}")]
     Api {
@@ -55,9 +59,6 @@ pub enum PairingError {
     /// Couldn't configure the TLS store
     #[error("failed to configure TLS")]
     Tls(#[from] rustls::Error),
-    /// Couldn't load native certs
-    #[error("couldn't load native certificates")]
-    Native(#[source] io::Error),
     /// Invalid configuration.
     #[error("configuration error, {0}")]
     Config(String),
@@ -90,7 +91,7 @@ pub enum PairingError {
     },
     /// Couldn't read native certificates
     #[error("couldn't read native certificates")]
-    ReadNativeCerts(#[from] tokio::task::JoinError),
+    ReadNativeCerts(#[source] tokio::task::JoinError),
 }
 
 /// Struct with the information for the pairing
@@ -98,7 +99,6 @@ pub(crate) struct ApiClient<'a> {
     pub(crate) realm: &'a str,
     pub(crate) device_id: &'a str,
     pairing_url: &'a Url,
-    credentials_secret: &'a str,
     client: reqwest::Client,
 }
 
@@ -110,15 +110,21 @@ impl<'a> ApiClient<'a> {
     ) -> Result<Self, PairingError> {
         let tls_config = provider.api_tls_config()?;
 
+        let mut headers = HeaderMap::new();
+        let auth = format!("Bearer {}", provider.credential_secret());
+        let mut value = HeaderValue::from_str(&auth)?;
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(tls_config.clone())
+            .default_headers(headers)
             .build()?;
 
         Ok(Self {
             realm,
             device_id,
             pairing_url: provider.pairing_url(),
-            credentials_secret: provider.credential_secret(),
             client,
         })
     }
@@ -152,13 +158,7 @@ impl<'a> ApiClient<'a> {
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let response = self
-            .client
-            .post(url)
-            .bearer_auth(self.credentials_secret)
-            .json(&payload)
-            .send()
-            .await?;
+        let response = self.client.post(url).json(&payload).send().await?;
 
         match response.status() {
             StatusCode::CREATED => {
@@ -180,12 +180,7 @@ impl<'a> ApiClient<'a> {
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
-        let response = self
-            .client
-            .get(url)
-            .bearer_auth(self.credentials_secret)
-            .send()
-            .await?;
+        let response = self.client.get(url).send().await?;
 
         match response.status() {
             StatusCode::OK => {
@@ -313,7 +308,7 @@ pub(crate) mod tests {
                 let client_crt = self_sign_csr_to_pem(&csr);
 
                 serde_json::to_vec(&ApiData::new(MqttV1Certificate { client_crt }))
-                    .expect("couldn't serialize reposonse")
+                    .expect("couldn't serialize response")
             })
             .match_header("authorization", "Bearer secret")
     }
@@ -333,7 +328,7 @@ pub(crate) mod tests {
         let client = ApiClient::from_transport(&provider, "realm", "device_id")
             .expect("couldn't create api client");
 
-        let bundle = Bundle::new("test", "device_id").unwrap();
+        let bundle = Bundle::generate_key("test", "device_id").unwrap();
 
         let res = client.create_certificate(&bundle.csr).await.unwrap();
 

@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,39 +16,74 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env::VarError, error::Error, time::Duration};
+use std::time::Duration;
 
+use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
+use eyre::Context;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-type DynError = Box<dyn Error + Send + Sync + 'static>;
-
-const INTERFACE_STORED: &str = include_str!(
+const INDIVIDUAL_STORED: &str = include_str!(
     "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json"
 );
-const INTERFACE_VOLATILE: &str = include_str!(
+const INDIVIDUAL_STORED_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream";
+
+const INDIVIDUAL_VOLATILE: &str = include_str!(
     "./interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream.json"
 );
-
-const INTERFACE_STORED_NAME: &str =
-    "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream";
-const INTERFACE_VOLATILE_NAME: &str =
+const INDIVIDUAL_VOLATILE_NAME: &str =
     "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream";
 
-#[derive(Debug, thiserror::Error)]
-#[error("couldn't find variable {name}")]
-struct EnvError {
-    name: &'static str,
-    #[source]
-    backtrace: VarError,
+const OBJECT_STORED: &str = include_str!(
+    "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject.json"
+);
+const OBJECT_STORED_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject";
+
+const OBJECT_UNIQ_STORED: &str = include_str!(
+    "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredUniqDeviceObject.json"
+);
+const OBJECT_UNIQ_STORED_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.StoredUniqDeviceObject";
+
+const OBJECT_VOLATILE: &str = include_str!(
+    "./interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject.json"
+);
+const OBJECT_VOLATILE_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject";
+
+const OBJECT_UNIQ_VOLATILE: &str = include_str!(
+    "./interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileUniqDeviceObject.json"
+);
+const OBJECT_UNIQ_VOLATILE_NAME: &str =
+    "org.astarte-platform.rust.examples.individual-datastream.VolatileUniqDeviceObject";
+
+fn get_env(name: &'static str) -> eyre::Result<String> {
+    std::env::var(name).wrap_err_with(|| format!("couldn't get environment variable {name}"))
 }
 
-fn get_env(name: &'static str) -> Result<String, EnvError> {
-    std::env::var(name).map_err(|backtrace| EnvError { name, backtrace })
+#[derive(Debug, Clone, IntoAstarteObject)]
+struct ObjectDatastream {
+    longinteger: i64,
+    boolean: bool,
+}
+
+impl ObjectDatastream {
+    fn new(longinteger: i64, boolean: bool) -> Self {
+        Self {
+            longinteger,
+            boolean,
+        }
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), DynError> {
-    env_logger::init();
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
 
     let realm = get_env("ASTARTE_REALM")?;
     let device_id = get_env("ASTARTE_DEVICE_ID")?;
@@ -67,15 +102,18 @@ async fn main() -> Result<(), DynError> {
     std::fs::create_dir_all(&tmp_dir)?;
 
     // Create an Astarte Device (also performs the connection)
-    let (client, connection) = DeviceBuilder::new()
+    let (mut client, connection) = DeviceBuilder::new()
         .store_dir(&tmp_dir)
         .await?
-        .interface_str(INTERFACE_STORED)?
-        .interface_str(INTERFACE_VOLATILE)?
-        .connect(mqtt_config)
-        .await?
+        .interface_str(INDIVIDUAL_STORED)?
+        .interface_str(INDIVIDUAL_VOLATILE)?
+        .interface_str(OBJECT_STORED)?
+        .interface_str(OBJECT_UNIQ_STORED)?
+        .interface_str(OBJECT_VOLATILE)?
+        .interface_str(OBJECT_UNIQ_VOLATILE)?
+        .connection(mqtt_config)
         .build()
-        .await;
+        .await?;
 
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -88,16 +126,32 @@ async fn main() -> Result<(), DynError> {
 
         loop {
             client
-                .send(INTERFACE_STORED_NAME, "/endpoint1", counter)
+                .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint1", counter.into())
                 .await?;
             client
-                .send(INTERFACE_STORED_NAME, "/endpoint2", flag)
+                .send_individual(INDIVIDUAL_STORED_NAME, "/endpoint2", flag.into())
                 .await?;
             client
-                .send(INTERFACE_VOLATILE_NAME, "/endpoint1", counter)
+                .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint1", counter.into())
                 .await?;
             client
-                .send(INTERFACE_VOLATILE_NAME, "/endpoint2", flag)
+                .send_individual(INDIVIDUAL_VOLATILE_NAME, "/endpoint2", flag.into())
+                .await?;
+
+            let object = ObjectDatastream::new(flag.into(), flag);
+            let object = AstarteObject::try_from(object)?;
+
+            client
+                .send_object(OBJECT_STORED_NAME, "/endpoint", object.clone())
+                .await?;
+            client
+                .send_object(OBJECT_UNIQ_STORED_NAME, "/endpoint", object.clone())
+                .await?;
+            client
+                .send_object(OBJECT_VOLATILE_NAME, "/endpoint", object.clone())
+                .await?;
+            client
+                .send_object(OBJECT_UNIQ_VOLATILE_NAME, "/endpoint", object)
                 .await?;
 
             counter += 1;

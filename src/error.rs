@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 SECO Mind Srl
+// Copyright 2023 - 2025 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,18 +18,21 @@
 
 //! Error types for the Astarte SDK.
 
-use crate::interface::error::InterfaceError;
-use crate::interface::mapping::path::MappingError;
-use crate::interface::{Aggregation, InterfaceTypeDef};
+use std::convert::Infallible;
+use std::fmt::{Display, Formatter};
+
+use astarte_interfaces::error::Error as InterfaceError;
+use astarte_interfaces::mapping::path::MappingPathError;
+use astarte_interfaces::schema::{Aggregation, InterfaceType, Ownership};
+
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
+use crate::session::SessionError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
 use crate::types::TypeError;
 use crate::validate::UserValidationError;
-use std::convert::Infallible;
-use std::fmt::{Display, Formatter};
 
 /// Dynamic error type
 pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -49,14 +52,6 @@ pub enum Error {
     /// Error while operating on the device introspection.
     #[error("couldn't complete introspection operation")]
     AddInterface(#[from] AddInterfaceError),
-    /// Invalid interface type when sending or receiving.
-    #[error("invalid interface type, expected {exp} but got {got}")]
-    InterfaceType {
-        /// Expected interface type.
-        exp: InterfaceTypeDef,
-        /// Actual interface type.
-        got: InterfaceTypeDef,
-    },
     /// Couldn't find an interface with the given name.
     #[error("couldn't find interface '{name}'")]
     InterfaceNotFound {
@@ -72,8 +67,8 @@ pub enum Error {
         mapping: String,
     },
     /// Couldn't parse the mapping path.
-    #[error("invalid mapping path '{}'", .0.path())]
-    InvalidEndpoint(#[from] MappingError),
+    #[error("invalid mapping path")]
+    InvalidEndpoint(#[from] MappingPathError),
     /// Errors when converting between Astarte types.
     #[error("couldn't convert to Astarte Type")]
     Types(#[from] TypeError),
@@ -88,7 +83,10 @@ pub enum Error {
     Validation(#[from] UserValidationError),
     /// Invalid aggregation between the interface and the data.
     #[error(transparent)]
-    Aggregation(#[from] AggregateError),
+    Aggregation(#[from] AggregationError),
+    /// Invalid interface type between the interface and the data.
+    #[error(transparent)]
+    InterfaceType(#[from] InterfaceTypeError),
     /// Infallible conversion.
     #[error(transparent)]
     Infallible(#[from] Infallible),
@@ -98,11 +96,14 @@ pub enum Error {
     /// Error when the Device is disconnected from Astarte or client.
     ///
     /// This is an unrecoverable error for the SDK.
-    #[error("disconnected from astarte")]
+    #[error("disconnected from Astarte")]
     Disconnected,
     /// Retention operation failed.
     #[error("retention operation failed")]
     Retention(#[from] RetentionError),
+    /// Persistent session operation failed
+    #[error("persistent session operation failed")]
+    Session(#[from] SessionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
     #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
@@ -110,88 +111,100 @@ pub enum Error {
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }
 
-/// Aggregate error variant.
+/// Aggregation error.
 ///
 /// This provides additional context in case of an aggregation error
 #[derive(Debug, thiserror::Error)]
-#[error("invalid aggregation in {ctx} for {interface}{path}, expected {exp} but got {got}")]
+#[error("invalid aggregation for {interface}{path}, expected {exp} but got {got}")]
 #[non_exhaustive]
-pub struct AggregateError {
+pub struct AggregationError {
     /// Interface name
     interface: String,
     /// Path
     path: String,
-    /// Context to differentiate interface from payload error
-    ctx: AggregationCtx,
     /// Expected aggregation of the interface.
     exp: Aggregation,
     /// The actual aggregation.
     got: Aggregation,
 }
 
-impl AggregateError {
-    pub(crate) fn new(
-        interface: String,
-        path: String,
-        ctx: AggregationCtx,
+impl AggregationError {
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn new(
+        interface: impl Into<String>,
+        path: impl Into<String>,
         exp: Aggregation,
         got: Aggregation,
     ) -> Self {
         Self {
-            interface,
-            path,
-            ctx,
+            interface: interface.into(),
+            path: path.into(),
+            exp,
+            got,
+        }
+    }
+}
+
+/// Invalid interface type when sending or receiving.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid interface type for {name}{}, expected {exp} but got {got}", path.as_deref().unwrap_or_default())]
+pub struct InterfaceTypeError {
+    /// Name of the interface.
+    name: String,
+    /// Optional path
+    path: Option<String>,
+    /// Expected interface type.
+    exp: InterfaceType,
+    /// Actual interface type.
+    got: InterfaceType,
+}
+
+impl InterfaceTypeError {
+    pub(crate) fn new(name: impl Into<String>, exp: InterfaceType, got: InterfaceType) -> Self {
+        Self {
+            name: name.into(),
+            path: None,
             exp,
             got,
         }
     }
 
-    pub(crate) fn for_interface(
-        interface: impl Into<String>,
+    // Public to be used in the derive macro.
+    #[doc(hidden)]
+    pub fn with_path(
+        name: impl Into<String>,
         path: impl Into<String>,
-        exp: Aggregation,
-        got: Aggregation,
+        exp: InterfaceType,
+        got: InterfaceType,
     ) -> Self {
-        Self::new(
-            interface.into(),
-            path.into(),
-            AggregationCtx::Interface,
+        Self {
+            name: name.into(),
+            path: Some(path.into()),
             exp,
             got,
-        )
-    }
-
-    #[cfg(feature = "message-hub")]
-    pub(crate) fn for_payload(
-        interface: impl Into<String>,
-        path: impl Into<String>,
-        exp: Aggregation,
-        got: Aggregation,
-    ) -> Self {
-        Self::new(
-            interface.into(),
-            path.into(),
-            AggregationCtx::Payload,
-            exp,
-            got,
-        )
+        }
     }
 }
 
-/// Context for the [AggregateError] error variant.
-#[derive(Debug, Clone)]
-pub enum AggregationCtx {
-    /// Error occurring when checking the interface.
-    Interface,
-    /// Error occurring when checking the payload data.
-    Payload,
+/// Sending data on an interface not owned by the device
+#[derive(Debug, thiserror::Error)]
+#[error("invalid ownership for interface {name}, expected {exp} but got {got}")]
+pub struct OwnershipError {
+    /// Name of the interface.
+    name: String,
+    /// Expected interface ownership.
+    exp: Ownership,
+    /// Actual interface ownership.
+    got: Ownership,
 }
 
-impl Display for AggregationCtx {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AggregationCtx::Interface => write!(f, "interface"),
-            AggregationCtx::Payload => write!(f, "payload"),
+impl OwnershipError {
+    pub(crate) fn new(name: impl Into<String>, exp: Ownership, got: Ownership) -> Self {
+        Self {
+            name: name.into(),
+            exp,
+            got,
         }
     }
 }

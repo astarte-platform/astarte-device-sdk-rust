@@ -18,19 +18,21 @@
 
 //! Handles the properties for the device.
 
-use std::io::Write;
+use std::{future::Future, io::Write};
 
-use async_trait::async_trait;
+use astarte_interfaces::{
+    interface::InterfaceTypeAggregation, schema::InterfaceType, MappingPath, Schema,
+};
 use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
 use futures::{future, StreamExt, TryStreamExt};
 use tracing::{debug, error, warn};
 
 use crate::{
     client::DeviceClient,
-    error::Error,
-    interface::mapping::path::MappingPath,
-    store::{PropertyStore, StoredProp},
-    types::AstarteType,
+    error::{Error, InterfaceTypeError},
+    store::{PropertyMapping, PropertyStore, StoredProp},
+    transport::Connection,
+    types::AstarteData,
 };
 
 /// Error handling the properties.
@@ -55,14 +57,13 @@ pub enum PropertiesError {
 }
 
 /// Trait to access the stored properties.
-#[async_trait]
 pub trait PropAccess {
     /// Get the value of a property given the interface and path.
     ///
     /// ```no_run
     /// use astarte_device_sdk::{
     ///     store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteType, prelude::*,
+    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
     /// };
     ///
     /// #[tokio::main]
@@ -73,71 +74,86 @@ pub trait PropAccess {
     ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
-    ///         .connect(mqtt_config).await.unwrap()
-    ///         .build().await;
+    ///         .connection(mqtt_config)
+    ///         .build().await.unwrap();
     ///
-    ///     let property_value: Option<AstarteType> = device
+    ///     let property_value: Option<AstarteData> = device
     ///         .property("my.interface.name", "/endpoint/path")
     ///         .await
     ///         .unwrap();
     /// }
     /// ```
-    async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteType>, Error>;
+    fn property(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<Option<AstarteData>, Error>> + Send;
     /// Get all the properties of the given interface.
-    async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
+    fn interface_props(
+        &self,
+        interface: &str,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored properties, device or server owners.
-    async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored device properties.
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
     /// Get all the stored server properties.
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
+    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
 }
 
-#[async_trait]
-impl<S> PropAccess for DeviceClient<S>
+impl<C> PropAccess for DeviceClient<C>
 where
-    S: PropertyStore,
+    C: Connection,
 {
     async fn property(
         &self,
         interface_name: &str,
         path: &str,
-    ) -> Result<Option<AstarteType>, Error> {
+    ) -> Result<Option<AstarteData>, Error> {
         let path = MappingPath::try_from(path)?;
 
-        let interfaces = &self.interfaces.read().await;
-        let mapping = interfaces.property_mapping(interface_name, &path)?;
+        let interfaces = self.state.interfaces.read().await;
+        let mapping = interfaces.get_property(interface_name, &path)?;
 
-        self.try_load_prop(&mapping, &path).await
+        self.try_load_prop(&mapping).await
     }
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
-        let interfaces = &self.interfaces.read().await;
-        let prop_if =
-            interfaces
-                .get_property(interface_name)
-                .ok_or_else(|| Error::InterfaceNotFound {
-                    name: interface_name.to_string(),
-                })?;
+        let interfaces = self.state.interfaces.read().await;
+        let interface = interfaces
+            .get(interface_name)
+            .ok_or_else(|| Error::InterfaceNotFound {
+                name: interface_name.to_string(),
+            })?;
 
-        let stored_prop = self.store.interface_props(prop_if.interface_name()).await?;
+        let InterfaceTypeAggregation::Properties(interface) = interface.inner() else {
+            return Err(Error::InterfaceType(InterfaceTypeError::new(
+                interface_name,
+                InterfaceType::Properties,
+                interface.interface_type(),
+            )));
+        };
+
+        let stored_prop = self.store.interface_props(interface).await?;
 
         futures::stream::iter(stored_prop)
-            .then(|p| async {
-                if p.interface_major != prop_if.version_major() {
+            .then(|stored_prop| async {
+                if stored_prop.interface_major != interface.version_major() {
                     warn!(
                         "version mismatch for property {}{} (stored {}, interface {}), deleting",
-                        p.interface,
-                        p.path,
-                        p.interface_major,
-                        prop_if.version_major()
+                        stored_prop.interface,
+                        stored_prop.path,
+                        stored_prop.interface_major,
+                        interface.version_major()
                     );
 
-                    self.store.delete_prop(&p.interface, &p.path).await?;
+                    self.store
+                        .delete_prop(&PropertyMapping::from(&stored_prop))
+                        .await?;
 
                     Ok(None)
                 } else {
-                    Ok(Some(p))
+                    Ok(Some(stored_prop))
                 }
             })
             .try_filter_map(future::ok)
@@ -256,15 +272,11 @@ fn encode_prop(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::str::FromStr;
+    use astarte_interfaces::schema::Ownership;
 
-    use crate::interface::Ownership;
+    use crate::client::tests::mock_client_with_store;
     use crate::store::memory::MemoryStore;
-    use crate::store::SqliteStore;
-    use crate::test::mock_astarte_device_store;
-    use crate::Interface;
-
-    use crate::transport::mqtt::client::{AsyncClient, EventLoop};
+    use crate::store::{SqliteStore, StoreCapabilities};
 
     use super::*;
 
@@ -295,8 +307,7 @@ pub(crate) mod tests {
     "description": "Generic aggregated object data.",
     "mappings": [{
         "endpoint": "/bar",
-        "type": "boolean",
-        "explicit_timestamp": false
+        "type": "boolean"
     }]
 }"#;
     const DEVICE_PROP: &str = r#"{
@@ -309,17 +320,19 @@ pub(crate) mod tests {
     "description": "Generic aggregated object data.",
     "mappings": [{
         "endpoint": "/foo",
-        "type": "integer",
-        "explicit_timestamp": false
+        "type": "integer"
     }]
 }"#;
 
-    async fn test_prop_access_for_store<S: PropertyStore>(store: S) {
+    async fn test_prop_access_for_store<S>(store: S)
+    where
+        S: StoreCapabilities,
+    {
         store
             .store_prop(StoredProp {
                 interface: "org.Foo",
                 path: "/bar",
-                value: &AstarteType::Boolean(true),
+                value: &AstarteData::Boolean(true),
                 interface_major: 1,
                 ownership: Ownership::Server,
             })
@@ -330,33 +343,20 @@ pub(crate) mod tests {
             .store_prop(StoredProp {
                 interface: "org.Bar",
                 path: "/foo",
-                value: &AstarteType::Integer(42),
+                value: &AstarteData::Integer(42),
                 interface_major: 1,
                 ownership: Ownership::Device,
             })
             .await
             .unwrap();
 
-        let mut client = AsyncClient::default();
-
-        client.expect_clone().once().returning(AsyncClient::default);
-
-        let (sdk, _) = mock_astarte_device_store(
-            client,
-            EventLoop::default(),
-            [
-                Interface::from_str(SERVER_PROP).unwrap(),
-                Interface::from_str(DEVICE_PROP).unwrap(),
-            ],
-            store,
-        )
-        .await;
+        let (sdk, _) = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], store);
 
         let prop = sdk.property("org.Foo", "/bar").await.unwrap();
-        assert_eq!(prop, Some(AstarteType::Boolean(true)));
+        assert_eq!(prop, Some(AstarteData::Boolean(true)));
 
         let prop = sdk.property("org.Bar", "/foo").await.unwrap();
-        assert_eq!(prop, Some(AstarteType::Integer(42)));
+        assert_eq!(prop, Some(AstarteData::Integer(42)));
 
         let mut props = sdk.all_props().await.unwrap();
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
@@ -364,14 +364,14 @@ pub(crate) mod tests {
             StoredProp::<&'static str> {
                 interface: "org.Bar",
                 path: "/foo",
-                value: AstarteType::Integer(42),
+                value: AstarteData::Integer(42),
                 interface_major: 1,
                 ownership: Ownership::Device,
             },
             StoredProp::<&'static str> {
                 interface: "org.Foo",
                 path: "/bar",
-                value: AstarteType::Boolean(true),
+                value: AstarteData::Boolean(true),
                 interface_major: 1,
                 ownership: Ownership::Server,
             },
@@ -382,7 +382,7 @@ pub(crate) mod tests {
         let expected = [StoredProp {
             interface: "org.Bar",
             path: "/foo",
-            value: AstarteType::Integer(42),
+            value: AstarteData::Integer(42),
             interface_major: 1,
             ownership: Ownership::Device,
         }];
@@ -395,7 +395,7 @@ pub(crate) mod tests {
         let expected = [StoredProp::<&'static str> {
             interface: "org.Foo",
             path: "/bar",
-            value: AstarteType::Boolean(true),
+            value: AstarteData::Boolean(true),
             interface_major: 1,
             ownership: Ownership::Server,
         }];

@@ -25,11 +25,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - Unreleased
+
+### Changed
+
+- Use a pool for the SQLite connections instead of thread local variables
+  [#489](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/489)
+
 ## [0.9.8] - 2025-08-01
 
 ### Fixed
 
 - Mark object messages as sent in stored messages [#495]
+
+[#495](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/495).
+
+## [0.10.2] - 2025-07-11
+
+### Fixed
+
+- Allow serializing and deserializing the `Size` enum.
+  [#483](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/483)
+
+## [0.10.1] - 2025-07-02
+
+### Fixed
+
+- Avoid panicking when modifying the capacity for volatile retention memory
+  [#478](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/478).
+
+## [0.10.0] - 2025-06-20
+
+### Added
+
+- Introduce `webpki` feature to use Mozilla webpki root certificates rather than the native ones
+  [#396](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/396).
+- Implement PropertyAccess using the Astarte MessageHub
+  [#399](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/399)
+- Add the AstarteObject struct for Object Datastream [#430].
+- Allow setting the sqlite database size
+  [#455](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/455).
+- Implement Display for the AstarteData
+  [#462](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/462)
+- Allow setting the maximum number of items for the retention
+  [#463](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/463).
+
+### Changed
+
+- Bump MSRV to 1.78.0 [#395](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/395).
+- Update MessageHub proto definition to be compatible with the Astarte MessageHub v0.8
+  [#429](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/429)
+- Rename the AstarteAggregate derive macro to IntoAstarteObject [#430].
+- Remove the AstarteAggregate trait in favor of the AstarteObject [#430].
+- Change the send_object client methods to receive an AstarteObject argument [#430].
+- Return the timestamp received from the Astarte MessageHub
+  [#439](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/439)
+- Create a `Double` struct to make sure the `AstarteData::Double` is always a valid float.
+  [#459](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/459)
+- Rename `AstarteType` into `AstarteData`.
+  [#460](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/460)
+
+[#430]: (https://github.com/astarte-platform/astarte-device-sdk-rust/pull/430)
 
 ## [0.9.7] - 2025-06-12
 

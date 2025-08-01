@@ -25,10 +25,12 @@
 //! When an interface major version is updated the retention cache must be invalidated. Since the
 //! payload will be publish on the new introspection.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
 use rumqttc::{AckOfPub, Token, TokenError};
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::retention::RetentionId;
 
@@ -75,23 +77,6 @@ impl MqttRetention {
 
         count
     }
-
-    fn next_received(&mut self) -> Option<Result<RetentionId, TokenError>> {
-        let (id, res) = self
-            .packets
-            .iter_mut()
-            .find_map(|(id, v)| match v.check() {
-                Ok(_) => Some((*id, Ok(*id))),
-                Err(TokenError::Waiting) => None,
-                Err(TokenError::Disconnected) => Some((*id, Err(TokenError::Disconnected))),
-            })?;
-
-        self.packets.remove(&id);
-
-        trace!("remove packet {id}");
-
-        Some(res)
-    }
 }
 
 impl<'a> IntoFuture for &'a mut MqttRetention {
@@ -104,29 +89,42 @@ impl<'a> IntoFuture for &'a mut MqttRetention {
     }
 }
 
-impl Iterator for MqttRetention {
-    type Item = Result<RetentionId, TokenError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_received()
-    }
-}
-
 pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 
 impl std::future::Future for MqttRetentionFuture<'_> {
     type Output = Result<RetentionId, TokenError>;
 
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        let this = self.get_mut();
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = &mut *self.get_mut().0;
 
-        this.0.queue();
+        this.queue();
 
-        match this.0.next() {
-            Some(res) => Poll::Ready(res),
+        let first = this.packets.iter_mut().find_map(|(id, token)| {
+            let poll = <Token<AckOfPub> as Future>::poll(Pin::new(token), cx);
+
+            match poll {
+                Poll::Pending => None,
+                Poll::Ready(Ok(_)) => Some((*id, Ok(*id))),
+                Poll::Ready(Err(TokenError::Waiting)) => {
+                    warn!(%id, "future returned Ready(Waiting), this should not happen and it could lead to errors on the next poll");
+
+                    // NOTE: we could return None here, but after some consideration it's safer to
+                    //       error and drop the token instead of risking a panic if we poll the
+                    //       Future again
+                    Some((*id, Err(TokenError::Disconnected)))
+                }
+                Poll::Ready(Err(TokenError::Disconnected)) => {
+                    Some((*id, Err(TokenError::Disconnected)))
+                }
+            }
+        });
+
+        match first {
+            Some((id, res)) => {
+                this.packets.remove(&id);
+
+                Poll::Ready(res)
+            }
             None => Poll::Pending,
         }
     }
@@ -140,8 +138,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn should_queue_and_get_next() {
+    #[tokio::test]
+    async fn should_queue_and_get_next() {
         let (tx, rx) = flume::unbounded();
 
         let mut retention = MqttRetention::new(rx);
@@ -163,16 +161,13 @@ mod tests {
 
         assert_eq!(retention.queue(), 3);
 
-        let n = retention.next();
-        assert!(n.is_none());
-
         t2.resolve(AckOfPub::None);
 
-        let n = retention.next().unwrap().unwrap();
+        let n = retention.into_future().await.unwrap();
         assert_eq!(n, RetentionId::Stored(i2));
 
         drop(t1);
-        let res = retention.next().unwrap();
+        let res = retention.into_future().await;
         assert!(res.is_err(), "expected error but got {:?}", res.unwrap());
     }
 }
