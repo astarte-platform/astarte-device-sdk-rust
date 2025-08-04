@@ -32,6 +32,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use a pool for the SQLite connections instead of thread local variables
   [#489](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/489)
 
+## [0.9.8] - 2025-08-01
+
+### Fixed
+
+- Mark object messages as sent in stored messages [#495]
+
+[#495](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/495).
+
 ## [0.10.2] - 2025-07-11
 
 ### Fixed

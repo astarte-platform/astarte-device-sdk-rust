@@ -31,6 +31,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Do not reimplement the `Client` trait in the mocks.
 
+## [0.9.8] - 2025-08-01
+
 ## [0.10.2] - 2025-07-11
 
 ## [0.10.1] - 2025-07-02

@@ -303,7 +303,7 @@ mod tests {
             .store
             .get_retention()
             .unwrap()
-            .mark_as_sent(&retention_id)
+            .mark_sent(&retention_id)
             .await
             .unwrap();
 

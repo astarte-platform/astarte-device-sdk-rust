@@ -406,7 +406,7 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
     }
 
     /// It will mark the stored publish as sent
-    async fn mark_as_sent(&self, id: &Id) -> Result<(), RetentionError> {
+    async fn mark_sent(&self, id: &Id) -> Result<(), RetentionError> {
         self.update_sent_flag(id, true).await
     }
 }
