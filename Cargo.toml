@@ -47,14 +47,13 @@ resolver = "2"
 members = [
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
-  "astarte-interfaces",
   "e2e-test",
 ]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.package]
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
@@ -145,9 +144,9 @@ all-features = true
 rustc-args = ["--cfg=docsrs"]
 
 [workspace.dependencies]
-astarte-device-sdk = { path = "./", version = "=0.10.2" }
-astarte-device-sdk-derive = { version = "=0.10.2", path = "./astarte-device-sdk-derive" }
-astarte-interfaces = { path = "./astarte-interfaces", version = "=0.1.1" }
+astarte-device-sdk = { path = "./", version = "=0.10.3" }
+astarte-device-sdk-derive = { version = "=0.10.3", path = "./astarte-device-sdk-derive" }
+astarte-interfaces = "0.1.1"
 astarte-message-hub-proto = "0.8.1"
 astarte-message-hub-proto-mock = "0.8.1"
 async-channel = "2.0.0"
