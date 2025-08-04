@@ -228,9 +228,10 @@ dependencies = [
 [[package]]
 name = "astarte-interfaces"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45bcdb5d3a2f2883e0958b78c2c6ba16c137de8ef2cc3887445af57f4f157fa5"
 dependencies = [
  "cfg-if",
- "pretty_assertions",
  "regex",
  "serde",
  "serde_json",

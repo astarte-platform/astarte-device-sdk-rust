@@ -29,7 +29,6 @@ listPackage() {
 
 pkgsFiles=$(
     cat <(cargo package --allow-dirty -l -p "astarte-device-sdk") \
-        <(listPackage "astarte-interfaces") \
         <(listPackage "astarte-device-sdk-derive") \
         <(listPackage "astarte-device-sdk-mock") \
         <(listPackage "e2e-test") |
