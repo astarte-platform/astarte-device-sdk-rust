@@ -30,52 +30,8 @@ use mockall::mock;
 // Export public facing dependencies
 pub use mockall;
 
-pub trait Client {
-    fn send_object_with_timestamp(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-        data: AstarteObject,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn send_object(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-        data: AstarteObject,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn send_individual_with_timestamp(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-        data: AstarteData,
-        timestamp: chrono::DateTime<chrono::Utc>,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn send_individual(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-        data: AstarteData,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn set_property(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-        data: AstarteData,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn unset_property(
-        &mut self,
-        interface_name: &str,
-        interface_path: &str,
-    ) -> impl Future<Output = Result<(), Error>> + Send;
-
-    fn recv(&self) -> impl Future<Output = Result<DeviceEvent, RecvError>> + Send;
-}
+// FIXME: remove, still present for backwards compatibility
+pub use astarte_device_sdk::Client;
 
 pub trait DeviceIntrospection {
     fn get_interface<F, O>(&self, interface_name: &str, f: F) -> impl Future<Output = O> + Send
@@ -125,6 +81,10 @@ pub trait DynamicIntrospection {
 
 mock! {
     pub DeviceClient<C: Connection + 'static> { }
+
+    impl<C: Connection> Clone for DeviceClient<C> {
+        fn clone(&self) -> Self;
+    }
 
     impl<C: Connection> Client for DeviceClient<C> {
         async fn send_object_with_timestamp(
@@ -208,10 +168,6 @@ mock! {
     impl<C: Connection> ClientDisconnect for DeviceClient<C> {
         async fn disconnect(&mut self) -> Result<(), Error>;
     }
-
-    impl<C: Connection> Clone for DeviceClient<C> {
-        fn clone(&self) -> Self {}
-    }
 }
 
 mock! {
@@ -229,83 +185,6 @@ mod tests {
     /// Struct to keep the traits and mock consistent
     #[derive(Debug, Clone)]
     struct CheckMocks {}
-
-    impl Client for CheckMocks {
-        async fn send_object_with_timestamp(
-            &mut self,
-            interface_name: &str,
-            interface_path: &str,
-            data: AstarteObject,
-            timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::send_object_with_timestamp(
-                self,
-                interface_name,
-                interface_path,
-                data,
-                timestamp,
-            )
-            .await
-        }
-
-        async fn send_object(
-            &mut self,
-            interface_name: &str,
-            interface_path: &str,
-            data: AstarteObject,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::send_object(self, interface_name, interface_path, data)
-                .await
-        }
-
-        async fn send_individual_with_timestamp(
-            &mut self,
-            interface_name: &str,
-            interface_path: &str,
-            data: AstarteData,
-            timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::send_individual_with_timestamp(
-                self,
-                interface_name,
-                interface_path,
-                data,
-                timestamp,
-            )
-            .await
-        }
-
-        async fn send_individual(
-            &mut self,
-            interface_name: &str,
-            interface_path: &str,
-            data: AstarteData,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::send_individual(self, interface_name, interface_path, data)
-                .await
-        }
-
-        async fn set_property(
-            &mut self,
-            interface_name: &str,
-            mapping_path: &str,
-            data: AstarteData,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::set_property(self, interface_name, mapping_path, data).await
-        }
-
-        async fn unset_property(
-            &mut self,
-            interface_name: &str,
-            interface_path: &str,
-        ) -> Result<(), Error> {
-            astarte_device_sdk::Client::unset_property(self, interface_name, interface_path).await
-        }
-
-        async fn recv(&self) -> Result<DeviceEvent, RecvError> {
-            astarte_device_sdk::Client::recv(self).await
-        }
-    }
 
     impl astarte_device_sdk::Client for CheckMocks {
         async fn send_object_with_timestamp(

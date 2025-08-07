@@ -50,8 +50,9 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteData")]
     AstarteData(#[from] TypeError),
     /// Expected object, individual data deserialized
+    // FIXME: remove in future release
     #[error("expected object, individual data deserialized instead {0}")]
-    Object(Bson),
+    Object(Box<Bson>),
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingPathError),
@@ -175,7 +176,7 @@ pub(super) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(data)),
+        data => return Err(PayloadError::Object(Box::new(data))),
     };
 
     trace!("base path {path}");
