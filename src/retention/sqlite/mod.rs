@@ -27,13 +27,10 @@ use rusqlite::{
 };
 use tracing::{debug, error, instrument, trace};
 
-use crate::{
-    error::Report,
-    store::{
-        sqlite::{statements::WriteConnection, wrap_sync_call, SqliteError},
-        SqliteStore,
-    },
-};
+use crate::error::Report;
+use crate::store::sqlite::connection::WriteConnection;
+use crate::store::sqlite::SqliteError;
+use crate::store::SqliteStore;
 
 use super::{
     duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
@@ -71,6 +68,18 @@ impl RetentionMapping<'_> {
             // packet forever.
             exp.as_secs().try_into().ok()
         })
+    }
+
+    #[cfg(test)]
+    /// Returns an owned version of the value
+    pub(crate) fn into_owned(self) -> RetentionMapping<'static> {
+        RetentionMapping {
+            interface: self.interface.into_owned().into(),
+            path: self.path.into_owned().into(),
+            version_major: self.version_major,
+            reliability: self.reliability,
+            expiry: self.expiry,
+        }
     }
 }
 
@@ -118,6 +127,19 @@ impl<'a> RetentionPublish<'a> {
             sent: info.sent,
             payload: Cow::Borrowed(&info.value),
         })
+    }
+
+    #[cfg(test)]
+    /// Returns an owned version of the value
+    pub(crate) fn into_owned(self) -> RetentionPublish<'static> {
+        RetentionPublish {
+            id: self.id,
+            interface: self.interface.into_owned().into(),
+            path: self.path.into_owned().into(),
+            expiry_time: self.expiry_time,
+            sent: self.sent,
+            payload: self.payload.into_owned().into(),
+        }
     }
 }
 
@@ -199,57 +221,56 @@ impl FromSql for TimestampSecs {
 
 impl StoredRetention for SqliteStore {
     async fn store_publish(&self, id: &Id, info: PublishInfo<'_>) -> Result<(), RetentionError> {
-        let mapping = RetentionMapping::from(&info);
-        let publish = RetentionPublish::from_info(*id, &info)
-            .map_err(|err| RetentionError::store(&info, err))?;
+        let id = *id;
+        let info = info.into_owned();
+        self.pool
+            .acquire_writer(move |writer| {
+                let mapping = RetentionMapping::from(&info);
+                let publish = RetentionPublish::from_info(id, &info)
+                    .map_err(|err| RetentionError::store(&info, err))?;
 
-        self.writer
-            .lock()
+                writer
+                    .store(&mapping, &publish)
+                    .map_err(|err| RetentionError::store(&info, err))
+            })
             .await
-            .store(&mapping, &publish)
-            .map_err(|err| RetentionError::store(&info, err))?;
-
-        Ok(())
     }
 
     async fn update_sent_flag(&self, id: &Id, sent: bool) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .update_publish_sent_flag(id, sent)
-            .map_err(|err| RetentionError::update_sent(*id, sent, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.update_publish_sent_flag(&id, sent))
+            .await
+            .map_err(|err| RetentionError::update_sent(id, sent, err))
     }
 
     async fn mark_received(&self, id: &Id) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .delete_publish_by_id(id)
-            .map_err(|err| RetentionError::received(*id, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
+            .await
+            .map_err(|err| RetentionError::received(id, err))
     }
 
     async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
-            .await
-            .delete_publish_by_id(id)
-            .map_err(|err| RetentionError::delete_publish(*id, err))?;
+        let id = *id;
 
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
+            .await
+            .map_err(|err| RetentionError::delete_publish(id, err))
     }
 
     async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {
-        self.writer
-            .lock()
+        self.pool
+            .acquire_writer({
+                let interface = interface.to_string();
+                move |writer| writer.delete_interface(&interface)
+            })
             .await
-            .delete_interface(interface)
-            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))?;
-
-        Ok(())
+            .map_err(|err| RetentionError::delete_interface(interface.to_string(), err))
     }
 
     async fn unsent_publishes(
@@ -259,18 +280,25 @@ impl StoredRetention for SqliteStore {
     ) -> Result<usize, RetentionError> {
         let now = TimestampSecs::now();
 
-        // Prefer the two different queries, so we can free the writer
-        {
-            self.writer
-                .lock()
-                .await
-                .delete_expired(&now)
-                .map_err(RetentionError::unsent)?;
-        }
+        // This is to move the vec to another thread
+        let mut buf_take = std::mem::take(buf);
 
-        let count = self
-            .with_reader(|reader| reader.unset_publishes(buf, &now, limit))
+        self.pool
+            .acquire_writer(move |writer| writer.delete_expired(&now))
+            .await
             .map_err(RetentionError::unsent)?;
+
+        let (buf_ret, count) = self
+            .pool
+            .acquire_reader(move |reader| -> Result<_, SqliteError> {
+                let count = reader.unsent_publishes(&mut buf_take, &now, limit)?;
+
+                Ok((buf_take, count))
+            })
+            .await
+            .map_err(RetentionError::unsent)?;
+
+        *buf = buf_ret;
 
         Ok(count)
     }
@@ -278,19 +306,23 @@ impl StoredRetention for SqliteStore {
     async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
         let now = TimestampSecs::now();
 
-        let writer = self.writer.lock().await;
-
-        writer
-            .delete_expired(&now)
+        self.pool
+            .acquire_writer(move |writer| writer.delete_expired(&now))
+            .await
             .map_err(RetentionError::unsent)?;
 
-        writer.reset_all_sent().map_err(RetentionError::reset)?;
+        self.pool
+            .acquire_writer(|writer| writer.reset_all_sent())
+            .await
+            .map_err(RetentionError::reset)?;
 
         Ok(())
     }
 
     async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
-        self.with_reader(|reader| reader.all_interfaces())
+        self.pool
+            .acquire_reader(|reader| reader.all_interfaces())
+            .await
             .map_err(RetentionError::fetch_interfaces)
     }
 
@@ -298,21 +330,10 @@ impl StoredRetention for SqliteStore {
         &self,
         size: std::num::NonZeroUsize,
     ) -> Result<(), RetentionError> {
-        let mut connection = self.writer.lock().await;
-
-        connection.retention_capacity = size;
-
-        let removed = connection
-            .free_retention_items(0)
-            .map_err(|err| RetentionError::set_capacity(size, err))?;
-
-        if removed > 0 {
-            if let Err(err) = wrap_sync_call(|| connection.execute("VACUUM", [])) {
-                error!(error = %Report::new(err), "failed to vacuum the database");
-            }
-        }
-
-        Ok(())
+        self.pool
+            .acquire_writer(move |writer| writer.set_max_retention_items(size))
+            .await
+            .map_err(|err| RetentionError::set_capacity(size, err))
     }
 }
 
@@ -322,14 +343,14 @@ impl WriteConnection {
     /// In sequence
     /// - first we check the occupied space is greater than the capacity
     /// - if so, remove the expired elements from the store
-    /// - if the available space is still unsufficient, remove the oldest elements
+    /// - if the available space is still insufficient, remove the oldest elements
     ///
     /// Return the number of removed elements.
     #[instrument(skip(self))]
     pub(crate) fn free_retention_items(&mut self, to_store: usize) -> Result<usize, SqliteError> {
         let max_items = self.retention_capacity.get();
 
-        debug!("remove elements from strore if it's full");
+        debug!("remove elements from store if it's full");
 
         let count_stored = self.count_stored()?;
 
@@ -365,6 +386,21 @@ impl WriteConnection {
 
         Ok(removed.saturating_add(expired))
     }
+
+    /// Sets max retention items
+    fn set_max_retention_items(&mut self, size: std::num::NonZeroUsize) -> Result<(), SqliteError> {
+        self.retention_capacity = size;
+
+        let removed = self.free_retention_items(0)?;
+
+        if removed > 0 {
+            if let Err(err) = self.execute("VACUUM", []) {
+                error!(error = %Report::new(err), "failed to vacuum the database");
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -372,6 +408,7 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use astarte_interfaces::interface::Retention;
+    use pretty_assertions::assert_eq;
     use statements::tests::{fetch_mapping, fetch_publish};
 
     use crate::retention::Context;
@@ -425,11 +462,11 @@ mod tests {
 
         store.store_publish(&id, publish_info).await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
 
         assert_eq!(res, publish);
 
-        let res = fetch_mapping(&store, interface, path).unwrap();
+        let res = fetch_mapping(&store, interface, path).await.unwrap();
 
         assert_eq!(res, mapping)
     }
@@ -456,12 +493,22 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
 
         let capacity = NonZeroUsize::new(1).unwrap();
         store.set_max_retention_items(capacity).await.unwrap();
 
-        assert_eq!(1, store.writer.lock().await.count_stored().unwrap());
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[tokio::test]
@@ -501,7 +548,7 @@ mod tests {
             .await
             .unwrap();
 
-        let res = fetch_publish(&store, &id1).unwrap();
+        let res = fetch_publish(&store, &id1).await.unwrap();
 
         let publish1 = RetentionPublish {
             id: id1,
@@ -514,10 +561,10 @@ mod tests {
 
         assert_eq!(res, publish1);
 
-        let res = fetch_publish(&store, &id2);
+        let res = fetch_publish(&store, &id2).await;
         assert!(res.is_none());
 
-        let res = fetch_publish(&store, &id3).unwrap();
+        let res = fetch_publish(&store, &id3).await.unwrap();
 
         let publish3 = RetentionPublish {
             id: id3,
@@ -531,7 +578,12 @@ mod tests {
         assert_eq!(res, publish3);
 
         //check that the store count is still 2
-        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[tokio::test]
@@ -569,10 +621,10 @@ mod tests {
             .await
             .unwrap();
 
-        let res = fetch_publish(&store, &id1);
+        let res = fetch_publish(&store, &id1).await;
         assert!(res.is_none());
 
-        let res = fetch_publish(&store, &id2).unwrap();
+        let res = fetch_publish(&store, &id2).await.unwrap();
 
         let publish2 = RetentionPublish {
             id: id2,
@@ -585,7 +637,7 @@ mod tests {
 
         assert_eq!(res, publish2);
 
-        let res = fetch_publish(&store, &id3).unwrap();
+        let res = fetch_publish(&store, &id3).await.unwrap();
 
         let publish3 = RetentionPublish {
             id: id3,
@@ -599,7 +651,12 @@ mod tests {
         assert_eq!(res, publish3);
 
         //check that the store count is still 2
-        assert_eq!(2, store.writer.lock().await.count_stored().unwrap());
+        let count = store
+            .pool
+            .acquire_writer(|writer| writer.count_stored())
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[tokio::test]
@@ -627,11 +684,11 @@ mod tests {
 
         store.mark_received(&id).await.unwrap();
 
-        let res = fetch_publish(&store, &id);
+        let res = fetch_publish(&store, &id).await;
 
         assert_eq!(res, None);
 
-        let res = fetch_mapping(&store, interface, path).unwrap();
+        let res = fetch_mapping(&store, interface, path).await.unwrap();
 
         assert_eq!(res, mapping)
     }
@@ -673,12 +730,12 @@ mod tests {
 
         store.update_sent_flag(&id, true).await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
         assert!(res.sent);
 
         store.reset_all_publishes().await.unwrap();
 
-        let res = fetch_publish(&store, &id).unwrap();
+        let res = fetch_publish(&store, &id).await.unwrap();
         assert!(!res.sent);
     }
 }

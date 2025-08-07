@@ -103,6 +103,16 @@ impl From<&Interfaces> for Vec<IntrospectionInterface> {
     }
 }
 
+impl From<IntrospectionInterface<&str>> for IntrospectionInterface {
+    fn from(value: IntrospectionInterface<&str>) -> Self {
+        IntrospectionInterface {
+            name: value.name.to_string(),
+            version_major: value.version_major,
+            version_minor: value.version_minor,
+        }
+    }
+}
+
 /// Error returned by the retention.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]

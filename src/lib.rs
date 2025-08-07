@@ -51,6 +51,7 @@ pub(crate) mod state;
 pub mod store;
 pub mod transport;
 pub mod types;
+pub(crate) mod utils;
 mod validate;
 
 /// Re-exported internal structs

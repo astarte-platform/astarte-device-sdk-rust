@@ -55,7 +55,3 @@ component_management:
       paths:
         - src/**
         - src/*
-    - component_id: astarte-interfaces
-      name: interfaces
-      paths:
-        - astarte-interfaces/**

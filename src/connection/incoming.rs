@@ -18,7 +18,7 @@
 
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::{DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema};
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, warn};
 
 use crate::client::RecvError;
 use crate::interfaces::MappingRef;
@@ -33,7 +33,7 @@ where
     C: Connection,
 {
     // Solves https://github.com/rust-lang/rust/issues/110486
-    #[cfg_attr(not(__coverage), instrument(skip(self, payload)))]
+    #[cfg_attr(not(__coverage), tracing::instrument(skip(self, payload)))]
     pub(crate) async fn handle_event(
         &self,
         interface: &str,

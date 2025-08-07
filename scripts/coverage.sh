@@ -53,7 +53,6 @@ export CARGO_INCREMENTAL=0
 
 crates=(
     'astarte-device-sdk'
-    'astarte-interfaces'
 )
 
 # Helpful for testing changes in the generation options
