@@ -28,23 +28,24 @@ use std::{
     time::Duration,
 };
 use tokio::fs;
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
     builder::{BuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE},
+    error::Report,
     store::{wrapper::StoreWrapper, StoreCapabilities},
     transport::mqtt::{
         config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-        registration::register_device, retention::MqttRetention, ClientId,
+        retention::MqttRetention, ClientId,
     },
 };
 
 use self::tls::is_env_ignore_ssl;
 
 use super::{
-    client::AsyncClient, pairing::ApiClient, Mqtt, MqttClient, PairingError,
-    DEFAULT_CONNECTION_TIMEOUT, DEFAULT_KEEP_ALIVE,
+    client::AsyncClient, pairing::ApiClient, registration::register_device_timeout, Mqtt,
+    MqttClient, PairingError, SharedState, DEFAULT_KEEP_ALIVE,
 };
 
 mod tls;
@@ -117,7 +118,7 @@ impl Debug for Credential {
 /// - does not ignore SSL errors.
 /// - has a keepalive of 30 seconds
 /// - has a default bounded channel size of [`crate::builder::DEFAULT_CHANNEL_SIZE`]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MqttConfig {
     pub(crate) realm: String,
     pub(crate) device_id: String,
@@ -126,8 +127,25 @@ pub struct MqttConfig {
     pub(crate) pairing_url: String,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: Duration,
-    pub(crate) conn_timeout: Duration,
     pub(crate) bounded_channel_size: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PartialConfig {
+    pub(crate) writable_dir: Option<PathBuf>,
+    pub(crate) channel_size: usize,
+}
+
+pub(crate) struct MqttTransport<S> {
+    pub(crate) connection: Mqtt<S>,
+    pub(crate) client: MqttClient<S>,
+    pub(crate) connected: bool,
+}
+
+pub(crate) struct MqttTransportOptions {
+    pub(crate) mqtt_opts: MqttOptions,
+    pub(crate) net_opts: NetworkOptions,
+    pub(crate) provider: TransportProvider,
 }
 
 impl MqttConfig {
@@ -159,7 +177,6 @@ impl MqttConfig {
             pairing_url: pairing_url.into(),
             ignore_ssl_errors: false,
             keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
-            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
             bounded_channel_size: DEFAULT_CHANNEL_SIZE,
         }
     }
@@ -208,7 +225,7 @@ impl MqttConfig {
     /// # type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<()>{
+    /// async fn main() -> Result<()> {
     ///     let realm = "realm_name";
     ///     let device_id = "device_id";
     ///     let pairing_token = "device_credentials_secret";
@@ -254,13 +271,6 @@ impl MqttConfig {
         self
     }
 
-    /// Sets the MQTT connection timeout.
-    pub fn connection_timeout(&mut self, conn_timeout: Duration) -> &mut Self {
-        self.conn_timeout = conn_timeout;
-
-        self
-    }
-
     /// Sets the size for the underlying bounded channel used by the eventloop of [`rumqttc`].
     pub fn bounded_channel_size(&mut self, bounded_channel_size: usize) -> &mut Self {
         self.bounded_channel_size = bounded_channel_size;
@@ -269,18 +279,24 @@ impl MqttConfig {
     }
 
     /// Retrieves the credentials for the connection
-    async fn credentials<S>(&mut self, config: &BuildConfig<S>) -> Result<String, MqttError> {
+    async fn credentials(
+        &mut self,
+        writable_dir: &Option<PathBuf>,
+        timeout: Duration,
+    ) -> Result<String, MqttError> {
         // We need to clone to not return something owning a mutable reference to self
         match &self.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
             Credential::ParingToken { pairing_token } => {
                 debug!("pairing token provided, retrieving credentials secret");
 
-                let Some(dir) = &config.writable_dir else {
+                let Some(dir) = &writable_dir else {
                     return Err(MqttError::NoStorePairingToken);
                 };
 
-                let secret = self.read_secret_or_register(dir, pairing_token).await?;
+                let secret = self
+                    .read_secret_or_register(dir, pairing_token, timeout)
+                    .await?;
 
                 self.credential = Credential::secret(secret.clone());
 
@@ -294,6 +310,7 @@ impl MqttConfig {
         &self,
         store_dir: &Path,
         pairing_token: &str,
+        timeout: Duration,
     ) -> Result<String, PairingError> {
         let credential_file = store_dir.join(CREDENTIAL_FILE);
 
@@ -310,11 +327,12 @@ impl MqttConfig {
             }
         }
 
-        let secret = register_device(
+        let secret = register_device_timeout(
             pairing_token,
             &self.pairing_url,
             &self.realm,
             &self.device_id,
+            timeout,
         )
         .await?;
 
@@ -336,6 +354,7 @@ impl MqttConfig {
         &self,
         transport: Transport,
         broker_url: &Url,
+        timeout: Duration,
     ) -> Result<(MqttOptions, NetworkOptions), PairingError> {
         let client_id = format!("{}/{}", self.realm, self.device_id);
 
@@ -349,11 +368,11 @@ impl MqttConfig {
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
         let keep_alive = self.keepalive.as_secs();
-        let conn_timeout = self.conn_timeout.as_secs();
+        let conn_timeout = timeout.as_secs();
         if keep_alive <= conn_timeout {
             return Err(PairingError::Config(
-            format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
-        ));
+                format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
+            ));
         }
 
         let mut net_opts = NetworkOptions::new();
@@ -368,21 +387,13 @@ impl MqttConfig {
 
         Ok((mqtt_opts, net_opts))
     }
-}
 
-impl<S> ConnectionConfig<S> for MqttConfig
-where
-    S: StoreCapabilities,
-{
-    type Conn = Mqtt<Self::Store>;
-    type Store = S;
-    type Err = MqttError;
-
-    async fn connect(
-        mut self,
-        config: BuildConfig<S>,
-    ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
-        let secret = self.credentials(&config).await?;
+    pub(crate) async fn try_create_transport(
+        &mut self,
+        config: &PartialConfig,
+        timeout: Duration,
+    ) -> Result<MqttTransportOptions, MqttError> {
+        let secret = self.credentials(&config.writable_dir, timeout).await?;
 
         let pairing_url = self
             .pairing_url
@@ -400,7 +411,7 @@ where
         .await
         .map_err(MqttError::Pairing)?;
 
-        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id)
+        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id, timeout)
             .map_err(MqttError::Pairing)?;
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
@@ -411,60 +422,147 @@ where
             .map_err(MqttError::Pairing)?;
 
         let (mqtt_opts, net_opts) = self
-            .build_mqtt_opts(transport, &borker_url)
+            .build_mqtt_opts(transport, &borker_url, timeout)
             .map_err(MqttError::Pairing)?;
 
         debug!("{:?}", mqtt_opts);
 
-        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, self.bounded_channel_size);
+        Ok(MqttTransportOptions {
+            mqtt_opts,
+            net_opts,
+            provider,
+        })
+    }
 
-        eventloop.set_network_options(net_opts);
-
-        let store_wrapper = StoreWrapper::new(config.store);
-
+    pub(crate) async fn try_connect<S>(
+        &mut self,
+        store_wrapper: &StoreWrapper<S>,
+        state: Arc<SharedState>,
+        config: PartialConfig,
+        timeout: Duration,
+    ) -> Result<MqttTransport<S>, MqttError>
+    where
+        S: StoreCapabilities,
+    {
         let client_id = ClientId {
             device_id: self.device_id.clone(),
             realm: self.realm.clone(),
         };
 
-        let connection = {
-            let interfaces = config.state.interfaces.read().await;
-
-            MqttConnection::wait_connack(
-                client.clone(),
-                eventloop,
-                provider,
-                client_id.as_ref(),
-                &interfaces,
-                &store_wrapper,
-            )
-            .await
-            .map_err(MqttError::Poll)?
-        };
-
         let (retention_tx, retention_rx) = flume::bounded(config.channel_size);
-
         let retention = MqttRetention::new(retention_rx);
 
-        let client = MqttClient::new(
-            client_id.clone(),
-            client,
-            retention_tx,
-            store_wrapper.clone(),
-            Arc::clone(&config.state),
-        );
+        let (connection, client) = match self.try_create_transport(&config, timeout).await {
+            Ok(MqttTransportOptions {
+                mqtt_opts,
+                net_opts,
+                provider,
+            }) => {
+                let (client, mut eventloop) =
+                    AsyncClient::new(mqtt_opts, self.bounded_channel_size);
+                eventloop.set_network_options(net_opts);
+
+                let interfaces = state.interfaces.read().await;
+
+                // NOTE if this function times out no error is returned
+                // but the connection will be in a Connecting state
+                let connection = MqttConnection::wait_connack(
+                    client.clone(),
+                    eventloop,
+                    provider,
+                    client_id.as_ref(),
+                    &interfaces,
+                    store_wrapper,
+                    timeout,
+                )
+                .await?;
+
+                let client = MqttClient::new(
+                    client_id.clone(),
+                    client,
+                    retention_tx,
+                    store_wrapper.clone(),
+                    Arc::clone(&state),
+                );
+
+                (connection, client)
+            }
+            // handle timeout errors differently by creating a connection and a client without a transport
+            Err(MqttError::Pairing(PairingError::RequestNoNetwork(e))) => {
+                warn!(error=%Report::new(e), "got a timeout while creating the transport, initializing offline device");
+
+                let client = MqttClient::without_transport(
+                    client_id.clone(),
+                    retention_tx,
+                    store_wrapper.clone(),
+                    Arc::clone(&state),
+                );
+                let connection = MqttConnection::without_transport(
+                    self.clone(),
+                    config.clone(),
+                    // NOTE pass client to connection so that the [`AsyncClient`] used by the clients can be updated.
+                    Arc::clone(&client.client),
+                    timeout,
+                );
+
+                (connection, client)
+            }
+            Err(e) => return Err(e),
+        };
+
+        let connected = connection.is_connected();
+
         let connection = Mqtt::new(
             client_id,
             connection,
             retention,
             store_wrapper.clone(),
-            config.state,
+            state,
         );
+
+        Ok(MqttTransport {
+            connection,
+            client,
+            connected,
+        })
+    }
+}
+
+impl<S> ConnectionConfig<S> for MqttConfig
+where
+    S: StoreCapabilities,
+{
+    type Conn = Mqtt<Self::Store>;
+    type Store = S;
+    type Err = MqttError;
+
+    async fn connect(
+        mut self,
+        config: BuildConfig<S>,
+    ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
+        let store_wrapper = StoreWrapper::new(config.store);
+
+        let MqttTransport {
+            connection,
+            client,
+            connected,
+        } = self
+            .try_connect(
+                &store_wrapper,
+                config.state,
+                PartialConfig {
+                    writable_dir: config.writable_dir.clone(),
+                    channel_size: config.channel_size,
+                },
+                config.timeout,
+            )
+            .await?;
 
         Ok(DeviceTransport {
             sender: client,
             connection,
             store: store_wrapper,
+            connected,
         })
     }
 }

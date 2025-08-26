@@ -637,6 +637,8 @@ where
             sender,
             connection,
             store,
+            // NOTE if the attach is successful we have correctly established a connection with the grpc server
+            connected: true,
         })
     }
 }

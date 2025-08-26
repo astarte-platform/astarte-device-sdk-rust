@@ -345,8 +345,6 @@ impl WriteConnection {
     pub(crate) fn free_retention_items(&mut self, to_store: usize) -> Result<usize, SqliteError> {
         let max_items = self.retention_capacity.get();
 
-        debug!("remove elements from store if it's full");
-
         let count_stored = self.count_stored()?;
 
         trace!(count_stored, "initial count");
@@ -357,9 +355,7 @@ impl WriteConnection {
             return Ok(0);
         }
 
-        trace!("store is full, evicting expired retention items");
         let expired = self.delete_expired(&TimestampSecs::now())?;
-
         trace!(expired, "removed expired items");
 
         let stored = stored.saturating_sub(expired);
@@ -370,14 +366,8 @@ impl WriteConnection {
 
         let to_remove = stored.saturating_sub(max_items);
 
-        trace!(
-            to_remove,
-            "store is still full, evicting the oldest elements"
-        );
-
         let removed = self.remove_oldest(to_remove)?;
-
-        debug!(removed, "removed elements");
+        debug!(removed, "removed oldest elements");
 
         Ok(removed.saturating_add(expired))
     }
