@@ -82,7 +82,7 @@ fn init_tracing() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .with(
             tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(concat!(env!("CARGO_PKG_NAME"), "=debug").parse()?)
+                .with_default_directive("astarte_device_sdk=debug".parse()?)
                 .from_env_lossy()
                 .add_directive(LevelFilter::INFO.into()),
         )
