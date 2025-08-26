@@ -38,7 +38,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use astarte_interfaces::{
@@ -98,21 +98,41 @@ pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 #[derive(Clone, Debug)]
 pub struct MqttClient<S> {
     client_id: ClientId,
-    client: AsyncClient,
+    client: Arc<OnceLock<AsyncClient>>,
     retention: RetSender,
     store: StoreWrapper<S>,
     state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
-    /// Create a new client.
-    pub(crate) fn new(
+    /// Creates a new client that is missing the transport
+    pub(crate) fn without_transport(
         client_id: ClientId,
-        client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
         state: Arc<SharedState>,
     ) -> Self {
+        Self {
+            client_id,
+            client: Arc::new(OnceLock::new()),
+            retention,
+            store,
+            state,
+        }
+    }
+
+    /// Create a new client.
+    pub(crate) fn new(
+        client_id: ClientId,
+        mqtt_client: AsyncClient,
+        retention: RetSender,
+        store: StoreWrapper<S>,
+        state: Arc<SharedState>,
+    ) -> Self {
+        let client = OnceLock::new();
+        client.set(mqtt_client).unwrap(); // NOTE this should never panic or block
+        let client = Arc::new(client);
+
         Self {
             client_id,
             client,
@@ -131,6 +151,8 @@ impl<S> MqttClient<S> {
         payload: Vec<u8>,
     ) -> Result<Token<AckOfPub>, MqttError> {
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .publish(
                 format!("{}/{interface}{path}", self.client_id),
                 reliability,
@@ -143,6 +165,8 @@ impl<S> MqttClient<S> {
 
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .subscribe(
                 self.client_id.make_interface_wildcard(interface_name),
                 rumqttc::QoS::ExactlyOnce,
@@ -154,6 +178,8 @@ impl<S> MqttClient<S> {
 
     async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .unsubscribe(self.client_id.make_interface_wildcard(interface_name))
             .await
             .map_err(MqttError::Unsubscribe)
@@ -392,6 +418,8 @@ where
         let introspection = DeviceIntrospection::new(interfaces.iter_with_added(added)).to_string();
 
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -415,6 +443,8 @@ where
         let introspection = DeviceIntrospection::new(iter).to_string();
 
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -453,6 +483,8 @@ where
             .collect_vec();
 
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .subscribe_interfaces(self.client_id.as_ref(), &server_interfaces)
             .await
             .map_err(MqttError::Subscribe)?;
@@ -462,6 +494,8 @@ where
 
         let res = self
             .client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err));
@@ -502,6 +536,8 @@ where
         let introspection = DeviceIntrospection::new(interfaces).to_string();
 
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -531,6 +567,8 @@ where
 {
     async fn disconnect(&mut self) -> Result<(), crate::Error> {
         self.client
+            .get()
+            .ok_or(MqttError::NoClient)?
             .disconnect()
             .await
             .map(drop)
@@ -739,7 +777,7 @@ where
         self.connection
             .reconnect(self.client_id.as_ref(), interfaces, &self.store)
             .await
-            .map_err(|err| Error::Mqtt(MqttError::Poll(err)))
+            .map_err(Error::Mqtt)
     }
 }
 
@@ -983,6 +1021,7 @@ pub(crate) mod test {
                 eventloop,
                 transport_provider,
                 self::connection::Connected,
+                Duration::from_secs(10),
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
@@ -1336,6 +1375,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
+                timeout: Duration::from_secs(10),
             }),
         )
         .await
@@ -1465,6 +1505,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
+                timeout: Duration::from_secs(10),
             }),
         )
         .await
