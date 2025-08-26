@@ -29,6 +29,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use astarte_interfaces::Interface;
 use tracing::debug;
@@ -62,6 +63,11 @@ pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
 pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
+
+/// Default timeout.
+/// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
+/// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Astarte builder error.
 ///
@@ -115,6 +121,7 @@ pub struct BuildConfig<S> {
     pub(crate) writable_dir: Option<PathBuf>,
     pub(crate) store: S,
     pub(crate) state: Arc<SharedState>,
+    pub(crate) timeout: Duration,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
@@ -128,6 +135,8 @@ pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
     pub(crate) writable_dir: Option<PathBuf>,
+    // FIXME it's not clear to the user if this is a timeout of the whole connection process or the timeout of every call performed
+    pub(crate) timeout: Duration,
 }
 
 impl DeviceBuilder<NoConnect, NoStore> {
@@ -154,6 +163,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
             store: NoStore,
+            timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
@@ -259,6 +269,14 @@ impl<S, C> DeviceBuilder<S, C> {
 
         self
     }
+
+    /// Set the timeout used while performing individual HTTP calls
+    /// and used while waiting for a connection to the MQTT server.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+
+        self
+    }
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
@@ -294,6 +312,7 @@ impl<C> DeviceBuilder<C, NoStore> {
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
+            timeout: self.timeout,
         }
     }
 }
@@ -330,6 +349,7 @@ where
             volatile_retention: self.volatile_retention,
             stored_retention: self.stored_retention,
             writable_dir: self.writable_dir,
+            timeout: self.timeout,
         }
     }
 }
@@ -369,6 +389,7 @@ where
             channel_size: self.channel_size,
             writable_dir: self.writable_dir,
             state: Arc::clone(&state),
+            timeout: self.timeout,
         };
 
         let DeviceTransport {
@@ -562,6 +583,7 @@ mod test {
                           writable_dir,
                           store: _,
                           state,
+                          timeout: _,
                       }| {
                     channel_size == channel_size
                         && *writable_dir == tmp_path
