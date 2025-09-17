@@ -50,7 +50,7 @@ pub enum PayloadError {
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
     #[error("expected object, individual data deserialized instead {0}")]
-    Object(Bson),
+    Object(Box<Bson>),
     /// Missing mapping in payload
     #[error["missing mappings in the payload"]]
     MissingMapping,
@@ -230,7 +230,7 @@ pub(crate) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(data)),
+        data => return Err(PayloadError::Object(Box::new(data))),
     };
 
     trace!("base path {path}");

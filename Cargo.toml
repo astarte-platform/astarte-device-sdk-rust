@@ -29,7 +29,7 @@ edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.66.1"
+rust-version = "1.66"
 
 [[bench]]
 name = "benchmark"
@@ -63,6 +63,9 @@ url = "2.2.2"
 uuid = { version = "1.0.0", features = ["v5", "v4"] }
 webpki = "0.22.0"
 x509-cert = { version = "0.2.2", features = ["builder"] }
+
+# Transitive dependencies
+time = "=0.3.17"
 
 [dev-dependencies]
 astarte-device-sdk-derive = { path = "./astarte-device-sdk-derive" }
