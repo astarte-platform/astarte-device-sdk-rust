@@ -60,7 +60,7 @@ static RENAME_RULES: &[(&str, RenameRule)] = &[
 
 impl RenameRule {
     /// Obrain a rename rule from a str
-    pub fn from_str(rename_all_str: &str) -> Result<Self, ParseError> {
+    pub fn from_str(rename_all_str: &str) -> Result<Self, ParseError<'_>> {
         for (name, rule) in RENAME_RULES {
             if rename_all_str == *name {
                 return Ok(*rule);

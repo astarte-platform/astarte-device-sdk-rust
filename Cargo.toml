@@ -6,18 +6,30 @@
 
 [package]
 name = "astarte-device-sdk"
-version = "0.6.6"
+version.workspace = true
 documentation = "https://docs.rs/astarte-device-sdk"
-edition = "2021"
-homepage = "https://astarte.cloud/"
+edition.workspace = true
+homepage.workspace = true
 keywords = ["sdk", "iot", "astarte"]
-license = "Apache-2.0"
+license.workspace = true
 readme = "README.md"
-repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.66.1"
+repository.workspace = true
+rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+resolver = "2"
+members = [
+  "astarte-device-sdk-derive",
+]
+
+[workspace.package]
+version = "0.6.6"
+edition = "2021"
+homepage = "https://astarte.cloud/"
+license = "Apache-2.0"
+repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
+rust-version = "1.66"
 
 [[bench]]
 name = "benchmark"
@@ -27,7 +39,7 @@ harness = false
 astarte-device-sdk-derive = { version = "=0.6.6", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
 base64 = "0.21.0"
-bson = { version = "2.1.0", features = ["chrono-0_4"] }
+bson = { version = "2.12.0", features = ["chrono-0_4"] }
 chrono = { version = "0.4.14", features = ["serde"] }
 ecdsa = { version = "0.16.7", features = ["sha2"] }
 flate2 = "1.0.0"
@@ -52,6 +64,9 @@ uuid = { version = "1.0.0", features = ["v5", "v4"] }
 webpki = "0.22.0"
 x509-cert = { version = "0.2.2", features = ["builder"] }
 
+# Transitive dependencies
+time = "=0.3.17"
+
 [dev-dependencies]
 astarte-device-sdk-derive = { path = "./astarte-device-sdk-derive" }
 criterion = "0.5.1"
@@ -60,11 +75,9 @@ mockall = "0.11.4"
 structopt = "0.3.26"
 tempfile = "3.6.0"
 
-[dev-dependencies.cargo-husky]
-version = "1.5.0"
-default-features = false # Disable features which are enabled by default
-features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]
-
 [features]
 derive = ["astarte-device-sdk-derive"]
 openssl = ["dep:openssl"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(taurpaulin_include)'] }
