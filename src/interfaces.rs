@@ -98,7 +98,7 @@ impl Interfaces {
         self.interfaces.get(interface_name)
     }
 
-    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef> {
+    pub(crate) fn get_property(&self, interface_name: &str) -> Option<PropertyRef<'_>> {
         self.interfaces
             .get(interface_name)
             .and_then(|interface| interface.is_property().then_some(PropertyRef(interface)))
@@ -113,7 +113,7 @@ impl Interfaces {
         &self,
         interface_name: &str,
         interface_path: &MappingPath,
-    ) -> Result<MappingRef<&Interface>, Error> {
+    ) -> Result<MappingRef<'_, &Interface>, Error> {
         self.interfaces
             .get(interface_name)
             .ok_or_else(|| Error::InterfaceNotFound {
@@ -136,7 +136,7 @@ impl Interfaces {
         &self,
         interface_name: &str,
         interface_path: &MappingPath,
-    ) -> Result<MappingRef<PropertyRef>, Error> {
+    ) -> Result<MappingRef<'_, PropertyRef<'_>>, Error> {
         self.interfaces
             .get(interface_name)
             .ok_or_else(|| Error::InterfaceNotFound {

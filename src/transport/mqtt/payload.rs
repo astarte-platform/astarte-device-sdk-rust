@@ -51,7 +51,7 @@ pub enum PayloadError {
     AstarteType(#[from] TypeError),
     /// Expected object, individual data deserialized
     #[error("expected object, individual data deserialized instead {0}")]
-    Object(Bson),
+    Object(Box<Bson>),
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingError),
@@ -69,7 +69,12 @@ pub enum PayloadError {
 pub(crate) struct Payload<T> {
     #[serde(rename = "v")]
     pub(crate) value: T,
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
+    )]
     pub(crate) timestamp: Option<Timestamp>,
 }
 
@@ -169,7 +174,7 @@ pub(super) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(data)),
+        data => return Err(PayloadError::Object(Box::new(data))),
     };
 
     trace!("base path {path}");
@@ -217,9 +222,10 @@ pub(super) fn deserialize_object(
 
 #[cfg(test)]
 mod test {
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
     use std::str::FromStr;
 
+    use base64::Engine;
     use chrono::TimeZone;
 
     use crate::{
@@ -340,9 +346,21 @@ mod test {
         let validated = mock_validate_object(&interface, path, data.clone(), None).unwrap();
         let buf = serialize_object(validated.data(), validated.timestamp()).unwrap();
 
-        let (res, _) = deserialize_object(validated.object(), validated.path(), &buf).unwrap();
+        let (res, res_timestamp) =
+            deserialize_object(validated.object(), validated.path(), &buf).unwrap();
 
-        assert_eq!(res, data)
+        assert_eq!(res, data);
+        assert_eq!(res_timestamp, None);
+
+        // With timestamp
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
+        let validated = mock_validate_object(&interface, path, data.clone(), timestamp).unwrap();
+        let buf = serialize_object(validated.data(), validated.timestamp()).unwrap();
+
+        let (res, res_timestamp) = deserialize_object(validated.object(), path, &buf).unwrap();
+
+        assert_eq!(res, data);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]
@@ -371,13 +389,43 @@ mod test {
             ValidatedIndividual::validate(mapping, path, og_value.clone(), None).unwrap();
         let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
 
-        let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
+        let expected = base64::prelude::BASE64_STANDARD
+            .decode("EAAAABJ2ABAOAAAAAAAAAA==")
+            .unwrap();
 
-        assert_eq!(buf, expected);
+        assert_eq!(
+            buf,
+            expected,
+            "Invalid bson {}",
+            base64::prelude::BASE64_STANDARD.encode(&buf)
+        );
 
-        let (res, _) = deserialize_individual(mapping, &buf).unwrap();
+        let (res, res_timestamp) = deserialize_individual(mapping, &buf).unwrap();
 
         assert_eq!(res, og_value);
+        assert_eq!(res_timestamp, None);
+
+        // Timestamp
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
+        let validated =
+            ValidatedIndividual::validate(mapping, path, og_value.clone(), timestamp).unwrap();
+        let buf = serialize_individual(validated.data(), validated.timestamp()).unwrap();
+
+        let expected = base64::prelude::BASE64_STANDARD
+            .decode("GwAAABJ2ABAOAAAAAAAACXQAKgAAAAAAAAAA")
+            .unwrap();
+
+        assert_eq!(
+            buf,
+            expected,
+            "Invalid bson {}",
+            base64::prelude::BASE64_STANDARD.encode(&buf)
+        );
+
+        let (res, res_timestamp) = deserialize_individual(mapping, &buf).unwrap();
+
+        assert_eq!(res, og_value);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]
