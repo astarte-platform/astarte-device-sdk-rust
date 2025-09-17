@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.6"
+version = "0.6.7"
 edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
@@ -36,7 +36,7 @@ name = "benchmark"
 harness = false
 
 [dependencies]
-astarte-device-sdk-derive = { version = "=0.6.6", optional = true, path = "./astarte-device-sdk-derive" }
+astarte-device-sdk-derive = { version = "=0.6.7", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
 base64 = "0.21.0"
 bson = { version = "2.12.0", features = ["chrono-0_4"] }
