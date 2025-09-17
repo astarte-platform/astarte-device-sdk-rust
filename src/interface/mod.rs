@@ -162,7 +162,7 @@ impl Interface {
         self.doc.as_deref()
     }
 
-    pub(crate) fn iter_mappings(&self) -> MappingIter {
+    pub(crate) fn iter_mappings(&self) -> MappingIter<'_> {
         MappingIter::new(&self.inner)
     }
 
@@ -183,7 +183,7 @@ impl Interface {
     }
 
     /// Get a [`MappingRef`] reference of the path if the endpoint is present in the interface.
-    pub(crate) fn as_mapping_ref(&self, path: &MappingPath) -> Option<MappingRef<&Interface>> {
+    pub(crate) fn as_mapping_ref(&self, path: &MappingPath) -> Option<MappingRef<'_, &Interface>> {
         MappingRef::new(self, path)
     }
 
@@ -193,7 +193,7 @@ impl Interface {
     }
 
     /// Returns a [`PropertyRef`] if the interface is a property.
-    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef> {
+    pub(crate) fn as_prop_ref(&self) -> Option<PropertyRef<'_>> {
         self.is_property().then_some(PropertyRef(self))
     }
 
@@ -203,7 +203,7 @@ impl Interface {
     }
 
     /// Returns a [`ObjectRef`] if the interface is an object.
-    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef> {
+    pub(crate) fn as_object_ref(&self) -> Option<ObjectRef<'_>> {
         ObjectRef::new(self)
     }
 
@@ -259,7 +259,7 @@ impl Interface {
 
     /// Returns a typed reference to a property, only if the interface is of type
     /// [`InterfaceTypeDef::Properties`].
-    pub fn as_prop(&self) -> Option<PropertyRef> {
+    pub fn as_prop(&self) -> Option<PropertyRef<'_>> {
         match self.inner {
             InterfaceType::DatastreamIndividual(_) | InterfaceType::DatastreamObject(_) => None,
             InterfaceType::Properties(_) => Some(PropertyRef(self)),
@@ -309,7 +309,7 @@ pub(crate) struct DatastreamIndividual {
 }
 
 impl DatastreamIndividual {
-    pub(crate) fn iter_mappings(&self) -> IndividualMappingIter {
+    pub(crate) fn iter_mappings(&self) -> IndividualMappingIter<'_> {
         IndividualMappingIter::new(&self.mappings)
     }
 
@@ -384,7 +384,7 @@ impl DatastreamObject {
         mapping
     }
 
-    pub fn iter_mappings(&self) -> ObjectMappingIter {
+    pub fn iter_mappings(&self) -> ObjectMappingIter<'_> {
         ObjectMappingIter::new(self)
     }
 
@@ -510,7 +510,7 @@ pub(crate) struct Properties {
 }
 
 impl Properties {
-    pub fn iter_mappings(&self) -> PropertiesMappingIter {
+    pub fn iter_mappings(&self) -> PropertiesMappingIter<'_> {
         PropertiesMappingIter::new(&self.mappings)
     }
 

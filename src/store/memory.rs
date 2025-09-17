@@ -171,7 +171,7 @@ impl PropertyStore for MemoryStore {
             .read()
             .await
             .iter()
-            .filter(|(k, _)| (k.interface == interface))
+            .filter(|(k, _)| k.interface == interface)
             .map(StoredProp::from)
             .collect())
     }

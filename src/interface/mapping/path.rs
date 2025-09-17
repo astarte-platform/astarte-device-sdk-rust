@@ -162,7 +162,7 @@ impl MappingError {
 }
 
 /// Parses the MQTT levels structure of the topic received.
-fn parse_mapping(input: &str) -> Result<MappingPath, MappingError> {
+fn parse_mapping(input: &str) -> Result<MappingPath<'_>, MappingError> {
     let path = input
         .strip_prefix('/')
         .ok_or_else(|| MappingError::Prefix(input.to_string()))?;

@@ -151,7 +151,7 @@ impl Mqtt {
     }
 
     /// Returns a wrapper for the client id
-    fn client_id(&self) -> ClientId {
+    fn client_id(&self) -> ClientId<'_> {
         ClientId {
             realm: &self.realm,
             device_id: &self.device_id,

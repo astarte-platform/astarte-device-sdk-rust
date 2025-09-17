@@ -61,7 +61,7 @@ pub enum GrpcTransportError {
     #[error("Transport error while working with grpc: {0}")]
     Transport(#[from] tonic::transport::Error),
     #[error("Status error {0}")]
-    Status(#[from] tonic::Status),
+    Status(#[from] Box<tonic::Status>),
     #[error("Error while serializing the interfaces")]
     InterfacesSerialization(#[from] serde_json::Error),
     #[error("Attempting to deserialize individual message but got an object")]
@@ -122,7 +122,7 @@ impl Grpc {
             .attach(tonic::Request::new(data.node))
             .await
             .map(|r| r.into_inner())
-            .map_err(GrpcTransportError::from)
+            .map_err(|err| GrpcTransportError::from(Box::new(err)))
     }
 
     // TODO this should be consuming the client but Arc::into_inner is not stsable in version 1.66.1
@@ -137,7 +137,7 @@ impl Grpc {
             .detach(Node::new(uuid, &Vec::<Vec<u8>>::new()))
             .await
             .map(|_| ())
-            .map_err(GrpcTransportError::from)
+            .map_err(|err| GrpcTransportError::from(Box::new(err)))
     }
 
     async fn reattach(&self, data: NodeData) -> Result<(), GrpcTransportError> {
@@ -149,7 +149,8 @@ impl Grpc {
         client
             .detach(Node::new(self.uuid, &Vec::<Vec<u8>>::new()))
             .await
-            .map(|_| ())?;
+            .map_err(|err| GrpcTransportError::from(Box::new(err)))
+            .map(drop)?;
 
         *stream = Grpc::attach(&mut client, data).await?;
 
@@ -176,7 +177,7 @@ impl Publish for Grpc {
             ))
             .await
             .map(|_| ())
-            .map_err(|e| GrpcTransportError::from(e).into())
+            .map_err(|e| GrpcTransportError::from(Box::new(e)).into())
     }
 
     async fn send_object(&self, data: ValidatedObject<'_>) -> Result<(), crate::Error> {
@@ -188,7 +189,7 @@ impl Publish for Grpc {
             ))
             .await
             .map(|_| ())
-            .map_err(|e| GrpcTransportError::from(e).into())
+            .map_err(|e| GrpcTransportError::from(Box::new(e)).into())
     }
 }
 
@@ -222,7 +223,7 @@ impl Receive for Grpc {
                 Err(s)
                     if s.code() != tonic::Code::Unavailable && s.code() != tonic::Code::Unknown =>
                 {
-                    return Err(GrpcTransportError::from(s).into());
+                    return Err(GrpcTransportError::from(Box::new(s)).into());
                 }
                 Ok(None) | Err(_) => {
                     // try reattaching

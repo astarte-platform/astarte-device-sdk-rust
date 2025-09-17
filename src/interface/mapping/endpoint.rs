@@ -65,7 +65,7 @@ impl<T> Endpoint<T> {
     }
 
     /// Iter the levels of the endpoint.
-    pub(crate) fn iter(&self) -> SliceIter<Level<T>> {
+    pub(crate) fn iter(&self) -> SliceIter<'_, Level<T>> {
         self.levels.iter()
     }
 
