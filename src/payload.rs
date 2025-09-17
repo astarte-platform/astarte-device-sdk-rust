@@ -77,7 +77,12 @@ pub(crate) type Timestamp = DateTime<Utc>;
 pub(crate) struct Payload<T> {
     #[serde(rename = "v")]
     pub(crate) value: T,
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
+    )]
     pub(crate) timestamp: Option<Timestamp>,
 }
 
@@ -275,6 +280,7 @@ pub(crate) fn deserialize_object(
 mod test {
     use std::str::FromStr;
 
+    use base64::Engine;
     use chrono::TimeZone;
 
     use crate::{interface::MappingType, mapping};
@@ -393,9 +399,19 @@ mod test {
 
         let buf = serialize_object(object, path, &data, None).unwrap();
 
-        let (res, _) = deserialize_object(object, path, &buf).unwrap();
+        let (res, res_timestamp) = deserialize_object(object, path, &buf).unwrap();
 
-        assert_eq!(res, data)
+        assert_eq!(res, data);
+        assert_eq!(res_timestamp, None);
+
+        // With timestamp
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
+        let buf = serialize_object(object, path, &data, timestamp).unwrap();
+
+        let (res, res_timestamp) = deserialize_object(object, path, &buf).unwrap();
+
+        assert_eq!(res, data);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]
@@ -421,15 +437,26 @@ mod test {
             .unwrap();
 
         let og_value = AstarteType::LongInteger(3600);
-        let buf = serialize_individual(mapping, &og_value, None).unwrap();
 
-        let expected = [16, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 0];
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
 
-        assert_eq!(buf, expected);
+        let buf = serialize_individual(mapping, &og_value, timestamp).unwrap();
 
-        let (res, _) = deserialize_individual(mapping, &buf).unwrap();
+        let expected = base64::prelude::BASE64_STANDARD
+            .decode("GwAAABJ2ABAOAAAAAAAACXQAKgAAAAAAAAAA")
+            .unwrap();
+
+        assert_eq!(
+            buf,
+            expected,
+            "Invalid bson {}",
+            base64::prelude::BASE64_STANDARD.encode(&buf)
+        );
+
+        let (res, res_timestamp) = deserialize_individual(mapping, &buf).unwrap();
 
         assert_eq!(res, og_value);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]

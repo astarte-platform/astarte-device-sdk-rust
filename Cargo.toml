@@ -27,7 +27,7 @@ harness = false
 astarte-device-sdk-derive = { version = "=0.6.6", optional = true, path = "./astarte-device-sdk-derive" }
 async-trait = "0.1.2"
 base64 = "0.21.0"
-bson = { version = "2.1.0", features = ["chrono-0_4"] }
+bson = { version = "2.12.0", features = ["chrono-0_4"] }
 chrono = { version = "0.4.14", features = ["serde"] }
 ecdsa = { version = "0.16.7", features = ["sha2"] }
 flate2 = "1.0.0"
@@ -60,11 +60,10 @@ mockall = "0.11.4"
 structopt = "0.3.26"
 tempfile = "3.6.0"
 
-[dev-dependencies.cargo-husky]
-version = "1.5.0"
-default-features = false # Disable features which are enabled by default
-features = ["precommit-hook", "run-cargo-test", "run-cargo-clippy", "run-cargo-fmt"]
 
 [features]
 derive = ["astarte-device-sdk-derive"]
 openssl = ["dep:openssl"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(taurpaulin_include)'] }
