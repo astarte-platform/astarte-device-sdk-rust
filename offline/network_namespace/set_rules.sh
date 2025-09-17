@@ -18,7 +18,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -eEuo pipefail
+set -exEuo pipefail
 
 # THANKS GEMINI
 

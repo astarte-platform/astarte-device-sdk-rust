@@ -28,16 +28,29 @@ popd
 
 # --- Pre-flight Checks ---
 
-# 1. Check for root privileges
+# Check for root privileges
 if [ "$EUID" -ne 0 ]; then
   echo "❌ This script must be run as root. Please use sudo."
   exit 1
 fi
 
-# 2. Check if the main interface was found
+# Check if the main interface was found
 if [ -z "$MAIN_INTERFACE" ]; then
   echo "❌ Could not determine the main network interface. Please set MAIN_INTERFACE manually."
   exit 1
+fi
+
+CURRENT_STATUS=$(sysctl -n net.ipv4.ip_forward)
+# Check if ip forwarding is already enabled or enable it
+if [ "$CURRENT_STATUS" -eq 1 ]; then
+    echo "👍 IP forwarding is already enabled. No changes made."
+else
+  # If disabled save current status so that we can restore it later
+  echo "$CURRENT_STATUS" > "$STATUS_FILE"
+  echo "💾 Original status ($CURRENT_STATUS) saved to $STATUS_FILE"
+  # enable ip forwarding
+  echo "🟡 IP forwarding is disabled. Enabling it now..."
+  sysctl -w net.ipv4.ip_forward=1 > /dev/null
 fi
 
 echo "🚀 Starting network sandbox..."
@@ -75,8 +88,6 @@ echo "[4/5] Enabling NAT for internet access..."
 nft add table nat
 nft 'add chain nat postrouting { type nat hook postrouting priority 100 ; }'
 nft add rule ip nat postrouting oifname "$MAIN_INTERFACE" ip saddr "${IP_GUEST%/*}" counter masquerade comment "net-sandbox-rule"
-# NOTE we assume ip forwarding is enabled
-# sysctl -w net.ipv4.ip_forward=1 > /dev/null
 
 echo "[5/5] Setting default rules..."
 tc qdisc add dev "$VETH_HOST" root netem delay "0ms" loss "0%"
