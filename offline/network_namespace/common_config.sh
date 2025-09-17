@@ -37,3 +37,5 @@ IP_HOST="10.10.10.1/24"
 IP_GUEST="10.10.10.2/24"
 IP_GATEWAY="10.10.10.1"
 
+# File used to store the status of ip forwarding before enabling it
+STATUS_FILE="/tmp/ip_forward_status.bak"

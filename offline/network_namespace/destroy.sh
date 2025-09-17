@@ -28,7 +28,7 @@ popd
 
 # --- Pre-flight Checks ---
 
-# 1. Check for root privileges
+# Check for root privileges
 if [ "$EUID" -ne 0 ]; then
   echo "❌ This script must be run as root. Please use sudo."
   exit 1
@@ -37,11 +37,21 @@ fi
 echo "🧹 Cleaning up network sandbox..."
 
 # --- Cleanup Steps ---
+# Check if the status file exists
+if [ ! -f "$STATUS_FILE" ]; then
+    echo "🤷 No status file found at '$STATUS_FILE'. No ip forwarding setting to restore."
+else
+    # Read the original status from the file
+    ORIGINAL_STATUS=$(cat "$STATUS_FILE")
+    # Restore the IP forwarding setting
+    echo "🔄 Restoring IP forwarding to its original state ('$ORIGINAL_STATUS')..."
+    sysctl -w net.ipv4.ip_forward="$ORIGINAL_STATUS" > /dev/null
+fi
 
 # Delete the network namespace
 # This automatically destroys the virtual interface inside it (veth-guest)
 # and any tc rules on the host side (veth-host).
-echo "[1/3] Deleting network namespace..."
+echo "[1/2] Deleting network namespace..."
 if ! ip netns list | grep -q "$NAMESPACE"; then
     echo "👍 Network sandbox '$NAMESPACE' does not exist. Nothing to do."
 else
@@ -51,7 +61,7 @@ fi
 
 # Remove the NAT rule from iptables
 # We find the rule using the comment we added in the start script.
-echo "[2/3] Removing NAT rule..."
+echo "[2/2] Removing NAT rule..."
 # Get the rule number
 RULE_NUM=$(nft -a list table ip nat | grep "net-sandbox-rule" | sed 's/.*# handle //')
 if [ ! -z "$RULE_NUM" ]; then
@@ -59,10 +69,5 @@ if [ ! -z "$RULE_NUM" ]; then
 else
     echo "  - Warning: Could not find the specific NAT rule to delete. It might have been removed already."
 fi
-
-# Disable IP forwarding (optional, but good for security)
-# echo "[3/3] Restoring IP forwarding to default..."
-# NOTE assuming it was already enabled
-#sysctl -w net.ipv4.ip_forward=0 > /dev/null
 
 echo "✅ Cleanup complete."
