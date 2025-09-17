@@ -64,4 +64,3 @@ jobs:
         run: |
           cargo publish --locked -p astarte-device-sdk-derive
           cargo publish --locked -p astarte-device-sdk
-          cargo publish --locked -p astarte-device-sdk-mock
