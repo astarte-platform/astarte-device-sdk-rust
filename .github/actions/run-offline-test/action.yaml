@@ -43,14 +43,13 @@ runs:
     - name: Install example interfaces
       shell: bash
       run: |
-        astartectl realm-management interfaces sync $SDK_WORKSPACE/docs/interfaces/*.json --non-interactive
-        astartectl realm-management interfaces sync $SDK_WORKSPACE/examples/**/interfaces/*.json --non-interactive
+        astartectl realm-management interfaces sync $SDK_WORKSPACE/examples/individual_datastream/interfaces/*.json --non-interactive
         astartectl realm-management interfaces ls
     - name: Create network namespace to run the application and configure dropping all packets
       shell: bash
       run: |
-        $SDK_WORKSPACE/offline/network_namespace/create.sh
-        $SDK_WORKSPACE/offline/network_namespace/set_rules.sh 0ms 100%
+        sudo $SDK_WORKSPACE/offline/network_namespace/create.sh
+        sudo $SDK_WORKSPACE/offline/network_namespace/set_rules.sh 0ms 100%
     - name: Build and run individual datastream
       shell: bash
       run: |
@@ -65,15 +64,20 @@ runs:
         }
         END
         cargo build --locked --example individual_datastream
-        exec 3< <("$SDK_WORKSPACE/offline/network_namespace/run.sh" "$SDK_WORKSPACE/target/debug/examples/individual_datastream" -c "$SDK_WORKSPACE/examples/individual_datastream/configuration.json")
-    - name: Re enable application network after 10 seconds
+        sudo "$SDK_WORKSPACE/offline/network_namespace/run.sh" \
+          "$SDK_WORKSPACE/target/debug/examples/individual_datastream" \
+          -c "$SDK_WORKSPACE/examples/individual_datastream/configuration.json" &>> $SDK_WORKSPACE/offline/log.out < /dev/null &
+    - name: Re enable application network after 5 seconds and wait 1 minute for reconnection
       shell: bash
       run: |
-        sleep 10
-        $SDK_WORKSPACE/offline/network_namespace/set_rules.sh 0ms 0%
+        sleep 5
+        sudo $SDK_WORKSPACE/offline/network_namespace/set_rules.sh 0ms 0%
+        sleep 60
     - name: Cat example output
       shell: bash
-      run: cat <&3
+      run: |
+        echo "example stdout"
+        cat $SDK_WORKSPACE/offline/log.out
     - name: Destroy network namespace
       shell: bash
-      run: $SDK_WORKSPACE/offline/network_namespace/destroy.sh
+      run: sudo $SDK_WORKSPACE/offline/network_namespace/destroy.sh
