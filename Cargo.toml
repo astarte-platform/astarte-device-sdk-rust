@@ -6,18 +6,30 @@
 
 [package]
 name = "astarte-device-sdk"
-version = "0.6.6"
+version.workspace = true
 documentation = "https://docs.rs/astarte-device-sdk"
-edition = "2021"
-homepage = "https://astarte.cloud/"
+edition.workspace = true
+homepage.workspace = true
 keywords = ["sdk", "iot", "astarte"]
-license = "Apache-2.0"
+license.workspace = true
 readme = "README.md"
-repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.66.1"
+repository.workspace = true
+rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+resolver = "2"
+members = [
+  "astarte-device-sdk-derive",
+]
+
+[workspace.package]
+version = "0.6.6"
+edition = "2021"
+homepage = "https://astarte.cloud/"
+license = "Apache-2.0"
+repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
+rust-version = "1.66.1"
 
 [[bench]]
 name = "benchmark"
@@ -59,7 +71,6 @@ env_logger = "0.10.0"
 mockall = "0.11.4"
 structopt = "0.3.26"
 tempfile = "3.6.0"
-
 
 [features]
 derive = ["astarte-device-sdk-derive"]
