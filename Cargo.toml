@@ -18,11 +18,11 @@
 
 [package]
 name = "astarte-device-sdk"
-version = { workspace = true }
+version.workspace = true
 categories = ["embedded", "api-bindings"]
 documentation = "https://docs.rs/astarte-device-sdk"
-edition = { workspace = true }
-homepage = { workspace = true }
+edition.workspace = true
+homepage.workspace = true
 include = [
   "!*.sqlite*",
   "/CHANGELOG.md",
@@ -36,10 +36,10 @@ include = [
   "/src",
 ]
 keywords = ["sdk", "iot", "astarte"]
-license = { workspace = true }
+license.workspace = true
 readme = "README.md"
-repository = { workspace = true }
-rust-version = { workspace = true }
+repository.workspace = true
+rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
 [workspace]
@@ -63,60 +63,60 @@ rust-version = "1.72"
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
-async-trait = { workspace = true }
-base64 = { workspace = true }
+async-trait.workspace = true
+base64.workspace = true
 bson = { workspace = true, features = ["chrono-0_4"] }
-bytes = { workspace = true }
+bytes.workspace = true
 chrono = { workspace = true, features = ["serde"] }
-flate2 = { workspace = true }
+flate2.workspace = true
 flume = { workspace = true, features = ["async"] }
-futures = { workspace = true }
-http = { workspace = true }
-itertools = { workspace = true }
-once_cell = { workspace = true }
+futures.workspace = true
+http.workspace = true
+itertools.workspace = true
+once_cell.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
 # Use aws-lc-rs to support all PrivateKey types
 rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
 reqwest = { workspace = true, default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
-rusqlite = { workspace = true }
-rustls = { workspace = true }
-rustls-native-certs = { workspace = true }
-rustls-pemfile = { workspace = true }
+rusqlite.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
 rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws_lc_rs"] }
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sync_wrapper = { workspace = true }
-thiserror = { workspace = true }
+serde_json.workspace = true
+sync_wrapper.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "parking_lot", "macros", "fs"] }
-tracing = { workspace = true }
+tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
 
 # Transitive dependency
-ahash = { workspace = true }
-litemap = { workspace = true }
-time = { workspace = true }
-zerofrom = { workspace = true }
+ahash.workspace = true
+litemap.workspace = true
+time.workspace = true
+zerofrom.workspace = true
 
 [target.'cfg(macos)'.dependencies]
 reqwest = { workspace = true, features = ["macos-system-configuration"] }
 
 [dev-dependencies]
-astarte-device-sdk-derive = { workspace = true }
-color-eyre = { workspace = true }
-env_logger = { workspace = true }
-eyre = { workspace = true }
-mockall = { workspace = true }
-mockito = { workspace = true }
-pretty_assertions = { workspace = true }
+astarte-device-sdk-derive.workspace = true
+color-eyre.workspace = true
+env_logger.workspace = true
+eyre.workspace = true
+mockall.workspace = true
+mockito.workspace = true
+pretty_assertions.workspace = true
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
-tempfile = { workspace = true }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true, features = ["net"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [features]
 default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
@@ -139,7 +139,7 @@ astarte-device-sdk-derive = { version = "=0.9.8", path = "./astarte-device-sdk-d
 astarte-message-hub-proto = "0.7.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
-bson = "2.7.0"
+bson = "2.12.0"
 bytes = "1.5.0"
 chrono = "0.4.20"
 color-eyre = "0.6.3"
