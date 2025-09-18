@@ -6,7 +6,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,7 +16,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-[toolchain]
-channel = "1.89.0"
-components = ["rust-analyzer", "llvm-tools"]
-profile = "default"
+name: "Install deps"
+description: "Install dependencies needed to run the jobs"
+runs:
+  using: "composite"
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install libsqlite3-dev libssl-dev

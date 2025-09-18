@@ -47,7 +47,7 @@ SPDX-License-Identifier = "CC0-1.0"
 [[annotations]]
 path = "Cargo.lock"
 precedence = "aggregate"
-SPDX-FileCopyrightText = "2023 SECO Mind Srl"
+SPDX-FileCopyrightText = "SECO Mind Srl"
 SPDX-License-Identifier = "CC0-1.0"
 
 [[annotations]]

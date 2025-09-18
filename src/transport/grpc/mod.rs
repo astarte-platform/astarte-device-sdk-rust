@@ -326,8 +326,8 @@ where
         removed_interfaces: &HashMap<&str, &Interface>,
     ) -> Result<(), Error> {
         let interfaces_name = removed_interfaces
-            .iter()
-            .map(|(iface_name, _iface)| iface_name.to_string())
+            .keys()
+            .map(|iface_name| iface_name.to_string())
             .collect();
 
         let interfaces_name = InterfacesName {
