@@ -187,7 +187,7 @@ impl Grpc {
         self.client
             .detach(Node::new(self.uuid, &Vec::<Vec<u8>>::new()))
             .await
-            .map(|_| ())?;
+            .map(drop)?;
 
         let stream = Grpc::attach(&mut self.client, data).await?;
         self.stream = SyncWrapper::new(stream);

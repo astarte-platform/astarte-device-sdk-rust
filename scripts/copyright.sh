@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # This file is part of Astarte.
 #
 # Copyright 2025 SECO Mind Srl
@@ -16,27 +18,38 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: warmup-caches
-on:
-  workflow_call:
-  workflow_dispatch:
-permissions:
-  contents: read
-defaults:
-  run:
-    shell: bash
-env:
-  CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
-jobs:
-  build:
-    runs-on: ubuntu-24.04
-    name: build
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Build with all features
-        run: cargo build --locked --all-targets --all-features --workspace
+##
+# Annotates the files passed from stdin
+#
+# For example
+#
+#   git status --short | cut -f 2 -d ' ' | ./scripts/copyright.sh
+#
+
+set -exEuo pipefail
+
+annotate() {
+    reuse annotate \
+        --copyright 'SECO Mind Srl' \
+        --copyright-prefix string \
+        --merge-copyrights \
+        --license 'Apache-2.0' \
+        --template apache-2 \
+        "$@"
+}
+
+if [[ $# != 0 ]]; then
+    annotate "$@"
+
+    exit
+fi
+
+# Read from stdin line by line
+while read -r line; do
+    if [[ $line == '' ]]; then
+        echo "Empty line, skipping" 1>&2
+        continue
+    fi
+
+    annotate "$line"
+done </dev/stdin

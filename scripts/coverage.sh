@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#    http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -48,8 +48,12 @@ export COVERAGE_OUT_DIR="$CARGO_TARGET_DIR/debug/coverage"
 # - `coverage-options=branch``: enable block and branch coverage (unstable option)
 #
 # See: https://doc.rust-lang.org/rustc/instrument-coverage.html
-export RUSTFLAGS="-Cinstrument-coverage -Zcoverage-options=branch"
+export RUSTFLAGS="-Cinstrument-coverage -Zcoverage-options=branch --cfg=__coverage"
 export CARGO_INCREMENTAL=0
+
+crates=(
+    'astarte-device-sdk'
+)
 
 # Helpful for testing changes in the generation options
 if [[ ${1:-} != '--no-gen' ]]; then
@@ -58,7 +62,9 @@ if [[ ${1:-} != '--no-gen' ]]; then
     mkdir -p "$COVERAGE_OUT_DIR"
     mkdir -p "$PROFS_DIR"
 
-    cargo +nightly test --locked --all-features --tests --no-fail-fast -p astarte-device-sdk
+    for crate in "${crates[@]}"; do
+        cargo +nightly test --locked --all-features --tests --no-fail-fast -p "$crate"
+    done
 fi
 
 find_target_tool() {
@@ -138,17 +144,14 @@ filter_lcov() {
             --dark-mode \
             --missed \
             --ignore-errors category \
+            --ignore-errors inconsistent \
             --output-directory "$COVERAGE_OUT_DIR/$1/genhtml" \
             "$COVERAGE_OUT_DIR/$1/lcov.info"
 
     fi
 }
 
-list=(
-    'astarte-device-sdk'
-)
-
-for p in "${list[@]}"; do
+for p in "${crates[@]}"; do
     mkdir -p "$COVERAGE_OUT_DIR/$p/"
 
     export_lcov "$p"
