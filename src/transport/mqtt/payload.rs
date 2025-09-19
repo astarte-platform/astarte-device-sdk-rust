@@ -70,7 +70,12 @@ pub enum PayloadError {
 pub(crate) struct Payload<T> {
     #[serde(rename = "v")]
     pub(crate) value: T,
-    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "t",
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
+    )]
     pub(crate) timestamp: Option<Timestamp>,
 }
 
@@ -220,6 +225,7 @@ mod test {
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
+    use base64::Engine;
     use chrono::TimeZone;
 
     use crate::types::Double;
@@ -329,7 +335,7 @@ mod test {
         ];
 
         let base_path = "/1";
-        let mut data: AstarteObject = alltypes
+        let data: AstarteObject = alltypes
             .into_iter()
             .map(|ty| {
                 let mapping_type = mapping_type(&ty);
@@ -342,21 +348,26 @@ mod test {
 
         let path = MappingPath::try_from(base_path).unwrap();
 
-        let validated = ValidatedObject::validate(
-            &interface,
-            &path,
-            data.clone(),
-            Some(TimeZone::timestamp_opt(&Utc, 1627580809, 0).unwrap()),
-        )
-        .unwrap();
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
+        let validated =
+            ValidatedObject::validate(&interface, &path, data.clone(), timestamp).unwrap();
         let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
-        let (mut res, _) = deserialize_object(&interface, &path, &buf).unwrap();
+        let expected = base64::prelude::BASE64_STANDARD
+            .decode("ZQIAAAN2AFICAAABZG91YmxlX2VuZHBvaW50AAAAAAAAABJAEGludGVnZXJfZW5kcG9pbnQA/P///whib29sZWFuX2VuZHBvaW50AAESbG9uZ2ludGVnZXJfZW5kcG9pbnQA7lKbmgoAAAACc3RyaW5nX2VuZHBvaW50AAYAAABoZWxsbwAFYmluYXJ5YmxvYl9lbmRwb2ludAAFAAAAAGhlbGxvCWRhdGV0aW1lX2VuZHBvaW50AEA7YPN6AQAABGRvdWJsZWFycmF5X2VuZHBvaW50ADEAAAABMAAzMzMzMzPzPwExADMzMzMzMwtAATIAZmZmZmZmFkABMwAzMzMzMzMfQAAEaW50ZWdlcmFycmF5X2VuZHBvaW50ACEAAAAQMAABAAAAEDEAAwAAABAyAAUAAAAQMwAHAAAAAARib29sZWFuYXJyYXlfZW5kcG9pbnQAFQAAAAgwAAEIMQAACDIAAQgzAAEABGxvbmdpbnRlZ2VyYXJyYXlfZW5kcG9pbnQAJgAAABIwAO5Sm5oKAAAAEjEA71KbmgoAAAASMgDwUpuaCgAAAAAEc3RyaW5nYXJyYXlfZW5kcG9pbnQAHwAAAAIwAAYAAABoZWxsbwACMQAGAAAAd29ybGQAAARiaW5hcnlibG9iYXJyYXlfZW5kcG9pbnQAHwAAAAUwAAUAAAAAaGVsbG8FMQAFAAAAAHdvcmxkAARkYXRldGltZWFycmF5X2VuZHBvaW50ACYAAAAJMABAO2DzegEAAAkxACg/YPN6AQAACTIAEENg83oBAAAAAAl0ACoAAAAAAAAAAA==")
+            .unwrap();
 
-        res.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
-        data.inner.sort_by(|(a, _), (b, _)| a.cmp(b));
+        assert_eq!(
+            buf,
+            expected,
+            "Invalid bson {}",
+            base64::prelude::BASE64_STANDARD.encode(&buf)
+        );
 
-        assert_eq!(res, data)
+        let (res, res_timestamp) = deserialize_object(&interface, &path, &buf).unwrap();
+
+        assert_eq!(res, data);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]
@@ -380,25 +391,26 @@ mod test {
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
         let og_value = AstarteData::LongInteger(3600);
-        let validated = ValidatedIndividual::validate(
-            mapping,
-            og_value.clone(),
-            Some(DateTime::from_timestamp_millis(42).unwrap()),
-        )
-        .unwrap();
+        let timestamp = Some(DateTime::from_timestamp_millis(42).unwrap());
+        let validated =
+            ValidatedIndividual::validate(mapping, og_value.clone(), timestamp).unwrap();
         let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
-        let expected = [
-            48, 0, 0, 0, 18, 118, 0, 16, 14, 0, 0, 0, 0, 0, 0, 2, 116, 0, 25, 0, 0, 0, 49, 57, 55,
-            48, 45, 48, 49, 45, 48, 49, 84, 48, 48, 58, 48, 48, 58, 48, 48, 46, 48, 52, 50, 90, 0,
-            0,
-        ];
+        let expected = base64::prelude::BASE64_STANDARD
+            .decode("GwAAABJ2ABAOAAAAAAAACXQAKgAAAAAAAAAA")
+            .unwrap();
 
-        assert_eq!(buf, expected);
+        assert_eq!(
+            buf,
+            expected,
+            "Invalid bson {}",
+            base64::prelude::BASE64_STANDARD.encode(&buf)
+        );
 
-        let (res, _) = deserialize_individual(&mapping, &buf).unwrap();
+        let (res, res_timestamp) = deserialize_individual(&mapping, &buf).unwrap();
 
         assert_eq!(res, og_value);
+        assert_eq!(res_timestamp, timestamp);
     }
 
     #[test]

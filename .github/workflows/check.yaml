@@ -31,35 +31,30 @@ env:
   RUSTC_WRAPPER: "sccache"
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
+  MAIN_PACKAGE: astarte-device-sdk
 jobs:
   fmt:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - name: Check formatting
         run: cargo fmt --check --all
   clippy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsqlite3-dev
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo clippy
         run: cargo clippy --locked --all-targets --all-features --workspace
   doc:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsqlite3-dev
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
         with:
           toolchain: nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -70,31 +65,25 @@ jobs:
   features:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsqlite3-dev
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo hack test sdk
         # Doesn't test all combination of features, but the space is becoming too large and it takes
         # too long
-        run: cargo hack --each-feature test --locked -p astarte-device-sdk
+        run: cargo hack --each-feature test --locked -p "$MAIN_PACKAGE"
   minimal-versions:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
       - name: install rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+        uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - name: install rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+        uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
         with:
           toolchain: nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -111,25 +100,22 @@ jobs:
         msrv: [1.78]
     name: msrv / ${{ matrix.msrv }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
         with:
           toolchain: ${{ matrix.msrv }}
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-hack
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo +${{ matrix.msrv }} hack --no-dev-deps check --all-features -p astarte-device-sdk
+        run: cargo +${{ matrix.msrv }} hack --no-dev-deps check --all-features -p "$MAIN_PACKAGE"
   # Run semver-check on release branch push or PR
   semver:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Check library API semver breakages
         uses: obi1kenobi/cargo-semver-checks-action@v2
@@ -140,11 +126,8 @@ jobs:
     name: stable / for-publish
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.13.0
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/install-deps
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
       - uses: mozilla-actions/sccache-action@v0.0.9
       - run: ./scripts/check-for-publish.sh
