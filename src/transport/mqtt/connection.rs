@@ -43,7 +43,12 @@
 //!
 //! Incoming messages must be processed as they arrive. If an error occurs during this process, it should be propagated up to the client with appropriate error-handling mechanisms.
 
-use std::{collections::VecDeque, fmt::Display, time::Duration};
+use std::{
+    collections::VecDeque,
+    fmt::Display,
+    sync::{Arc, OnceLock},
+    time::{Duration, SystemTime},
+};
 
 use rumqttc::{
     mqttbytes, ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError,
@@ -60,13 +65,16 @@ use crate::{
     retry::ExponentialIter,
     session::StoredSession,
     store::{wrapper::StoreWrapper, OptStoredProp, PropertyStore, StoreCapabilities},
-    transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
+    transport::mqtt::{
+        config::MqttTransportOptions, pairing::ApiClient, payload::Payload, AsyncClientExt,
+    },
 };
 
 use super::{
     client::{AsyncClient, EventLoop},
-    config::transport::TransportProvider,
-    ClientId, PairingError, PayloadError, SessionData,
+    config::{transport::TransportProvider, PartialConfig},
+    error::MqttError,
+    ClientId, MqttConfig, PairingError, PayloadError, SessionData,
 };
 
 /// Errors while initializing the MQTT connection.
@@ -114,21 +122,143 @@ impl InitError {
     }
 }
 
-/// MQTT connection to Astarte that can be pulled to receive packets.
 #[derive(Debug)]
-pub(crate) struct MqttConnection {
+pub(crate) struct MqttConnectionEstablished {
     connection: Connection,
-    /// Queue for the packet published while re/connecting.
-    buff: VecDeque<Publish>,
     state: State,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NeedsTransport {
+    mqtt_config: MqttConfig,
+    config: PartialConfig,
+    client_sender: Arc<OnceLock<AsyncClient>>,
+}
+
+impl NeedsTransport {
+    async fn create_transport(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Connection>, MqttError> {
+        match self
+            .mqtt_config
+            .try_create_transport(&self.config, timeout)
+            .await
+        {
+            Ok(MqttTransportOptions {
+                mqtt_opts,
+                net_opts: _net_opts,
+                provider,
+            }) => {
+                let (client, eventloop) = AsyncClient::new(mqtt_opts, self.config.channel_size);
+
+                let connection = Connection {
+                    client: client.clone(),
+                    eventloop: SyncWrapper::new(eventloop),
+                    provider,
+                    session_synced: false,
+                };
+
+                let _ = self.client_sender.set(client);
+
+                Ok(Some(connection))
+            }
+            Err(MqttError::Pairing(PairingError::RequestNoNetwork(e))) => {
+                info!(error=%Report::new(e), "can't create the transport as network is still unreachable");
+
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// State of the MQTT link, it will be changed one time only when it goes from
+/// being Absent to Established, this is why we allow large_enum_variant
+/// It should be Established for most of the application's lifetime.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub(crate) enum MqttLinkState {
+    Absent(NeedsTransport),
+    Established(MqttConnectionEstablished),
+}
+
+impl MqttLinkState {
+    fn get_mut(&mut self) -> Option<&mut MqttConnectionEstablished> {
+        match self {
+            MqttLinkState::Absent(_) => None,
+            MqttLinkState::Established(mqtt_connection_established) => {
+                Some(mqtt_connection_established)
+            }
+        }
+    }
+
+    fn is_link_connected(&self) -> bool {
+        matches!(
+            self,
+            MqttLinkState::Established(MqttConnectionEstablished {
+                state: State::Connected(..),
+                ..
+            })
+        )
+    }
+
+    async fn ensure_established(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<&mut MqttConnectionEstablished>, MqttError> {
+        if let MqttLinkState::Absent(needs_transport) = self {
+            let Some(connection) = needs_transport.create_transport(timeout).await? else {
+                return Ok(None);
+            };
+
+            *self = MqttLinkState::Established(MqttConnectionEstablished {
+                connection,
+                state: Connecting.into(),
+            });
+        }
+
+        if let MqttLinkState::Established(link_established) = self {
+            Ok(Some(link_established))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// MQTT connection to Astarte that can be pulled to receive packets.
+#[derive(Debug)]
+pub(crate) struct MqttConnection {
+    link: MqttLinkState,
+    /// Queue for the packet published while re/connecting.
+    buff: VecDeque<Publish>,
+    timeout: Duration,
+}
+
 impl MqttConnection {
+    pub(crate) fn without_transport(
+        mqtt_config: MqttConfig,
+        config: PartialConfig,
+        client_sender: Arc<OnceLock<AsyncClient>>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            link: MqttLinkState::Absent(NeedsTransport {
+                mqtt_config,
+                config,
+                client_sender,
+            }),
+            buff: VecDeque::new(),
+            timeout,
+        }
+    }
+
     pub(crate) fn new(
         client: AsyncClient,
         eventloop: EventLoop,
         provider: TransportProvider,
         state: impl Into<State>,
+        timeout: Duration,
     ) -> Self {
         let connection = Connection {
             client,
@@ -138,9 +268,12 @@ impl MqttConnection {
         };
 
         Self {
-            connection,
+            link: MqttLinkState::Established(MqttConnectionEstablished {
+                connection,
+                state: state.into(),
+            }),
             buff: VecDeque::new(),
-            state: state.into(),
+            timeout,
         }
     }
 
@@ -153,20 +286,21 @@ impl MqttConnection {
             return Some(publish);
         }
 
+        let connection = self.link.get_mut()?;
         // Here we only get the connected state so we don't need to pass all the arguments, like the
         // interfaces or the store.
-        let State::Connected(connected) = &mut self.state else {
+        let State::Connected(connected) = &mut connection.state else {
             return None;
         };
 
         loop {
-            match connected.poll(&mut self.connection).await {
+            match connected.poll(&mut connection.connection).await {
                 Next::Same => {}
                 Next::Publish(publish) => return Some(publish),
                 Next::State(next) => {
                     debug_assert!(!next.is_connected());
 
-                    self.state = next;
+                    connection.state = next;
 
                     return None;
                 }
@@ -185,21 +319,35 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
-    ) -> Result<Self, PollError>
+        timeout: Duration,
+    ) -> Result<Self, MqttError>
     where
         S: PropertyStore + StoreCapabilities,
     {
         let session_sync = Self::is_introspection_stored(interfaces, store).await;
         debug!(session_sync = session_sync, "Creating new mqtt connection");
-        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
-        mqtt_connection.connection.set_session_synced(session_sync);
+        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting, timeout);
+        if let Some(link) = mqtt_connection.link.get_mut() {
+            link.connection.set_session_synced(session_sync);
+        }
 
         let mut exp_back = ExponentialIter::default();
+
+        let start = SystemTime::now();
 
         while !mqtt_connection
             .reconnect(client_id, interfaces, store)
             .await?
         {
+            if SystemTime::now()
+                .duration_since(start)
+                .is_ok_and(|d| d > timeout)
+            {
+                // if the timeout is hit we will have a created transport but a connectiong status
+                info!("Timeout reached exiting connction loop without connection established");
+                break;
+            }
+
             let timeout = exp_back.next();
 
             debug!("waiting {timeout} seconds before retrying");
@@ -242,21 +390,24 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
-    ) -> Result<bool, PollError>
+    ) -> Result<bool, MqttError>
     where
         S: PropertyStore + StoreCapabilities,
     {
-        if self.state.is_connected() {
+        if self.link.is_link_connected() {
             debug!("already connected");
 
             return Ok(true);
         }
 
         loop {
-            let opt_publish = self
-                .state
-                .poll(&mut self.connection, client_id, interfaces, store)
-                .await?;
+            let Some(MqttConnectionEstablished { connection, state }) =
+                self.link.ensure_established(self.timeout).await?
+            else {
+                return Ok(false);
+            };
+
+            let opt_publish = state.poll(connection, client_id, interfaces, store).await?;
 
             if let Some(publish) = opt_publish {
                 debug!("publish received");
@@ -264,13 +415,13 @@ impl MqttConnection {
                 self.buff.push_back(publish);
             }
 
-            match &self.state {
+            match &state {
                 State::Connected(_) => {
                     debug!("reconnected");
 
                     break Ok(true);
                 }
-                State::Disconnected(_) => {
+                State::Disconnected(_) | State::Connecting(_) => {
                     debug!("error occurred");
 
                     break Ok(false);
@@ -414,7 +565,13 @@ impl Disconnected {
         conn: &mut Connection,
         client_id: ClientId<&str>,
     ) -> Result<Next, PairingError> {
-        let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id)?;
+        let api = ApiClient::from_transport(
+            &conn.provider,
+            client_id.realm,
+            client_id.device_id,
+            // TODO pass timeout from external context
+            Duration::from_secs(10),
+        )?;
 
         let transport = match conn.provider.recreate_transport(&api).await {
             Ok(transport) => transport,
@@ -1206,13 +1363,14 @@ mod tests {
                 client_id,
                 &interfaces,
                 &store,
+                Duration::from_secs(10),
             ),
         )
         .await
         .expect("timeout reached")
         .expect("failed to connect");
 
-        assert!(connection.state.is_connected());
+        assert!(connection.link.is_link_connected());
     }
 
     #[tokio::test]
@@ -1336,13 +1494,14 @@ mod tests {
                 client_id,
                 &interfaces,
                 &mock_store,
+                Duration::from_secs(10),
             ),
         )
         .await
         .expect("timeout reached")
         .expect("failed to connect");
 
-        assert!(connection.state.is_connected());
+        assert!(connection.link.is_link_connected());
     }
 
     #[tokio::test]
@@ -1450,12 +1609,13 @@ mod tests {
                 client_id,
                 &interfaces,
                 &mock_store,
+                Duration::from_secs(10),
             ),
         )
         .await
         .expect("timeout reached")
         .expect("failed to connect");
 
-        assert!(connection.state.is_connected());
+        assert!(connection.link.is_link_connected());
     }
 }
