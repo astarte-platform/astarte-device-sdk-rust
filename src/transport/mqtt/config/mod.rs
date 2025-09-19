@@ -45,7 +45,7 @@ use self::tls::is_env_ignore_ssl;
 
 use super::{
     client::AsyncClient, pairing::ApiClient, registration::register_device_timeout, Mqtt,
-    MqttClient, PairingError, SharedState, DEFAULT_CONNECTION_TIMEOUT, DEFAULT_KEEP_ALIVE,
+    MqttClient, PairingError, SharedState, DEFAULT_KEEP_ALIVE,
 };
 
 mod tls;
@@ -127,7 +127,6 @@ pub struct MqttConfig {
     pub(crate) pairing_url: String,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: Duration,
-    pub(crate) conn_timeout: Duration,
     pub(crate) bounded_channel_size: usize,
 }
 
@@ -177,7 +176,6 @@ impl MqttConfig {
             pairing_url: pairing_url.into(),
             ignore_ssl_errors: false,
             keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
-            conn_timeout: Duration::from_secs(DEFAULT_CONNECTION_TIMEOUT),
             bounded_channel_size: DEFAULT_CHANNEL_SIZE,
         }
     }
@@ -226,7 +224,7 @@ impl MqttConfig {
     /// # type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<()>{
+    /// async fn main() -> Result<()> {
     ///     let realm = "realm_name";
     ///     let device_id = "device_id";
     ///     let pairing_token = "device_credentials_secret";
@@ -268,13 +266,6 @@ impl MqttConfig {
     /// Ignore TLS/SSL certificate errors.
     pub fn ignore_ssl_errors(&mut self) -> &mut Self {
         self.ignore_ssl_errors = true;
-
-        self
-    }
-
-    /// Sets the MQTT connection timeout.
-    pub fn connection_timeout(&mut self, conn_timeout: Duration) -> &mut Self {
-        self.conn_timeout = conn_timeout;
 
         self
     }
@@ -362,6 +353,7 @@ impl MqttConfig {
         &self,
         transport: Transport,
         broker_url: &Url,
+        timeout: Duration,
     ) -> Result<(MqttOptions, NetworkOptions), PairingError> {
         let client_id = format!("{}/{}", self.realm, self.device_id);
 
@@ -375,11 +367,11 @@ impl MqttConfig {
         let mut mqtt_opts = MqttOptions::new(client_id, host, port);
 
         let keep_alive = self.keepalive.as_secs();
-        let conn_timeout = self.conn_timeout.as_secs();
+        let conn_timeout = timeout.as_secs();
         if keep_alive <= conn_timeout {
             return Err(PairingError::Config(
-            format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
-        ));
+                format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
+            ));
         }
 
         let mut net_opts = NetworkOptions::new();
@@ -390,7 +382,8 @@ impl MqttConfig {
         mqtt_opts.set_transport(transport);
 
         // Set the clean_session since this is the first connection.
-        mqtt_opts.set_clean_session(true);
+        // TODO discuss irl NOTE we can probably let the server handle the clean session
+        mqtt_opts.set_clean_session(false);
 
         Ok((mqtt_opts, net_opts))
     }
@@ -429,7 +422,7 @@ impl MqttConfig {
             .map_err(MqttError::Pairing)?;
 
         let (mqtt_opts, net_opts) = self
-            .build_mqtt_opts(transport, &borker_url)
+            .build_mqtt_opts(transport, &borker_url, timeout)
             .map_err(MqttError::Pairing)?;
 
         debug!("{:?}", mqtt_opts);
@@ -496,7 +489,7 @@ impl MqttConfig {
             }
             // handle timeout errors differently by creating a connection and a client without a transport
             Err(MqttError::Pairing(PairingError::RequestNoNetwork(e))) => {
-                warn!(error=%Report::new(e), "got a timeout while cerating the transport");
+                warn!(error=%Report::new(e), "got a timeout while creating the transport, initializing offline device");
 
                 let client = MqttClient::without_transport(
                     client_id.clone(),

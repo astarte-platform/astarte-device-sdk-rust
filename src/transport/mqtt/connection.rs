@@ -218,11 +218,7 @@ impl MqttLinkState {
             });
         }
 
-        if let MqttLinkState::Established(link_established) = self {
-            Ok(Some(link_established))
-        } else {
-            Ok(None)
-        }
+        Ok(self.get_mut())
     }
 }
 
@@ -1048,9 +1044,12 @@ impl Next {
 
                 Next::state(Disconnected)
             }
+            ConnectionError::MqttState(StateError::Unsolicited(pkid)) => {
+                warn!("rumqtt reports unsolicited ack to pkid: {}", pkid);
+                Next::Same
+            }
             ConnectionError::MqttState(_) => {
                 trace!("no state change");
-
                 Next::Same
             }
         }
