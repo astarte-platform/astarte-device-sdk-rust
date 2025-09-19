@@ -64,10 +64,10 @@ pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 /// Default capacity for the number of packets w ith retention store to store in memory.
 pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
 
-/// Default timeout applied to the http calls performed by the client.
-/// This timeout is also respected while waiting for a response by the trasnport implementations
-/// This is not the complete timeout of the whole connection process
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default timeout.
+/// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
+/// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Astarte builder error.
 ///
@@ -163,7 +163,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
             store: NoStore,
-            timeout: DEFAULT_TIMEOUT,
+            timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
