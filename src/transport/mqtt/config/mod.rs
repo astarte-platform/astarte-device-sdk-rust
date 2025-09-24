@@ -382,8 +382,7 @@ impl MqttConfig {
         mqtt_opts.set_transport(transport);
 
         // Set the clean_session since this is the first connection.
-        // TODO discuss irl NOTE we can probably let the server handle the clean session
-        mqtt_opts.set_clean_session(false);
+        mqtt_opts.set_clean_session(true);
 
         Ok((mqtt_opts, net_opts))
     }

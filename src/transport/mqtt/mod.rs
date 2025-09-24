@@ -552,14 +552,12 @@ where
     S: Send,
 {
     async fn disconnect(&mut self) -> Result<(), crate::Error> {
-        let client = self.get_client();
-
-        if let Err(MqttError::NoClient) = &client {
+        let Some(client) = self.client.get() else {
             info!("disconnecting while never connected, the mqtt client was not created");
             return Ok(());
-        }
+        };
 
-        client?
+        client
             .disconnect()
             .await
             .map(drop)

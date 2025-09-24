@@ -113,7 +113,6 @@ pub(crate) struct ApiClient<'a> {
     pub(crate) device_id: &'a str,
     pairing_url: &'a Url,
     client: reqwest::Client,
-    timeout: Duration,
 }
 
 impl<'a> ApiClient<'a> {
@@ -142,7 +141,6 @@ impl<'a> ApiClient<'a> {
             device_id,
             pairing_url: provider.pairing_url(),
             client,
-            timeout,
         })
     }
 
@@ -175,13 +173,7 @@ impl<'a> ApiClient<'a> {
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let response = self
-            .client
-            .post(url)
-            .json(&payload)
-            .timeout(self.timeout)
-            .send()
-            .await?;
+        let response = self.client.post(url).json(&payload).send().await?;
 
         match response.status() {
             StatusCode::CREATED => {
@@ -203,7 +195,7 @@ impl<'a> ApiClient<'a> {
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
-        let response = self.client.get(url).timeout(self.timeout).send().await?;
+        let response = self.client.get(url).send().await?;
 
         match response.status() {
             StatusCode::OK => {
