@@ -403,7 +403,9 @@ impl MqttConnection {
                 return Ok(false);
             };
 
-            let opt_publish = state.poll(connection, client_id, interfaces, store).await?;
+            let opt_publish = state
+                .poll(connection, client_id, interfaces, store, self.timeout)
+                .await?;
 
             if let Some(publish) = opt_publish {
                 debug!("publish received");
@@ -493,6 +495,7 @@ impl State {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        timeout: Duration,
     ) -> Result<Option<Publish>, PollError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -500,7 +503,9 @@ impl State {
         trace!("state {}", self);
 
         let next = match self {
-            State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await?,
+            State::Disconnected(disconnected) => {
+                disconnected.reconnect(conn, client_id, timeout).await?
+            }
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
             State::Handshake(handshake) => {
                 let session_data = SessionData::from_props(interfaces, store).await;
@@ -560,13 +565,13 @@ impl Disconnected {
         &mut self,
         conn: &mut Connection,
         client_id: ClientId<&str>,
+        timeout: Duration,
     ) -> Result<Next, PairingError> {
         let api = ApiClient::from_transport(
             &conn.provider,
             client_id.realm,
             client_id.device_id,
-            // TODO pass timeout from external context
-            Duration::from_secs(10),
+            timeout,
         )?;
 
         let transport = match conn.provider.recreate_transport(&api).await {
@@ -933,6 +938,13 @@ impl WaitAcks {
                 debug!("next event polled");
 
                 match res {
+                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(connack))) => {
+                        debug!("connack received, initializing connection");
+
+                        Next::state(Handshake {
+                            session_present: connack.session_present,
+                        })
+                    }
                     Ok(event) => Next::handle_event(event),
                     Err(err) => Next::handle_error(err),
                 }
@@ -1072,12 +1084,13 @@ impl Next {
         };
 
         match incoming {
+            // FIXME according to the MQTT spec the connack is only sent after the connack
+            // here we are also handling connack packets received after the first one
+            // this situation should probably be treated as a critical error
             rumqttc::Packet::ConnAck(connack) => {
-                debug!("connack received, initializing connection");
+                error!(connack=?connack, "connack received after the initial connection, broker bug");
 
-                Next::state(Handshake {
-                    session_present: connack.session_present,
-                })
+                Next::Same
             }
             rumqttc::Packet::Publish(publish) => {
                 debug!("incoming publish on {}", publish.topic);
