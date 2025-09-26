@@ -416,7 +416,7 @@ impl Disconnected {
     ) -> Result<Next, PairingError> {
         let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id)?;
 
-        let transport = match conn.provider.recreate_transport(&api).await {
+        let transport = match conn.provider.validate_transport(&api).await {
             Ok(transport) => transport,
             Err(err) => {
                 error!(error = %Report::new(err),"couldn't pair device");
@@ -460,7 +460,7 @@ impl Connecting {
 
         match event {
             Event::Incoming(Packet::ConnAck(connack)) => {
-                trace!("connack received");
+                debug!("connack received");
 
                 Next::state(Handshake {
                     session_present: connack.session_present,
