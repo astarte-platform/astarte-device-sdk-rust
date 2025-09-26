@@ -36,6 +36,9 @@ pub enum PairingError {
     /// Invalid credential secret.
     #[error("invalid credentials secret")]
     InvalidCredentials(#[source] io::Error),
+    /// Missing certificate crendential.
+    #[error("missing certificate credential")]
+    MissingCredentials,
     /// Couldn't parse the pairing URL.
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
@@ -177,6 +180,30 @@ impl<'a> ApiClient<'a> {
         }
     }
 
+    pub async fn verify_certificate(&self, client_crt: &str) -> Result<bool, PairingError> {
+        let url = self.url(["protocols", "astarte_mqtt_v1", "credentials", "verify"])?;
+
+        let payload = ApiData::new(MqttV1Certificate { client_crt });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let res: ApiData<MqttV1ClientCrtValidity> = response.json().await?;
+
+                Ok(res.data.valid)
+            }
+            status_code => {
+                let raw_response = response.text().await?;
+
+                Err(PairingError::Api {
+                    status: status_code,
+                    body: raw_response,
+                })
+            }
+        }
+    }
+
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
@@ -225,6 +252,11 @@ struct MqttV1Certificate<S = String> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct MqttV1ClientCrtValidity {
+    valid: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct StatusInfo {
     version: String,
     status: String,
@@ -267,7 +299,7 @@ pub(crate) mod tests {
     }
 
     // Returns the self signed certificate from a CSR
-    fn self_sign_csr_to_pem(csr_pem: &str) -> String {
+    pub(crate) fn self_sign_csr_to_pem(csr_pem: &str) -> String {
         // NOTE: read the doc for this function if crypto backend changes
         let issuer_key = rcgen::KeyPair::from_pem_and_sign_algo(
             ASTARTE_CA_KEY_PEM,
@@ -308,6 +340,20 @@ pub(crate) mod tests {
                 let client_crt = self_sign_csr_to_pem(&csr);
 
                 serde_json::to_vec(&ApiData::new(MqttV1Certificate { client_crt }))
+                    .expect("couldn't serialize response")
+            })
+            .match_header("authorization", "Bearer secret")
+    }
+
+    pub(crate) fn mock_verify_certificate(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials/verify",
+            )
+            .with_status(200)
+            .with_body_from_request(|_req| {
+                serde_json::to_vec(&ApiData::new(MqttV1ClientCrtValidity { valid: true }))
                     .expect("couldn't serialize response")
             })
             .match_header("authorization", "Bearer secret")

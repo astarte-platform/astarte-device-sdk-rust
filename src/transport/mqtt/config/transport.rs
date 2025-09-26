@@ -16,15 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use core::str;
 use std::{path::PathBuf, sync::Arc};
 
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
 use tokio::fs;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
+use super::ClientId;
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
 use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
@@ -166,8 +168,11 @@ impl TransportProvider {
             .await
         }
 
-        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-            .map_err(PairingError::InvalidCredentials)
+        match ClientAuth::try_from_pem_cert(certificate, bundle.private_key) {
+            Ok(Some(auth)) => Ok(auth),
+            Ok(None) => Err(PairingError::MissingCredentials),
+            Err(e) => Err(PairingError::InvalidCredentials(e)),
+        }
     }
 
     /// Retrieves an already stored certificate or creates a new one
@@ -197,14 +202,59 @@ impl TransportProvider {
         self.config_transport(client_auth)
     }
 
-    /// Create a new transport, including the creation of new credentials.
-    pub(crate) async fn recreate_transport(
+    // validate the existing certificate is valid, if valid use it for the transport
+    // if it's invalid recreate the certificate
+    pub(crate) async fn validate_transport(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
-        let client_auth = self.create_credentials(client).await?;
+        let client_auth = if let Some(client_auth) = self.verify_certificate(client).await? {
+            client_auth
+        } else {
+            self.create_credentials(client).await?
+        };
 
         self.config_transport(client_auth)
+    }
+
+    /// Verify the stored certificate first by checking the Subject common name
+    /// and comparing it to the client id then by using the provided astarte api
+    /// Returns true if valid, false otherwise
+    async fn verify_certificate(
+        &self,
+        client: &ApiClient<'_>,
+    ) -> Result<Option<ClientAuth>, PairingError> {
+        let Some(store_dir) = &self.store_dir else {
+            warn!(
+                store_dir = ?self.store_dir,
+                "no device store directory, assuming invalid"
+            );
+            return Ok(None);
+        };
+
+        let certificate_file = CertificateFile::new(store_dir);
+        let key_file = PrivateKeyFile::new(store_dir);
+
+        let Some(client_auth) = ClientAuth::try_read(certificate_file, key_file).await else {
+            warn!(
+                ?store_dir,
+                "no device certificate file in store dir, assuming invalid"
+            );
+            return Ok(None);
+        };
+
+        if !client_auth.verify_certificate_data(ClientId::<&str> {
+            realm: client.realm,
+            device_id: client.device_id,
+        }) {
+            warn!("invalid certificate data");
+            return Ok(None);
+        }
+
+        client
+            .verify_certificate(client_auth.pem())
+            .await
+            .map(|res| res.then_some(client_auth))
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
@@ -366,7 +416,7 @@ mod tests {
         let api = ApiClient::from_transport(&provider, "realm", "device_id")
             .expect("failed to create api client");
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         let certificate_file = CertificateFile::new(dir.path());
         let private_key_file = PrivateKeyFile::new(dir.path());
@@ -392,7 +442,7 @@ mod tests {
         let api = ApiClient::from_transport(&provider, "realm", "device_id")
             .expect("failed to create api client");
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         mock.assert_async().await;
     }
@@ -422,7 +472,7 @@ mod tests {
 
         let _ = provider.transport(&api).await.unwrap();
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         mock.assert_async().await;
     }
