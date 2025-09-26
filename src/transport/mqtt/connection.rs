@@ -512,7 +512,7 @@ impl State {
 
                 handshake.start(conn, client_id, store, session_data).await
             }
-            State::WaitAcks(init) => init.wait_connection(conn).await,
+            State::WaitAcks(init) => init.wait_connection(conn, client_id, timeout).await,
             State::Connected(connected) => connected.poll(conn).await,
         };
 
@@ -618,7 +618,7 @@ impl Connecting {
 
         match event {
             Event::Incoming(Packet::ConnAck(connack)) => {
-                trace!("connack received");
+                debug!("connack received");
 
                 Next::state(Handshake {
                     session_present: connack.session_present,
@@ -925,28 +925,46 @@ impl WaitAcks {
     /// We check that the task is finished, or we pull the connection. This ensures that all the
     /// packets in are sent correctly and the handle can advance to completion. Eventual published
     /// packets are returned.
-    async fn wait_connection(&mut self, conn: &mut Connection) -> Next {
+    async fn wait_connection(
+        &mut self,
+        conn: &mut Connection,
+        client_id: ClientId<&str>,
+        timeout: Duration,
+    ) -> Result<Next, PairingError> {
         tokio::select! {
             // Join handle is cancel safe
             res = &mut self.handle => {
                 debug!("task joined");
 
-                Self::handle_join(res, conn)
+                Ok(Self::handle_join(res, conn))
             }
             // I hope this is cancel safe
             res = conn.eventloop_mut().poll() => {
                 debug!("next event polled");
 
                 match res {
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(connack))) => {
-                        debug!("connack received, initializing connection");
+                    Ok(event) => Ok(Next::handle_event(event)),
+                    Err(err @ ConnectionError::MqttState(StateError::ConnectionAborted)) => {
+                        error!("Connection aborted while connecting, verifying certificate");
 
-                        Next::state(Handshake {
-                            session_present: connack.session_present,
-                        })
+                        let client = ApiClient::from_transport(
+                            &conn.provider,
+                            client_id.realm,
+                            client_id.device_id,
+                            timeout,
+                        )?;
+
+                        if conn.provider.verify_certificate(&client).await? {
+                            info!("Valid certificate, handling connection aborted normally");
+                            Ok(Next::handle_error(err))
+                        } else {
+                            warn!(
+                                "Invalid certificate, moving state to disconnected to recreate transport"
+                            );
+                            Ok(Next::state(Disconnected))
+                        }
                     }
-                    Ok(event) => Next::handle_event(event),
-                    Err(err) => Next::handle_error(err),
+                    Err(err) => Ok(Next::handle_error(err)),
                 }
             }
         }

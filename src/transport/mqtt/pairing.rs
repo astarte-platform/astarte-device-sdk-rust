@@ -192,6 +192,30 @@ impl<'a> ApiClient<'a> {
         }
     }
 
+    pub async fn verify_certificate(&self, client_crt: &str) -> Result<bool, PairingError> {
+        let url = self.url(["protocols", "astarte_mqtt_v1", "credentials", "verify"])?;
+
+        let payload = ApiData::new(MqttV1ClientCrt { client_crt });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let res: ApiData<MqttV1ClientCrtValidity> = response.json().await?;
+
+                Ok(res.data.valid)
+            }
+            status_code => {
+                let raw_response = response.text().await?;
+
+                Err(PairingError::Api {
+                    status: status_code,
+                    body: raw_response,
+                })
+            }
+        }
+    }
+
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.url([])?;
 
@@ -237,6 +261,17 @@ struct MqttV1Csr<'a> {
 #[derive(Debug, Serialize, Deserialize)]
 struct MqttV1Certificate<S = String> {
     client_crt: S,
+}
+
+/// Request that contains the certificate to verify it
+#[derive(Debug, Serialize)]
+struct MqttV1ClientCrt<'a> {
+    client_crt: &'a str,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MqttV1ClientCrtValidity {
+    valid: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
