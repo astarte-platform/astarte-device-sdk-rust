@@ -16,13 +16,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use core::str;
 use std::{path::PathBuf, sync::Arc};
 
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
 use tokio::fs;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
@@ -91,6 +92,34 @@ impl TransportProvider {
         debug!("credentials created");
 
         Ok((bundle, certificate))
+    }
+
+    /// Verify the stored certificate using the provided astarte api
+    /// Returns true if valid, false otherwise
+    pub(crate) async fn verify_certificate(
+        &self,
+        client: &ApiClient<'_>,
+    ) -> Result<bool, PairingError> {
+        let Some(store_dir) = &self.store_dir else {
+            warn!("no device certificate file, assuming invalid");
+            return Ok(false);
+        };
+
+        let certificate_file = CertificateFile::new(store_dir);
+        let certificate_pem =
+            fs::read(certificate_file.path())
+                .await
+                .map_err(|e| PairingError::ReadCertificate {
+                    path: certificate_file.path().to_path_buf(),
+                    backtrace: e,
+                })?;
+
+        let Ok(certificate_pem) = str::from_utf8(&certificate_pem) else {
+            warn!("Invalid encoding in the device certificate file, assuming invalid");
+            return Ok(false);
+        };
+
+        client.verify_certificate(certificate_pem).await
     }
 
     /// Store the credentials to files.
@@ -219,6 +248,8 @@ impl TransportProvider {
 #[cfg(test)]
 mod tests {
 
+    use std::time::Duration;
+
     use mockito::Server;
     use rumqttc::TlsConfiguration;
     use tempfile::TempDir;
@@ -248,8 +279,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let transport = provider.transport(&api).await.unwrap();
 
@@ -279,8 +311,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -308,8 +341,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -334,8 +368,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -363,8 +398,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -389,8 +425,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.recreate_transport(&api).await.unwrap();
 
@@ -417,8 +454,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
