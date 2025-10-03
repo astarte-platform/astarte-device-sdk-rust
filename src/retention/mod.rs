@@ -30,7 +30,7 @@ use std::{
 
 use astarte_interfaces::{interface::Retention, schema::Reliability};
 use futures::{StreamExt, TryStreamExt};
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::{
     error::{DynError, Report},

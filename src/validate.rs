@@ -23,7 +23,7 @@ use astarte_interfaces::{
     schema::{Ownership, Reliability},
     DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
 };
-use tracing::{error, trace};
+use tracing::trace;
 
 use crate::{
     aggregate::AstarteObject,
