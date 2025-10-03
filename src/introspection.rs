@@ -24,7 +24,7 @@ use std::{
 };
 
 use astarte_interfaces::{error::Error as InterfaceError, Interface};
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::Error;
 

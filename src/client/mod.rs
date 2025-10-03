@@ -21,7 +21,7 @@
 use std::{future::Future, sync::Arc};
 
 use astarte_interfaces::{mapping::path::MappingPathError, MappingPath};
-use tracing::{error, trace};
+use tracing::trace;
 
 use crate::{
     aggregate::AstarteObject,
