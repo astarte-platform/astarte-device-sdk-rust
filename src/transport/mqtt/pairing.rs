@@ -18,7 +18,7 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -36,12 +36,18 @@ pub enum PairingError {
     /// Invalid credential secret.
     #[error("invalid credentials secret")]
     InvalidCredentials(#[source] io::Error),
+    /// Missing certificate crendential.
+    #[error("missing certificate credential")]
+    MissingCredentials,
     /// Couldn't parse the pairing URL.
     #[error("invalid pairing URL")]
     InvalidUrl(#[from] ParseError),
     /// The pairing request failed.
     #[error("error while sending or receiving request")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
+    /// The pairing request failed with a timeout (missing connection).
+    #[error("got a timeout or connection error")]
+    RequestNoNetwork(reqwest::Error),
     /// Invalid credential secret
     #[error("couldn't set bearer header, invalid credential secret")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
@@ -94,6 +100,16 @@ pub enum PairingError {
     ReadNativeCerts(#[source] tokio::task::JoinError),
 }
 
+impl From<reqwest::Error> for PairingError {
+    fn from(err: reqwest::Error) -> Self {
+        if err.is_timeout() || err.is_request() {
+            PairingError::RequestNoNetwork(err)
+        } else {
+            PairingError::Request(err)
+        }
+    }
+}
+
 /// Struct with the information for the pairing
 pub(crate) struct ApiClient<'a> {
     pub(crate) realm: &'a str,
@@ -107,6 +123,7 @@ impl<'a> ApiClient<'a> {
         provider: &'a TransportProvider,
         realm: &'a str,
         device_id: &'a str,
+        timeout: Duration,
     ) -> Result<Self, PairingError> {
         let tls_config = provider.api_tls_config()?;
 
@@ -119,6 +136,7 @@ impl<'a> ApiClient<'a> {
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(tls_config.clone())
             .default_headers(headers)
+            .timeout(timeout)
             .build()?;
 
         Ok(Self {
@@ -165,6 +183,30 @@ impl<'a> ApiClient<'a> {
                 let res: ApiData<MqttV1Certificate> = response.json().await?;
 
                 Ok(res.data.client_crt)
+            }
+            status_code => {
+                let raw_response = response.text().await?;
+
+                Err(PairingError::Api {
+                    status: status_code,
+                    body: raw_response,
+                })
+            }
+        }
+    }
+
+    pub async fn verify_certificate(&self, client_crt: &str) -> Result<bool, PairingError> {
+        let url = self.url(["protocols", "astarte_mqtt_v1", "credentials", "verify"])?;
+
+        let payload = ApiData::new(MqttV1Certificate { client_crt });
+
+        let response = self.client.post(url).json(&payload).send().await?;
+
+        match response.status() {
+            StatusCode::OK => {
+                let res: ApiData<MqttV1ClientCrtValidity> = response.json().await?;
+
+                Ok(res.data.valid)
             }
             status_code => {
                 let raw_response = response.text().await?;
@@ -225,6 +267,11 @@ struct MqttV1Certificate<S = String> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct MqttV1ClientCrtValidity {
+    valid: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct StatusInfo {
     version: String,
     status: String,
@@ -267,7 +314,7 @@ pub(crate) mod tests {
     }
 
     // Returns the self signed certificate from a CSR
-    fn self_sign_csr_to_pem(csr_pem: &str) -> String {
+    pub(crate) fn self_sign_csr_to_pem(csr_pem: &str) -> String {
         // NOTE: read the doc for this function if crypto backend changes
         let issuer_key = rcgen::KeyPair::from_pem_and_sign_algo(
             ASTARTE_CA_KEY_PEM,
@@ -313,6 +360,20 @@ pub(crate) mod tests {
             .match_header("authorization", "Bearer secret")
     }
 
+    pub(crate) fn mock_verify_certificate(server: &mut mockito::ServerGuard) -> mockito::Mock {
+        server
+            .mock(
+                "POST",
+                "/v1/realm/devices/device_id/protocols/astarte_mqtt_v1/credentials/verify",
+            )
+            .with_status(200)
+            .with_body_from_request(|_req| {
+                serde_json::to_vec(&ApiData::new(MqttV1ClientCrtValidity { valid: true }))
+                    .expect("couldn't serialize response")
+            })
+            .match_header("authorization", "Bearer secret")
+    }
+
     #[tokio::test]
     async fn should_create_certificate() {
         let mut server = Server::new_async().await;
@@ -325,8 +386,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let bundle = Bundle::generate_key("test", "device_id").unwrap();
 
@@ -362,8 +424,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client
             .create_certificate("csr")
@@ -387,8 +450,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.unwrap();
 
@@ -416,8 +480,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.expect_err("should error");
 

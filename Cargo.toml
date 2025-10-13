@@ -93,6 +93,7 @@ tracing = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
 webpki-roots = { workspace = true, optional = true }
+x509-parser = { workspace = true, features = [ "aws-lc-rs" ] }
 
 [target.'cfg(macos)'.dependencies]
 reqwest = { workspace = true, features = ["macos-system-configuration"] }
@@ -175,7 +176,7 @@ quote = "1.0.35"
 rcgen = { version = "0.13.1", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.12.9", default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
-rumqttc = { package = "rumqttc-dev-patched", version = "0.24.6-ack-notify" }
+rumqttc = { package = "rumqttc-dev-patched", version = "0.24.7-ack-notify" }
 # Error with bindgen and rust <1.82
 # See: https://github.com/rusqlite/rusqlite/issues/1631
 rusqlite = "=0.32.1"
@@ -197,6 +198,7 @@ tracing-subscriber = "0.3.0"
 url = "2.4.0"
 uuid = "1.1.2"
 webpki-roots = "1.0.0"
+x509-parser = "0.18.0"
 
 # Transitive dependencies
 litemap = "=0.7.4"
