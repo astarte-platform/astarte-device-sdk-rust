@@ -186,6 +186,10 @@ impl MqttConnection {
         S: PropertyStore,
     {
         let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
+        // NOTE always enable clean session during the first connection
+        // since we can't persistently store in flight mqtt messages this ensures that we don't receive packet ids
+        // of the previous session
+        set_clean_session(mqtt_connection.connection.eventloop_mut(), true);
 
         mqtt_connection
             .connect(client_id, interfaces, store)
@@ -200,7 +204,7 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
-    ) -> Result<(), StoreError>
+    ) -> Result<bool, StoreError>
     where
         S: PropertyStore,
     {
@@ -217,8 +221,6 @@ impl MqttConnection {
             if let Some(publish) = opt_publish {
                 debug!("received a publish");
 
-                disable_clean_session(self.connection.eventloop_mut());
-
                 self.buff.push_back(publish);
             }
 
@@ -232,19 +234,17 @@ impl MqttConnection {
             }
         }
 
-        disable_clean_session(self.connection.eventloop_mut());
-
-        Ok(())
+        Ok(matches!(self.state, State::Connected(c) if c.is_session_present()))
     }
 }
 
 #[cfg(not(test))]
-fn disable_clean_session(eventloop: &mut EventLoop) {
-    eventloop.mqtt_options.set_clean_session(false);
+fn set_clean_session(eventloop: &mut EventLoop, clean: bool) {
+    eventloop.mqtt_options.set_clean_session(clean);
 }
 
 #[cfg(test)]
-fn disable_clean_session(_eventloop: &mut EventLoop) {}
+fn set_clean_session(_eventloop: &mut EventLoop, _clean: bool) {}
 
 /// Struct to hold the connection and client to be passed to the state.
 ///
@@ -388,7 +388,6 @@ impl Disconnected {
         debug!("created a new transport, reconnecting");
 
         let eventloop = conn.eventloop_mut();
-        eventloop.clean();
         Self::set_transport(eventloop, transport);
 
         Next::state(Connecting)
@@ -424,12 +423,18 @@ impl Connecting {
             Event::Incoming(Packet::ConnAck(connack)) => {
                 trace!("connack received");
 
+                // permanently set the clean session to false since the mqtt library will keep inflight messages in memory
+                set_clean_session(conn.eventloop_mut(), false);
+
                 Next::state(Handshake {
                     session_present: connack.session_present,
                 })
             }
             Event::Incoming(incoming) => {
-                error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
+                error!(
+                    ?incoming,
+                    "unexpected packet received while waiting for connack"
+                );
 
                 Next::state(Disconnected)
             }
@@ -508,7 +513,10 @@ impl Handshake {
             Ok(())
         });
 
-        Next::state(WaitAcks { handle })
+        Next::state(WaitAcks {
+            handle,
+            session_present: self.session_present,
+        })
     }
 
     /// Subscribes to the passed list of interfaces
@@ -654,6 +662,7 @@ impl From<Handshake> for State {
 #[derive(Debug)]
 pub(crate) struct WaitAcks {
     handle: JoinHandle<Result<(), InitError>>,
+    session_present: bool,
 }
 
 impl WaitAcks {
@@ -668,7 +677,7 @@ impl WaitAcks {
             res = &mut self.handle => {
                 debug!("task joined");
 
-                Self::handle_join(res)
+                Self::handle_join(res, self.session_present)
             }
             // I hope this is cancel safe
             res = conn.eventloop_mut().poll() => {
@@ -684,12 +693,15 @@ impl WaitAcks {
         }
     }
 
-    fn handle_join(res: Result<Result<(), InitError>, JoinError>) -> Result<Next, StoreError> {
+    fn handle_join(
+        res: Result<Result<(), InitError>, JoinError>,
+        session_present: bool,
+    ) -> Result<Next, StoreError> {
         // Don't move the handle to await the task
         match res {
             Ok(Ok(())) => {
                 info!("device connected");
-                Ok(Next::state(Connected))
+                Ok(Next::state(Connected { session_present }))
             }
             Ok(Err(InitError::Unset(err))) => {
                 error!(error = %Report::new(&err), "init task failed");
@@ -732,9 +744,15 @@ impl From<WaitAcks> for State {
 
 /// Established connection to Astarte
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Connected;
+pub(crate) struct Connected {
+    pub(crate) session_present: bool,
+}
 
 impl Connected {
+    pub(crate) fn is_session_present(&self) -> bool {
+        self.session_present
+    }
+
     async fn poll(&mut self, conn: &mut Connection) -> Next {
         match conn.eventloop_mut().poll().await {
             Ok(event) => Next::handle_event(event),

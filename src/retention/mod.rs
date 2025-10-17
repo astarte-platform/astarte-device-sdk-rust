@@ -33,12 +33,14 @@ use std::{
 
 use async_trait::async_trait;
 use futures::{StreamExt, TryStreamExt};
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::{
     error::{DynError, Report},
     interface::{Reliability, Retention},
     interfaces::Interfaces,
+    retention::memory::SharedVolatileStore,
+    store::StoreCapabilities,
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -310,8 +312,8 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         individual: &ValidatedIndividual,
         value: &[u8],
     ) -> Result<(), RetentionError> {
-        // Always store as not sent, so we can mark it afterwards
-        let publish = PublishInfo::from_individual(false, individual, value);
+        // Always store as sent, so that no resend is submitted while in flight
+        let publish = PublishInfo::from_individual(true, individual, value);
 
         self.store_publish(id, publish).await
     }
@@ -322,8 +324,8 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         obj: &ValidatedObject,
         value: &[u8],
     ) -> Result<(), RetentionError> {
-        // Always store as not sent, so we can mark it afterwards
-        let publish = PublishInfo::from_obj(false, obj, value);
+        // Always store as sent, so that no resend is submitted while in flight
+        let publish = PublishInfo::from_obj(true, obj, value);
 
         self.store_publish(id, publish).await
     }
@@ -354,11 +356,6 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
             .await?;
 
         Ok(())
-    }
-
-    /// It will mark the stored publish as sent
-    async fn mark_sent(&self, id: &Id) -> Result<(), RetentionError> {
-        self.update_sent_flag(id, true).await
     }
 }
 
@@ -533,6 +530,32 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub(crate) async fn mark_unsent_on_err<S>(
+    store: &S,
+    volatile: &mut SharedVolatileStore,
+    id: &RetentionId,
+) where
+    S: StoreCapabilities,
+{
+    match id {
+        RetentionId::Volatile(id) => {
+            volatile.mark_sent(id, false).await;
+        }
+        RetentionId::Stored(id) => {
+            let Some(retention) = store.get_retention() else {
+                return;
+            };
+
+            let update_result = retention.update_sent_flag(id, false).await;
+
+            if let Err(e) = update_result {
+                warn!(error=%Report::new(e),
+                    "error in the store implementation while marking a record as not sent");
+            }
+        }
     }
 }
 
