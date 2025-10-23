@@ -176,14 +176,22 @@ impl TransportProvider {
     }
 
     /// Retrieves an already stored certificate or creates a new one
+    /// It also verifies certificate data that can be checked for validity locally
     async fn retrieve_credentials(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<ClientAuth, PairingError> {
         debug!("retrieving credentials");
 
+        let auth = self.read_credentials().await.filter(|auth| {
+            auth.verify_certificate_data(ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            })
+        });
+
         // Return with the existing certificate
-        if let Some(auth) = self.read_credentials().await {
+        if let Some(auth) = auth {
             info!("existing certificate found");
 
             return Ok(auth);
@@ -219,7 +227,7 @@ impl TransportProvider {
 
     /// Verify the stored certificate first by checking the Subject common name
     /// and comparing it to the client id then by using the provided astarte api
-    /// Returns true if valid, false otherwise
+    /// Returns the [`ClientAuth`] struct if valid, None otherwise
     async fn verify_certificate(
         &self,
         client: &ApiClient<'_>,

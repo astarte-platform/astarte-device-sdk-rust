@@ -18,7 +18,7 @@
 
 //! MQTT TLS configuration
 
-use std::{fs, io, sync::Arc};
+use std::{io, sync::Arc};
 
 use rustls::{
     client::WantsClientCert,
@@ -29,7 +29,7 @@ use rustls::{
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::transport::mqtt::PairingError;
+use crate::{error::Report, transport::mqtt::PairingError};
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
 
@@ -51,9 +51,7 @@ impl ClientAuth {
         certificates: CertificateFile,
         key: PrivateKeyFile,
     ) -> Option<Self> {
-        let res = tokio::task::spawn_blocking(|| Self::read_cert_and_key(certificates, key))
-            .await
-            .ok()?;
+        let res = Self::read_cert_and_key(certificates, key).await;
 
         match res {
             Ok(auth) => auth,
@@ -87,37 +85,28 @@ impl ClientAuth {
         })
     }
 
-    /// Blocking function to read the certificate and the key
-    fn read_cert_and_key(
+    /// Function to read the certificate and the key
+    async fn read_cert_and_key(
         certificates: CertificateFile,
         key: PrivateKeyFile,
     ) -> Result<Option<Self>, io::Error> {
-        let pem = fs::read_to_string(certificates.path())?;
-        let Some(der) = rustls_pemfile::certs(&mut pem.as_bytes()).next() else {
-            debug!("no certificate available in certificate file");
-            return Ok(None);
-        };
-        let der = der?;
+        let pem = tokio::fs::read_to_string(certificates.path()).await?;
 
-        let k_r = std::fs::read(key)?;
+        let k_r = tokio::fs::read(key).await?;
         if k_r.is_empty() {
             debug!("no private key found");
             return Ok(None);
         }
         let private_key = PrivatePkcs8KeyDer::from(k_r);
 
-        Ok(Some(ClientAuth {
-            private_key,
-            der,
-            pem,
-        }))
+        Self::try_from_pem_cert(pem, private_key)
     }
 
     pub(crate) fn verify_certificate_data(&self, client_id: ClientId<&str>) -> bool {
         let parsed = match x509_parser::parse_x509_certificate(&self.der) {
             Ok((_remaining, cert)) => cert,
             Err(e) => {
-                warn!(error=?e, "parsing certificate error assuming invalid");
+                warn!(error=%Report::new(e), "parsing certificate error assuming invalid");
                 return false;
             }
         };
