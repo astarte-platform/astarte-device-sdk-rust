@@ -113,7 +113,7 @@ impl TransportProvider {
     }
 
     /// Read credentials from the filesystem.
-    async fn read_credentials(&self) -> Option<ClientAuth> {
+    async fn read_credentials(&self, client_id: ClientId<&str>) -> Option<ClientAuth> {
         let Some(store_dir) = &self.store_dir else {
             debug!("no store directory");
 
@@ -125,7 +125,7 @@ impl TransportProvider {
         let certificate_file = CertificateFile::new(store_dir);
         let private_key_file = PrivateKeyFile::new(store_dir);
 
-        ClientAuth::try_read(certificate_file, private_key_file).await
+        ClientAuth::try_read(certificate_file, private_key_file, client_id).await
     }
 
     fn root_cert_store(&self) -> Arc<RootCertStore> {
@@ -168,7 +168,14 @@ impl TransportProvider {
             .await
         }
 
-        match ClientAuth::try_from_pem_cert(certificate, bundle.private_key) {
+        match ClientAuth::try_from_pem_cert(
+            certificate,
+            bundle.private_key,
+            ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            },
+        ) {
             Ok(Some(auth)) => Ok(auth),
             Ok(None) => Err(PairingError::MissingCredentials),
             Err(e) => Err(PairingError::InvalidCredentials(e)),
@@ -183,12 +190,12 @@ impl TransportProvider {
     ) -> Result<ClientAuth, PairingError> {
         debug!("retrieving credentials");
 
-        let auth = self.read_credentials().await.filter(|auth| {
-            auth.verify_certificate_data(ClientId {
+        let auth = self
+            .read_credentials(ClientId {
                 realm: client.realm,
                 device_id: client.device_id,
             })
-        });
+            .await;
 
         // Return with the existing certificate
         if let Some(auth) = auth {
@@ -243,21 +250,22 @@ impl TransportProvider {
         let certificate_file = CertificateFile::new(store_dir);
         let key_file = PrivateKeyFile::new(store_dir);
 
-        let Some(client_auth) = ClientAuth::try_read(certificate_file, key_file).await else {
+        let Some(client_auth) = ClientAuth::try_read(
+            certificate_file,
+            key_file,
+            ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            },
+        )
+        .await
+        else {
             warn!(
                 ?store_dir,
                 "no device certificate file in store dir, assuming invalid"
             );
             return Ok(None);
         };
-
-        if !client_auth.verify_certificate_data(ClientId::<&str> {
-            realm: client.realm,
-            device_id: client.device_id,
-        }) {
-            warn!("invalid certificate data");
-            return Ok(None);
-        }
 
         client
             .verify_certificate(client_auth.pem())

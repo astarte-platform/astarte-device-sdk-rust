@@ -20,6 +20,7 @@
 
 use std::{io, sync::Arc};
 
+use itertools::Itertools;
 use rustls::{
     client::WantsClientCert,
     crypto::CryptoProvider,
@@ -50,8 +51,9 @@ impl ClientAuth {
     pub(crate) async fn try_read(
         certificates: CertificateFile,
         key: PrivateKeyFile,
+        client_id: ClientId<&str>,
     ) -> Option<Self> {
-        let res = Self::read_cert_and_key(certificates, key).await;
+        let res = Self::read_cert_and_key(certificates, key, client_id).await;
 
         match res {
             Ok(auth) => auth,
@@ -68,27 +70,11 @@ impl ClientAuth {
         }
     }
 
-    pub(crate) fn try_from_pem_cert(
-        pem: String,
-        private_key: PrivatePkcs8KeyDer<'static>,
-    ) -> Result<Option<Self>, io::Error> {
-        let Some(cert) = rustls_pemfile::certs(&mut pem.as_bytes()).next() else {
-            return Ok(None);
-        };
-
-        cert.map(|cert| {
-            Some(Self {
-                der: cert,
-                private_key,
-                pem,
-            })
-        })
-    }
-
     /// Function to read the certificate and the key
     async fn read_cert_and_key(
         certificates: CertificateFile,
         key: PrivateKeyFile,
+        client_id: ClientId<&str>,
     ) -> Result<Option<Self>, io::Error> {
         let pem = tokio::fs::read_to_string(certificates.path()).await?;
 
@@ -99,10 +85,30 @@ impl ClientAuth {
         }
         let private_key = PrivatePkcs8KeyDer::from(k_r);
 
-        Self::try_from_pem_cert(pem, private_key)
+        Self::try_from_pem_cert(pem, private_key, client_id)
     }
 
-    pub(crate) fn verify_certificate_data(&self, client_id: ClientId<&str>) -> bool {
+    pub(crate) fn try_from_pem_cert(
+        pem: String,
+        private_key: PrivatePkcs8KeyDer<'static>,
+        client_id: ClientId<&str>,
+    ) -> Result<Option<Self>, io::Error> {
+        let Ok(cert) = rustls_pemfile::certs(&mut pem.as_bytes()).exactly_one() else {
+            return Ok(None);
+        };
+
+        cert.map(|cert| {
+            let auth = Self {
+                der: cert,
+                private_key,
+                pem,
+            };
+
+            auth.verify_certificate_data(client_id).then_some(auth)
+        })
+    }
+
+    fn verify_certificate_data(&self, client_id: ClientId<&str>) -> bool {
         let parsed = match x509_parser::parse_x509_certificate(&self.der) {
             Ok((_remaining, cert)) => cert,
             Err(e) => {
@@ -279,6 +285,10 @@ pub(crate) mod tests {
 
     pub(crate) const TEST_CERTIFICATE: &str = include_str!("../../../../tests/certificate.pem");
     pub(crate) const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../../tests/priv-key.der");
+    pub(crate) const TEST_CLIENT_ID: ClientId<&'static str> = ClientId {
+        realm: "test",
+        device_id: "2TBn-jNESuuHamE2Zo1anA",
+    };
 
     #[tokio::test]
     async fn should_read_keys() {
@@ -290,7 +300,7 @@ pub(crate) mod tests {
         let key = PrivateKeyFile::new(dir.path());
         tokio::fs::write(&key, TEST_PRIVATE_KEY).await.unwrap();
 
-        let client = ClientAuth::try_read(cert.clone(), key.clone())
+        let client = ClientAuth::try_read(cert.clone(), key.clone(), TEST_CLIENT_ID)
             .await
             .unwrap();
 
@@ -313,7 +323,9 @@ pub(crate) mod tests {
         client.tls_config(root_cert_store).unwrap();
 
         // Reuse the file setup
-        let client = ClientAuth::try_read(cert, key).await.unwrap();
+        let client = ClientAuth::try_read(cert, key, TEST_CLIENT_ID)
+            .await
+            .unwrap();
 
         client.insecure_tls_config().unwrap();
     }
@@ -342,7 +354,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        let cert = ClientAuth::try_read(certificate_file, private_key_file)
+        let cert = ClientAuth::try_read(certificate_file, private_key_file, TEST_CLIENT_ID)
             .await
             .unwrap();
 
@@ -373,7 +385,7 @@ pub(crate) mod tests {
         .await
         .unwrap();
 
-        let cert = ClientAuth::try_read(certificate_file, private_key_file)
+        let cert = ClientAuth::try_read(certificate_file, private_key_file, TEST_CLIENT_ID)
             .await
             .unwrap();
 
