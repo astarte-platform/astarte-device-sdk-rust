@@ -893,6 +893,7 @@ pub(crate) mod test {
     use chrono::Utc;
     use mockall::{predicate, Sequence};
     use mockito::Server;
+    use pairing::tests::mock_verify_certificate;
     use properties::extract_set_properties;
     use rumqttc::{
         ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
@@ -1312,10 +1313,8 @@ pub(crate) mod test {
         let mut server = Server::new_async().await;
 
         let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server)
-            .expect(2)
-            .create_async()
-            .await;
+        let mock_cert = mock_create_certificate(&mut server).create_async().await;
+        let mock_verify = mock_verify_certificate(&mut server).create_async().await;
 
         let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
 
@@ -1344,6 +1343,7 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+        mock_verify.assert_async().await;
     }
 
     #[tokio::test]
@@ -1427,10 +1427,8 @@ pub(crate) mod test {
         let mut server = Server::new_async().await;
 
         let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server)
-            .expect(2)
-            .create_async()
-            .await;
+        let mock_cert = mock_create_certificate(&mut server).create_async().await;
+        let mock_verify = mock_verify_certificate(&mut server).create_async().await;
 
         let builder = DeviceBuilder::new()
             .interface_str(crate::test::DEVICE_OBJECT)
@@ -1473,6 +1471,7 @@ pub(crate) mod test {
 
         mock_url.assert_async().await;
         mock_cert.assert_async().await;
+        mock_verify.assert_async().await;
     }
 
     #[tokio::test]
