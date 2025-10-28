@@ -28,7 +28,7 @@
 use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
 use rumqttc::{AckOfPub, Token, TokenError};
-use tracing::trace;
+use tracing::{info, trace};
 
 use crate::retention::RetentionId;
 
@@ -51,6 +51,13 @@ impl MqttRetention {
     /// The retention client is disconnected and all packets have been handled
     pub(crate) fn is_empty(&self) -> bool {
         self.rx.is_empty() && self.rx.is_disconnected() && self.packets.is_empty()
+    }
+
+    pub(crate) fn discard(&mut self) {
+        let count = self.packets.drain().count();
+        info!(count, "discarded stored retention packets");
+        let count = self.rx.drain().count();
+        info!(count, "discarded received retention packets");
     }
 
     pub(crate) fn queue(&mut self) -> usize {

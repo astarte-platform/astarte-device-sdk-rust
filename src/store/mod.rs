@@ -28,7 +28,7 @@ use crate::{
         reference::{MappingRef, PropertyRef},
         Ownership,
     },
-    retention::StoredRetention,
+    retention::{memory::SharedVolatileStore, RetentionId, StoredRetention},
     types::AstarteType,
 };
 
@@ -36,6 +36,41 @@ pub mod error;
 pub mod memory;
 pub mod sqlite;
 pub mod wrapper;
+
+pub(crate) async fn check_stored_send<S, T, E>(
+    store: &S,
+    volatile: &mut SharedVolatileStore,
+    id: &RetentionId,
+    res: Result<T, E>,
+) -> Result<T, crate::Error>
+where
+    S: StoreCapabilities,
+    crate::Error: From<E>,
+{
+    // TODO improve by flattening the structure with match (id, res)
+    match id {
+        RetentionId::Volatile(id) => match res {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                volatile.mark_sent(id, false).await;
+                Err(e.into())
+            }
+        },
+        RetentionId::Stored(id) => {
+            let Some(retention) = store.get_retention() else {
+                return res.map_err(crate::Error::from);
+            };
+
+            match res {
+                Ok(r) => Ok(r),
+                Err(e) => {
+                    retention.update_sent_flag(id, false).await?;
+                    Err(e.into())
+                }
+            }
+        }
+    }
+}
 
 /// Inform what capabilities are implemented for a store.
 ///
