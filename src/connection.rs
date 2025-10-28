@@ -520,7 +520,7 @@ where
             Retention::Volatile { .. } => {
                 let id = self.retention_ctx.next();
 
-                self.volatile_store.push(id, data).await;
+                self.volatile_store.push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
                 let id = self.retention_ctx.next();
@@ -528,12 +528,12 @@ where
                     let value = self.sender.serialize_individual(&data)?;
 
                     retention
-                        .store_publish_individual(&id, &data, &value)
+                        .store_publish_individual_unsent(&id, &data, &value)
                         .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(id, data).await;
+                    self.volatile_store.push_unsent(id, data).await;
                 }
             }
         }
@@ -552,18 +552,20 @@ where
             Retention::Volatile { .. } => {
                 let id = self.retention_ctx.next();
 
-                self.volatile_store.push(id, data).await;
+                self.volatile_store.push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
                 let id = self.retention_ctx.next();
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_object(&data)?;
 
-                    retention.store_publish_object(&id, &data, &value).await?;
+                    retention
+                        .store_publish_object_unsent(&id, &data, &value)
+                        .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(id, data).await;
+                    self.volatile_store.push_unsent(id, data).await;
                 }
             }
         }

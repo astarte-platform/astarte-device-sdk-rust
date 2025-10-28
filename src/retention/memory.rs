@@ -66,6 +66,13 @@ impl SharedVolatileStore {
         self.store.lock().await.push(id, value);
     }
 
+    pub(crate) async fn push_unsent<T>(&self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
+        self.store.lock().await.push_unsent(id, value);
+    }
+
     pub(crate) async fn mark_sent(&self, id: &Id, sent: bool) -> Option<bool> {
         self.store.lock().await.mark_sent(id, sent)
     }
@@ -111,6 +118,20 @@ impl VolatileStore {
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
+        self.push_item(id, value, true);
+    }
+
+    fn push_unsent<T>(&mut self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
+        self.push_item(id, value, false);
+    }
+
+    fn push_item<T>(&mut self, id: Id, value: T, sent: bool)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
         if self.is_full() {
             // remote the expired only if its full, it will be done while iterating
             self.remove_expired();
@@ -133,7 +154,7 @@ impl VolatileStore {
             }
         };
 
-        self.store.push_back(VolatileItem::new(id, item));
+        self.store.push_back(VolatileItem::new(id, item, sent));
     }
 
     fn mark_sent(&mut self, id: &Id, sent: bool) -> Option<bool> {
@@ -219,11 +240,10 @@ struct VolatileItem {
 }
 
 impl VolatileItem {
-    fn new(id: Id, value: ItemValue) -> Self {
+    fn new(id: Id, value: ItemValue, sent: bool) -> Self {
         Self {
             id,
-            // always store as sent so that no resend is performed while in flight
-            sent: true,
+            sent,
             store_time: SystemTime::now(),
             value,
         }

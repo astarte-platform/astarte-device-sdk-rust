@@ -330,6 +330,28 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         self.store_publish(id, publish).await
     }
 
+    async fn store_publish_individual_unsent(
+        &self,
+        id: &Id,
+        individual: &ValidatedIndividual,
+        value: &[u8],
+    ) -> Result<(), RetentionError> {
+        let publish = PublishInfo::from_individual(false, individual, value);
+
+        self.store_publish(id, publish).await
+    }
+
+    async fn store_publish_object_unsent(
+        &self,
+        id: &Id,
+        obj: &ValidatedObject,
+        value: &[u8],
+    ) -> Result<(), RetentionError> {
+        let publish = PublishInfo::from_obj(false, obj, value);
+
+        self.store_publish(id, publish).await
+    }
+
     /// Removes the outdated interfaces from the introspection
     async fn cleanup_introspection(&self, interfaces: &Interfaces) -> Result<(), RetentionError> {
         let iter = self
