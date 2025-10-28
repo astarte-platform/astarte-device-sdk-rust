@@ -740,6 +740,9 @@ where
             if let Some(retention) = self.store.get_retention() {
                 retention.reset_all_publishes().await?;
             }
+
+            // we also discard previously retention stored packets notices
+            self.retention.discard();
         }
 
         Ok(())
