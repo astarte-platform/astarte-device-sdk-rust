@@ -25,10 +25,15 @@
 //! When an interface major version is updated the retention cache must be invalidated. Since the
 //! payload will be publish on the new introspection.
 
-use std::{collections::HashMap, future::IntoFuture, task::Poll};
+use std::{
+    collections::HashMap,
+    future::{Future, IntoFuture},
+    pin::Pin,
+    task::Poll,
+};
 
 use rumqttc::{AckOfPub, Token, TokenError};
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::retention::RetentionId;
 
@@ -117,16 +122,39 @@ pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
 impl std::future::Future for MqttRetentionFuture<'_> {
     type Output = Result<RetentionId, TokenError>;
 
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        let this = self.get_mut();
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = &mut *self.get_mut().0;
 
-        this.0.queue();
+        this.queue();
 
-        match this.0.next() {
-            Some(res) => Poll::Ready(res),
+        let first = this.packets.iter_mut().find_map(|(id, token)| {
+            let poll = <Token<AckOfPub> as Future>::poll(Pin::new(token), cx);
+
+            match poll {
+                Poll::Pending => None,
+                Poll::Ready(Ok(_)) => Some((*id, Ok(*id))),
+                Poll::Ready(Err(TokenError::Waiting)) => {
+                    warn!(%id, "future returned Ready(Waiting), this should not happen and it could lead to errors on the next poll");
+
+                    // NOTE: we could return None here, but after some consideration it's safer to
+                    //       error and drop the token instead of risking a panic if we poll the
+                    //       Future again
+                    Some((*id, Err(TokenError::Disconnected)))
+                }
+                Poll::Ready(Err(TokenError::Disconnected)) => {
+                    Some((*id, Err(TokenError::Disconnected)))
+                }
+            }
+        });
+
+        match first {
+            Some((id, res)) => {
+                let prev = this.packets.remove(&id);
+
+                debug_assert!(prev.is_some(), "No token could be removed");
+
+                Poll::Ready(res)
+            }
             None => Poll::Pending,
         }
     }
