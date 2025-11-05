@@ -677,7 +677,7 @@ pub(crate) mod tests {
 
         store_publish(&store, &exp).await;
 
-        store.delete_publish(&id).await.unwrap();
+        store.mark_received(&id).await.unwrap();
 
         let publish = fetch_publish(&store, &exp.id);
 
@@ -896,7 +896,7 @@ pub(crate) mod tests {
 
         assert_eq!(res, publish);
 
-        store.delete_publish(&publish.id).await.unwrap();
+        store.mark_received(&publish.id).await.unwrap();
 
         let res = fetch_publish(&store, &publish.id);
 

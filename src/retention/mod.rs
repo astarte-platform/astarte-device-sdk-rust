@@ -96,6 +96,7 @@ pub enum RetentionError {
         #[source]
         backtrace: DynError,
     },
+    // TODO remove in next release replaced by Received variant
     /// Couldn't delete the publish with id.
     #[error("couldn't delete the publish with id {id}")]
     DeletePublish {
@@ -155,13 +156,6 @@ impl RetentionError {
 
     pub(crate) fn unsent(backtrace: impl Into<DynError>) -> Self {
         Self::Unsent {
-            backtrace: backtrace.into(),
-        }
-    }
-
-    pub(crate) fn delete_publish(id: Id, backtrace: impl Into<DynError>) -> Self {
-        Self::DeletePublish {
-            id,
             backtrace: backtrace.into(),
         }
     }
@@ -257,6 +251,8 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// It will mark the stored publish as received.
     async fn mark_received(&self, id: &Id) -> Result<(), RetentionError>;
 
+    // TODO remove and leave only mark_received since these two methods perform the same function
+    // and delete_publish is unused
     /// Deletes a publish from the store.
     async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError>;
 
@@ -392,7 +388,7 @@ impl StoredRetention for Missing {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
+    async fn delete_publish(&self, _packet: &Id) -> Result<(), RetentionError> {
         unreachable!("the type is Un-constructable");
     }
 
