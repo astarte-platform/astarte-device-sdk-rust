@@ -52,11 +52,18 @@ impl VolatileStore {
         }
     }
 
-    pub(crate) async fn push<T>(&self, id: Id, value: T)
+    pub(crate) async fn push_sent<T>(&self, id: Id, value: T)
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
-        self.store.lock().await.push(id, value);
+        self.store.lock().await.push_sent(id, value);
+    }
+
+    pub(crate) async fn push_unsent<T>(&self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
+        self.store.lock().await.push_unsent(id, value);
     }
 
     pub(crate) async fn mark_sent(&self, id: &Id, sent: bool) -> Option<bool> {
@@ -94,7 +101,7 @@ impl State {
         }
     }
 
-    fn push<T>(&mut self, id: Id, value: T)
+    fn push<T>(&mut self, id: Id, value: T, sent: bool)
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
@@ -125,7 +132,21 @@ impl State {
             }
         };
 
-        self.store.push_back(VolatileItem::new(id, item));
+        self.store.push_back(VolatileItem::new(id, item, sent));
+    }
+
+    fn push_unsent<T>(&mut self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
+        self.push(id, value, false);
+    }
+
+    fn push_sent<T>(&mut self, id: Id, value: T)
+    where
+        T: TryInto<ItemValue, Error = VolatileItemError>,
+    {
+        self.push(id, value, true);
     }
 
     fn mark_sent(&mut self, id: &Id, sent: bool) -> Option<bool> {
@@ -216,10 +237,10 @@ struct VolatileItem {
 }
 
 impl VolatileItem {
-    fn new(id: Id, value: ItemValue) -> Self {
+    fn new(id: Id, value: ItemValue, sent: bool) -> Self {
         Self {
             id,
-            sent: false,
+            sent,
             store_time: SystemTime::now(),
             value,
         }
@@ -339,7 +360,7 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push(ctx.next(), info);
+        store.push_unsent(ctx.next(), info);
 
         assert!(store.is_full());
     }
@@ -369,11 +390,11 @@ mod tests {
         let mut store = State::with_capacity(1);
         let ctx = Context::new();
 
-        store.push(ctx.next(), info1);
+        store.push_unsent(ctx.next(), info1);
 
         assert!(store.is_full());
 
-        store.push(ctx.next(), info2.clone());
+        store.push_unsent(ctx.next(), info2.clone());
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info2));
     }
@@ -416,14 +437,14 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push(ctx.next(), info1);
-        store.push(ctx.next(), info2);
+        store.push_unsent(ctx.next(), info1);
+        store.push_unsent(ctx.next(), info2);
 
         store.store[0].store_time -= Duration::from_secs(1);
 
         assert!(store.is_full());
 
-        store.push(ctx.next(), info3.clone());
+        store.push_unsent(ctx.next(), info3.clone());
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info3));
     }
@@ -466,9 +487,9 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push(ctx.next(), info1);
-        store.push(ctx.next(), info2);
-        store.push(ctx.next(), info3.clone());
+        store.push_unsent(ctx.next(), info1);
+        store.push_unsent(ctx.next(), info2);
+        store.push_unsent(ctx.next(), info3.clone());
 
         store.store[0].store_time -= Duration::from_secs(1);
         store.store[1].store_time -= Duration::from_secs(1);
@@ -546,10 +567,10 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push(ctx.next(), info1);
+        store.push_unsent(ctx.next(), info1);
         let id = ctx.next();
-        store.push(id, info2);
-        store.push(ctx.next(), info3.clone());
+        store.push_unsent(id, info2);
+        store.push_unsent(ctx.next(), info3.clone());
 
         assert!(!store.mark_sent(&id, true).unwrap());
 
@@ -594,10 +615,10 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push(ctx.next(), info1);
+        store.push_unsent(ctx.next(), info1);
         let id = ctx.next();
-        store.push(id, info2);
-        store.push(ctx.next(), info3.clone());
+        store.push_unsent(id, info2);
+        store.push_unsent(ctx.next(), info3.clone());
 
         assert!(store.mark_received(&id).is_some());
 
@@ -620,7 +641,7 @@ mod tests {
             timestamp: None,
         };
 
-        store.push(ctx.next(), info.clone());
+        store.push_unsent(ctx.next(), info.clone());
 
         assert_eq!(None, store.pop_next());
     }
@@ -640,7 +661,7 @@ mod tests {
             timestamp: None,
         };
 
-        store.push(ctx.next(), info.clone());
+        store.push_unsent(ctx.next(), info.clone());
 
         assert_eq!(store.pop_next().unwrap(), ItemValue::Individual(info));
 
@@ -654,7 +675,7 @@ mod tests {
             timestamp: None,
         };
 
-        store.push(ctx.next(), info.clone());
+        store.push_unsent(ctx.next(), info.clone());
 
         assert_eq!(store.pop_next().unwrap(), ItemValue::Object(info));
     }
@@ -685,9 +706,9 @@ mod tests {
             timestamp: None,
         };
 
-        store.push(ctx.next(), individual.clone());
-        store.push(ctx.next(), individual.clone());
-        store.push(ctx.next(), object.clone());
+        store.push_unsent(ctx.next(), individual.clone());
+        store.push_unsent(ctx.next(), individual.clone());
+        store.push_unsent(ctx.next(), object.clone());
 
         assert_eq!(store.delete_interface(interface), 2);
 

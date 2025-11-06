@@ -446,7 +446,7 @@ mod tests {
         client
             .state
             .volatile_store
-            .push(
+            .push_sent(
                 client.state.retention_ctx.next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
@@ -555,7 +555,7 @@ mod tests {
         client
             .state
             .volatile_store
-            .push(
+            .push_sent(
                 client.state.retention_ctx.next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
