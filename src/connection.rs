@@ -520,7 +520,7 @@ where
             Retention::Volatile { .. } => {
                 let id = self.retention_ctx.next();
 
-                self.volatile_store.push(id, data).await;
+                self.volatile_store.push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
                 let id = self.retention_ctx.next();
@@ -528,12 +528,12 @@ where
                     let value = self.sender.serialize_individual(&data)?;
 
                     retention
-                        .store_publish_individual(&id, &data, &value)
+                        .store_publish_individual_unsent(&id, &data, &value)
                         .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(id, data).await;
+                    self.volatile_store.push_unsent(id, data).await;
                 }
             }
         }
@@ -552,18 +552,20 @@ where
             Retention::Volatile { .. } => {
                 let id = self.retention_ctx.next();
 
-                self.volatile_store.push(id, data).await;
+                self.volatile_store.push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
                 let id = self.retention_ctx.next();
                 if let Some(retention) = self.store.get_retention() {
                     let value = self.sender.serialize_object(&data)?;
 
-                    retention.store_publish_object(&id, &data, &value).await?;
+                    retention
+                        .store_publish_object_unsent(&id, &data, &value)
+                        .await?;
                 } else {
                     warn!("storing interface with retention stored in volatile since the store doesn't support retention");
 
-                    self.volatile_store.push(id, data).await;
+                    self.volatile_store.push_unsent(id, data).await;
                 }
             }
         }
@@ -735,18 +737,41 @@ where
     where
         T: Publish,
     {
-        while let Some(item) = self.volatile_store.pop_next().await {
-            match item {
-                ItemValue::Individual(individual) => {
-                    self.sender.send_individual(individual).await?;
-                }
-                ItemValue::Object(object) => {
-                    self.sender.send_object(object).await?;
+        // NOTE don't reset sent flag, the reset is perform in a connection specific manner
+        // mqtt performs a reset of the sent flags when the session present is false
+        // self.volatile_store.reset_sent().await;
+
+        let mut buf = Vec::with_capacity(DEFAULT_CHANNEL_SIZE);
+
+        loop {
+            let count = self
+                .volatile_store
+                .get_unsent(&mut buf, DEFAULT_CHANNEL_SIZE)
+                .await;
+
+            trace!("loaded {count} volatile publishes");
+
+            for (id, value) in buf.drain(..) {
+                // mark as sent before so that no resend is tryed while in flight
+                self.volatile_store.mark_sent(&id, true).await;
+
+                match value {
+                    ItemValue::Individual(individual) => {
+                        self.sender
+                            .send_individual_stored(RetentionId::Volatile(id), individual)
+                            .await?;
+                    }
+                    ItemValue::Object(object) => {
+                        self.sender
+                            .send_object_stored(RetentionId::Volatile(id), object)
+                            .await?;
+                    }
                 }
             }
 
-            // Let's check if we are still connected after the await
-            if self.status.is_connected() {
+            if count == 0 || count < DEFAULT_CHANNEL_SIZE {
+                trace!("all volatile publishes sent");
+
                 break;
             }
         }
@@ -762,7 +787,11 @@ where
             return Ok(());
         };
 
-        let mut buf = Vec::new();
+        // NOTE don't reset sent flag, the reset is perform in a connection specific manner
+        // mqtt performs a reset of the sent flags when the session present is false
+        // retention.reset_all_publishes().await?;
+
+        let mut buf = Vec::with_capacity(DEFAULT_CHANNEL_SIZE);
 
         debug!("start sending store publishes");
         loop {
@@ -773,6 +802,9 @@ where
             trace!("loaded {count} stored publishes");
 
             for (id, info) in buf.drain(..) {
+                // mark as sent before so that no resend is tryed while in flight
+                retention.update_sent_flag(&id, true).await?;
+
                 self.sender
                     .resend_stored(RetentionId::Stored(id), info)
                     .await?;
@@ -783,8 +815,6 @@ where
 
                 break;
             }
-
-            buf.clear();
         }
 
         Ok(())

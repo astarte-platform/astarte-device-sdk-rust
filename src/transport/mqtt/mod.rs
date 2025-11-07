@@ -66,7 +66,7 @@ use crate::{
     interfaces::{self, Interfaces, Introspection},
     properties,
     retention::{
-        memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention, StoredRetentionExt,
+        mark_unsent_on_err, memory::SharedVolatileStore, PublishInfo, RetentionId, StoredRetention,
     },
     store::{error::StoreError, wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
@@ -240,17 +240,6 @@ impl<S> MqttClient<S> {
                 self.mark_received(&id).await?;
             }
             Reliability::Guaranteed | Reliability::Unique => {
-                match id {
-                    RetentionId::Volatile(id) => {
-                        self.volatile.mark_sent(&id, true).await;
-                    }
-                    RetentionId::Stored(id) => {
-                        if let Some(retention) = self.store.get_retention() {
-                            retention.mark_sent(&id).await?;
-                        }
-                    }
-                }
-
                 self.retention
                     .send((id, notice))
                     .map_err(|_| Error::Disconnected)?;
@@ -301,23 +290,28 @@ where
         id: RetentionId,
         validated: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
+        debug_assert!(
+            !validated.retention.is_discard(),
+            "send stored called for retention discard"
+        );
+
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
             .map_err(MqttError::Payload)?;
 
-        let notice = self
+        let notice_res = self
             .send(
                 &validated.interface,
                 &validated.path,
                 validated.reliability.into(),
                 buf,
             )
-            .await?;
+            .await;
 
-        debug_assert!(
-            !validated.retention.is_discard(),
-            "send stored called for retention discard"
-        );
+        if notice_res.is_err() {
+            mark_unsent_on_err(&self.store, &mut self.volatile, &id).await;
+        }
 
+        let notice = notice_res?;
         self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
@@ -328,18 +322,28 @@ where
         id: RetentionId,
         validated: ValidatedObject,
     ) -> Result<(), crate::Error> {
+        debug_assert!(
+            !validated.retention.is_discard(),
+            "send stored called for retention discard"
+        );
+
         let buf = payload::serialize_object(&validated.data, validated.timestamp)
             .map_err(MqttError::Payload)?;
 
-        let notice = self
+        let notice_res = self
             .send(
                 &validated.interface,
                 &validated.path,
                 validated.reliability.into(),
                 buf,
             )
-            .await?;
+            .await;
 
+        if notice_res.is_err() {
+            mark_unsent_on_err(&self.store, &mut self.volatile, &id).await;
+        }
+
+        let notice = notice_res?;
         self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
@@ -350,20 +354,25 @@ where
         id: RetentionId,
         data: PublishInfo<'_>,
     ) -> Result<(), crate::Error> {
-        let notice = self
+        debug_assert!(
+            self.store.get_retention().is_some(),
+            "resend stored called without store that supports retention"
+        );
+
+        let notice_res = self
             .send(
                 &data.interface,
                 &data.path,
                 data.reliability.into(),
                 data.value.into(),
             )
-            .await?;
+            .await;
 
-        debug_assert!(
-            self.store.get_retention().is_some(),
-            "resend stored called without store that supports retention"
-        );
+        if notice_res.is_err() {
+            mark_unsent_on_err(&self.store, &mut self.volatile, &id).await;
+        }
 
+        let notice = notice_res?;
         self.mark_sent(id, data.reliability, notice).await?;
 
         Ok(())
@@ -728,9 +737,28 @@ where
     S: StoreCapabilities + PropertyStore,
 {
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<(), crate::Error> {
-        self.connection
+        let session_present = self
+            .connection
             .connect(self.client_id.as_ref(), interfaces, &self.store)
             .await?;
+
+        if !session_present {
+            // when the session is not present we reset the sent flags for stored messages
+            info!("the session is not present after reconnection we will resend the packets");
+
+            // we also discard previously stored packets notices
+            let received = self.retention.discard();
+
+            for id in received {
+                Self::mark_packet_received(&self.volatile, &self.store, Ok(id)).await?;
+            }
+
+            if let Some(retention) = self.store.get_retention() {
+                retention.reset_all_publishes().await?;
+            }
+
+            self.volatile.reset_sent().await;
+        }
 
         Ok(())
     }
@@ -933,7 +961,9 @@ pub(crate) mod test {
                 )
                 .await
                 .expect("failed to configure transport provider"),
-                self::connection::Connected,
+                self::connection::Connected {
+                    session_present: false,
+                },
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
@@ -1236,13 +1266,6 @@ pub(crate) mod test {
                     })
                 });
 
-            // First clean for the good connection
-            ev_loop
-                .expect_clean()
-                .once()
-                .in_sequence(&mut seq)
-                .return_const(());
-
             ev_loop
                 .expect_poll()
                 .once()
@@ -1353,7 +1376,8 @@ pub(crate) mod test {
         );
         // force a store
         store.store_publish(&id, publish.clone()).await.unwrap();
-        // should mark the message as sent
+        // NOTE the mark as sent must be done before the send_individual_stored call
+        store.update_sent_flag(&id, true).await.unwrap();
         client
             .send_individual_stored(store_id, validated_individual)
             .await
@@ -1361,7 +1385,10 @@ pub(crate) mod test {
         // resend not sent (should not do anything)
         let mut unsent = Vec::with_capacity(1);
         store.unsent_publishes(1, &mut unsent).await.unwrap();
+
         for (id, publish) in unsent {
+            // NOTE the mark as sent must be done before the resend_stored call
+            store.update_sent_flag(&id, true).await.unwrap();
             client
                 .resend_stored(RetentionId::Stored(id), publish)
                 .await
@@ -1445,7 +1472,9 @@ pub(crate) mod test {
         );
         // force a store
         store.store_publish(&id, publish).await.unwrap();
-        // send object (should mark message as sent)
+        // send object
+        // NOTE the mark as sent must be done before the send_object call
+        store.update_sent_flag(&id, true).await.unwrap();
         client
             .send_object_stored(stored_id, validated_object)
             .await
@@ -1454,6 +1483,8 @@ pub(crate) mod test {
         let mut unsent = Vec::with_capacity(1);
         store.unsent_publishes(1, &mut unsent).await.unwrap();
         for (id, publish) in unsent {
+            // NOTE the mark as sent must be done before the resend_stored call
+            store.update_sent_flag(&id, true).await.unwrap();
             client
                 .resend_stored(RetentionId::Stored(id), publish)
                 .await

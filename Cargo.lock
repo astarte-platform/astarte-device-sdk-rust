@@ -2241,9 +2241,9 @@ dependencies = [
 
 [[package]]
 name = "rumqttc-dev-patched"
-version = "0.24.6-ack-notify"
+version = "0.24.9-ack-notify"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27aa48273c2956fb942154248a3d16c61c40123af33121796e3fcb5d319ec596"
+checksum = "8290dde8ebda083d31765a7ebaeffd84ae98cc311a4488645a18dc54e2046044"
 dependencies = [
  "bytes",
  "fixedbitset 0.5.7",
