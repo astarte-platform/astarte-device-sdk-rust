@@ -56,26 +56,30 @@ impl VolatileStore {
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
-        self.store.lock().await.push_sent(id, value);
+        self.store.lock().await.push(id, value, true);
     }
 
     pub(crate) async fn push_unsent<T>(&self, id: Id, value: T)
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
-        self.store.lock().await.push_unsent(id, value);
+        self.store.lock().await.push(id, value, false);
     }
 
     pub(crate) async fn mark_sent(&self, id: &Id, sent: bool) -> Option<bool> {
         self.store.lock().await.mark_sent(id, sent)
     }
 
-    pub(crate) async fn mark_received(&self, id: &Id) -> Option<ItemValue> {
-        self.store.lock().await.mark_received(id)
+    pub(crate) async fn get_unsent(&self, buf: &mut Vec<(Id, ItemValue)>, limit: usize) -> usize {
+        self.store.lock().await.get_unsent(buf, limit)
     }
 
-    pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
-        self.store.lock().await.pop_next()
+    pub(crate) async fn reset_sent(&self) {
+        self.store.lock().await.reset_sent()
+    }
+
+    pub(crate) async fn mark_received(&self, id: &Id) -> Option<ItemValue> {
+        self.store.lock().await.mark_received(id)
     }
 
     pub(crate) async fn delete_interface(&self, interface_name: &str) -> usize {
@@ -86,6 +90,11 @@ impl VolatileStore {
     #[cfg(feature = "message-hub")]
     pub(crate) async fn set_capacity(&self, capacity: usize) {
         self.store.lock().await.set_capacity(capacity);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
+        self.store.lock().await.pop_next()
     }
 }
 
@@ -135,18 +144,27 @@ impl State {
         self.store.push_back(VolatileItem::new(id, item, sent));
     }
 
-    fn push_unsent<T>(&mut self, id: Id, value: T)
-    where
-        T: TryInto<ItemValue, Error = VolatileItemError>,
-    {
-        self.push(id, value, false);
+    fn reset_sent(&mut self) {
+        self.store.iter_mut().for_each(|item| {
+            item.sent = false;
+        })
     }
 
-    fn push_sent<T>(&mut self, id: Id, value: T)
-    where
-        T: TryInto<ItemValue, Error = VolatileItemError>,
-    {
-        self.push(id, value, true);
+    fn get_unsent(&mut self, unsent: &mut Vec<(Id, ItemValue)>, limit: usize) -> usize {
+        self.remove_expired();
+
+        let before = unsent.len();
+
+        let unsent_iter = self
+            .store
+            .iter()
+            .filter(|item| !item.sent)
+            .map(|item| (item.id, item.value.clone()))
+            .take(limit);
+
+        unsent.extend(unsent_iter);
+
+        unsent.len() - before
     }
 
     fn mark_sent(&mut self, id: &Id, sent: bool) -> Option<bool> {
@@ -157,21 +175,9 @@ impl State {
     }
 
     fn mark_received(&mut self, id: &Id) -> Option<ItemValue> {
-        let idx = self
-            .store
-            .iter()
-            .enumerate()
-            .find_map(|(idx, item)| (item.id == *id).then_some(idx))?;
+        let idx = self.store.iter().position(|item| item.id == *id)?;
 
         self.store.remove(idx).map(|item| item.value)
-    }
-
-    fn pop_next(&mut self) -> Option<ItemValue> {
-        let now = SystemTime::now();
-
-        std::iter::from_fn(|| self.store.pop_front())
-            .find(|item| !item.is_expired(now))
-            .map(|item| item.value)
     }
 
     fn remove_expired(&mut self) {
@@ -219,6 +225,15 @@ impl State {
         trace!(count, "interface removed");
 
         count
+    }
+
+    #[cfg(test)]
+    fn pop_next(&mut self) -> Option<ItemValue> {
+        let now = SystemTime::now();
+
+        std::iter::from_fn(|| self.store.pop_front())
+            .find(|item| !item.is_expired(now))
+            .map(|item| item.value)
     }
 }
 
@@ -360,7 +375,7 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info);
+        store.push(ctx.next(), info, false);
 
         assert!(store.is_full());
     }
@@ -390,11 +405,11 @@ mod tests {
         let mut store = State::with_capacity(1);
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info1);
+        store.push(ctx.next(), info1, false);
 
         assert!(store.is_full());
 
-        store.push_unsent(ctx.next(), info2.clone());
+        store.push(ctx.next(), info2.clone(), false);
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info2));
     }
@@ -437,20 +452,20 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info1);
-        store.push_unsent(ctx.next(), info2);
+        store.push(ctx.next(), info1, false);
+        store.push(ctx.next(), info2, false);
 
         store.store[0].store_time -= Duration::from_secs(1);
 
         assert!(store.is_full());
 
-        store.push_unsent(ctx.next(), info3.clone());
+        store.push(ctx.next(), info3.clone(), false);
 
         assert_eq!(store.store[0].value, ItemValue::Individual(info3));
     }
 
     #[test]
-    fn should_pop_non_expired() {
+    fn should_queue_non_expired() {
         let info1 = ValidatedIndividual {
             interface: "interface1".to_string(),
             path: "path".to_string(),
@@ -487,15 +502,19 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info1);
-        store.push_unsent(ctx.next(), info2);
-        store.push_unsent(ctx.next(), info3.clone());
+        store.push(ctx.next(), info1, false);
+        store.push(ctx.next(), info2, false);
+        store.push(ctx.next(), info3.clone(), false);
 
         store.store[0].store_time -= Duration::from_secs(1);
         store.store[1].store_time -= Duration::from_secs(1);
 
-        assert_eq!(store.pop_next(), Some(ItemValue::Individual(info3)));
-        assert!(store.store.is_empty());
+        let mut buf = Vec::with_capacity(1);
+        // does not remove the non expired elements
+        store.get_unsent(&mut buf, 1);
+
+        assert_eq!(buf.pop().map(|e| e.1), Some(ItemValue::Individual(info3)));
+        assert_eq!(store.store.len(), 1);
     }
 
     #[test]
@@ -567,10 +586,10 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info1);
+        store.push(ctx.next(), info1, false);
         let id = ctx.next();
-        store.push_unsent(id, info2);
-        store.push_unsent(ctx.next(), info3.clone());
+        store.push(id, info2, false);
+        store.push(ctx.next(), info3.clone(), false);
 
         assert!(!store.mark_sent(&id, true).unwrap());
 
@@ -615,10 +634,10 @@ mod tests {
 
         let ctx = Context::new();
 
-        store.push_unsent(ctx.next(), info1);
+        store.push(ctx.next(), info1, false);
         let id = ctx.next();
-        store.push_unsent(id, info2);
-        store.push_unsent(ctx.next(), info3.clone());
+        store.push(id, info2, false);
+        store.push(ctx.next(), info3.clone(), false);
 
         assert!(store.mark_received(&id).is_some());
 
@@ -641,9 +660,9 @@ mod tests {
             timestamp: None,
         };
 
-        store.push_unsent(ctx.next(), info.clone());
+        store.push(ctx.next(), info.clone(), false);
 
-        assert_eq!(None, store.pop_next());
+        assert_eq!(None, store.store.pop_front());
     }
 
     #[test]
@@ -661,9 +680,12 @@ mod tests {
             timestamp: None,
         };
 
-        store.push_unsent(ctx.next(), info.clone());
+        store.push(ctx.next(), info.clone(), false);
 
-        assert_eq!(store.pop_next().unwrap(), ItemValue::Individual(info));
+        assert_eq!(
+            store.store.pop_front().map(|e| e.value).unwrap(),
+            ItemValue::Individual(info)
+        );
 
         let info = ValidatedObject {
             interface: "interface3".to_string(),
@@ -675,9 +697,12 @@ mod tests {
             timestamp: None,
         };
 
-        store.push_unsent(ctx.next(), info.clone());
+        store.push(ctx.next(), info.clone(), false);
 
-        assert_eq!(store.pop_next().unwrap(), ItemValue::Object(info));
+        assert_eq!(
+            store.store.pop_front().map(|e| e.value).unwrap(),
+            ItemValue::Object(info)
+        );
     }
 
     #[test]
@@ -706,13 +731,16 @@ mod tests {
             timestamp: None,
         };
 
-        store.push_unsent(ctx.next(), individual.clone());
-        store.push_unsent(ctx.next(), individual.clone());
-        store.push_unsent(ctx.next(), object.clone());
+        store.push(ctx.next(), individual.clone(), false);
+        store.push(ctx.next(), individual.clone(), false);
+        store.push(ctx.next(), object.clone(), false);
 
         assert_eq!(store.delete_interface(interface), 2);
 
-        assert_eq!(store.pop_next().unwrap(), ItemValue::Object(object));
+        assert_eq!(
+            store.store.pop_front().map(|e| e.value).unwrap(),
+            ItemValue::Object(object)
+        );
     }
 
     #[cfg(feature = "message-hub")]
@@ -734,5 +762,123 @@ mod tests {
 
         store.set_capacity(0).await;
         assert_eq!(store.store.lock().await.store.capacity(), 0);
+    }
+
+    #[test]
+    fn should_mark_all_unsent() {
+        let info1 = ValidatedIndividual {
+            interface: "interface1".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteData::Integer(42),
+            timestamp: None,
+        };
+        let info2 = ValidatedIndividual {
+            interface: "interface2".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_nanos(1)),
+            },
+            data: AstarteData::Integer(42),
+            timestamp: None,
+        };
+        let info3 = ValidatedIndividual {
+            interface: "interface3".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile { expiry: None },
+            data: AstarteData::Integer(42),
+            timestamp: None,
+        };
+
+        let mut store = State::with_capacity(3);
+
+        let ctx = Context::new();
+
+        let id = ctx.next();
+        store.push(id, info1, true);
+        store.mark_sent(&id, true);
+        let id = ctx.next();
+        store.push(id, info2, true);
+        store.mark_sent(&id, true);
+        let id = ctx.next();
+        store.push(id, info3.clone(), true);
+        store.mark_sent(&id, true);
+
+        store.reset_sent();
+
+        assert!(!store.store[0].sent);
+        assert!(!store.store[1].sent);
+        assert!(!store.store[2].sent);
+    }
+
+    #[test]
+    fn should_return_unsent_only() {
+        let info = ValidatedIndividual {
+            interface: "interface1".to_string(),
+            path: "path".to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_secs(3599)),
+            },
+            data: AstarteData::Integer(42),
+            timestamp: None,
+        };
+        let info_unsent_check = ValidatedIndividual {
+            interface: "interface_check".to_string(),
+            path: "path".to_string(),
+            version_major: 1,
+            reliability: Reliability::Unique,
+            retention: Retention::Volatile {
+                expiry: Some(Duration::from_secs(3600)),
+            },
+            data: AstarteData::Integer(42),
+            timestamp: None,
+        };
+
+        let mut store = State::with_capacity(50);
+
+        let ctx = Context::new();
+
+        const ELEMENTS: usize = 50;
+
+        for i in 0..ELEMENTS {
+            let id = ctx.next();
+
+            // 4 elements marked as not sent
+            if (i + 1) % 25 == 0 {
+                store.push(id, info_unsent_check.clone(), true);
+                store.mark_sent(&id, false);
+                let id = ctx.next();
+                store.push(id, info_unsent_check.clone(), true);
+                store.mark_sent(&id, false);
+            } else {
+                store.push(id, info.clone(), true);
+                store.mark_sent(&id, true);
+            }
+        }
+
+        let check_is_unsent_element = |item: &ItemValue| {
+            matches!(item, ItemValue::Individual(ref individual)
+                if individual.interface == "interface_check" && individual.version_major == 1)
+        };
+
+        let mut buf = Vec::with_capacity(4);
+
+        store.get_unsent(&mut buf, 50);
+
+        assert_eq!(buf.len(), 4);
+        assert!(check_is_unsent_element(&buf[0].1));
+        assert!(check_is_unsent_element(&buf[1].1));
+        assert!(check_is_unsent_element(&buf[2].1));
+        assert!(check_is_unsent_element(&buf[3].1));
     }
 }

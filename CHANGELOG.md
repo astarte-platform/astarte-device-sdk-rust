@@ -25,6 +25,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Forward port changes relese v0.9.10
+  [#526](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/526)
+
+## [v0.9.10] - 2025-11-12
+
+### Fixed
+
+- Update rumqttc to include latest fixes
+  [#528](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/528)
+- Fix the resend process after a reconnection
+  [#523](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/523)
+
 ## [0.10.4] - 2025-09-19
 
 ### Changed

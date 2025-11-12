@@ -283,6 +283,19 @@ mod tests {
             .unsent_publishes(2, &mut stored)
             .await
             .unwrap();
+        assert_eq!(read, 0);
+        assert_eq!(stored.len(), 0);
+        stored.clear();
+
+        // reset sent
+        client.store.store.reset_all_publishes().await.unwrap();
+
+        let read = client
+            .store
+            .store
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(

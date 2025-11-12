@@ -511,6 +511,7 @@ mod tests {
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
+                true,
             )
             .await
             .unwrap();
@@ -623,6 +624,7 @@ mod tests {
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
+                true,
             )
             .await
             .unwrap();

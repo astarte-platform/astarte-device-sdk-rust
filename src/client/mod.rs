@@ -21,7 +21,7 @@
 use std::{future::Future, sync::Arc};
 
 use astarte_interfaces::{interface::Retention, mapping::path::MappingPathError, MappingPath};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::{
     aggregate::AstarteObject,
@@ -370,10 +370,10 @@ where
     {
         match state.status.connection() {
             Status::Connected => {
-                trace!("publish object while connection is connected");
+                trace!("publish while connection is connected");
             }
             Status::Disconnected => {
-                trace!("publish object while connection is offline");
+                trace!("publish while connection is offline");
                 return Self::offline_send(state, store, sender, data).await;
             }
             Status::Closed => {
@@ -406,16 +406,16 @@ where
             Retention::Volatile { .. } => {
                 let id = state.retention_ctx.next();
 
-                state.volatile_store.push_sent(id, data).await;
+                state.volatile_store.push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
                 let id = state.retention_ctx.next();
 
                 if let Some(retention) = store.get_retention() {
-                    data.store_publish(&id, sender, retention).await?;
+                    data.store_publish(&id, sender, retention, false).await?;
                 } else {
                     warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
-                    state.volatile_store.push_sent(id, data).await;
+                    state.volatile_store.push_unsent(id, data).await;
                 }
             }
         }
@@ -434,14 +434,15 @@ where
         C::Store: StoreCapabilities,
         C::Sender: Publish,
     {
-        let id = state.retention_ctx.next();
-
         let Some(retention) = store.get_retention() else {
             warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
             return Self::send_volatile(state, sender, data).await;
         };
 
-        data.store_publish(&id, sender, retention).await?;
+        // generate id after the check to avoid wasting an id generation in case it gets regenerated in send_volatile
+        let id = state.retention_ctx.next();
+
+        data.store_publish(&id, sender, retention, true).await?;
         data.send_stored(RetentionId::Stored(id), sender).await
     }
 
@@ -458,7 +459,6 @@ where
         let id = state.retention_ctx.next();
 
         state.volatile_store.push_sent(id, data.clone()).await;
-
         data.send_stored(RetentionId::Volatile(id), sender).await
     }
 }
@@ -604,6 +604,7 @@ trait ClientPacket {
         id: &Id,
         sender: &S,
         retention: &R,
+        sent: bool,
     ) -> impl Future<Output = Result<(), crate::Error>> + Send
     where
         S: Publish + Sync,
@@ -641,6 +642,7 @@ impl ClientPacket for ValidatedIndividual {
         id: &Id,
         sender: &S,
         retention: &R,
+        sent: bool,
     ) -> Result<(), crate::Error>
     where
         S: Publish + Sync,
@@ -649,7 +651,7 @@ impl ClientPacket for ValidatedIndividual {
         let serialized = self.serialize(sender)?;
 
         retention
-            .store_publish_individual(id, self, &serialized)
+            .store_publish_individual(id, self, &serialized, sent)
             .await
             .map_err(crate::Error::from)
     }
@@ -686,6 +688,7 @@ impl ClientPacket for ValidatedObject {
         id: &Id,
         sender: &S,
         retention: &R,
+        sent: bool,
     ) -> Result<(), crate::Error>
     where
         S: Publish + Sync,
@@ -694,7 +697,7 @@ impl ClientPacket for ValidatedObject {
         let serialized = self.serialize(sender)?;
 
         retention
-            .store_publish_object(id, self, &serialized)
+            .store_publish_object(id, self, &serialized, sent)
             .await
             .map_err(crate::Error::from)
     }

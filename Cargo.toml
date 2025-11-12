@@ -174,7 +174,7 @@ quote = "1.0.35"
 rcgen = { version = "0.13.1", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.12.9", default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
-rumqttc = { package = "rumqttc-dev-patched", version = "0.24.6-ack-notify" }
+rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # Error with bindgen and rust <1.82
 # See: https://github.com/rusqlite/rusqlite/issues/1631
 rusqlite = "=0.32.1"
