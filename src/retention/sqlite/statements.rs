@@ -19,7 +19,7 @@
 use std::{borrow::Cow, collections::HashSet, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, Transaction};
-use tracing::{instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 
 use crate::retention::{Id, PublishInfo, StoredInterface};
 use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
@@ -164,6 +164,10 @@ impl WriteConnection {
 
         let changed = statement.execute((timestamp, id.counter))?;
 
+        if changed == 0 {
+            debug!(?id, "no retention row deleted");
+        }
+
         // If remove an interface before the ACK is received the publish will also be deleted
         debug_assert!((0..=1).contains(&changed));
 
@@ -213,7 +217,11 @@ impl WriteConnection {
         let timestamp = now.to_bytes();
         let timestamp = timestamp.as_slice();
 
-        statement.execute([timestamp]).map_err(SqliteError::Query)
+        let deleted = statement.execute([timestamp]).map_err(SqliteError::Query)?;
+
+        debug!(deleted, "deleted expired records");
+
+        Ok(deleted)
     }
 
     pub(super) fn reset_all_sent(&self) -> Result<(), SqliteError> {
@@ -338,6 +346,8 @@ fn expiry_from_sql(expiry: Option<i64>) -> Option<Duration> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use astarte_interfaces::{interface::Retention, schema::Reliability};
     use itertools::Itertools;
 
@@ -1225,5 +1235,61 @@ pub(crate) mod tests {
 
         // only 1 element remains from the previous removal
         assert_eq!(removed, 1);
+    }
+
+    #[tokio::test]
+    async fn should_delete_expired_and_do_nothing_on_delete() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = SqliteStore::connect(dir.path()).await.unwrap();
+
+        let interface = "com.Foo";
+        let path = "/bar";
+
+        let mapping = RetentionMapping {
+            interface: interface.into(),
+            path: path.into(),
+            version_major: 1,
+            reliability: RetentionReliability::from(Reliability::Guaranteed),
+            expiry: Some(Duration::from_secs(100)),
+        };
+
+        store_mapping(&store, &mapping).await;
+
+        let id = Id {
+            timestamp: TimestampMillis::now(),
+            counter: 1,
+        };
+
+        let info = PublishInfo {
+            interface: mapping.interface,
+            path: mapping.path,
+            version_major: mapping.version_major,
+            reliability: mapping.reliability.into(),
+            expiry: mapping.expiry,
+            sent: true,
+            value: [].as_slice().into(),
+        };
+        let exp = RetentionPublish::from_info(id, &info).unwrap();
+
+        store_publish(&store, &exp).await;
+
+        // delete expired by adding 101 seconds to be sure the mock record gets deleted
+        store
+            .pool
+            .acquire_writer(|w| {
+                w.delete_expired(&TimestampSecs(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 101,
+                ))
+            })
+            .await
+            .unwrap();
+
+        // check that we can still delete the record
+        store.mark_received(&id).await.unwrap();
     }
 }

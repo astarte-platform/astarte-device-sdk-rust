@@ -255,12 +255,7 @@ impl StoredRetention for SqliteStore {
     }
 
     async fn delete_publish(&self, id: &Id) -> Result<(), RetentionError> {
-        let id = *id;
-
-        self.pool
-            .acquire_writer(move |writer| writer.delete_publish_by_id(&id))
-            .await
-            .map_err(|err| RetentionError::delete_publish(id, err))
+        self.mark_received(id).await
     }
 
     async fn delete_interface(&self, interface: &str) -> Result<(), RetentionError> {

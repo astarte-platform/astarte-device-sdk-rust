@@ -20,14 +20,18 @@
 
 use std::{future::Future, sync::Arc};
 
-use astarte_interfaces::{mapping::path::MappingPathError, MappingPath};
-use tracing::{error, trace};
+use astarte_interfaces::{interface::Retention, mapping::path::MappingPathError, MappingPath};
+use tracing::{debug, trace, warn};
 
 use crate::{
     aggregate::AstarteObject,
     error::{AggregationError, InterfaceTypeError},
-    retention::{RetentionId, StoredRetentionExt},
-    state::SharedState,
+    retention::{
+        memory::{ItemValue, VolatileItemError},
+        Id, RetentionId, StoredRetention, StoredRetentionExt,
+    },
+    state::{SharedState, Status},
+    store::StoreCapabilities,
     transport::{mqtt::error::MqttError, Connection, Publish},
     Timestamp,
 };
@@ -352,6 +356,111 @@ where
             state,
         }
     }
+
+    async fn send<T>(
+        state: &SharedState,
+        store: &StoreWrapper<C::Store>,
+        sender: &mut C::Sender,
+        data: T,
+    ) -> Result<(), Error>
+    where
+        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
+        C::Store: StoreCapabilities,
+        C::Sender: Publish,
+    {
+        match state.status.connection() {
+            Status::Connected => {
+                trace!("publish while connection is connected");
+            }
+            Status::Disconnected => {
+                trace!("publish while connection is offline");
+                return Self::offline_send(state, store, sender, data).await;
+            }
+            Status::Closed => {
+                return Err(Error::Disconnected);
+            }
+        }
+
+        match data.get_retention() {
+            Retention::Volatile { .. } => Self::send_volatile(state, sender, data).await,
+            Retention::Stored { .. } => Self::send_stored(state, store, sender, data).await,
+            Retention::Discard => data.send(sender).await,
+        }
+    }
+
+    async fn offline_send<T>(
+        state: &SharedState,
+        store: &StoreWrapper<C::Store>,
+        sender: &mut C::Sender,
+        data: T,
+    ) -> Result<(), Error>
+    where
+        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError>,
+        C::Store: StoreCapabilities,
+        C::Sender: Publish,
+    {
+        match data.get_retention() {
+            Retention::Discard => {
+                debug!("drop publish with retention discard since disconnected");
+            }
+            Retention::Volatile { .. } => {
+                let id = state.retention_ctx.next();
+
+                state.volatile_store.push_unsent(id, data).await;
+            }
+            Retention::Stored { .. } => {
+                let id = state.retention_ctx.next();
+
+                if let Some(retention) = store.get_retention() {
+                    data.store_publish(&id, sender, retention, false).await?;
+                } else {
+                    warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
+                    state.volatile_store.push_unsent(id, data).await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_stored<T>(
+        state: &SharedState,
+        store: &StoreWrapper<C::Store>,
+        sender: &mut C::Sender,
+        data: T,
+    ) -> Result<(), Error>
+    where
+        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
+        C::Store: StoreCapabilities,
+        C::Sender: Publish,
+    {
+        let Some(retention) = store.get_retention() else {
+            warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
+            return Self::send_volatile(state, sender, data).await;
+        };
+
+        // generate id after the check to avoid wasting an id generation in case it gets regenerated in send_volatile
+        let id = state.retention_ctx.next();
+
+        data.store_publish(&id, sender, retention, true).await?;
+        data.send_stored(RetentionId::Stored(id), sender).await
+    }
+
+    async fn send_volatile<T>(
+        state: &SharedState,
+        sender: &mut C::Sender,
+        data: T,
+    ) -> Result<(), Error>
+    where
+        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
+        C::Store: StoreCapabilities,
+        C::Sender: Publish,
+    {
+        let id = state.retention_ctx.next();
+
+        state.volatile_store.push_sent(id, data.clone()).await;
+        data.send_stored(RetentionId::Volatile(id), sender).await
+    }
 }
 
 // Cannot be derived it has specific generic bounds.
@@ -468,6 +577,129 @@ where
         self.state.status.close();
 
         Ok(())
+    }
+}
+
+trait ClientPacket {
+    fn get_retention(&self) -> Retention;
+
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    where
+        S: Publish;
+
+    fn send<S>(self, sender: &mut S) -> impl Future<Output = Result<(), crate::Error>> + Send
+    where
+        S: Publish + Send;
+
+    fn send_stored<S>(
+        self,
+        id: RetentionId,
+        sender: &mut S,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send
+    where
+        S: Publish + Send;
+
+    fn store_publish<S, R>(
+        &self,
+        id: &Id,
+        sender: &S,
+        retention: &R,
+        sent: bool,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send
+    where
+        S: Publish + Sync,
+        R: StoredRetention + Sync;
+}
+
+impl ClientPacket for ValidatedIndividual {
+    fn get_retention(&self) -> Retention {
+        self.retention
+    }
+
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    where
+        S: Publish,
+    {
+        sender.serialize_individual(self)
+    }
+
+    async fn send<S>(self, sender: &mut S) -> Result<(), crate::Error>
+    where
+        S: Publish + Send,
+    {
+        sender.send_individual(self).await
+    }
+
+    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), crate::Error>
+    where
+        S: Publish,
+    {
+        sender.send_individual_stored(id, self).await
+    }
+
+    async fn store_publish<S, R>(
+        &self,
+        id: &Id,
+        sender: &S,
+        retention: &R,
+        sent: bool,
+    ) -> Result<(), crate::Error>
+    where
+        S: Publish + Sync,
+        R: StoredRetention + Sync,
+    {
+        let serialized = self.serialize(sender)?;
+
+        retention
+            .store_publish_individual(id, self, &serialized, sent)
+            .await
+            .map_err(crate::Error::from)
+    }
+}
+
+impl ClientPacket for ValidatedObject {
+    fn get_retention(&self) -> Retention {
+        self.retention
+    }
+
+    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, crate::Error>
+    where
+        S: Publish,
+    {
+        sender.serialize_object(self)
+    }
+
+    async fn send<S>(self, sender: &mut S) -> Result<(), crate::Error>
+    where
+        S: Publish + Send,
+    {
+        sender.send_object(self).await
+    }
+
+    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), crate::Error>
+    where
+        S: Publish + Send,
+    {
+        sender.send_object_stored(id, self).await
+    }
+
+    async fn store_publish<S, R>(
+        &self,
+        id: &Id,
+        sender: &S,
+        retention: &R,
+        sent: bool,
+    ) -> Result<(), crate::Error>
+    where
+        S: Publish + Sync,
+        R: StoredRetention + Sync,
+    {
+        let serialized = self.serialize(sender)?;
+
+        retention
+            .store_publish_object(id, self, &serialized, sent)
+            .await
+            .map_err(crate::Error::from)
     }
 }
 

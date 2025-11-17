@@ -18,17 +18,14 @@
 
 //! Handles the sending of individual datastream.
 
-use astarte_interfaces::interface::Retention;
 use astarte_interfaces::MappingPath;
-use tracing::{debug, trace, warn};
+use tracing::debug;
 
 use crate::client::ValidatedIndividual;
-use crate::state::{SharedState, Status};
-use crate::store::StoreCapabilities;
 use crate::transport::Connection;
 use crate::{AstarteData, Error};
 
-use super::{DeviceClient, Publish, RetentionId, StoreWrapper, StoredRetentionExt, Timestamp};
+use super::{DeviceClient, Publish, Timestamp};
 
 impl<C> DeviceClient<C>
 where
@@ -49,129 +46,10 @@ where
 
         let validated = ValidatedIndividual::validate(mapping, data, timestamp)?;
 
+        debug!("sending individual {}{}", interface_name, path);
         debug!("sending individual type {}", validated.data.display_type());
 
-        match self.state.status.connection() {
-            Status::Connected => {
-                trace!("publish individual while connection is online");
-            }
-            Status::Disconnected => {
-                trace!("publish individual while connection is offline");
-
-                return Self::offline_send_individual(
-                    &self.state,
-                    &self.store,
-                    &mut self.sender,
-                    validated,
-                )
-                .await;
-            }
-            Status::Closed => {
-                return Err(Error::Disconnected);
-            }
-        }
-
-        match mapping.mapping().retention() {
-            Retention::Volatile { .. } => {
-                Self::send_volatile_individual(&self.state, &mut self.sender, validated).await
-            }
-            Retention::Stored { .. } => {
-                Self::send_stored_individual(&self.state, &self.store, &mut self.sender, validated)
-                    .await
-            }
-            Retention::Discard => self.sender.send_individual(validated).await,
-        }
-    }
-
-    async fn offline_send_individual(
-        state: &SharedState,
-        store: &StoreWrapper<C::Store>,
-        sender: &mut C::Sender,
-        data: ValidatedIndividual,
-    ) -> Result<(), Error>
-    where
-        C::Sender: Publish,
-    {
-        match data.retention {
-            Retention::Discard => {
-                debug!("drop publish with retention discard since disconnected");
-            }
-            Retention::Volatile { .. } => {
-                let id = state.retention_ctx.next();
-
-                state.volatile_store.push(id, data).await;
-            }
-            Retention::Stored { .. } => {
-                let id = state.retention_ctx.next();
-                if let Some(retention) = store.get_retention() {
-                    let value = sender.serialize_individual(&data)?;
-
-                    retention
-                        .store_publish_individual(&id, &data, &value)
-                        .await?;
-                } else {
-                    warn!("storing interface with retention stored in volatile since the store doesn't support retention");
-
-                    state.volatile_store.push(id, data).await;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn send_volatile_individual(
-        state: &SharedState,
-        sender: &mut C::Sender,
-        data: ValidatedIndividual,
-    ) -> Result<(), Error>
-    where
-        C::Sender: Publish,
-    {
-        let id = state.retention_ctx.next();
-
-        state.volatile_store.push(id, data.clone()).await;
-
-        sender
-            .send_individual_stored(RetentionId::Volatile(id), data)
-            .await
-    }
-
-    async fn send_stored_individual(
-        state: &SharedState,
-        store: &StoreWrapper<C::Store>,
-        sender: &mut C::Sender,
-        data: ValidatedIndividual,
-    ) -> Result<(), Error>
-    where
-        C::Sender: Publish,
-    {
-        let id = state.retention_ctx.next();
-
-        match store.get_retention() {
-            Some(retention) => {
-                let value = sender.serialize_individual(&data)?;
-
-                retention
-                    .store_publish_individual(&id, &data, &value)
-                    .await?;
-
-                sender
-                    .send_individual_stored(RetentionId::Stored(id), data)
-                    .await?;
-            }
-            None => {
-                warn!("storing interface with retention stored in volatile since the store doesn't support retention");
-
-                state.volatile_store.push(id, data.clone()).await;
-
-                sender
-                    .send_individual_stored(RetentionId::Volatile(id), data)
-                    .await?;
-            }
-        }
-
-        Ok(())
+        Self::send(&self.state, &self.store, &mut self.sender, validated).await
     }
 }
 
@@ -179,6 +57,7 @@ where
 mod tests {
     use std::time::Duration;
 
+    use astarte_interfaces::interface::Retention;
     use astarte_interfaces::schema::Reliability;
     use chrono::Utc;
     use mockall::{predicate, Sequence};
@@ -189,7 +68,7 @@ mod tests {
 
     use crate::client::tests::{mock_client, mock_client_with_store};
     use crate::retention::memory::ItemValue;
-    use crate::retention::{PublishInfo, StoredRetention};
+    use crate::retention::{PublishInfo, RetentionId, StoredRetention};
     use crate::store::SqliteStore;
     use crate::test::{
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_DATASTREAM,
@@ -370,6 +249,19 @@ mod tests {
             .unwrap();
 
         let mut stored = Vec::new();
+        let read = client
+            .store
+            .store
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
+        assert_eq!(read, 0);
+        assert_eq!(stored.len(), 0);
+        stored.clear();
+
+        // reset sent
+        client.store.store.reset_all_publishes().await.unwrap();
+
         let read = client
             .store
             .store
