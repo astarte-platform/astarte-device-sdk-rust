@@ -52,8 +52,6 @@ where
             retention.cleanup_introspection(&interfaces).await?;
         }
 
-        retention.reset_all_publishes().await?;
-
         self.resend_retention(false).await;
 
         Ok(())
@@ -133,14 +131,38 @@ where
     where
         C::Sender: Publish,
     {
-        while let Some(item) = state.volatile_store.pop_next().await {
-            match item {
-                ItemValue::Individual(individual) => {
-                    sender.send_individual(individual).await?;
+        let mut buf = Vec::new();
+
+        loop {
+            let count = state
+                .volatile_store
+                .get_unsent(&mut buf, DEFAULT_CHANNEL_SIZE)
+                .await;
+
+            trace!("loaded {count} volatile publishes");
+
+            for (id, value) in buf.drain(..) {
+                // mark as sent before so that no resend is tryed while in flight
+                state.volatile_store.mark_sent(&id, true).await;
+
+                match value {
+                    ItemValue::Individual(individual) => {
+                        sender
+                            .send_individual_stored(RetentionId::Volatile(id), individual)
+                            .await?;
+                    }
+                    ItemValue::Object(object) => {
+                        sender
+                            .send_object_stored(RetentionId::Volatile(id), object)
+                            .await?;
+                    }
                 }
-                ItemValue::Object(object) => {
-                    sender.send_object(object).await?;
-                }
+            }
+
+            if count == 0 || count < DEFAULT_CHANNEL_SIZE {
+                trace!("all volatile publishes sent");
+
+                break;
             }
         }
 
@@ -169,6 +191,9 @@ where
             trace!("loaded {count} stored publishes");
 
             for (id, info) in buf.drain(..) {
+                // mark as sent before so that no resend is tryed while in flight
+                retention.update_sent_flag(&id, true).await?;
+
                 sender.resend_stored(RetentionId::Stored(id), info).await?;
             }
 
@@ -177,8 +202,6 @@ where
 
                 break;
             }
-
-            buf.clear();
         }
 
         Ok(())
@@ -238,7 +261,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
-    use crate::retention::{PublishInfo, RetentionId, StoredRetentionExt};
+    use crate::retention::{PublishInfo, RetentionId, StoredRetention, StoredRetentionExt};
     use crate::store::{SqliteStore, StoreCapabilities};
     use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
     use crate::transport::mock::MockSender;
@@ -295,7 +318,7 @@ mod tests {
             .store
             .get_retention()
             .unwrap()
-            .store_publish_individual(&retention_id, &individual, &bytes)
+            .store_publish_individual(&retention_id, &individual, &bytes, true)
             .await
             .unwrap();
 
@@ -303,7 +326,16 @@ mod tests {
             .store
             .get_retention()
             .unwrap()
-            .mark_sent(&retention_id)
+            .update_sent_flag(&retention_id, true)
+            .await
+            .unwrap();
+
+        // NOTE the reset_all_publishes is called BEFORE the init retention
+        connection
+            .store
+            .get_retention()
+            .unwrap()
+            .reset_all_publishes()
             .await
             .unwrap();
 

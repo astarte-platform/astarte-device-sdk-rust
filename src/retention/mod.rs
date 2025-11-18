@@ -35,7 +35,8 @@ use tracing::warn;
 use crate::{
     error::{DynError, Report},
     interfaces::Interfaces,
-    store::sqlite::SqliteError,
+    retention::memory::VolatileStore,
+    store::{sqlite::SqliteError, StoreCapabilities},
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -93,6 +94,7 @@ pub enum RetentionError {
         #[source]
         backtrace: DynError,
     },
+    // TODO remove since the method is a duplicate version of mark_received
     /// Couldn't delete the publish with id.
     #[error("couldn't delete the publish with id {id}")]
     DeletePublish {
@@ -164,13 +166,6 @@ impl RetentionError {
 
     pub(crate) fn unsent(backtrace: impl Into<DynError>) -> Self {
         Self::Unsent {
-            backtrace: backtrace.into(),
-        }
-    }
-
-    pub(crate) fn delete_publish(id: Id, backtrace: impl Into<DynError>) -> Self {
-        Self::DeletePublish {
-            id,
             backtrace: backtrace.into(),
         }
     }
@@ -299,6 +294,7 @@ pub trait StoredRetention: Clone + Send + Sync {
     /// It will mark the stored publish as received.
     fn mark_received(&self, id: &Id) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
+    // TODO remove since it's a duplicate version of mark_received
     /// Deletes a publish from the store.
     fn delete_publish(&self, id: &Id) -> impl Future<Output = Result<(), RetentionError>> + Send;
 
@@ -358,9 +354,10 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         id: &Id,
         individual: &ValidatedIndividual,
         value: &[u8],
+        sent: bool,
     ) -> Result<(), RetentionError> {
         // Always store as not sent, so we can mark it afterwards
-        let publish = PublishInfo::from_individual(false, individual, value);
+        let publish = PublishInfo::from_individual(sent, individual, value);
 
         self.store_publish(id, publish).await
     }
@@ -370,9 +367,10 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
         id: &Id,
         obj: &ValidatedObject,
         value: &[u8],
+        sent: bool,
     ) -> Result<(), RetentionError> {
         // Always store as not sent, so we can mark it afterwards
-        let publish = PublishInfo::from_obj(false, obj, value);
+        let publish = PublishInfo::from_obj(sent, obj, value);
 
         self.store_publish(id, publish).await
     }
@@ -403,11 +401,6 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
             .await?;
 
         Ok(())
-    }
-
-    /// It will mark the stored publish as sent
-    async fn mark_sent(&self, id: &Id) -> Result<(), RetentionError> {
-        self.update_sent_flag(id, true).await
     }
 }
 
@@ -525,6 +518,29 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub(crate) async fn mark_unsent_on_err<S>(store: &S, volatile: &VolatileStore, id: &RetentionId)
+where
+    S: StoreCapabilities,
+{
+    match id {
+        RetentionId::Volatile(id) => {
+            volatile.mark_sent(id, false).await;
+        }
+        RetentionId::Stored(id) => {
+            let Some(retention) = store.get_retention() else {
+                return;
+            };
+
+            let update_result = retention.update_sent_flag(id, false).await;
+
+            if let Err(e) = update_result {
+                warn!(error=%Report::new(e),
+                    "error in the store implementation while marking a record as not sent");
+            }
+        }
     }
 }
 

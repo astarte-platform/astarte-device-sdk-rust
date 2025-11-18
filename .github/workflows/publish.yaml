@@ -43,10 +43,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Install stable
@@ -58,10 +55,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - name: publish creates
         env:

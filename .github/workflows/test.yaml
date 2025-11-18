@@ -34,10 +34,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo test --locked
@@ -49,10 +46,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
           toolchain: nightly
@@ -84,4 +78,4 @@ jobs:
           name: coverage
           path: |
             pr_number
-            coverage-astarte-device-sdk.info
+            coverage-*.info

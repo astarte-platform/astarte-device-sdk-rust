@@ -30,7 +30,7 @@ use std::pin::Pin;
 use std::{collections::HashMap, future::IntoFuture, task::Poll};
 
 use rumqttc::{AckOfPub, Token, TokenError};
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::retention::RetentionId;
 
@@ -53,6 +53,17 @@ impl MqttRetention {
     /// The retention client is disconnected and all packets have been handled
     pub(crate) fn is_empty(&self) -> bool {
         self.rx.is_empty() && self.rx.is_disconnected() && self.packets.is_empty()
+    }
+
+    /// Discards retention packets and returns the id of received packets
+    pub(crate) fn discard(&mut self) -> Vec<RetentionId> {
+        debug!("discarding retention packets");
+
+        self.packets
+            .drain()
+            .chain(self.rx.drain())
+            .filter_map(|(id, mut token)| token.check().map(|_| id).ok())
+            .collect()
     }
 
     pub(crate) fn queue(&mut self) -> usize {
@@ -121,7 +132,9 @@ impl std::future::Future for MqttRetentionFuture<'_> {
 
         match first {
             Some((id, res)) => {
-                this.packets.remove(&id);
+                let pkt = this.packets.remove(&id);
+
+                debug_assert!(pkt.is_some());
 
                 Poll::Ready(res)
             }

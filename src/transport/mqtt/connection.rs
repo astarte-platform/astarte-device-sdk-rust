@@ -180,7 +180,7 @@ impl MqttConnection {
     /// reconnection automatically.
     pub(crate) async fn wait_connack<S>(
         client: AsyncClient,
-        eventloop: EventLoop,
+        mut eventloop: EventLoop,
         provider: TransportProvider,
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
@@ -191,6 +191,9 @@ impl MqttConnection {
     {
         let session_sync = Self::is_introspection_stored(interfaces, store).await;
         debug!(session_sync = session_sync, "Creating new mqtt connection");
+        // NOTE during the first connection we will always clean the session since the mqtt library can't
+        // persistently store inflight message
+        Connection::set_clean_session(&mut eventloop, true);
         let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting);
         mqtt_connection.connection.set_session_synced(session_sync);
 
@@ -281,6 +284,11 @@ impl MqttConnection {
             }
         }
     }
+
+    /// Retruns true only if the state is connected and the session present is true
+    pub(crate) fn is_session_present(&self) -> bool {
+        self.state.is_session_present()
+    }
 }
 
 /// Struct to hold the connection and client to be passed to the state.
@@ -307,16 +315,15 @@ impl Connection {
 
     pub(crate) fn set_session_synced(&mut self, sync: bool) {
         self.session_synced = sync;
-
-        // We can not access a field of the mock so we have to add the cfg
-        #[cfg(not(test))]
-        {
-            self.eventloop
-                .get_mut()
-                .mqtt_options
-                .set_clean_session(!sync);
-        }
     }
+
+    #[cfg(not(test))]
+    fn set_clean_session(eventloop: &mut EventLoop, clean: bool) {
+        eventloop.mqtt_options.set_clean_session(clean);
+    }
+
+    #[cfg(test)]
+    fn set_clean_session(_eventloop: &mut EventLoop, _clean: bool) {}
 }
 
 /// This cannot be a type state machine, because any additional data cannot be moved out of the enum
@@ -383,6 +390,16 @@ impl State {
     #[must_use]
     fn is_connected(&self) -> bool {
         matches!(self, Self::Connected(..))
+    }
+
+    /// Returns `true` if the state is [`Connected`] with and the connack had a session present flag.
+    fn is_session_present(&self) -> bool {
+        matches!(
+            self,
+            Self::Connected(Connected {
+                session_present: true
+            })
+        )
     }
 }
 
@@ -461,6 +478,9 @@ impl Connecting {
         match event {
             Event::Incoming(Packet::ConnAck(connack)) => {
                 debug!("connack received");
+
+                // NOTE permanently set the clean session to false since the mqtt library will keep inflight messages in memory
+                Connection::set_clean_session(conn.eventloop_mut(), false);
 
                 Next::state(Handshake {
                     session_present: connack.session_present,
@@ -541,7 +561,10 @@ impl Handshake {
             Self::full_handshake(client, client_id, store, session_data)
         };
 
-        Next::state(WaitAcks { handle })
+        Next::state(WaitAcks {
+            handle,
+            session_present: self.session_present,
+        })
     }
 
     fn full_handshake<S>(
@@ -759,6 +782,7 @@ impl From<Handshake> for State {
 #[derive(Debug)]
 pub(crate) struct WaitAcks {
     handle: JoinHandle<Result<(), InitError>>,
+    session_present: bool,
 }
 
 impl WaitAcks {
@@ -773,7 +797,7 @@ impl WaitAcks {
             res = &mut self.handle => {
                 debug!("task joined");
 
-                Self::handle_join(res, conn)
+                Self::handle_join(res, conn, self.session_present)
             }
             // I hope this is cancel safe
             res = conn.eventloop_mut().poll() => {
@@ -787,14 +811,18 @@ impl WaitAcks {
         }
     }
 
-    fn handle_join(res: Result<Result<(), InitError>, JoinError>, conn: &mut Connection) -> Next {
+    fn handle_join(
+        res: Result<Result<(), InitError>, JoinError>,
+        conn: &mut Connection,
+        session_present: bool,
+    ) -> Next {
         // Don't move the handle to await the task
         match res {
             Ok(Ok(())) => {
                 info!("device connected");
                 // if the device successfully connects we set the sync status to true
                 conn.set_session_synced(true);
-                Next::state(Connected)
+                Next::state(Connected::new(session_present))
             }
             Ok(Err(err)) => {
                 error!(error = %Report::new(err), "init task failed");
@@ -832,9 +860,15 @@ impl From<WaitAcks> for State {
 
 /// Established connection to Astarte
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Connected;
+pub(crate) struct Connected {
+    session_present: bool,
+}
 
 impl Connected {
+    pub(crate) fn new(session_present: bool) -> Self {
+        Self { session_present }
+    }
+
     async fn poll(&mut self, conn: &mut Connection) -> Next {
         match conn.eventloop_mut().poll().await {
             Ok(event) => Next::handle_event(event),

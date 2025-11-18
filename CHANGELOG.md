@@ -25,6 +25,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.10.5] - 2025-11-18
+
+### Fixed
+
+- Forward port changes relese v0.9.10
+  [#526](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/526)
+
+## [v0.9.10] - 2025-11-12
+
+### Fixed
+
+- Update rumqttc to include latest fixes
+  [#528](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/528)
+- Fix the resend process after a reconnection
+  [#523](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/523)
+
+## [v0.10.4] - 2025-09-19
+
+### Changed
+
+- Forward port release v0.9.9
+  [#516](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/516)
+
+## [v0.9.9] - 2025-09-18
+
+### Changed
+
+- Forward port release v0.8.7
+  [#514](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/514)
+
+## [v0.8.7] - 2025-09-18
+
+### Changed
+
+- Forward port release v0.7.6
+  [#512](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/512)
+
+## [v0.7.6] - 2025-09-17
+
+### Changed
+
+- Forward port release v0.6.7
+  [#510](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/510)
+
+## [0.6.7] - 2025-09-17
+
+### Fixed
+
+- Send the MQTT timestamp field as BSON DateTime instead of String
+  [#508](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/508)
+
 ## [0.10.3] - 2025-08-04
 
 ### Changed

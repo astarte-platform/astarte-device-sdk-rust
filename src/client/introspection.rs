@@ -446,7 +446,7 @@ mod tests {
         client
             .state
             .volatile_store
-            .push(
+            .push_sent(
                 client.state.retention_ctx.next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
@@ -511,6 +511,7 @@ mod tests {
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
+                true,
             )
             .await
             .unwrap();
@@ -555,7 +556,7 @@ mod tests {
         client
             .state
             .volatile_store
-            .push(
+            .push_sent(
                 client.state.retention_ctx.next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
@@ -623,6 +624,7 @@ mod tests {
                     timestamp: Some(Utc::now()),
                 },
                 &[1, 2, 3, 4],
+                true,
             )
             .await
             .unwrap();
