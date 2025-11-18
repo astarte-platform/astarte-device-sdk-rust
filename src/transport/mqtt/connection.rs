@@ -56,6 +56,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
+    notify::event::{notify_security_event, notify_tls_error, SecurityEvent},
     properties::{encode_set_properties, PropertiesError},
     retry::ExponentialIter,
     session::StoredSession,
@@ -489,6 +490,8 @@ impl Connecting {
             Event::Incoming(incoming) => {
                 error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
 
+                notify_security_event(SecurityEvent::UnexpectedMessageReceived);
+
                 Next::state(Disconnected)
             }
             Event::Outgoing(outgoing) => {
@@ -920,7 +923,14 @@ impl Next {
 
                 Next::state(Connecting)
             }
-            ConnectionError::Tls(_) | ConnectionError::ConnectionRefused(_) => {
+            ConnectionError::Tls(tls_err) => {
+                trace!("tls error recreate the connection");
+
+                notify_tls_error(&tls_err);
+
+                Next::state(Disconnected)
+            }
+            ConnectionError::ConnectionRefused(_) => {
                 trace!("recreate the connection");
 
                 Next::state(Disconnected)

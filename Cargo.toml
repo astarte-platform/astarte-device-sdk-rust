@@ -136,6 +136,8 @@ sqlite-trace = ["rusqlite/trace"]
 tokio-multi-thread = []
 # Uses the webpki-roots the Mozilla CA bundle for TLS
 webpki = ["dep:webpki-roots"]
+# Enable logging of security events onto a custom tracing target
+security-events = []
 
 [lints.rust]
 # config used for coverage generation

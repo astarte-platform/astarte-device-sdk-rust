@@ -24,7 +24,10 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::transport::mqtt::PairingError;
+use crate::{
+    notify::event::{notify_security_event, SecurityEvent},
+    transport::mqtt::PairingError,
+};
 
 use super::pairing::ApiData;
 
@@ -68,10 +71,15 @@ pub async fn register_device(
         StatusCode::CREATED => {
             let res: ApiData<MqttV1Credential> = response.json().await?;
 
+            notify_security_event(SecurityEvent::CriticalOperationAuthSuccessful);
+
             Ok(res.data.credentials_secret)
         }
         status_code => {
             let raw_response = response.text().await?;
+
+            notify_security_event(SecurityEvent::CriticalOperationAuthFailed);
+
             Err(PairingError::Api {
                 status: status_code,
                 body: raw_response,

@@ -33,6 +33,7 @@ use url::Url;
 
 use crate::{
     builder::{BuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE},
+    notify::event::{notify_security_event, SecurityEvent},
     store::{wrapper::StoreWrapper, StoreCapabilities},
     transport::mqtt::{
         config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
@@ -390,6 +391,10 @@ where
             .map_err(|err| MqttError::Pairing(PairingError::InvalidUrl(err)))?;
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
+
+        if insecure_ssl {
+            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
+        }
 
         let provider = TransportProvider::configure(
             pairing_url,

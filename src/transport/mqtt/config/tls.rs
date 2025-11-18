@@ -30,7 +30,11 @@ use rustls::{
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::{error::Report, transport::mqtt::PairingError};
+use crate::{
+    error::Report,
+    notify::event::{notify_security_event, SecurityEvent},
+    transport::mqtt::PairingError,
+};
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
 
@@ -105,7 +109,13 @@ impl ClientAuth {
                 pem,
             };
 
-            auth.verify_certificate_data(client_id).then_some(auth)
+            let auth = auth.verify_certificate_data(client_id).then_some(auth);
+
+            if auth.is_none() {
+                notify_security_event(SecurityEvent::CertificateValidationFailed);
+            }
+
+            auth
         })
     }
 
@@ -117,6 +127,15 @@ impl ClientAuth {
                 return false;
             }
         };
+
+        #[cfg(feature = "security-events")]
+        {
+            // NOTE this validity check is performed using the local datetime and it's not relevant to the actual validity check
+            if !parsed.validity.is_valid() {
+                notify_security_event(SecurityEvent::AlarmExpiredCertificate);
+                notify_security_event(SecurityEvent::CertificateValidationFailedExpired);
+            }
+        }
 
         self.verify_certificate_subject(&parsed, client_id)
     }
@@ -148,6 +167,7 @@ impl ClientAuth {
 
     pub(crate) fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
         warn!("INSECURE: ignore TLS certificates");
+        notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
 
         insecure_tls_config_builder()?
             .with_client_auth_cert(vec![self.der], self.private_key.into())
