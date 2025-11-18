@@ -25,7 +25,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.10.5] - 2025-11-18
 
 ### Fixed
 
@@ -41,7 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fix the resend process after a reconnection
   [#523](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/523)
 
-## [0.10.4] - 2025-09-19
+## [v0.10.4] - 2025-09-19
 
 ### Changed
 
