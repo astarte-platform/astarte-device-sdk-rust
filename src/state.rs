@@ -19,6 +19,9 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use chrono::DateTime;
+use chrono::Utc;
+use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio::sync::Semaphore;
 
@@ -38,6 +41,7 @@ pub(crate) struct SharedState {
     pub(crate) volatile_store: VolatileStore,
     pub(crate) retention_ctx: retention::Context,
     pub(crate) status: ConnectionStatus,
+    pub(crate) cert_expiry: Mutex<Option<DateTime<Utc>>>,
 }
 
 impl SharedState {
@@ -48,6 +52,7 @@ impl SharedState {
             volatile_store,
             retention_ctx: retention::Context::new(),
             status: ConnectionStatus::new(),
+            cert_expiry: Mutex::new(None),
         }
     }
 }

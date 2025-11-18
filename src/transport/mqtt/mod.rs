@@ -771,7 +771,12 @@ where
     async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
         let result = self
             .connection
-            .reconnect(self.client_id.as_ref(), interfaces, &self.store)
+            .reconnect(
+                self.client_id.as_ref(),
+                interfaces,
+                &self.store,
+                &self.state,
+            )
             .await
             .map_err(Error::Mqtt);
 
