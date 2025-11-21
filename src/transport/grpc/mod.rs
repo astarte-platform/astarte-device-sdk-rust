@@ -74,7 +74,6 @@ use crate::{
 };
 
 #[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
 pub use astarte_message_hub_proto::tonic;
 
 /// Errors raised while using the [`Grpc`] transport

@@ -245,7 +245,6 @@ impl Ord for BaseMapping {
 }
 
 #[cfg(feature = "interface-doc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
 impl<'a> From<&'a BaseMapping> for Mapping<&'a str> {
     fn from(value: &'a BaseMapping) -> Self {
         Self::new(value.endpoint(), value.mapping_type())

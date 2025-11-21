@@ -269,14 +269,12 @@ impl<T> Mapping<T> {
     }
 
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the mapping's description.
     pub fn description(&self) -> Option<&T> {
         self.description.as_ref()
     }
 
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the mapping's documentation.
     pub fn doc(&self) -> Option<&T> {
         self.doc.as_ref()
