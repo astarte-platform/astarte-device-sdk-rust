@@ -32,7 +32,6 @@ type OpensslError =
 #[derive(thiserror::Error, Debug)]
 pub enum CryptoError {
     #[cfg(feature = "openssl")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "openssl")))]
     #[doc(hidden)]
     /// Openssl CSR generation failed.
     #[error("Openssl error")]

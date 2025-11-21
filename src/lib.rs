@@ -64,7 +64,6 @@ pub use rumqttc;
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
 
 #[cfg(feature = "derive")]
-#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
 pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
