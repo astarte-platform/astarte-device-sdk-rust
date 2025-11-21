@@ -19,6 +19,7 @@
 use core::str;
 use std::{path::PathBuf, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
@@ -154,6 +155,7 @@ impl TransportProvider {
     /// Config the TLS for the transport.
     fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
+            notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
             client_auth.insecure_tls_config()?
         } else {
             let roots = self.root_cert_store();
@@ -236,6 +238,15 @@ impl TransportProvider {
         let client_auth = self.retrieve_credentials(client).await?;
 
         self.config_transport(client_auth)
+    }
+
+    pub(crate) async fn fetch_cert_expiry(
+        &self,
+        client_id: ClientId<&str>,
+    ) -> Option<DateTime<Utc>> {
+        let client_auth = self.read_credentials(client_id).await?;
+
+        client_auth.fetch_expiry()
     }
 
     // validate the existing certificate is valid, if valid use it for the transport

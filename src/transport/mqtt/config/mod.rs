@@ -414,6 +414,12 @@ where
             .transport(&client)
             .await
             .map_err(MqttError::Pairing)?;
+        *config.state.cert_expiry.lock().await = provider
+            .fetch_cert_expiry(ClientId {
+                realm: &self.realm,
+                device_id: &self.device_id,
+            })
+            .await;
 
         let (mqtt_opts, net_opts) = self
             .build_mqtt_opts(transport, &borker_url)
@@ -442,6 +448,7 @@ where
                 client_id.as_ref(),
                 &interfaces,
                 &store_wrapper,
+                &config.state,
             )
             .await
             .map_err(MqttError::Poll)?
