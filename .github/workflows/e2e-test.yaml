@@ -41,7 +41,7 @@ jobs:
       - name: Create Astarte Cluster
         id: astarte
         uses: astarte-platform/astarte-cluster-action@v1.2.0
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install system dependencies
         run: |
           sudo apt update

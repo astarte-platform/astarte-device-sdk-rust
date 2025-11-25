@@ -63,9 +63,9 @@ jobs:
       THEIR_FILE: './sdk-doc/source/get_started/rust.md'
     steps:
       # clone the astarte-device-sdk repo
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       # clone the sdk-doc repo
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           repository: astarte-platform/sdk-doc
           # this also sets up the ssh key for the git push
