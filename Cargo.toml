@@ -201,7 +201,7 @@ webpki-roots = "1.0.0"
 x509-parser = "0.18.0"
 
 # Transitive dependencies
-litemap = "=0.7.4"
+litemap = "=0.8.1"
 zerofrom = "=0.1.5"
 
 [[example]]
