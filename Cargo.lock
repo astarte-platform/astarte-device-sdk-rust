@@ -187,7 +187,7 @@ version = "0.10.5"
 dependencies = [
  "astarte-device-sdk-derive",
  "astarte-interfaces",
- "astarte-message-hub-proto",
+ "astarte-message-hub-proto 0.8.4",
  "astarte-message-hub-proto-mock",
  "async-trait",
  "base64 0.22.1",
@@ -280,12 +280,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "astarte-message-hub-proto-mock"
-version = "0.8.4"
+name = "astarte-message-hub-proto"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9f18024df68a36a76cf9b1fd938805d5be8017bacebd1073232af3cc6185bdf"
+checksum = "f5e2b7a8ee177f1cac91cf78e8f2ca67ac5e03531559ea3694848871f36408f2"
 dependencies = [
- "astarte-message-hub-proto",
+ "chrono",
+ "pbjson-types",
+ "prost",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
+ "tonic",
+ "uuid",
+]
+
+[[package]]
+name = "astarte-message-hub-proto-mock"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3c399ca3aa4eb7f127a8a65c435704f9d8758ef04a1ad7611e4de2feb43060e"
+dependencies = [
+ "astarte-message-hub-proto 0.9.0",
  "mockall",
  "pbjson-types",
  "tonic",
