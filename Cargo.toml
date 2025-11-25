@@ -150,7 +150,7 @@ astarte-device-sdk = { path = "./", version = "=0.10.5" }
 astarte-device-sdk-derive = { version = "=0.10.5", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = "0.1.1"
 astarte-message-hub-proto = "0.8.1"
-astarte-message-hub-proto-mock = "0.8.1"
+astarte-message-hub-proto-mock = "0.9.0"
 async-channel = "2.0.0"
 async-trait = "0.1.67"
 base64 = "0.22.0"
