@@ -18,7 +18,7 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
-use std::{io, path::PathBuf};
+use std::{io, path::PathBuf, time::Duration};
 
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -44,7 +44,10 @@ pub enum PairingError {
     InvalidUrl(#[from] ParseError),
     /// The pairing request failed.
     #[error("error while sending or receiving request")]
-    Request(#[from] reqwest::Error),
+    Request(reqwest::Error),
+    /// The pairing request failed with a timeout (missing connection).
+    #[error("got a timeout or connection error")]
+    RequestNoNetwork(reqwest::Error),
     /// Invalid credential secret
     #[error("couldn't set bearer header, invalid credential secret")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
@@ -97,6 +100,16 @@ pub enum PairingError {
     ReadNativeCerts(#[source] tokio::task::JoinError),
 }
 
+impl From<reqwest::Error> for PairingError {
+    fn from(err: reqwest::Error) -> Self {
+        if err.is_timeout() || err.is_request() {
+            PairingError::RequestNoNetwork(err)
+        } else {
+            PairingError::Request(err)
+        }
+    }
+}
+
 /// Struct with the information for the pairing
 pub(crate) struct ApiClient<'a> {
     pub(crate) realm: &'a str,
@@ -110,6 +123,7 @@ impl<'a> ApiClient<'a> {
         provider: &'a TransportProvider,
         realm: &'a str,
         device_id: &'a str,
+        timeout: Duration,
     ) -> Result<Self, PairingError> {
         let tls_config = provider.api_tls_config()?;
 
@@ -122,6 +136,7 @@ impl<'a> ApiClient<'a> {
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(tls_config.clone())
             .default_headers(headers)
+            .timeout(timeout)
             .build()?;
 
         Ok(Self {
@@ -371,8 +386,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let bundle = Bundle::generate_key("test", "device_id").unwrap();
 
@@ -408,8 +424,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client
             .create_certificate("csr")
@@ -433,8 +450,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.unwrap();
 
@@ -462,8 +480,9 @@ pub(crate) mod tests {
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("couldn't create api client");
+        let client =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.expect_err("should error");
 

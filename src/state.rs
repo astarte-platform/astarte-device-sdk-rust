@@ -72,8 +72,11 @@ impl ConnectionStatus {
     pub(crate) fn new() -> Self {
         Self {
             closed: AtomicBool::new(false),
-            // Assume we are connected
-            connected: AtomicBool::new(true),
+            // Do not assume we are connected
+            // NOTE it's the connection which will set the connected flag to true once the connection gets established
+            // this should happen after the [`ConnectionConfig`](crate::builder::ConnectionConfig) `connect` method
+            // to ensure the device is already marked as connected after the `build` function is called
+            connected: AtomicBool::new(false),
         }
     }
 
