@@ -33,6 +33,7 @@ use url::Url;
 
 use crate::{
     builder::{BuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE},
+    notify::event::{notify_security_event, SecurityEvent},
     store::{wrapper::StoreWrapper, StoreCapabilities},
     transport::mqtt::{
         config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
@@ -391,6 +392,10 @@ where
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
 
+        if insecure_ssl {
+            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
+        }
+
         let provider = TransportProvider::configure(
             pairing_url,
             secret,
@@ -409,6 +414,12 @@ where
             .transport(&client)
             .await
             .map_err(MqttError::Pairing)?;
+        *config.state.cert_expiry.lock().await = provider
+            .fetch_cert_expiry(ClientId {
+                realm: &self.realm,
+                device_id: &self.device_id,
+            })
+            .await;
 
         let (mqtt_opts, net_opts) = self
             .build_mqtt_opts(transport, &borker_url)
@@ -437,6 +448,7 @@ where
                 client_id.as_ref(),
                 &interfaces,
                 &store_wrapper,
+                &config.state,
             )
             .await
             .map_err(MqttError::Poll)?

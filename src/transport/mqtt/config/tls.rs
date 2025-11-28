@@ -20,6 +20,7 @@
 
 use std::{io, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use rustls::{
     client::WantsClientCert,
@@ -30,7 +31,11 @@ use rustls::{
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::{error::Report, transport::mqtt::PairingError};
+use crate::{
+    error::Report,
+    notify::event::{notify_security_event, SecurityEvent},
+    transport::mqtt::PairingError,
+};
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
 
@@ -105,7 +110,13 @@ impl ClientAuth {
                 pem,
             };
 
-            auth.verify_certificate_data(client_id).then_some(auth)
+            let auth = auth.verify_certificate_data(client_id).then_some(auth);
+
+            if auth.is_none() {
+                notify_security_event(SecurityEvent::CertificateValidationFailed);
+            }
+
+            auth
         })
     }
 
@@ -117,6 +128,21 @@ impl ClientAuth {
                 return false;
             }
         };
+
+        #[cfg(feature = "security-events")]
+        {
+            // NOTE this validity check is performed using the local datetime and it's not relevant to the actual validity check
+            if !parsed.validity.is_valid() {
+                notify_security_event(SecurityEvent::AlarmExpiredCertificate);
+                notify_security_event(SecurityEvent::CertificateValidationFailedExpired);
+            }
+            // else if !Self::check_cert_valid_at(&parsed, Duration::from_secs(10 * 24 * 60 * 60))
+            //     // if we can't check the validity do not notify
+            //     .unwrap_or(true)
+            // {
+            //     notify_security_event(SecurityEvent::CertificateAboutToExpire);
+            // }
+        }
 
         self.verify_certificate_subject(&parsed, client_id)
     }
@@ -152,6 +178,20 @@ impl ClientAuth {
         insecure_tls_config_builder()?
             .with_client_auth_cert(vec![self.der], self.private_key.into())
             .map_err(PairingError::Tls)
+    }
+
+    /// verify if the certificate will be expired after the specified duration
+    /// if the certificate can't be read this method returns None
+    pub(crate) fn fetch_expiry(&self) -> Option<DateTime<Utc>> {
+        let parsed = match x509_parser::parse_x509_certificate(&self.der) {
+            Ok((_remaining, cert)) => cert,
+            Err(e) => {
+                warn!(error=%Report::new(e), "parsing certificate error, assume it is not about to expire");
+                return None;
+            }
+        };
+
+        DateTime::from_timestamp(parsed.validity.not_after.timestamp(), 0)
     }
 
     pub(crate) fn pem(&self) -> &str {

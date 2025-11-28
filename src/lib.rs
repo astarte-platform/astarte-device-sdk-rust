@@ -42,6 +42,7 @@ pub mod error;
 pub mod event;
 mod interfaces;
 pub mod introspection;
+pub(crate) mod notify;
 pub mod prelude;
 pub mod properties;
 pub mod retention;

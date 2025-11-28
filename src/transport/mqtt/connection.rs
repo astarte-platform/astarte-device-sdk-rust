@@ -56,9 +56,11 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
+    notify::event::{notify_security_event, notify_tls_error, SecurityEvent},
     properties::{encode_set_properties, PropertiesError},
     retry::ExponentialIter,
     session::StoredSession,
+    state::SharedState,
     store::{wrapper::StoreWrapper, OptStoredProp, PropertyStore, StoreCapabilities},
     transport::mqtt::{pairing::ApiClient, payload::Payload, AsyncClientExt},
 };
@@ -185,6 +187,7 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
     ) -> Result<Self, PollError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -200,7 +203,7 @@ impl MqttConnection {
         let mut exp_back = ExponentialIter::default();
 
         while !mqtt_connection
-            .reconnect(client_id, interfaces, store)
+            .reconnect(client_id, interfaces, store, shared_state)
             .await?
         {
             let timeout = exp_back.next();
@@ -245,6 +248,7 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
     ) -> Result<bool, PollError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -258,7 +262,13 @@ impl MqttConnection {
         loop {
             let opt_publish = self
                 .state
-                .poll(&mut self.connection, client_id, interfaces, store)
+                .poll(
+                    &mut self.connection,
+                    client_id,
+                    interfaces,
+                    store,
+                    shared_state,
+                )
                 .await?;
 
             if let Some(publish) = opt_publish {
@@ -353,6 +363,7 @@ impl State {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
     ) -> Result<Option<Publish>, PollError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -360,7 +371,11 @@ impl State {
         trace!("state {}", self);
 
         let next = match self {
-            State::Disconnected(disconnected) => disconnected.reconnect(conn, client_id).await?,
+            State::Disconnected(disconnected) => {
+                disconnected
+                    .reconnect(conn, client_id, shared_state)
+                    .await?
+            }
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
             State::Handshake(handshake) => {
                 let session_data = SessionData::from_props(interfaces, store).await;
@@ -430,6 +445,7 @@ impl Disconnected {
         &mut self,
         conn: &mut Connection,
         client_id: ClientId<&str>,
+        shared_state: &SharedState,
     ) -> Result<Next, PairingError> {
         let api = ApiClient::from_transport(&conn.provider, client_id.realm, client_id.device_id)?;
 
@@ -441,6 +457,8 @@ impl Disconnected {
                 return Ok(Next::Same);
             }
         };
+
+        *shared_state.cert_expiry.lock().await = conn.provider.fetch_cert_expiry(client_id).await;
 
         debug!("created a new transport, reconnecting");
 
@@ -488,6 +506,8 @@ impl Connecting {
             }
             Event::Incoming(incoming) => {
                 error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
+
+                notify_security_event(SecurityEvent::UnexpectedMessageReceived);
 
                 Next::state(Disconnected)
             }
@@ -920,7 +940,14 @@ impl Next {
 
                 Next::state(Connecting)
             }
-            ConnectionError::Tls(_) | ConnectionError::ConnectionRefused(_) => {
+            ConnectionError::Tls(tls_err) => {
+                trace!("tls error recreate the connection");
+
+                notify_tls_error(&tls_err);
+
+                Next::state(Disconnected)
+            }
+            ConnectionError::ConnectionRefused(_) => {
                 trace!("recreate the connection");
 
                 Next::state(Disconnected)
@@ -992,6 +1019,7 @@ mod tests {
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
+        retention::memory::VolatileStore,
         session::{IntrospectionInterface, SessionError},
         store::{memory::MemoryStore, mock::MockStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
@@ -1218,6 +1246,8 @@ mod tests {
 
         let interfaces = Interfaces::from_iter(interfaces);
         let store = StoreWrapper::new(MemoryStore::new());
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
+        let interfaces = shared_state.interfaces.read().await;
 
         store
             .store_prop(prop.as_prop_ref())
@@ -1240,6 +1270,7 @@ mod tests {
                 client_id,
                 &interfaces,
                 &store,
+                &shared_state,
             ),
         )
         .await
@@ -1353,6 +1384,8 @@ mod tests {
             });
 
         let mock_store = StoreWrapper::new(mock_store);
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
+        let interfaces = shared_state.interfaces.read().await;
 
         let connection = tokio::time::timeout(
             Duration::from_secs(3),
@@ -1370,6 +1403,7 @@ mod tests {
                 client_id,
                 &interfaces,
                 &mock_store,
+                &shared_state,
             ),
         )
         .await
@@ -1465,6 +1499,8 @@ mod tests {
 
         // session storage
         let interfaces = Interfaces::from_iter(interfaces);
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
+        let interfaces = shared_state.interfaces.read().await;
 
         let mock_store = StoreWrapper::new(mock_store);
 
@@ -1484,6 +1520,7 @@ mod tests {
                 client_id,
                 &interfaces,
                 &mock_store,
+                &shared_state,
             ),
         )
         .await

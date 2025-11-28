@@ -21,6 +21,7 @@
 use std::{future::Future, sync::Arc};
 
 use astarte_interfaces::{interface::Retention, mapping::path::MappingPathError, MappingPath};
+use chrono::{DateTime, Utc};
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -32,7 +33,10 @@ use crate::{
     },
     state::{SharedState, Status},
     store::StoreCapabilities,
-    transport::{mqtt::error::MqttError, Connection, Publish},
+    transport::{
+        mqtt::{error::MqttError, Mqtt},
+        Connection, Publish,
+    },
     Timestamp,
 };
 use crate::{error::DynError, transport::Disconnect};
@@ -381,6 +385,10 @@ where
             }
         }
 
+        crate::notify::event::notify_security_event(
+            crate::notify::event::SecurityEvent::CertificateAboutToExpire,
+        );
+
         match data.get_retention() {
             Retention::Volatile { .. } => Self::send_volatile(state, sender, data).await,
             Retention::Stored { .. } => Self::send_stored(state, store, sender, data).await,
@@ -460,6 +468,30 @@ where
 
         state.volatile_store.push_sent(id, data.clone()).await;
         data.send_stored(RetentionId::Volatile(id), sender).await
+    }
+}
+
+impl<S> DeviceClient<Mqtt<S>>
+where
+    S: StoreCapabilities,
+{
+    /// Retrieve the expiry (not_after) timestamp of the current certificate
+    pub async fn get_cert_expiry(&self) -> Option<DateTime<Utc>> {
+        *self.state.cert_expiry.lock().await
+    }
+
+    /// Retrieve the expiry (not_after) timestamp of the current certificate
+    /// Note that this function will log a security event [`crate::notify::event::SecurityEvent::CertificateAboutToExpire`]
+    /// when the certificate will expire at the passed datetime
+    #[cfg(feature = "security-events")]
+    pub async fn is_valid_at(&self, check_dt: DateTime<Utc>) -> Option<bool> {
+        let expiry = self.get_cert_expiry().await?;
+
+        if check_dt < expiry {
+            Some(true)
+        } else {
+            Some(false)
+        }
     }
 }
 
