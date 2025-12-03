@@ -1391,7 +1391,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
-                timeout: Duration::from_secs(10),
+                connection_timeout: Duration::from_secs(10),
             }),
         )
         .await
@@ -1520,7 +1520,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
-                timeout: Duration::from_secs(10),
+                connection_timeout: Duration::from_secs(10),
             }),
         )
         .await

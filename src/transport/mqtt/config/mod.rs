@@ -44,7 +44,7 @@ use crate::{
 use self::tls::is_env_ignore_ssl;
 
 use super::{
-    client::AsyncClient, pairing::ApiClient, registration::register_device_timeout, Mqtt,
+    client::AsyncClient, pairing::ApiClient, registration::register_device_with_timeout, Mqtt,
     MqttClient, PairingError, SharedState, DEFAULT_KEEP_ALIVE,
 };
 
@@ -327,7 +327,7 @@ impl MqttConfig {
             }
         }
 
-        let secret = register_device_timeout(
+        let secret = register_device_with_timeout(
             pairing_token,
             &self.pairing_url,
             &self.realm,
@@ -554,7 +554,7 @@ where
                     writable_dir: config.writable_dir.clone(),
                     channel_size: config.channel_size,
                 },
-                config.timeout,
+                config.connection_timeout,
             )
             .await?;
 

@@ -17,7 +17,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: 'Run offline test'
-description: 'Run the example datastream_individual without a connection'
+description: 'Run the example "retention" without a connection'
 inputs:
   sdk_path:
     required: true
@@ -58,5 +58,5 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        sudo "$SDK_WORKSPACE/scripts/test-offline-run.sh" \
+        $SDK_WORKSPACE/scripts/test-offline-run.sh \
           -c "$SDK_WORKSPACE/examples/retention/configuration.json"

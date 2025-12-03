@@ -122,7 +122,7 @@ pub struct BuildConfig<S> {
     pub(crate) writable_dir: Option<PathBuf>,
     pub(crate) store: S,
     pub(crate) state: Arc<SharedState>,
-    pub(crate) timeout: Duration,
+    pub(crate) connection_timeout: Duration,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
@@ -136,8 +136,8 @@ pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
     pub(crate) writable_dir: Option<PathBuf>,
-    // FIXME it's not clear to the user if this is a timeout of the whole connection process or the timeout of every call performed
-    pub(crate) timeout: Duration,
+    pub(crate) connection_timeout: Duration,
+    // TODO add a send timeout to the client that will be applied to mqtt send methods
 }
 
 impl DeviceBuilder<NoConnect, NoStore> {
@@ -164,7 +164,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
             store: NoStore,
-            timeout: DEFAULT_REQUEST_TIMEOUT,
+            connection_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
@@ -273,8 +273,8 @@ impl<S, C> DeviceBuilder<S, C> {
 
     /// Set the timeout used while performing individual HTTP calls
     /// and used while waiting for a connection to the MQTT server.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+    pub fn connection_timeout(mut self, timeout: Duration) -> Self {
+        self.connection_timeout = timeout;
 
         self
     }
@@ -313,7 +313,7 @@ impl<C> DeviceBuilder<C, NoStore> {
             channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
-            timeout: self.timeout,
+            connection_timeout: self.connection_timeout,
         }
     }
 }
@@ -350,7 +350,7 @@ where
             volatile_retention: self.volatile_retention,
             stored_retention: self.stored_retention,
             writable_dir: self.writable_dir,
-            timeout: self.timeout,
+            connection_timeout: self.connection_timeout,
         }
     }
 }
@@ -390,7 +390,7 @@ where
             channel_size: self.channel_size,
             writable_dir: self.writable_dir,
             state: Arc::clone(&state),
-            timeout: self.timeout,
+            connection_timeout: self.connection_timeout,
         };
 
         let DeviceTransport {
@@ -594,7 +594,7 @@ mod test {
                           writable_dir,
                           store: _,
                           state,
-                          timeout: _,
+                          connection_timeout: _,
                       }| {
                     channel_size == channel_size
                         && *writable_dir == tmp_path

@@ -41,7 +41,7 @@ struct MqttV1Credential {
 }
 
 /// Obtain a credentials secret from the astarte API
-pub async fn register_device_timeout(
+pub async fn register_device_with_timeout(
     token: &str,
     pairing_url: &str,
     realm: &str,
@@ -90,7 +90,7 @@ pub async fn register_device(
     realm: &str,
     device_id: &str,
 ) -> Result<String, PairingError> {
-    register_device_timeout(
+    register_device_with_timeout(
         token,
         pairing_url,
         realm,
