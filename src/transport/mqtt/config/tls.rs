@@ -20,7 +20,6 @@
 
 use std::{io, sync::Arc};
 
-use itertools::Itertools;
 use rustls::{
     client::WantsClientCert,
     crypto::CryptoProvider,
@@ -93,10 +92,19 @@ impl ClientAuth {
         private_key: PrivatePkcs8KeyDer<'static>,
         client_id: ClientId<&str>,
     ) -> Result<Option<Self>, io::Error> {
-        let Ok(cert) = rustls_pemfile::certs(&mut pem.as_bytes()).exactly_one() else {
-            warn!("expected only one certificate in the chain");
+        let bytes = &mut pem.as_bytes();
+        let mut certificates = rustls_pemfile::certs(bytes);
+        let Some(cert) = certificates.next() else {
+            warn!("expected one certificate in the chain");
             return Ok(None);
         };
+
+        if certificates.next().is_some() {
+            warn!("expected exactly one certificate in the chain, found more");
+            return Ok(None);
+        }
+
+        drop(certificates);
 
         cert.map(|cert| {
             let auth = Self {
