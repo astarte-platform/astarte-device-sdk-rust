@@ -439,7 +439,8 @@ impl MqttConfig {
         store_wrapper: &StoreWrapper<S>,
         state: Arc<SharedState>,
         config: PartialConfig,
-        timeout: Duration,
+        connection_timeout: Duration,
+        send_timeout: Duration,
     ) -> Result<MqttTransport<S>, MqttError>
     where
         S: StoreCapabilities,
@@ -452,7 +453,10 @@ impl MqttConfig {
         let (retention_tx, retention_rx) = flume::bounded(config.channel_size);
         let retention = MqttRetention::new(retention_rx);
 
-        let (connection, client) = match self.try_create_transport(&config, timeout).await {
+        let (connection, client) = match self
+            .try_create_transport(&config, connection_timeout)
+            .await
+        {
             Ok(MqttTransportOptions {
                 mqtt_opts,
                 net_opts,
@@ -473,7 +477,7 @@ impl MqttConfig {
                     client_id.as_ref(),
                     &interfaces,
                     store_wrapper,
-                    timeout,
+                    connection_timeout,
                 )
                 .await?;
 
@@ -483,6 +487,7 @@ impl MqttConfig {
                     retention_tx,
                     store_wrapper.clone(),
                     Arc::clone(&state),
+                    send_timeout,
                 );
 
                 (connection, client)
@@ -496,13 +501,14 @@ impl MqttConfig {
                     retention_tx,
                     store_wrapper.clone(),
                     Arc::clone(&state),
+                    send_timeout,
                 );
                 let connection = MqttConnection::without_transport(
                     self.clone(),
                     config.clone(),
                     // NOTE pass client to connection so that the [`AsyncClient`] used by the clients can be updated.
                     Arc::clone(&client.client),
-                    timeout,
+                    connection_timeout,
                 );
 
                 (connection, client)
@@ -555,6 +561,7 @@ where
                     channel_size: config.channel_size,
                 },
                 config.connection_timeout,
+                config.send_timeout,
             )
             .await?;
 
