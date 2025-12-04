@@ -70,6 +70,9 @@ pub enum MqttError {
     /// Token error while waiting for ack
     #[error("token error while waiting for ack")]
     PubAckToken(#[source] TokenError),
+    /// The client is currently disconnected
+    #[error("no client, connection with the server was not established")]
+    NoClient,
 }
 
 impl MqttError {

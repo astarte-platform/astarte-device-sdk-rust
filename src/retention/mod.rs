@@ -416,8 +416,8 @@ pub(crate) enum RetentionId {
 impl Display for RetentionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RetentionId::Volatile(id) => write!(f, "volatile {id}"),
-            RetentionId::Stored(id) => write!(f, "stored {id}"),
+            RetentionId::Volatile(id) => write!(f, "Volatile {id}"),
+            RetentionId::Stored(id) => write!(f, "Stored {id}"),
         }
     }
 }

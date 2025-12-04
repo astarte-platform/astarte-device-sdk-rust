@@ -202,9 +202,6 @@ where
     async fn handle_events(mut self) -> Result<(), crate::Error> {
         self.init_stored_retention().await?;
 
-        // We are connected and all the stored packet have been sent
-        self.state.status.set_connected(true);
-
         loop {
             match self.poll().await {
                 Ok(Status::Connected) => {}
@@ -330,6 +327,20 @@ mod tests {
 
         connection
             .connection
+            .expect_reconnect()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(true));
+
+        connection
+            .sender
+            .expect_clone()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(MockSender::new);
+
+        connection
+            .connection
             .expect_next_event()
             .once()
             .in_sequence(&mut seq)
@@ -360,6 +371,9 @@ mod tests {
 
                 Ok((value, None))
             });
+
+        // first ensure the status is connected (starts off with a disconnected status)
+        connection.reconnect_and_resend().await.unwrap();
 
         let status = connection.poll().await.unwrap();
 

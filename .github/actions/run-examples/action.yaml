@@ -46,8 +46,7 @@ runs:
         astartectl realm-management interfaces sync $SDK_WORKSPACE/docs/interfaces/*.json --non-interactive
         astartectl realm-management interfaces sync $SDK_WORKSPACE/examples/**/interfaces/*.json --non-interactive
         astartectl realm-management interfaces ls
-    # registration
-    - name: Configure registartion
+    - name: Configure and run registartion
       shell: bash
       run: |
         ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
@@ -60,10 +59,6 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-    - name: Run registration
-      shell: bash
-      # use the full command to use the sccache
-      run: |
         cargo run --locked --example registration
     - name: Configure and run retention
       shell: bash
@@ -78,8 +73,7 @@ runs:
             "pairing_url": "$ASTARTE_PAIRING_URL"
         }
         END
-        # FIXME fix the problem with the non unique retention ids and remove the disabled debug assertions
-        RUSTFLAGS="-C debug-assertions=off" cargo run --locked --example retention --features="derive" -- -l 10
+        cargo run --locked --example retention --features="derive" -- -l 10
     - name: Configure and run individual datastream
       shell: bash
       run: |

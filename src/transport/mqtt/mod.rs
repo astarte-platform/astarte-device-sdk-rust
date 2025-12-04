@@ -38,7 +38,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use astarte_interfaces::{
@@ -88,8 +88,6 @@ use self::{
 
 /// Default keep alive interval in seconds for the MQTT connection.
 pub const DEFAULT_KEEP_ALIVE: u64 = 30;
-/// Default connection timeout in seconds for the MQTT connection.
-pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 
 /// Struct representing an MQTT connection handler for an Astarte device.
 ///
@@ -98,21 +96,41 @@ pub const DEFAULT_CONNECTION_TIMEOUT: u64 = 5;
 #[derive(Clone, Debug)]
 pub struct MqttClient<S> {
     client_id: ClientId,
-    client: AsyncClient,
+    client: Arc<OnceLock<AsyncClient>>,
     retention: RetSender,
     store: StoreWrapper<S>,
     state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
-    /// Create a new client.
-    pub(crate) fn new(
+    /// Creates a new client that is missing the transport
+    pub(crate) fn without_transport(
         client_id: ClientId,
-        client: AsyncClient,
         retention: RetSender,
         store: StoreWrapper<S>,
         state: Arc<SharedState>,
     ) -> Self {
+        Self {
+            client_id,
+            client: Arc::new(OnceLock::new()),
+            retention,
+            store,
+            state,
+        }
+    }
+
+    /// Create a new client.
+    pub(crate) fn new(
+        client_id: ClientId,
+        mqtt_client: AsyncClient,
+        retention: RetSender,
+        store: StoreWrapper<S>,
+        state: Arc<SharedState>,
+    ) -> Self {
+        let client = OnceLock::new();
+        client.set(mqtt_client).unwrap(); // NOTE this should never panic or block
+        let client = Arc::new(client);
+
         Self {
             client_id,
             client,
@@ -120,6 +138,10 @@ impl<S> MqttClient<S> {
             store,
             state,
         }
+    }
+
+    fn get_client(&self) -> Result<&AsyncClient, MqttError> {
+        self.client.get().ok_or(MqttError::NoClient)
     }
 
     /// Send a binary payload over this mqtt connection.
@@ -130,7 +152,7 @@ impl<S> MqttClient<S> {
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
     ) -> Result<Token<AckOfPub>, MqttError> {
-        self.client
+        self.get_client()?
             .publish(
                 format!("{}/{interface}{path}", self.client_id),
                 reliability,
@@ -142,7 +164,7 @@ impl<S> MqttClient<S> {
     }
 
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.client
+        self.get_client()?
             .subscribe(
                 self.client_id.make_interface_wildcard(interface_name),
                 rumqttc::QoS::ExactlyOnce,
@@ -153,7 +175,7 @@ impl<S> MqttClient<S> {
     }
 
     async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.client
+        self.get_client()?
             .unsubscribe(self.client_id.make_interface_wildcard(interface_name))
             .await
             .map_err(MqttError::Unsubscribe)
@@ -397,7 +419,7 @@ where
 
         let introspection = DeviceIntrospection::new(interfaces.iter_with_added(added)).to_string();
 
-        self.client
+        self.get_client()?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -420,7 +442,7 @@ where
         let iter = interfaces.iter_without_removed(removed);
         let introspection = DeviceIntrospection::new(iter).to_string();
 
-        self.client
+        self.get_client()?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -458,7 +480,7 @@ where
             })
             .collect_vec();
 
-        self.client
+        self.get_client()?
             .subscribe_interfaces(self.client_id.as_ref(), &server_interfaces)
             .await
             .map_err(MqttError::Subscribe)?;
@@ -467,7 +489,7 @@ where
             DeviceIntrospection::new(interfaces.iter_with_added_many(added)).to_string();
 
         let res = self
-            .client
+            .get_client()?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err));
@@ -507,7 +529,7 @@ where
         let interfaces = interfaces.iter_without_removed_many(removed);
         let introspection = DeviceIntrospection::new(interfaces).to_string();
 
-        self.client
+        self.get_client()?
             .send_introspection(self.client_id.as_ref(), introspection)
             .await
             .map_err(|err| MqttError::publish("send introspection", err))?
@@ -536,7 +558,12 @@ where
     S: Send,
 {
     async fn disconnect(&mut self) -> Result<(), crate::Error> {
-        self.client
+        let Some(client) = self.client.get() else {
+            info!("disconnecting while never connected, the mqtt client was not created");
+            return Ok(());
+        };
+
+        client
             .disconnect()
             .await
             .map(drop)
@@ -746,7 +773,7 @@ where
             .connection
             .reconnect(self.client_id.as_ref(), interfaces, &self.store)
             .await
-            .map_err(|err| Error::Mqtt(MqttError::Poll(err)));
+            .map_err(Error::Mqtt);
 
         // if we are connected but the session is not present we have to cleanup the retention data
         if result.as_ref().is_ok_and(|con| *con) && !self.connection.is_session_present() {
@@ -1012,6 +1039,7 @@ pub(crate) mod test {
                 eventloop,
                 transport_provider,
                 self::connection::Connected::new(true),
+                Duration::from_secs(10),
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
@@ -1363,6 +1391,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
+                connection_timeout: Duration::from_secs(10),
             }),
         )
         .await
@@ -1491,6 +1520,7 @@ pub(crate) mod test {
                     builder.interfaces,
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
+                connection_timeout: Duration::from_secs(10),
             }),
         )
         .await
