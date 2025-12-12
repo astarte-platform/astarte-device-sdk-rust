@@ -17,7 +17,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub(crate) mod security {
-    use cfg_if::cfg_if;
     use tracing::Level;
 
     /// Represents a security device event.
@@ -141,45 +140,16 @@ pub(crate) mod security {
         }
     }
 
-    #[cfg(feature = "security-events")]
-    #[derive(Clone, Debug, serde::Serialize)]
-    struct SecurityEventMessage<'a> {
-        id: u16,
-        message: &'a str,
-    }
-
     pub(crate) fn notify_security_event(event: SecurityEvent) {
         let id = event as u16;
         let message = event.description();
 
-        cfg_if! {
-            if #[cfg(feature = "security-events")] {
-                let message = SecurityEventMessage {
-                    id,
-                    message,
-                };
-                let Ok(serialized) = serde_json::to_string(&message) else {
-                    tracing::warn!("error while logging security event");
-                    return;
-                };
-
-                match event.level() {
-                    Level::ERROR => tracing::error!(target: "security-event", message=serialized),
-                    Level::WARN => tracing::warn!(target: "security-event", message=serialized),
-                    Level::INFO => tracing::info!(target: "security-event", message=serialized),
-                    Level::DEBUG => tracing::debug!(target: "security-event", message=serialized),
-                    Level::TRACE => tracing::trace!(target: "security-event", message=serialized),
-                }
-            }
-            else {
-                match event.level() {
-                    Level::ERROR => tracing::error!(target:"security-event", id, "{message}"),
-                    Level::WARN => tracing::warn!(target:"security-event", id, "{message}"),
-                    Level::INFO => tracing::info!(target:"security-event", id, "{message}"),
-                    Level::DEBUG => tracing::debug!(target:"security-event", id, "{message}"),
-                    Level::TRACE => tracing::trace!(target:"security-event", id, "{message}"),
-                }
-            }
+        match event.level() {
+            Level::ERROR => tracing::error!(target:"security-event", id, "{message}"),
+            Level::WARN => tracing::warn!(target:"security-event", id, "{message}"),
+            Level::INFO => tracing::info!(target:"security-event", id, "{message}"),
+            Level::DEBUG => tracing::debug!(target:"security-event", id, "{message}"),
+            Level::TRACE => tracing::trace!(target:"security-event", id, "{message}"),
         }
     }
 
