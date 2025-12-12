@@ -34,6 +34,7 @@ use url::Url;
 use crate::{
     builder::{BuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE},
     error::Report,
+    logging::security::{notify_security_event, SecurityEvent},
     store::{wrapper::StoreWrapper, StoreCapabilities},
     transport::mqtt::{
         config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
@@ -402,6 +403,10 @@ impl MqttConfig {
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
 
+        if insecure_ssl {
+            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
+        }
+
         let provider = TransportProvider::configure(
             pairing_url,
             secret,
@@ -462,7 +467,12 @@ impl MqttConfig {
                     AsyncClient::new(mqtt_opts, self.bounded_channel_size);
                 eventloop.set_network_options(net_opts);
 
-                let interfaces = state.interfaces.read().await;
+                *state.cert_expiry.lock().await = provider
+                    .fetch_cert_expiry(ClientId {
+                        realm: &self.realm,
+                        device_id: &self.device_id,
+                    })
+                    .await;
 
                 // NOTE if this function times out no error is returned
                 // but the connection will be in a Connecting state
@@ -471,8 +481,8 @@ impl MqttConfig {
                     eventloop,
                     provider,
                     client_id.as_ref(),
-                    &interfaces,
                     store_wrapper,
+                    &state,
                     timeout,
                 )
                 .await?;

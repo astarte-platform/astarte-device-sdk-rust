@@ -61,9 +61,11 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
+    logging::security::{notify_security_event, notify_tls_error, SecurityEvent},
     properties::{encode_set_properties, PropertiesError},
     retry::ExponentialIter,
     session::StoredSession,
+    state::SharedState,
     store::{wrapper::StoreWrapper, OptStoredProp, PropertyStore, StoreCapabilities},
     transport::mqtt::{
         config::MqttTransportOptions, pairing::ApiClient, payload::Payload, AsyncClientExt,
@@ -316,14 +318,16 @@ impl MqttConnection {
         mut eventloop: EventLoop,
         provider: TransportProvider,
         client_id: ClientId<&str>,
-        interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
         timeout: Duration,
     ) -> Result<Self, MqttError>
     where
         S: PropertyStore + StoreCapabilities,
     {
-        let session_sync = Self::is_introspection_stored(interfaces, store).await;
+        let interfaces = shared_state.interfaces.read().await;
+
+        let session_sync = Self::is_introspection_stored(&interfaces, store).await;
         debug!(session_sync = session_sync, "Creating new mqtt connection");
 
         // NOTE during the first connection we will always clean the session since the mqtt library can't
@@ -340,7 +344,7 @@ impl MqttConnection {
         let start = SystemTime::now();
 
         while !mqtt_connection
-            .reconnect(client_id, interfaces, store)
+            .reconnect(client_id, &interfaces, store, shared_state)
             .await?
         {
             if SystemTime::now()
@@ -394,6 +398,7 @@ impl MqttConnection {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
     ) -> Result<bool, MqttError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -412,7 +417,14 @@ impl MqttConnection {
 
         loop {
             let opt_publish = state
-                .poll(connection, client_id, interfaces, store, self.timeout)
+                .poll(
+                    connection,
+                    client_id,
+                    interfaces,
+                    store,
+                    shared_state,
+                    self.timeout,
+                )
                 .await?;
 
             if let Some(publish) = opt_publish {
@@ -524,6 +536,7 @@ impl State {
         client_id: ClientId<&str>,
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
+        shared_state: &SharedState,
         timeout: Duration,
     ) -> Result<Option<Publish>, PollError>
     where
@@ -533,7 +546,9 @@ impl State {
 
         let next = match self {
             State::Disconnected(disconnected) => {
-                disconnected.reconnect(conn, client_id, timeout).await?
+                disconnected
+                    .reconnect(conn, client_id, shared_state, timeout)
+                    .await?
             }
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
             State::Handshake(handshake) => {
@@ -604,6 +619,7 @@ impl Disconnected {
         &mut self,
         conn: &mut Connection,
         client_id: ClientId<&str>,
+        shared_state: &SharedState,
         timeout: Duration,
     ) -> Result<Next, PairingError> {
         let api = ApiClient::from_transport(
@@ -621,6 +637,8 @@ impl Disconnected {
                 return Ok(Next::Same);
             }
         };
+
+        *shared_state.cert_expiry.lock().await = conn.provider.fetch_cert_expiry(client_id).await;
 
         debug!("created a new transport, reconnecting");
 
@@ -668,6 +686,8 @@ impl Connecting {
             }
             Event::Incoming(incoming) => {
                 error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
+
+                notify_security_event(SecurityEvent::UnexpectedMessageReceived);
 
                 Next::state(Disconnected)
             }
@@ -1107,7 +1127,14 @@ impl Next {
 
                 Next::state(Connecting)
             }
-            ConnectionError::Tls(_) | ConnectionError::ConnectionRefused(_) => {
+            ConnectionError::Tls(tls_err) => {
+                trace!("tls error recreate the connection");
+
+                notify_tls_error(&tls_err);
+
+                Next::state(Disconnected)
+            }
+            ConnectionError::ConnectionRefused(_) => {
                 trace!("recreate the connection");
 
                 Next::state(Disconnected)
@@ -1183,6 +1210,7 @@ mod tests {
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
+        retention::memory::VolatileStore,
         session::{IntrospectionInterface, SessionError},
         store::{memory::MemoryStore, mock::MockStore, StoredProp},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
@@ -1409,6 +1437,7 @@ mod tests {
 
         let interfaces = Interfaces::from_iter(interfaces);
         let store = StoreWrapper::new(MemoryStore::new());
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
 
         store
             .store_prop(prop.as_prop_ref())
@@ -1429,8 +1458,8 @@ mod tests {
                 .await
                 .expect("failed to configure transport provider"),
                 client_id,
-                &interfaces,
                 &store,
+                &shared_state,
                 Duration::from_secs(10),
             ),
         )
@@ -1545,6 +1574,7 @@ mod tests {
             });
 
         let mock_store = StoreWrapper::new(mock_store);
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
 
         let connection = tokio::time::timeout(
             Duration::from_secs(3),
@@ -1560,8 +1590,8 @@ mod tests {
                 .await
                 .expect("failed to configure transport provider"),
                 client_id,
-                &interfaces,
                 &mock_store,
+                &shared_state,
                 Duration::from_secs(10),
             ),
         )
@@ -1658,6 +1688,7 @@ mod tests {
 
         // session storage
         let interfaces = Interfaces::from_iter(interfaces);
+        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
 
         let mock_store = StoreWrapper::new(mock_store);
 
@@ -1675,8 +1706,8 @@ mod tests {
                 .await
                 .expect("failed to configure transport provider"),
                 client_id,
-                &interfaces,
                 &mock_store,
+                &shared_state,
                 Duration::from_secs(10),
             ),
         )

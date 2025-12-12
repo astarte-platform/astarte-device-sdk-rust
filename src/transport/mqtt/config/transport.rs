@@ -19,6 +19,7 @@
 use core::str;
 use std::{path::PathBuf, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
@@ -28,6 +29,7 @@ use url::Url;
 
 use super::ClientId;
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use crate::logging::security::{notify_security_event, SecurityEvent};
 use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
     error::Report,
@@ -87,9 +89,18 @@ impl TransportProvider {
         client: &ApiClient<'_>,
     ) -> Result<(Bundle, String), PairingError> {
         let bundle = Bundle::generate_key(client.realm, client.device_id)?;
+        notify_security_event(SecurityEvent::CsrPendingApproval);
 
-        let certificate = client.create_certificate(&bundle.csr).await?;
+        let certificate = client
+            .create_certificate(&bundle.csr)
+            .await
+            .inspect_err(|_| {
+                notify_security_event(SecurityEvent::CsrFailed);
+                notify_security_event(SecurityEvent::CertificateTransferFailed);
+            })?;
 
+        notify_security_event(SecurityEvent::CsrApproved);
+        notify_security_event(SecurityEvent::CertificateTransferredSuccessfully);
         debug!("credentials created");
 
         Ok((bundle, certificate))
@@ -103,11 +114,20 @@ impl TransportProvider {
         certificate_file: &CertificateFile,
         certificate: &str,
     ) {
+        let store_cert = fs::write(&certificate_file, &certificate).await;
+        let store_key = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await;
+
+        if store_cert.is_ok() && store_key.is_ok() {
+            notify_security_event(SecurityEvent::CertificateStoredSuccessfully);
+        } else {
+            notify_security_event(SecurityEvent::CertificateWriteFailed);
+        }
+
         // Don't fail here since the SDK can always regenerate the certificate,
-        if let Err(err) = fs::write(&certificate_file, &certificate).await {
+        if let Err(err) = store_cert {
             error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
         }
-        if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
+        if let Err(err) = store_key {
             error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
         }
     }
@@ -135,6 +155,7 @@ impl TransportProvider {
     /// Config the TLS for the transport.
     fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
+            notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
             client_auth.insecure_tls_config()?
         } else {
             let roots = self.root_cert_store();
@@ -202,6 +223,8 @@ impl TransportProvider {
             info!("existing certificate found");
 
             return Ok(auth);
+        } else {
+            notify_security_event(SecurityEvent::AlarmCertificateUnavailable);
         }
 
         self.create_credentials(client).await
@@ -215,6 +238,15 @@ impl TransportProvider {
         let client_auth = self.retrieve_credentials(client).await?;
 
         self.config_transport(client_auth)
+    }
+
+    pub(crate) async fn fetch_cert_expiry(
+        &self,
+        client_id: ClientId<&str>,
+    ) -> Option<DateTime<Utc>> {
+        let client_auth = self.read_credentials(client_id).await?;
+
+        client_auth.parse_validity_not_after()
     }
 
     // validate the existing certificate is valid, if valid use it for the transport
@@ -264,13 +296,22 @@ impl TransportProvider {
                 ?store_dir,
                 "no device certificate file in store dir, assuming invalid"
             );
+            notify_security_event(SecurityEvent::AlarmCertificateUnavailable);
             return Ok(None);
         };
 
         client
             .verify_certificate(client_auth.pem())
             .await
-            .map(|res| res.then_some(client_auth))
+            .map(|res| {
+                if res {
+                    notify_security_event(SecurityEvent::CertificateValidationSucceeded);
+                } else {
+                    notify_security_event(SecurityEvent::CertificateValidationFailed);
+                }
+
+                res.then_some(client_auth)
+            })
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
