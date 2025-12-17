@@ -39,6 +39,7 @@ use std::{
     fmt::{Debug, Display},
     future::{Future, IntoFuture},
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use astarte_interfaces::{
@@ -46,7 +47,7 @@ use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
 };
 use bytes::Bytes;
-use futures::future::Either;
+use futures::{future::Either, TryFutureExt};
 use itertools::Itertools;
 use rumqttc::{AckOfPub, ClientError, QoS, SubAck, SubscribeFilter, Token, TokenError};
 use tracing::{debug, error, info, trace};
@@ -100,6 +101,7 @@ pub struct MqttClient<S> {
     retention: RetSender,
     store: StoreWrapper<S>,
     state: Arc<SharedState>,
+    send_timeout: Duration,
 }
 
 impl<S> MqttClient<S> {
@@ -109,6 +111,7 @@ impl<S> MqttClient<S> {
         retention: RetSender,
         store: StoreWrapper<S>,
         state: Arc<SharedState>,
+        send_timeout: Duration,
     ) -> Self {
         Self {
             client_id,
@@ -116,6 +119,7 @@ impl<S> MqttClient<S> {
             retention,
             store,
             state,
+            send_timeout,
         }
     }
 
@@ -126,6 +130,7 @@ impl<S> MqttClient<S> {
         retention: RetSender,
         store: StoreWrapper<S>,
         state: Arc<SharedState>,
+        send_timeout: Duration,
     ) -> Self {
         let client = OnceLock::new();
         client.set(mqtt_client).unwrap(); // NOTE this should never panic or block
@@ -137,6 +142,7 @@ impl<S> MqttClient<S> {
             retention,
             store,
             state,
+            send_timeout,
         }
     }
 
@@ -152,34 +158,40 @@ impl<S> MqttClient<S> {
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
     ) -> Result<Token<AckOfPub>, MqttError> {
-        self.get_client()?
-            .publish(
-                format!("{}/{interface}{path}", self.client_id),
-                reliability,
-                false,
-                payload,
-            )
-            .await
-            .map_err(|err| MqttError::publish("send", err))
+        self.apply_timeout(
+            self.get_client()?
+                .publish(
+                    format!("{}/{interface}{path}", self.client_id),
+                    reliability,
+                    false,
+                    payload,
+                )
+                .map_err(|err| MqttError::publish("send", err)),
+        )
+        .await
     }
 
     async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.get_client()?
-            .subscribe(
-                self.client_id.make_interface_wildcard(interface_name),
-                rumqttc::QoS::ExactlyOnce,
-            )
-            .await
-            .map_err(MqttError::Subscribe)
-            .map(drop)
+        self.apply_timeout(
+            self.get_client()?
+                .subscribe(
+                    self.client_id.make_interface_wildcard(interface_name),
+                    rumqttc::QoS::ExactlyOnce,
+                )
+                .map_err(MqttError::Subscribe),
+        )
+        .await
+        .map(drop)
     }
 
     async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
-        self.get_client()?
-            .unsubscribe(self.client_id.make_interface_wildcard(interface_name))
-            .await
-            .map_err(MqttError::Unsubscribe)
-            .map(drop)
+        self.apply_timeout(
+            self.get_client()?
+                .unsubscribe(self.client_id.make_interface_wildcard(interface_name))
+                .map_err(MqttError::Unsubscribe),
+        )
+        .await
+        .map(drop)
     }
 
     async fn mark_received(&self, id: &RetentionId) -> Result<(), Error>
@@ -233,13 +245,25 @@ impl<S> MqttClient<S> {
             return res.map(drop);
         };
 
-        let ack_result = token.await;
+        let ack_result = self
+            .apply_timeout(token.map_err(MqttError::PubAckToken))
+            .await;
         let Ok(_) = ack_result else {
             error!("error in ack reception while subscribing to interfaces");
-            return ack_result.map(drop).map_err(MqttError::PubAckToken);
+            return ack_result.map(drop);
         };
 
         Ok(())
+    }
+
+    #[inline]
+    async fn apply_timeout<F, T>(&self, fut: F) -> Result<T, MqttError>
+    where
+        F: Future<Output = Result<T, MqttError>>,
+    {
+        tokio::time::timeout(self.send_timeout, fut)
+            .await
+            .map_err(MqttError::Timeout)?
     }
 }
 
@@ -419,12 +443,14 @@ where
 
         let introspection = DeviceIntrospection::new(interfaces.iter_with_added(added)).to_string();
 
-        self.get_client()?
-            .send_introspection(self.client_id.as_ref(), introspection)
-            .await
-            .map_err(|err| MqttError::publish("send introspection", err))?
-            .await
-            .map_err(MqttError::PubAckToken)?;
+        self.apply_timeout(
+            self.get_client()?
+                .send_introspection(self.client_id.as_ref(), introspection)
+                .map_err(|err| MqttError::publish("send introspection", err)),
+        )
+        .await?
+        .await
+        .map_err(MqttError::PubAckToken)?;
 
         if let Some(session) = self.store.get_session() {
             let interface: IntrospectionInterface<&str> = added.interface().into();
@@ -442,12 +468,14 @@ where
         let iter = interfaces.iter_without_removed(removed);
         let introspection = DeviceIntrospection::new(iter).to_string();
 
-        self.get_client()?
-            .send_introspection(self.client_id.as_ref(), introspection)
-            .await
-            .map_err(|err| MqttError::publish("send introspection", err))?
-            .await
-            .map_err(MqttError::PubAckToken)?;
+        self.apply_timeout(
+            self.get_client()?
+                .send_introspection(self.client_id.as_ref(), introspection)
+                .map_err(|err| MqttError::publish("send introspection", err)),
+        )
+        .await?
+        .await
+        .map_err(MqttError::PubAckToken)?;
 
         if let Some(session) = self.store.get_session() {
             let interface: IntrospectionInterface<&str> = removed.into();
@@ -480,19 +508,23 @@ where
             })
             .collect_vec();
 
-        self.get_client()?
-            .subscribe_interfaces(self.client_id.as_ref(), &server_interfaces)
-            .await
-            .map_err(MqttError::Subscribe)?;
+        self.apply_timeout(
+            self.get_client()?
+                .subscribe_interfaces(self.client_id.as_ref(), &server_interfaces)
+                .map_err(MqttError::Subscribe),
+        )
+        .await?;
 
         let introspection =
             DeviceIntrospection::new(interfaces.iter_with_added_many(added)).to_string();
 
         let res = self
-            .get_client()?
-            .send_introspection(self.client_id.as_ref(), introspection)
-            .await
-            .map_err(|err| MqttError::publish("send introspection", err));
+            .apply_timeout(
+                self.get_client()?
+                    .send_introspection(self.client_id.as_ref(), introspection)
+                    .map_err(|err| MqttError::publish("send introspection", err)),
+            )
+            .await;
 
         let res = self
             .extend_interfaces_await_pub(res)
@@ -529,12 +561,14 @@ where
         let interfaces = interfaces.iter_without_removed_many(removed);
         let introspection = DeviceIntrospection::new(interfaces).to_string();
 
-        self.get_client()?
-            .send_introspection(self.client_id.as_ref(), introspection)
-            .await
-            .map_err(|err| MqttError::publish("send introspection", err))?
-            .await
-            .map_err(MqttError::PubAckToken)?;
+        self.apply_timeout(
+            self.get_client()?
+                .send_introspection(self.client_id.as_ref(), introspection)
+                .map_err(|err| MqttError::publish("send introspection", err)),
+        )
+        .await?
+        .await
+        .map_err(MqttError::PubAckToken)?;
 
         if let Some(session) = self.store.get_session() {
             let removed: Vec<IntrospectionInterface<&str>> =
@@ -1051,7 +1085,14 @@ pub(crate) mod test {
             Arc::clone(&state),
         );
 
-        let mqtt_client = MqttClient::new(client_id, client, ret_tx, store, state);
+        let mqtt_client = MqttClient::new(
+            client_id,
+            client,
+            ret_tx,
+            store,
+            state,
+            Duration::from_secs(5),
+        );
 
         (mqtt_client, mqtt)
     }
@@ -1397,6 +1438,7 @@ pub(crate) mod test {
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
                 connection_timeout: Duration::from_secs(10),
+                send_timeout: Duration::from_secs(10),
             }),
         )
         .await
@@ -1526,6 +1568,7 @@ pub(crate) mod test {
                     VolatileStore::with_capacity(builder.volatile_retention),
                 )),
                 connection_timeout: Duration::from_secs(10),
+                send_timeout: Duration::from_secs(10),
             }),
         )
         .await

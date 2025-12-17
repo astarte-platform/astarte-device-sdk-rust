@@ -123,6 +123,7 @@ pub struct BuildConfig<S> {
     pub(crate) store: S,
     pub(crate) state: Arc<SharedState>,
     pub(crate) connection_timeout: Duration,
+    pub(crate) send_timeout: Duration,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
@@ -137,7 +138,7 @@ pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) interfaces: Interfaces,
     pub(crate) writable_dir: Option<PathBuf>,
     pub(crate) connection_timeout: Duration,
-    // TODO add a send timeout to the client that will be applied to mqtt send methods
+    pub(crate) send_timeout: Duration,
 }
 
 impl DeviceBuilder<NoConnect, NoStore> {
@@ -165,6 +166,7 @@ impl DeviceBuilder<NoConnect, NoStore> {
             connection_config: NoConnect,
             store: NoStore,
             connection_timeout: DEFAULT_REQUEST_TIMEOUT,
+            send_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 }
@@ -278,6 +280,13 @@ impl<S, C> DeviceBuilder<S, C> {
 
         self
     }
+
+    /// Set the timeout used while sending data on the connection transport
+    pub fn send_timeout(mut self, timeout: Duration) -> Self {
+        self.send_timeout = timeout;
+
+        self
+    }
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
@@ -314,6 +323,7 @@ impl<C> DeviceBuilder<C, NoStore> {
             volatile_retention: self.volatile_retention,
             writable_dir: self.writable_dir,
             connection_timeout: self.connection_timeout,
+            send_timeout: self.send_timeout,
         }
     }
 }
@@ -351,6 +361,7 @@ where
             stored_retention: self.stored_retention,
             writable_dir: self.writable_dir,
             connection_timeout: self.connection_timeout,
+            send_timeout: self.send_timeout,
         }
     }
 }
@@ -391,6 +402,7 @@ where
             writable_dir: self.writable_dir,
             state: Arc::clone(&state),
             connection_timeout: self.connection_timeout,
+            send_timeout: self.send_timeout,
         };
 
         let DeviceTransport {
@@ -592,9 +604,8 @@ mod test {
                 move |BuildConfig {
                           channel_size,
                           writable_dir,
-                          store: _,
                           state,
-                          connection_timeout: _,
+                          ..
                       }| {
                     channel_size == channel_size
                         && *writable_dir == tmp_path
