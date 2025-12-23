@@ -194,7 +194,8 @@ impl<S> MqttClient<S> {
             }
             Reliability::Guaranteed | Reliability::Unique => {
                 self.retention
-                    .send((id, notice))
+                    .send_async((id, notice))
+                    .await
                     .map_err(|_| Error::Disconnected)?;
             }
         }
