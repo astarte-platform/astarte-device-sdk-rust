@@ -25,10 +25,12 @@ use tracing::{debug, error, info, trace};
 use crate::Error;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
-use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
+use crate::retention::{
+    RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
+};
 use crate::state::{ConnStatus, ConnectionState};
-use crate::store::StoreCapabilities;
 use crate::store::wrapper::StoreWrapper;
+use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::{Connection, Publish, Receive, Reconnect};
 
 use super::DeviceConnection;
@@ -94,38 +96,78 @@ where
             let _interfaces = state.interfaces().read().await;
 
             let mut remaining_data = true;
+            let mut offset = 0;
 
             while remaining_data {
                 remaining_data = false;
 
                 if volatile {
-                    remaining_data |= match Self::resend_volatile_publishes(
-                        &mut sender,
-                        &state,
-                        limit,
-                    )
-                    .await
-                    {
-                        Ok(sent) => sent >= limit.get(),
+                    match Self::resend_volatile_publishes(&mut sender, &state, limit).await {
+                        Ok(sent) => remaining_data |= sent >= limit.get(),
                         Err(err) => {
                             error!(error = %Report::new(&err), "error sending volatile retention");
                             // in case of errors while sending we still exit the loop
-                            false
+                            break;
                         }
-                    };
+                    }
                 }
 
-                remaining_data |=
-                    match Self::resend_stored_publishes(&mut store, &mut sender, limit).await {
-                        Ok(sent) => sent >= limit.get(),
-                        Err(err) => {
-                            error!(error = %Report::new(&err), "error sending stored retention");
-                            // in case of errors while sending we still exit the loop
-                            false
-                        }
-                    };
+                match Self::resend_stored_publishes(&mut store, &mut sender, limit).await {
+                    Ok(sent) => remaining_data |= sent >= limit.get(),
+                    Err(err) => {
+                        error!(error = %Report::new(&err), "error sending stored retention");
+                        // in case of errors while sending we still exit the loop
+                        break;
+                    }
+                }
+
+                match Self::send_device_properties(&mut store, &mut sender, limit.get(), offset)
+                    .await
+                {
+                    Ok(sent) => {
+                        offset += sent;
+
+                        remaining_data |= sent >= limit.get();
+                    }
+                    Err(err) => {
+                        error!(error = %Report::new(&err), "error sending device properties");
+
+                        break;
+                    }
+                }
             }
         }));
+    }
+
+    /// Sends the device owned properties even the null values.
+    /// This ignores the purge properties that should be sent by the connection implementation.
+    /// Since the purge properties we sent earlier new properties could have gotten unset.
+    // NOTE the current implementation of grpc does can't send a purge properties
+    // so currently in this generic resend we need to resend unsets too
+    async fn send_device_properties(
+        store: &mut StoreWrapper<C::Store>,
+        sender: &mut C::Sender,
+        limit: usize,
+        offset: usize,
+    ) -> Result<usize, Error>
+    where
+        C::Sender: Publish,
+    {
+        let device_properties = store.device_props_with_unset(limit, offset).await?;
+        let count = device_properties.len();
+        debug!("fetched {count} properties (limit: {limit}, offset: {offset})");
+
+        for prop in device_properties {
+            debug!(
+                "sending device-owned property = {}{}",
+                prop.interface, prop.path
+            );
+
+            // Don't wait for the ack since it's not fundamental for the connection
+            sender.resend_stored_property(prop).await?;
+        }
+
+        Ok(count)
     }
 
     /// Check if there is a previous task for the resend of stored publishes and cancels it.
@@ -170,14 +212,24 @@ where
             // mark as sent before so that no resend is tried while in flight
             state.volatile_store().mark_sent(&id, true).await;
 
-            let id = RetentionId::Volatile(id);
-
-            match value {
+            let result = match value {
                 ItemValue::Individual(individual) => {
-                    sender.send_individual_stored(id, individual).await?
+                    sender
+                        .send_individual_stored(RetentionId::Volatile(id), individual)
+                        .await
                 }
-                ItemValue::Object(object) => sender.send_object_stored(id, object).await?,
+                ItemValue::Object(object) => {
+                    sender
+                        .send_object_stored(RetentionId::Volatile(id), object)
+                        .await
+                }
             };
+
+            if let Err(e) = result {
+                error!(error=%Report::new(&e), "error while sending volatile marking unsent");
+                volatile_mark_unsent(state.volatile_store(), &id).await;
+                return Err(e);
+            }
         }
 
         Ok(count)
@@ -206,10 +258,13 @@ where
         for (id, info) in buf.drain(..) {
             // mark as sent before so that no resend is tried while in flight
             retention.update_sent_flag(&id, true).await?;
+            let result = sender.resend_stored(RetentionId::Stored(id), info).await;
 
-            let id = RetentionId::Stored(id);
-
-            sender.resend_stored(id, info).await?;
+            if let Err(e) = result {
+                error!(error=%Report::new(&e), "error while sending stored marking unsent");
+                stored_mark_unsent(store, &id).await;
+                return Err(e);
+            }
         }
 
         Ok(count)

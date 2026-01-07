@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -102,40 +102,45 @@ mock! {
         async fn send_individual(
             &mut self,
             data: crate::validate::ValidatedIndividual,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         async fn send_object(
             &mut self,
             data: crate::validate::ValidatedObject,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         async fn send_individual_stored(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::validate::ValidatedIndividual,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         async fn send_object_stored(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::validate::ValidatedObject,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         async fn resend_stored<'a>(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::retention::PublishInfo<'a> ,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
+
+        async fn resend_stored_property(
+            &mut self,
+            property_data: crate::store::OptStoredProp,
+        ) -> Result<(), crate::Error>;
 
         async fn send_property(
             &mut self,
             data: crate::validate::ValidatedProperty,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         async fn unset(
             &mut self,
             data: crate::validate::ValidatedUnset,
-        ) -> Result<(),crate::Error>;
+        ) -> Result<(), crate::Error>;
 
         fn serialize_individual(&self, data: &crate::validate::ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
 

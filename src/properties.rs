@@ -222,9 +222,10 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 /// Extracts the properties from a set payload.
 ///
 /// See https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#purge-properties
-pub(crate) fn encode_set_properties(
-    interface_paths: impl IntoIterator<Item = String>,
-) -> Result<Vec<u8>, PropertiesError> {
+pub(crate) fn encode_set_properties<'a, I>(interface_paths: I) -> Result<Vec<u8>, PropertiesError>
+where
+    I: IntoIterator<Item = &'a String>,
+{
     let mut iter = interface_paths.into_iter();
 
     let mut uncompressed_size: u32 = 0;
@@ -240,13 +241,13 @@ pub(crate) fn encode_set_properties(
         return encoder.finish().map_err(PropertiesError::Encode);
     };
 
-    uncompressed_size = encode_prop(&mut encoder, uncompressed_size, &first)?;
+    uncompressed_size = encode_prop(&mut encoder, uncompressed_size, first)?;
 
     for prop in iter {
         // encode the separator
         uncompressed_size = encode_prop(&mut encoder, uncompressed_size, ";")?;
         // encode the prop
-        uncompressed_size = encode_prop(&mut encoder, uncompressed_size, &prop)?;
+        uncompressed_size = encode_prop(&mut encoder, uncompressed_size, prop)?;
     }
 
     let mut res = encoder.finish().map_err(PropertiesError::Encode)?;
@@ -449,7 +450,7 @@ pub(crate) mod tests {
             "org.example.DraftInterface/otherPath".to_string(),
         ];
 
-        let encoded = encode_set_properties(example.clone()).unwrap();
+        let encoded = encode_set_properties(&example).unwrap();
 
         let expected_snapshot: [u8; 71] = [
             0, 0, 0, 70, 120, 156, 69, 202, 33, 14, 192, 32, 12, 5, 208, 27, 193, 1, 102, 103, 38,

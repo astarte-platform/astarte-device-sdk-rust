@@ -40,10 +40,10 @@ fn trace_sqlite(event: rusqlite::trace::TraceEvent) {
             tracing::trace!(statement);
         }
         rusqlite::trace::TraceEvent::Profile(stmt_ref, duration) => {
-            tracing::trace!(sql = %stmt_ref.sql(), profile = ?duration);
+            tracing::trace!(sql = stmt_ref.expanded_sql(), profile = ?duration);
         }
         rusqlite::trace::TraceEvent::Row(stmt_ref) => {
-            tracing::trace!(row = %stmt_ref.sql());
+            tracing::trace!(row = stmt_ref.expanded_sql());
         }
         rusqlite::trace::TraceEvent::Close(conn_ref) => {
             tracing::trace!(close = ?conn_ref.db_filename());

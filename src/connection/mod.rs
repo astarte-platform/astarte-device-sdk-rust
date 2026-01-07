@@ -246,6 +246,9 @@ where
     }
 }
 
+/// Implement drop on the connection.
+///
+/// All the clients will error when the connection is dropped.
 impl<C> Drop for DeviceConnection<C>
 where
     C: Connection,

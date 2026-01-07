@@ -21,11 +21,9 @@
 use astarte_interfaces::MappingPath;
 use tracing::debug;
 
-use crate::client::ValidatedIndividual;
-use crate::transport::Connection;
-use crate::{AstarteData, Error};
+use crate::{AstarteData, Error, Timestamp, client::ValidatedIndividual, transport::Connection};
 
-use super::{DeviceClient, Publish, Timestamp};
+use super::{DeviceClient, Publish};
 
 impl<C> DeviceClient<C>
 where
