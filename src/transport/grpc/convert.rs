@@ -31,7 +31,7 @@ use chrono::TimeZone;
 use itertools::Itertools;
 
 use crate::aggregate::AstarteObject;
-use crate::store::StoredProp;
+use crate::store::{OptStoredProp, StoredProp};
 use crate::types::{Double, TypeError};
 use crate::validate::ValidatedUnset;
 use crate::{
@@ -287,6 +287,21 @@ impl From<ValidatedProperty> for astarte_message_hub_proto::AstarteMessage {
             payload: Some(ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual {
                     data: Some(value.data.into()),
+                },
+            )),
+        }
+    }
+}
+
+// To convert a stored property
+impl From<OptStoredProp> for astarte_message_hub_proto::AstarteMessage {
+    fn from(prop: OptStoredProp) -> Self {
+        Self {
+            interface_name: prop.interface,
+            path: prop.path,
+            payload: Some(ProtoPayload::PropertyIndividual(
+                astarte_message_hub_proto::AstartePropertyIndividual {
+                    data: prop.value.map(Into::into),
                 },
             )),
         }

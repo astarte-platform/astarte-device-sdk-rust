@@ -161,6 +161,7 @@ program.
 use astarte_device_sdk::{
     builder::DeviceBuilder,
     prelude::*,
+    store::SqliteStore,
     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
     DeviceClient, DeviceConnection,
 };
@@ -177,8 +178,8 @@ const MESSAGE_HUB_URL: &str = "http://127.0.0.1:50051";
 const STORE_DIRECTORY: &str = "./store-dir";
 
 async fn init() -> eyre::Result<(
-    DeviceClient<Grpc>,
-    DeviceConnection<Grpc>,
+    DeviceClient<Grpc<SqliteStore>>,
+    DeviceConnection<Grpc<SqliteStore>>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -298,6 +299,7 @@ function that we declared previously.
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder,
 #     prelude::*,
+#     store::SqliteStore,
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
@@ -313,8 +315,8 @@ const INDIVIDUAL_SERVER: &str = include_str!("../../docs/interfaces/org.astarte-
 const PROPERTY_DEVICE: &str = include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Property.json");
 
 async fn init() -> eyre::Result<(
-    DeviceClient<Grpc>,
-    DeviceConnection<Grpc>,
+    DeviceClient<Grpc<SqliteStore>>,
+    DeviceConnection<Grpc<SqliteStore>>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
@@ -348,6 +350,7 @@ We can now spawn a task to receive data from Astarte. Using the
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder,
 #     prelude::*,
+#     store::{SqliteStore, StoreCapabilities},
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
@@ -372,7 +375,10 @@ enum ServerIndividual {
     Boolean(bool),
 }
 
-async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
+async fn receive_data<S>(client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+where
+    S: PropertyStore + StoreCapabilities,
+{
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -413,7 +419,7 @@ async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<Grpc> { todo!() }
+# fn client() -> DeviceClient<Grpc<SqliteStore>> { todo!() }
 # let client = client();
   // ...
 
@@ -455,6 +461,7 @@ convert the Rust struct in an Object Aggregate to send.
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder,
 #     prelude::*,
+#     store::{SqliteStore, StoreCapabilities},
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
 #     DeviceClient, DeviceConnection,
 # };
@@ -474,7 +481,10 @@ struct AggregatedDevice {
 }
 
 /// Send data after an interval to every interface
-async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
+async fn send_data<S>(mut client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+where
+    S: PropertyStore + StoreCapabilities,
+{
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
@@ -515,7 +525,7 @@ async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
 # let mut tasks = tokio::task::JoinSet::new();
-# fn client() -> DeviceClient<Grpc> { todo!() }
+# fn client() -> DeviceClient<Grpc<SqliteStore>> { todo!() }
 # let client = client();
   // ...
 

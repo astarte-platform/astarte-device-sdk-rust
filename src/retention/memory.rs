@@ -86,12 +86,6 @@ impl VolatileStore {
         self.store.lock().await.delete_interface(interface_name)
     }
 
-    /// This method will swap the capacity.
-    #[cfg(feature = "message-hub")]
-    pub(crate) async fn set_capacity(&self, capacity: usize) {
-        self.store.lock().await.set_capacity(capacity);
-    }
-
     #[cfg(test)]
     pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
         self.store.lock().await.pop_next()
@@ -188,23 +182,6 @@ impl State {
 
     fn is_full(&mut self) -> bool {
         self.store.len() == self.store.capacity()
-    }
-
-    /// A capacity of 0 will make every push into this store a noop.
-    #[cfg(feature = "message-hub")]
-    fn set_capacity(&mut self, capacity: usize) {
-        let current = self.store.capacity();
-
-        if capacity < current {
-            let diff = self.store.len().saturating_sub(capacity);
-            self.store.drain(..diff);
-            self.store.shrink_to_fit();
-        }
-
-        // Number of elements that needed to be reserved
-        let additional = capacity.saturating_sub(self.store.len());
-
-        self.store.reserve_exact(additional);
     }
 
     fn delete_interface(&mut self, interface_name: &str) -> usize {
@@ -741,27 +718,6 @@ mod tests {
             store.store.pop_front().map(|e| e.value).unwrap(),
             ItemValue::Object(object)
         );
-    }
-
-    #[cfg(feature = "message-hub")]
-    #[tokio::test]
-    async fn test_modify_store_capacity() {
-        let store = VolatileStore::with_capacity(10);
-
-        store.set_capacity(20).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 20);
-
-        store.set_capacity(4).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 4);
-    }
-
-    #[cfg(feature = "message-hub")]
-    #[tokio::test]
-    async fn should_allow_zero_capacity() {
-        let store = VolatileStore::default();
-
-        store.set_capacity(0).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 0);
     }
 
     #[test]

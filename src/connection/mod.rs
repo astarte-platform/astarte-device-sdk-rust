@@ -191,6 +191,9 @@ where
     fn drop(&mut self) {
         self.state.introspection.close();
         self.state.status.close();
+        if let Some(resend) = &self.resend {
+            resend.abort();
+        }
     }
 }
 

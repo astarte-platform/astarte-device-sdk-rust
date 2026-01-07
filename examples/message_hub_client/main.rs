@@ -21,9 +21,11 @@
 use std::{f64, time::Duration};
 
 use astarte_device_sdk::{
+    aggregate::AstarteObject,
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
+    store::{SqliteStore, StoreCapabilities},
     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
     DeviceClient, DeviceConnection,
 };
@@ -51,6 +53,10 @@ const INDIVIDUAL_SERVER: &str = include_str!(
 const PROPERTY_DEVICE: &str =
     include_str!("../../docs/interfaces/org.astarte-platform.rust.get-started.Property.json");
 
+const OBJECT_UNIQ_STORED: &str = include_str!(
+    "../retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredUniqDeviceObject.json"
+);
+
 /// Used to receive the IndividualDevice data.
 ///
 /// This need to be an enum because we deserialize each endpoint in it's own variables
@@ -64,7 +70,10 @@ enum ServerIndividual {
     Double(f64),
 }
 
-async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
+async fn init() -> eyre::Result<(
+    DeviceClient<Grpc<SqliteStore>>,
+    DeviceConnection<Grpc<SqliteStore>>,
+)> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(MESSAGE_HUB_URL);
@@ -77,6 +86,7 @@ async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?
         .interface_str(PROPERTY_DEVICE)?
+        .interface_str(OBJECT_UNIQ_STORED)?
         .connection(grpc_config)
         .build()
         .await?;
@@ -84,7 +94,10 @@ async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
     Ok((client, connection))
 }
 
-async fn receive_data(client: DeviceClient<Grpc>) -> eyre::Result<()> {
+async fn receive_data<S>(client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+where
+    S: PropertyStore + StoreCapabilities,
+{
     loop {
         let event = match client.recv().await {
             Ok(event) => event,
@@ -129,40 +142,77 @@ struct AggregatedDevice {
     string_endpoint: String,
 }
 
+/// Stored object datastream
+#[derive(Debug, Clone, IntoAstarteObject)]
+struct StoredObjectDatastream {
+    longinteger: i64,
+    boolean: bool,
+}
+
+impl StoredObjectDatastream {
+    fn new(longinteger: i64, boolean: bool) -> Self {
+        Self {
+            longinteger,
+            boolean,
+        }
+    }
+}
+
 /// Send data after an interval to every interface
-async fn send_data(mut client: DeviceClient<Grpc>) -> eyre::Result<()> {
+async fn send_data<S>(mut client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+where
+    S: PropertyStore + StoreCapabilities,
+{
     // Every 2 seconds send the data
     let mut interval = tokio::time::interval(Duration::from_secs(2));
 
     loop {
         // Publish on the IndividualDevice
-        client
+        // NOTE errors are inspected but not bubbled up to handle a sudden disconnection of the message hub
+        let _ = client
             .send_individual(
                 "org.astarte-platform.rust.get-started.IndividualDevice",
                 "/double_endpoint",
                 42.6.try_into()?,
             )
-            .await?;
+            .await
+            .inspect_err(|e| error!(error = e.to_string(), "error while sending indivdual"));
+
+        let stored_object = StoredObjectDatastream::new(2i64.pow(32), false);
+        let stored_object = AstarteObject::try_from(stored_object)?;
+        // NOTE errors are inspected but not bubbled up to handle a sudden disconnection of the message hub
+        let _ = client
+            .send_object(
+                "org.astarte-platform.rust.examples.individual-datastream.StoredUniqDeviceObject",
+                "/endpoint",
+                stored_object,
+            )
+            .await
+            .inspect_err(|e| error!(error = e.to_string(), "error while sending object"));
         // Publish on the Aggregaed
         let obj_data = AggregatedDevice {
             double_endpoint: 42.0,
             string_endpoint: "Sensor 1".to_string(),
         };
-        client
+        // NOTE errors are inspected but not bubbled up to handle a sudden disconnection of the message hub
+        let _ = client
             .send_object(
                 "org.astarte-platform.rust.get-started.Aggregated",
                 "/group_data",
                 obj_data.try_into()?,
             )
-            .await?;
+            .await
+            .inspect_err(|e| error!(error = e.to_string(), "error while sending object"));
         // Set the Property
-        client
+        // NOTE errors are inspected but not bubbled up to handle a sudden disconnection of the message hub
+        let _ = client
             .set_property(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
                 42.0.try_into()?,
             )
-            .await?;
+            .await
+            .inspect_err(|e| error!(error = e.to_string(), "error while setting property"));
 
         interval.tick().await;
     }

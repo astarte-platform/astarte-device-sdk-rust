@@ -67,9 +67,7 @@ use crate::{
     error::Report,
     interfaces::{self, DeviceIntrospection, Interfaces, MappingRef},
     properties,
-    retention::{
-        mark_unsent_on_err, memory::VolatileStore, PublishInfo, RetentionId, StoredRetention,
-    },
+    retention::{memory::VolatileStore, PublishInfo, RetentionId, StoredRetention},
     session::{IntrospectionInterface, StoredSession},
     state::SharedState,
     store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
@@ -332,13 +330,9 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, validated.reliability, notice?).await?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -363,13 +357,9 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, validated.reliability, notice?).await?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -391,15 +381,34 @@ where
                 to_qos(data.reliability),
                 data.value.into(),
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, data.reliability, notice?).await?;
+        self.mark_sent(id, data.reliability, notice).await?;
 
         Ok(())
+    }
+
+    /// Resend previously stored property.
+    async fn resend_stored_property(
+        &mut self,
+        property_data: OptStoredProp,
+    ) -> Result<(), crate::Error> {
+        let buf = property_data
+            .value
+            .as_ref()
+            .map(|d| payload::serialize_individual(d, None))
+            .unwrap_or(Ok(Vec::new()))
+            .map_err(MqttError::Payload)?;
+
+        self.send(
+            &property_data.interface,
+            &property_data.path,
+            QoS::ExactlyOnce,
+            buf,
+        )
+        .await
+        .map(drop)
+        .map_err(Error::Mqtt)
     }
 
     async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {

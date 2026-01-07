@@ -22,15 +22,16 @@ use std::{future::Future, sync::Arc};
 
 use astarte_interfaces::{interface::Retention, mapping::path::MappingPathError, MappingPath};
 use chrono::{DateTime, Utc};
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     aggregate::AstarteObject,
-    error::{AggregationError, InterfaceTypeError},
+    error::{AggregationError, InterfaceTypeError, Report},
     logging::security::{notify_security_event, SecurityEvent},
     retention::{
         memory::{ItemValue, VolatileItemError},
-        Id, RetentionId, StoredRetention, StoredRetentionExt,
+        stored_mark_unsent, volatile_mark_unsent, Id, RetentionId, StoredRetention,
+        StoredRetentionExt,
     },
     state::{SharedState, Status},
     store::StoreCapabilities,
@@ -448,7 +449,15 @@ where
         let id = state.retention_ctx.next();
 
         data.store_publish(&id, sender, retention, true).await?;
-        data.send_stored(RetentionId::Stored(id), sender).await
+
+        let result = data.send_stored(RetentionId::Stored(id), sender).await;
+
+        if result.is_err() {
+            error!("error while sending stored marking unsent");
+            stored_mark_unsent(store, &id).await;
+        }
+
+        result
     }
 
     async fn send_volatile<T>(
@@ -464,7 +473,15 @@ where
         let id = state.retention_ctx.next();
 
         state.volatile_store.push_sent(id, data.clone()).await;
-        data.send_stored(RetentionId::Volatile(id), sender).await
+
+        let result = data.send_stored(RetentionId::Volatile(id), sender).await;
+
+        if result.is_err() {
+            error!("error while sending volatile marking unsent");
+            volatile_mark_unsent(&state.volatile_store, &id).await;
+        }
+
+        result
     }
 }
 

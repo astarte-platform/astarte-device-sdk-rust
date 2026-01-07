@@ -24,10 +24,12 @@ use tracing::{debug, error, trace};
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
-use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
+use crate::retention::{
+    stored_mark_unsent, volatile_mark_unsent, RetentionId, StoredRetention, StoredRetentionExt,
+};
 use crate::state::SharedState;
 use crate::store::wrapper::StoreWrapper;
-use crate::store::StoreCapabilities;
+use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::{Connection, Publish, Receive, Reconnect};
 use crate::Error;
 
@@ -100,7 +102,36 @@ where
             if let Err(err) = Self::resend_stored_publishes(&mut store, &mut sender).await {
                 error!(error = %Report::new(&err), "error sending stored retention");
             }
+
+            if let Err(err) = Self::send_device_properties(&mut store, &mut sender).await {
+                error!(error = %Report::new(&err), "error sending device properties");
+            }
         }));
+    }
+
+    /// Sends the device owned properties even the null values.
+    /// This ignores the purge properties that should be sent by the connection implementation.
+    /// Since the purge properties we sent earlier new properties could have gotten unset.
+    async fn send_device_properties(
+        store: &mut StoreWrapper<C::Store>,
+        sender: &mut C::Sender,
+    ) -> Result<(), Error>
+    where
+        C::Sender: Publish,
+    {
+        let device_properties = store.device_props_with_unset().await?;
+
+        for prop in device_properties {
+            debug!(
+                "sending device-owned property = {}{}",
+                prop.interface, prop.path
+            );
+
+            // Don't wait for the ack since it's not fundamental for the connection
+            sender.resend_stored_property(prop).await?;
+        }
+
+        Ok(())
     }
 
     /// Check if there is a previous task for the resend of stored publishes and cancels it.
@@ -145,17 +176,23 @@ where
                 // mark as sent before so that no resend is tryed while in flight
                 state.volatile_store.mark_sent(&id, true).await;
 
-                match value {
+                let result = match value {
                     ItemValue::Individual(individual) => {
                         sender
                             .send_individual_stored(RetentionId::Volatile(id), individual)
-                            .await?;
+                            .await
                     }
                     ItemValue::Object(object) => {
                         sender
                             .send_object_stored(RetentionId::Volatile(id), object)
-                            .await?;
+                            .await
                     }
+                };
+
+                if let Err(e) = result {
+                    error!(error=%Report::new(&e), "error while sending volatile marking unsent");
+                    volatile_mark_unsent(&state.volatile_store, &id).await;
+                    return Err(e);
                 }
             }
 
@@ -194,7 +231,13 @@ where
                 // mark as sent before so that no resend is tryed while in flight
                 retention.update_sent_flag(&id, true).await?;
 
-                sender.resend_stored(RetentionId::Stored(id), info).await?;
+                let result = sender.resend_stored(RetentionId::Stored(id), info).await;
+
+                if let Err(e) = result {
+                    error!(error=%Report::new(&e), "error while sending stored marking unsent");
+                    stored_mark_unsent(store, &id).await;
+                    return Err(e);
+                }
             }
 
             if count == 0 || count < DEFAULT_CHANNEL_SIZE {
