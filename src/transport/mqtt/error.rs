@@ -19,6 +19,7 @@
 //! Errors returned by the MQTT connection
 
 use rumqttc::{ClientError, TokenError};
+use tokio::time::error::Elapsed;
 
 use super::connection::PollError;
 use super::{PairingError, PayloadError};
@@ -70,6 +71,12 @@ pub enum MqttError {
     /// Token error while waiting for ack
     #[error("token error while waiting for ack")]
     PubAckToken(#[source] TokenError),
+    /// The client is currently disconnected
+    #[error("no client, connection with the server was not established")]
+    NoClient,
+    /// Timeout reached
+    #[error("the configured timeout was reached {0}")]
+    Timeout(Elapsed),
 }
 
 impl MqttError {

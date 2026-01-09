@@ -1,0 +1,118 @@
+# This file is part of Astarte.
+#
+# Copyright 2025 SECO Mind Srl
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Run examples'
+description: 'Run the examples defined in the Cargo.toml'
+inputs:
+  sdk_path:
+    required: true
+    type: string
+    description: 'Path to the astarte-device-sdk to run the examples from'
+  astarte_realm:
+    required: true
+    type: string
+    description: 'Astarte realm to register the example devices'
+  astarte_pairing_url:
+    required: true
+    type: string
+    description: 'Astarte pairing url to register the example devices'
+runs:
+  using: "composite"
+  steps:
+    - name: Set environment variables
+      shell: bash
+      run: |
+        echo "SDK_WORKSPACE=${{ inputs.sdk_path }}" >> $GITHUB_ENV
+        echo "ASTARTE_REALM=${{ inputs.astarte_realm }}" >> $GITHUB_ENV
+        echo "ASTARTE_PAIRING_URL=${{ inputs.astarte_pairing_url }}" >> $GITHUB_ENV
+    - name: Install example interfaces
+      shell: bash
+      run: |
+        astartectl realm-management interfaces sync $SDK_WORKSPACE/docs/interfaces/*.json --non-interactive
+        astartectl realm-management interfaces sync $SDK_WORKSPACE/examples/**/interfaces/*.json --non-interactive
+        astartectl realm-management interfaces ls
+    - name: Configure and run registartion
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_PAIRING_TOKEN=$(astartectl utils gen-jwt pairing)
+        tee $SDK_WORKSPACE/examples/registration/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "pairing_token": "$ASTARTE_PAIRING_TOKEN",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        cargo run --locked --example registration
+    - name: Configure and run retention
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+        tee $SDK_WORKSPACE/examples/retention/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        cargo run --locked --example retention --features="derive" -- -l 10
+    - name: Configure and run individual datastream
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+        tee $SDK_WORKSPACE/examples/individual_datastream/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        cargo run --locked --example individual_datastream -- -l 10
+    - name: Configure and run object datastream
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+        tee $SDK_WORKSPACE/examples/object_datastream/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        cargo run --locked --example object_datastream --features="derive" -- -l 10
+    - name: Configure and run individual properties
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+        tee $SDK_WORKSPACE/examples/individual_properties/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        cargo run --locked --example individual_properties -- -l 10

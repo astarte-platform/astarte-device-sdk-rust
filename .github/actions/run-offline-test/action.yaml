@@ -1,0 +1,62 @@
+# This file is part of Astarte.
+#
+# Copyright 2025 SECO Mind Srl
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Run offline test'
+description: 'Run the example "retention" without a connection'
+inputs:
+  sdk_path:
+    required: true
+    type: string
+    description: 'Path to the astarte-device-sdk to run the examples from'
+  astarte_realm:
+    required: true
+    type: string
+    description: 'Astarte realm to register the example devices'
+  astarte_pairing_url:
+    required: true
+    type: string
+    description: 'Astarte pairing url to register the example devices'
+runs:
+  using: "composite"
+  steps:
+    - name: Set environment variables
+      shell: bash
+      run: |
+        echo "SDK_WORKSPACE=${{ inputs.sdk_path }}" >> $GITHUB_ENV
+        echo "ASTARTE_REALM=${{ inputs.astarte_realm }}" >> $GITHUB_ENV
+        echo "ASTARTE_PAIRING_URL=${{ inputs.astarte_pairing_url }}" >> $GITHUB_ENV
+    - name: Install example interfaces
+      shell: bash
+      run: |
+        astartectl realm-management interfaces sync $SDK_WORKSPACE/examples/retention/interfaces/*.json --non-interactive
+        astartectl realm-management interfaces ls
+    - name: Run the retention example while offline using the script
+      shell: bash
+      run: |
+        ASTARTE_DEVICE_ID=$(astartectl utils device-id generate-random)
+        ASTARTE_CREDENTIAL_SECRET=$(astartectl pairing agent register --compact-output -- "$ASTARTE_DEVICE_ID")
+        tee $SDK_WORKSPACE/examples/retention/configuration.json << END
+        {
+            "realm": "$ASTARTE_REALM",
+            "device_id": "$ASTARTE_DEVICE_ID",
+            "credentials_secret": "$ASTARTE_CREDENTIAL_SECRET",
+            "pairing_url": "$ASTARTE_PAIRING_URL"
+        }
+        END
+        $SDK_WORKSPACE/scripts/test-offline-run.sh \
+          -c "$SDK_WORKSPACE/examples/retention/configuration.json"

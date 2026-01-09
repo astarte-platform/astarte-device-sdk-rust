@@ -287,7 +287,6 @@ mod test {
         ];
 
         for ty in alltypes {
-            println!("checking {ty:?}");
             let mapping_type = mapping_type(&ty);
             let endpoint = format!("/{mapping_type}_endpoint");
 

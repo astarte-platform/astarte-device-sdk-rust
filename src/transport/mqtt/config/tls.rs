@@ -18,24 +18,25 @@
 
 //! MQTT TLS configuration
 
-use std::{
-    fs::File,
-    io::{self, BufReader},
-    sync::Arc,
-};
+use std::{io, sync::Arc};
 
-use itertools::Itertools;
+use chrono::{DateTime, Utc};
 use rustls::{
     client::WantsClientCert,
     crypto::CryptoProvider,
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
     ClientConfig, ConfigBuilder, RootCertStore,
 };
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
+use x509_parser::prelude::X509Certificate;
 
-use crate::transport::mqtt::PairingError;
+use crate::{
+    error::Report,
+    logging::security::{notify_security_event, SecurityEvent},
+    transport::mqtt::PairingError,
+};
 
-use super::{CertificateFile, PrivateKeyFile};
+use super::{CertificateFile, ClientId, PrivateKeyFile};
 
 pub(crate) fn is_env_ignore_ssl() -> bool {
     matches!(
@@ -45,7 +46,8 @@ pub(crate) fn is_env_ignore_ssl() -> bool {
 }
 
 pub(crate) struct ClientAuth {
-    certs: Vec<CertificateDer<'static>>,
+    pem: String,
+    der: CertificateDer<'static>,
     private_key: PrivatePkcs8KeyDer<'static>,
 }
 
@@ -53,10 +55,9 @@ impl ClientAuth {
     pub(crate) async fn try_read(
         certificates: CertificateFile,
         key: PrivateKeyFile,
+        client_id: ClientId<&str>,
     ) -> Option<Self> {
-        let res = tokio::task::spawn_blocking(|| Self::read_cert_and_key(certificates, key))
-            .await
-            .ok()?;
+        let res = Self::read_cert_and_key(certificates, key, client_id).await;
 
         match res {
             Ok(auth) => auth,
@@ -73,40 +74,92 @@ impl ClientAuth {
         }
     }
 
-    pub(crate) fn try_from_pem_cert(
-        certs: String,
-        private_key: PrivatePkcs8KeyDer<'static>,
-    ) -> Result<Self, io::Error> {
-        let certs = rustls_pemfile::certs(&mut certs.as_bytes()).try_collect()?;
-
-        Ok(Self { certs, private_key })
-    }
-
-    /// Blocking function to read the certificate and the key
-    fn read_cert_and_key(
+    /// Function to read the certificate and the key
+    async fn read_cert_and_key(
         certificates: CertificateFile,
         key: PrivateKeyFile,
+        client_id: ClientId<&str>,
     ) -> Result<Option<Self>, io::Error> {
-        let c_f = File::open(certificates)?;
+        let pem = tokio::fs::read_to_string(certificates.path()).await?;
 
-        let mut c_r = BufReader::new(c_f);
-        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut c_r).try_collect()?;
-
-        if certs.is_empty() {
-            debug!("no certificate found");
-
-            return Ok(None);
-        }
-
-        let k_r = std::fs::read(key)?;
+        let k_r = tokio::fs::read(key).await?;
         if k_r.is_empty() {
             debug!("no private key found");
-
             return Ok(None);
         }
         let private_key = PrivatePkcs8KeyDer::from(k_r);
 
-        Ok(Some(ClientAuth { private_key, certs }))
+        Self::try_from_pem_cert(pem, private_key, client_id)
+    }
+
+    pub(crate) fn try_from_pem_cert(
+        pem: String,
+        private_key: PrivatePkcs8KeyDer<'static>,
+        client_id: ClientId<&str>,
+    ) -> Result<Option<Self>, io::Error> {
+        let bytes = &mut pem.as_bytes();
+        let mut certificates = rustls_pemfile::certs(bytes);
+        let Some(cert) = certificates.next() else {
+            warn!("expected one certificate in the chain");
+            return Ok(None);
+        };
+
+        if certificates.next().is_some() {
+            warn!("expected exactly one certificate in the chain, found more");
+            return Ok(None);
+        }
+
+        drop(certificates);
+
+        cert.map(|cert| {
+            let auth = Self {
+                der: cert,
+                private_key,
+                pem,
+            };
+
+            let auth = auth.verify_certificate_data(client_id).then_some(auth);
+
+            if auth.is_none() {
+                notify_security_event(SecurityEvent::CertificateValidationFailed);
+            }
+
+            auth
+        })
+    }
+
+    fn verify_certificate_data(&self, client_id: ClientId<&str>) -> bool {
+        let parsed = match x509_parser::parse_x509_certificate(&self.der) {
+            Ok((_remaining, cert)) => cert,
+            Err(e) => {
+                warn!(error=%Report::new(e), "parsing certificate error assuming invalid");
+                return false;
+            }
+        };
+
+        // NOTE this validity check is performed using the local datetime and it's not relevant to the actual validity check
+        if !parsed.validity.is_valid() {
+            notify_security_event(SecurityEvent::AlarmExpiredCertificate);
+            notify_security_event(SecurityEvent::CertificateValidationFailedExpired);
+        }
+
+        self.verify_certificate_subject(&parsed, client_id)
+    }
+
+    fn verify_certificate_subject(
+        &self,
+        cert: &X509Certificate<'_>,
+        client_id: ClientId<&str>,
+    ) -> bool {
+        let Some(subject_cn) = cert.subject.iter_common_name().next() else {
+            warn!("no subject common name assuming invalid");
+            return false;
+        };
+
+        let subject_cn_str = subject_cn.as_str();
+        info!("subject common name as str = {:?}", subject_cn_str);
+
+        subject_cn_str.is_ok_and(|subject_cn_str| subject_cn_str == client_id.to_string())
     }
 
     pub(crate) fn tls_config(
@@ -114,7 +167,7 @@ impl ClientAuth {
         roots: Arc<RootCertStore>,
     ) -> Result<rustls::ClientConfig, PairingError> {
         tls_config_builder(roots)?
-            .with_client_auth_cert(self.certs, self.private_key.into())
+            .with_client_auth_cert(vec![self.der], self.private_key.into())
             .map_err(PairingError::Tls)
     }
 
@@ -122,8 +175,26 @@ impl ClientAuth {
         warn!("INSECURE: ignore TLS certificates");
 
         insecure_tls_config_builder()?
-            .with_client_auth_cert(self.certs, self.private_key.into())
+            .with_client_auth_cert(vec![self.der], self.private_key.into())
             .map_err(PairingError::Tls)
+    }
+
+    /// verify if the certificate will be expired after the specified duration
+    /// if the certificate can't be read this method returns None
+    pub(crate) fn parse_validity_not_after(&self) -> Option<DateTime<Utc>> {
+        let parsed = match x509_parser::parse_x509_certificate(&self.der) {
+            Ok((_remaining, cert)) => cert,
+            Err(e) => {
+                warn!(error=%Report::new(e), "parsing certificate error, assume it is not about to expire");
+                return None;
+            }
+        };
+
+        DateTime::from_timestamp(parsed.validity.not_after.timestamp(), 0)
+    }
+
+    pub(crate) fn pem(&self) -> &str {
+        &self.pem
     }
 }
 
@@ -248,10 +319,16 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
 pub(crate) mod tests {
     use tempfile::TempDir;
 
+    use crate::transport::mqtt::{crypto::Bundle, pairing::tests::self_sign_csr_to_pem};
+
     use super::*;
 
     pub(crate) const TEST_CERTIFICATE: &str = include_str!("../../../../tests/certificate.pem");
     pub(crate) const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../../tests/priv-key.der");
+    pub(crate) const TEST_CLIENT_ID: ClientId<&'static str> = ClientId {
+        realm: "test",
+        device_id: "2TBn-jNESuuHamE2Zo1anA",
+    };
 
     #[tokio::test]
     async fn should_read_keys() {
@@ -263,13 +340,11 @@ pub(crate) mod tests {
         let key = PrivateKeyFile::new(dir.path());
         tokio::fs::write(&key, TEST_PRIVATE_KEY).await.unwrap();
 
-        let client = ClientAuth::try_read(cert.clone(), key.clone())
+        let client = ClientAuth::try_read(cert.clone(), key.clone(), TEST_CLIENT_ID)
             .await
             .unwrap();
 
-        assert_eq!(client.certs.len(), 1);
-
-        let cert_der = client.certs.first().unwrap();
+        let cert_der = &client.der;
 
         let rustls_pemfile::Item::X509Certificate(exp) =
             rustls_pemfile::read_one_from_slice(TEST_CERTIFICATE.as_bytes())
@@ -288,8 +363,70 @@ pub(crate) mod tests {
         client.tls_config(root_cert_store).unwrap();
 
         // Reuse the file setup
-        let client = ClientAuth::try_read(cert, key).await.unwrap();
+        let client = ClientAuth::try_read(cert, key, TEST_CLIENT_ID)
+            .await
+            .unwrap();
 
         client.insecure_tls_config().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_valid_certificate() {
+        let client_id = ClientId {
+            realm: "realm",
+            device_id: "device_id",
+        };
+        let bundle = Bundle::generate_key(client_id.realm, client_id.device_id).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let certificate_file = CertificateFile::new(&dir);
+        let private_key_file = PrivateKeyFile::new(&dir);
+
+        let cert = self_sign_csr_to_pem(&bundle.csr);
+
+        tokio::fs::write(certificate_file.path(), cert)
+            .await
+            .unwrap();
+        tokio::fs::write(
+            private_key_file.path(),
+            bundle.private_key.secret_pkcs8_der(),
+        )
+        .await
+        .unwrap();
+
+        let cert = ClientAuth::try_read(certificate_file, private_key_file, client_id)
+            .await
+            .unwrap();
+
+        assert!(cert.verify_certificate_data(client_id))
+    }
+
+    #[tokio::test]
+    async fn test_invalid_certificate_subject_cn() {
+        let bundle = Bundle::generate_key(TEST_CLIENT_ID.realm, TEST_CLIENT_ID.device_id).unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let certificate_file = CertificateFile::new(&dir);
+        let private_key_file = PrivateKeyFile::new(&dir);
+
+        let cert = self_sign_csr_to_pem(&bundle.csr);
+
+        tokio::fs::write(certificate_file.path(), cert)
+            .await
+            .unwrap();
+        tokio::fs::write(
+            private_key_file.path(),
+            bundle.private_key.secret_pkcs8_der(),
+        )
+        .await
+        .unwrap();
+
+        let diff_client_id = ClientId {
+            realm: "realm",
+            device_id: "different_device_id",
+        };
+        let cert = ClientAuth::try_read(certificate_file, private_key_file, diff_client_id).await;
+
+        assert!(cert.is_none())
     }
 }

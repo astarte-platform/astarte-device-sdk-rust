@@ -16,16 +16,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use core::str;
 use std::{path::PathBuf, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use rumqttc::Transport;
 use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
 use tokio::fs;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
+use super::ClientId;
 use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
+use crate::logging::security::{notify_security_event, SecurityEvent};
 use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
     error::Report,
@@ -85,9 +89,18 @@ impl TransportProvider {
         client: &ApiClient<'_>,
     ) -> Result<(Bundle, String), PairingError> {
         let bundle = Bundle::generate_key(client.realm, client.device_id)?;
+        notify_security_event(SecurityEvent::CsrPendingApproval);
 
-        let certificate = client.create_certificate(&bundle.csr).await?;
+        let certificate = client
+            .create_certificate(&bundle.csr)
+            .await
+            .inspect_err(|_| {
+                notify_security_event(SecurityEvent::CsrFailed);
+                notify_security_event(SecurityEvent::CertificateTransferFailed);
+            })?;
 
+        notify_security_event(SecurityEvent::CsrApproved);
+        notify_security_event(SecurityEvent::CertificateTransferredSuccessfully);
         debug!("credentials created");
 
         Ok((bundle, certificate))
@@ -101,17 +114,26 @@ impl TransportProvider {
         certificate_file: &CertificateFile,
         certificate: &str,
     ) {
+        let store_cert = fs::write(&certificate_file, &certificate).await;
+        let store_key = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await;
+
+        if store_cert.is_ok() && store_key.is_ok() {
+            notify_security_event(SecurityEvent::CertificateStoredSuccessfully);
+        } else {
+            notify_security_event(SecurityEvent::CertificateWriteFailed);
+        }
+
         // Don't fail here since the SDK can always regenerate the certificate,
-        if let Err(err) = fs::write(&certificate_file, &certificate).await {
+        if let Err(err) = store_cert {
             error!(error = %Report::new(&err), file = %certificate_file, "couldn't write certificate file");
         }
-        if let Err(err) = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await {
+        if let Err(err) = store_key {
             error!(error = %Report::new(err), file = %private_key_file, "couldn't write private key file");
         }
     }
 
     /// Read credentials from the filesystem.
-    async fn read_credentials(&self) -> Option<ClientAuth> {
+    async fn read_credentials(&self, client_id: ClientId<&str>) -> Option<ClientAuth> {
         let Some(store_dir) = &self.store_dir else {
             debug!("no store directory");
 
@@ -123,7 +145,7 @@ impl TransportProvider {
         let certificate_file = CertificateFile::new(store_dir);
         let private_key_file = PrivateKeyFile::new(store_dir);
 
-        ClientAuth::try_read(certificate_file, private_key_file).await
+        ClientAuth::try_read(certificate_file, private_key_file, client_id).await
     }
 
     fn root_cert_store(&self) -> Arc<RootCertStore> {
@@ -133,6 +155,7 @@ impl TransportProvider {
     /// Config the TLS for the transport.
     fn config_transport(&self, client_auth: ClientAuth) -> Result<Transport, PairingError> {
         let config = if self.insecure_ssl {
+            notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
             client_auth.insecure_tls_config()?
         } else {
             let roots = self.root_cert_store();
@@ -166,22 +189,42 @@ impl TransportProvider {
             .await
         }
 
-        ClientAuth::try_from_pem_cert(certificate, bundle.private_key)
-            .map_err(PairingError::InvalidCredentials)
+        match ClientAuth::try_from_pem_cert(
+            certificate,
+            bundle.private_key,
+            ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            },
+        ) {
+            Ok(Some(auth)) => Ok(auth),
+            Ok(None) => Err(PairingError::MissingCredentials),
+            Err(e) => Err(PairingError::InvalidCredentials(e)),
+        }
     }
 
     /// Retrieves an already stored certificate or creates a new one
+    /// It also verifies certificate data that can be checked for validity locally
     async fn retrieve_credentials(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<ClientAuth, PairingError> {
         debug!("retrieving credentials");
 
+        let auth = self
+            .read_credentials(ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            })
+            .await;
+
         // Return with the existing certificate
-        if let Some(auth) = self.read_credentials().await {
+        if let Some(auth) = auth {
             info!("existing certificate found");
 
             return Ok(auth);
+        } else {
+            notify_security_event(SecurityEvent::AlarmCertificateUnavailable);
         }
 
         self.create_credentials(client).await
@@ -197,14 +240,78 @@ impl TransportProvider {
         self.config_transport(client_auth)
     }
 
-    /// Create a new transport, including the creation of new credentials.
-    pub(crate) async fn recreate_transport(
+    pub(crate) async fn fetch_cert_expiry(
+        &self,
+        client_id: ClientId<&str>,
+    ) -> Option<DateTime<Utc>> {
+        let client_auth = self.read_credentials(client_id).await?;
+
+        client_auth.parse_validity_not_after()
+    }
+
+    // validate the existing certificate is valid, if valid use it for the transport
+    // if it's invalid recreate the certificate
+    pub(crate) async fn validate_transport(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<Transport, PairingError> {
-        let client_auth = self.create_credentials(client).await?;
+        let client_auth = if let Some(client_auth) = self.verify_certificate(client).await? {
+            client_auth
+        } else {
+            self.create_credentials(client).await?
+        };
 
         self.config_transport(client_auth)
+    }
+
+    /// Verify the stored certificate first by checking the Subject common name
+    /// and comparing it to the client id then by using the provided astarte api
+    /// Returns the [`ClientAuth`] struct if valid, None otherwise
+    async fn verify_certificate(
+        &self,
+        client: &ApiClient<'_>,
+    ) -> Result<Option<ClientAuth>, PairingError> {
+        let Some(store_dir) = &self.store_dir else {
+            warn!(
+                store_dir = ?self.store_dir,
+                "no device store directory, assuming invalid"
+            );
+            return Ok(None);
+        };
+
+        let certificate_file = CertificateFile::new(store_dir);
+        let key_file = PrivateKeyFile::new(store_dir);
+
+        let Some(client_auth) = ClientAuth::try_read(
+            certificate_file,
+            key_file,
+            ClientId {
+                realm: client.realm,
+                device_id: client.device_id,
+            },
+        )
+        .await
+        else {
+            warn!(
+                ?store_dir,
+                "no device certificate file in store dir, assuming invalid"
+            );
+            notify_security_event(SecurityEvent::AlarmCertificateUnavailable);
+            return Ok(None);
+        };
+
+        client
+            .verify_certificate(client_auth.pem())
+            .await
+            .map(|res| {
+                if res {
+                    notify_security_event(SecurityEvent::CertificateValidationSucceeded);
+                } else {
+                    notify_security_event(SecurityEvent::CertificateValidationFailed);
+                }
+
+                res.then_some(client_auth)
+            })
     }
 
     pub(crate) fn pairing_url(&self) -> &Url {
@@ -218,6 +325,8 @@ impl TransportProvider {
 
 #[cfg(test)]
 mod tests {
+
+    use std::time::Duration;
 
     use mockito::Server;
     use rumqttc::TlsConfiguration;
@@ -248,8 +357,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let transport = provider.transport(&api).await.unwrap();
 
@@ -279,8 +389,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -308,8 +419,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -334,8 +446,9 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
@@ -363,10 +476,11 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         let certificate_file = CertificateFile::new(dir.path());
         let private_key_file = PrivateKeyFile::new(dir.path());
@@ -389,10 +503,11 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         mock.assert_async().await;
     }
@@ -417,12 +532,13 @@ mod tests {
         .await
         .expect("failed to configure transport provider");
 
-        let api = ApiClient::from_transport(&provider, "realm", "device_id")
-            .expect("failed to create api client");
+        let api =
+            ApiClient::from_transport(&provider, "realm", "device_id", Duration::from_secs(10))
+                .expect("failed to create api client");
 
         let _ = provider.transport(&api).await.unwrap();
 
-        let _ = provider.recreate_transport(&api).await.unwrap();
+        let _ = provider.validate_transport(&api).await.unwrap();
 
         mock.assert_async().await;
     }

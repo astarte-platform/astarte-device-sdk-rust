@@ -1,3 +1,5 @@
+#! /usr/bin/env bash
+
 # This file is part of Astarte.
 #
 # Copyright 2025 SECO Mind Srl
@@ -16,13 +18,22 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: "Install deps"
-description: "Install dependencies needed to run the jobs"
-runs:
-  using: "composite"
-  steps:
-    - name: Install system dependencies
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get -y install libsqlite3-dev
+set -eEuo pipefail
+
+# --- Configuration ---
+# The name for your network namespace
+NAMESPACE="my-test-ns"
+# Automatically find the main internet-facing interface
+MAIN_INTERFACE=$(ip route | grep '^default' | awk '{print $5}' | head -1)
+
+# The virtual "network cable" interfaces
+VETH_HOST="veth-host"
+VETH_GUEST="veth-guest"
+
+# IP addresses for the virtual link
+IP_HOST="10.10.10.1/24"
+IP_GUEST="10.10.10.2/24"
+IP_GATEWAY="10.10.10.1"
+
+# File used to store the status of ip forwarding before enabling it
+STATUS_FILE="/tmp/ip_forward_status.bak"

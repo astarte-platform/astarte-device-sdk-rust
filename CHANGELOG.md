@@ -32,6 +32,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Use only send_async on retention channel.
   [#545](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/545)
 
+## [v0.11.1] - 2026-01-09
+
+### Changed
+
+- Changed serialization of security-events.
+  [#540](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/540)
+
+## [v0.11.0] - 2025-12-18
+
+### Added
+
+- Add the `vendored` and `bindgen` features to help compile C dependencies.
+  [#544](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/544)
+- Add a user configurable send timeout applied to mqtt send function calls.
+  [#539](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/539)
+
 ## [v0.10.5] - 2025-11-18
 
 ### Fixed

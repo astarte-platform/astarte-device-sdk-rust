@@ -16,6 +16,24 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+[workspace]
+resolver = "2"
+members = [
+  "astarte-device-sdk-derive",
+  "astarte-device-sdk-mock",
+  "e2e-test",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace.package]
+version = "0.11.1"
+edition = "2021"
+homepage = "https://astarte.cloud/"
+license = "Apache-2.0"
+repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
+rust-version = "1.78.0"
+
 [package]
 name = "astarte-device-sdk"
 version.workspace = true
@@ -42,23 +60,45 @@ repository.workspace = true
 rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
-[workspace]
-resolver = "2"
-members = [
-  "astarte-device-sdk-derive",
-  "astarte-device-sdk-mock",
-  "e2e-test",
-]
+[features]
+default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
+# Enable and exports the derive macros
+derive = ["dep:astarte-device-sdk-derive"]
+# Deprecated: Add the documentation and description to the interfaces
+interface-doc = []
+# Deprecated: Add stricter checks to the interfaces
+interface-strict = []
+# gRPC connection through the Astarte MessageHub
+message-hub = ["dep:astarte-message-hub-proto"]
+# Logs the SQLite queries and features
+sqlite-trace = ["rusqlite/trace"]
+# Deprecated: this features should be activated by the user
+tokio-multi-thread = []
+# Uses the webpki-roots the Mozilla CA bundle for TLS
+webpki = ["dep:webpki-roots"]
+# Enable logging of security events onto a custom tracing target
+security-events = []
+# Compiles and uses the vendored version of the C dependencies
+vendored = ["rusqlite/bundled"]
+# Recreates the C bindings at buildtime, requires cmake, clang, and  bindgen-cli
+bindgen = ["rusqlite/buildtime_bindgen", "dep:aws-lc-rs", "aws-lc-rs/bindgen"]
+# Feature to make it easier to cross compile
+cross = ["vendored", "bindgen"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[example]]
+name = "msghub_client"
+path = "examples/message_hub_client/main.rs"
+required-features = ["message-hub", "derive"]
 
-[workspace.package]
-version = "0.10.6"
-edition = "2021"
-homepage = "https://astarte.cloud/"
-license = "Apache-2.0"
-repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.78.0"
+[[example]]
+name = "object_datastream"
+path = "examples/object_datastream/main.rs"
+required-features = ["derive"]
+
+[[example]]
+name = "retention"
+path = "examples/retention/main.rs"
+required-features = ["derive"]
 
 [dependencies]
 astarte-device-sdk-derive = { workspace = true, optional = true }
@@ -78,7 +118,6 @@ itertools = { workspace = true }
 rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
 reqwest = { workspace = true, default-features = false }
 rumqttc = { workspace = true, features = ["use-rustls"] }
-rusqlite.workspace = true
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
@@ -93,6 +132,11 @@ tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
 webpki-roots = { workspace = true, optional = true }
+x509-parser = { workspace = true, features = ["aws-lc-rs"] }
+
+# C dependencies, used to enable bindgen and vendoring
+aws-lc-rs = { workspace = true, optional = true }
+rusqlite.workspace = true
 
 [target.'cfg(macos)'.dependencies]
 reqwest = { workspace = true, features = ["macos-system-configuration"] }
@@ -102,6 +146,7 @@ astarte-device-sdk-derive = { workspace = true }
 astarte-message-hub-proto = { workspace = true }
 astarte-message-hub-proto-mock = { workspace = true }
 async-trait = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
 color-eyre = { workspace = true }
 eyre = { workspace = true }
 mockall = { workspace = true }
@@ -112,28 +157,11 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 # Transitive dependencies
 litemap = { workspace = true }
 zerofrom = { workspace = true }
-
-[features]
-default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
-# Enable and exports the derive macros
-derive = ["dep:astarte-device-sdk-derive"]
-# Deprecated: Add the documentation and description to the interfaces
-interface-doc = []
-# Deprecated: Add stricter checks to the interfaces
-interface-strict = []
-# gRPC connection through the Astarte MessageHub
-message-hub = ["dep:astarte-message-hub-proto"]
-# Logs the SQLite queries and features
-sqlite-trace = ["rusqlite/trace"]
-# Deprecated: this features should be activated by the user
-tokio-multi-thread = []
-# Uses the webpki-roots the Mozilla CA bundle for TLS
-webpki = ["dep:webpki-roots"]
 
 [lints.rust]
 # config used for coverage generation
@@ -144,18 +172,19 @@ all-features = true
 rustc-args = ["--cfg=docsrs"]
 
 [workspace.dependencies]
-astarte-device-sdk = { path = "./", version = "=0.10.6" }
-astarte-device-sdk-derive = { version = "=0.10.6", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk = { path = "./", version = "=0.11.1" }
+astarte-device-sdk-derive = { version = "=0.11.1", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = "0.1.1"
 astarte-message-hub-proto = "0.8.1"
 astarte-message-hub-proto-mock = "0.8.1"
 async-channel = "2.0.0"
 async-trait = "0.1.67"
+aws-lc-rs = "1.9.0"
 base64 = "0.22.0"
 bson = "2.12.0"
 bytes = "1.5.0"
 cfg-if = "1.0.0"
-chrono = "0.4.20"
+chrono = "0.4.31"
 clap = "4.5.32"
 color-eyre = "0.6.3"
 eyre = "0.6.12"
@@ -196,22 +225,8 @@ tracing-subscriber = "0.3.0"
 url = "2.4.0"
 uuid = "1.1.2"
 webpki-roots = "1.0.0"
+x509-parser = "0.18.0"
 
 # Transitive dependencies
 litemap = "=0.7.4"
 zerofrom = "=0.1.5"
-
-[[example]]
-name = "msghub_client"
-path = "examples/message_hub_client/main.rs"
-required-features = ["message-hub", "derive"]
-
-[[example]]
-name = "object_datastream"
-path = "examples/object_datastream/main.rs"
-required-features = ["derive"]
-
-[[example]]
-name = "retention"
-path = "examples/retention/main.rs"
-required-features = ["derive"]

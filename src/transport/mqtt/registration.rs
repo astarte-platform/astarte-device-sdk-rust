@@ -19,12 +19,17 @@
  */
 //! Provides static functions for registering a new device to an Astarte Cluster.
 
+use std::time::Duration;
+
 use base64::Engine;
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::transport::mqtt::PairingError;
+use crate::{
+    logging::security::{notify_security_event, SecurityEvent},
+    transport::mqtt::PairingError,
+};
 
 use super::pairing::ApiData;
 
@@ -39,11 +44,12 @@ struct MqttV1Credential {
 }
 
 /// Obtain a credentials secret from the astarte API
-pub async fn register_device(
+pub async fn register_device_with_timeout(
     token: &str,
     pairing_url: &str,
     realm: &str,
     device_id: &str,
+    timeout: Duration,
 ) -> Result<String, PairingError> {
     let mut url = Url::parse(pairing_url)?;
 
@@ -56,7 +62,7 @@ pub async fn register_device(
 
     let payload = ApiData::new(MqttV1HwId { hw_id: device_id });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().timeout(timeout).build()?;
     let response = client
         .post(url)
         .bearer_auth(token)
@@ -68,16 +74,38 @@ pub async fn register_device(
         StatusCode::CREATED => {
             let res: ApiData<MqttV1Credential> = response.json().await?;
 
+            notify_security_event(SecurityEvent::CriticalOperationAuthSuccessful);
+
             Ok(res.data.credentials_secret)
         }
         status_code => {
             let raw_response = response.text().await?;
+
+            notify_security_event(SecurityEvent::CriticalOperationAuthFailed);
+
             Err(PairingError::Api {
                 status: status_code,
                 body: raw_response,
             })
         }
     }
+}
+
+/// Obtain a credentials secret from the astarte API with a default timeout of 10 seconds
+pub async fn register_device(
+    token: &str,
+    pairing_url: &str,
+    realm: &str,
+    device_id: &str,
+) -> Result<String, PairingError> {
+    register_device_with_timeout(
+        token,
+        pairing_url,
+        realm,
+        device_id,
+        Duration::from_secs(10),
+    )
+    .await
 }
 
 /// Generate a random device Id with UUIDv4.
