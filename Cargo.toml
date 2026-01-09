@@ -17,7 +17,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
@@ -28,11 +28,11 @@ members = [
 
 [workspace.package]
 version = "0.11.2"
-edition = "2021"
+edition = "2024"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.78.0"
+rust-version = "1.86"
 
 [package]
 name = "astarte-device-sdk"
@@ -61,7 +61,7 @@ rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
 [features]
-default = ["interface-strict", "sqlite-trace", "tokio-multi-thread"]
+default = ["interface-strict", "sqlite-trace"]
 # Enable and exports the derive macros
 derive = ["dep:astarte-device-sdk-derive"]
 # Deprecated: Add the documentation and description to the interfaces
@@ -72,8 +72,6 @@ interface-strict = []
 message-hub = ["dep:astarte-message-hub-proto"]
 # Logs the SQLite queries and features
 sqlite-trace = ["rusqlite/trace"]
-# Deprecated: this features should be activated by the user
-tokio-multi-thread = []
 # Uses the webpki-roots the Mozilla CA bundle for TLS
 webpki = ["dep:webpki-roots"]
 # Enable logging of security events onto a custom tracing target
@@ -105,18 +103,17 @@ astarte-device-sdk-derive = { workspace = true, optional = true }
 astarte-interfaces = { workspace = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
 base64 = { workspace = true }
-bson = { workspace = true, features = ["chrono-0_4"] }
+bson = { workspace = true, features = ["chrono-0_4", "serde"] }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 flate2.workspace = true
 flume = { workspace = true, features = ["async"] }
 futures = { workspace = true }
-http = { workspace = true }
 itertools = { workspace = true }
 # Use aws-lc-rs to support all PrivateKey types
 rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
-reqwest = { workspace = true, default-features = false }
+reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
@@ -138,9 +135,6 @@ x509-parser = { workspace = true, features = ["aws-lc-rs"] }
 aws-lc-rs = { workspace = true, optional = true }
 rusqlite.workspace = true
 
-[target.'cfg(macos)'.dependencies]
-reqwest = { workspace = true, features = ["macos-system-configuration"] }
-
 [dev-dependencies]
 astarte-device-sdk-derive = { workspace = true }
 astarte-message-hub-proto = { workspace = true }
@@ -159,65 +153,61 @@ tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
-# Transitive dependencies
-litemap = { workspace = true }
-zerofrom = { workspace = true }
-
-[lints.rust]
-# config used for coverage generation
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(__coverage)'] }
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+  'cfg(__coverage)',
+  'cfg(astarte_device_sdk_docsrs)',
+]
 
 [package.metadata.docs.rs]
 all-features = true
-rustc-args = ["--cfg=docsrs"]
+rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.11.2" }
 astarte-device-sdk-derive = { version = "=0.11.2", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = "0.1.1"
-astarte-message-hub-proto = "0.8.1"
-astarte-message-hub-proto-mock = "0.8.1"
+astarte-message-hub-proto = "0.10.1"
+astarte-message-hub-proto-mock = "0.10.1"
 async-channel = "2.0.0"
 async-trait = "0.1.67"
-aws-lc-rs = "1.9.0"
-base64 = "0.22.0"
-bson = "2.12.0"
-bytes = "1.5.0"
+aws-lc-rs = "1.12.0"
+base64 = "0.22.1"
+bson = "3.0.0"
+bytes = "1.7.1"
 cfg-if = "1.0.0"
-chrono = "0.4.31"
+chrono = "0.4.34"
 clap = "4.5.32"
 color-eyre = "0.6.3"
 eyre = "0.6.12"
 flate2 = "1.0.0"
-flume = "0.11.0"
+flume = "0.12.0"
 futures = "0.3.0"
-http = "1.0.0"
 itertools = "0.14.0"
-mockall = "0.13.1"
+mockall = "0.14.0"
 mockito = "1.4.0"
-openssl = "0.10.46"
 phoenix-chan = "0.4.2"
 pretty_assertions = "1.4.1"
 proc-macro2 = "1.0.83"
 quote = "1.0.35"
-rcgen = { version = "0.13.1", default-features = false }
+rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
-reqwest = { version = "0.12.9", default-features = false, features = ["http2", "charset", "json", "rustls-tls-native-roots-no-provider"] }
+reqwest = { version = "0.13.0", default-features = false }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
-# Error with bindgen and rust <1.82
-# See: https://github.com/rusqlite/rusqlite/issues/1631
-rusqlite = "=0.32.1"
-rustls = "0.23.4"
+# for last diesel release compatibility
+rusqlite = ">=0.35.0"
+rustls = "0.23.27"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
-rustls-platform-verifier = "0.5.1"
-rustls-webpki = { version = "0.103.0", default-features = false }
+rustls-platform-verifier = "0.6.0"
+rustls-webpki = { version = "0.103.2", default-features = false }
 serde = "1.0.184"
 serde_json = "1.0.85"
 syn = "2.0.87"
-sync_wrapper = "1.0.0"
+sync_wrapper = "1.0.2"
 tempfile = "3.6.0"
-thiserror = "2.0.8"
+thiserror = "2.0.12"
 tokio = "1.39.1"
 tokio-stream = "0.1.0"
 tracing = "0.1.37"
@@ -227,6 +217,6 @@ uuid = "1.1.2"
 webpki-roots = "1.0.0"
 x509-parser = "0.18.0"
 
-# Transitive dependencies
-litemap = "=0.7.4"
-zerofrom = "=0.1.5"
+# Waiting on https://github.com/rusticata/x509-parser/pull/229
+[patch.crates-io]
+x509-parser = { git = 'https://github.com/cpu/x509-parser', rev = "1055ca17581b96d8431de4c696187869fc12587a" }

@@ -36,7 +36,7 @@ use crate::{
     error::{DynError, Report},
     interfaces::Interfaces,
     retention::memory::VolatileStore,
-    store::{sqlite::SqliteError, StoreCapabilities},
+    store::{StoreCapabilities, sqlite::SqliteError},
     validate::{ValidatedIndividual, ValidatedObject},
 };
 
@@ -565,18 +565,18 @@ mod tests {
                 let tx = tx.clone();
 
                 move || {
-                    let mut gen = Vec::with_capacity(CAP);
+                    let mut out = Vec::with_capacity(CAP);
                     let mut prev = ctx.next();
                     for _i in 0..CAP {
                         let new = ctx.next();
 
                         assert!(new > prev);
 
-                        gen.push(prev);
+                        out.push(prev);
                         prev = new;
                     }
 
-                    tx.send(gen).expect("channel closed");
+                    tx.send(out).expect("channel closed");
                 }
             });
         }
@@ -584,8 +584,8 @@ mod tests {
         drop(tx);
 
         let mut recvd = HashSet::new();
-        while let Ok(gen) = rx.recv() {
-            for i in gen {
+        while let Ok(out) = rx.recv() {
+            for i in out {
                 assert!(recvd.insert(i));
             }
         }

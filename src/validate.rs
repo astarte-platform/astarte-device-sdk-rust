@@ -19,18 +19,18 @@
 //! Validate the submission and reception of a payload.
 
 use astarte_interfaces::{
+    DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
     interface::Retention,
     schema::{Ownership, Reliability},
-    DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
 };
 use tracing::trace;
 
 use crate::{
+    Timestamp,
     aggregate::AstarteObject,
     error::{AggregationError, InterfaceTypeError, OwnershipError},
     interfaces::MappingRef,
     types::AstarteData,
-    Timestamp,
 };
 
 /// Errors returned while validating a send payload
@@ -38,7 +38,9 @@ use crate::{
 #[derive(thiserror::Error, Debug)]
 pub enum UserValidationError {
     /// Sending timestamp to a mapping without `explicit_timestamp`
-    #[error("{ctx} timestamp on {interface}{path}, but interface has 'explicit_timestamp: {explicit_timestamp}'")]
+    #[error(
+        "{ctx} timestamp on {interface}{path}, but interface has 'explicit_timestamp: {explicit_timestamp}'"
+    )]
     Timestamp {
         /// Missing or sending context
         ctx: &'static str,
@@ -69,7 +71,9 @@ pub enum UserValidationError {
         missing: usize,
     },
     /// Trying to send data on a mapping with a different type
-    #[error("mismatching type while sending data on {interface}{path}, expected {expected} but got {got}")]
+    #[error(
+        "mismatching type while sending data on {interface}{path}, expected {expected} but got {got}"
+    )]
     MappingType {
         interface: String,
         path: String,

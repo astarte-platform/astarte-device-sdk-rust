@@ -31,6 +31,7 @@ use astarte_interfaces::{
 };
 
 use crate::{
+    Timestamp,
     aggregate::AstarteObject,
     client::RecvError,
     interfaces::{self, Interfaces, MappingRef},
@@ -38,11 +39,10 @@ use crate::{
     store::StoreCapabilities,
     types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
-    Timestamp,
 };
 
 #[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
 pub mod grpc;
 pub mod mqtt;
 

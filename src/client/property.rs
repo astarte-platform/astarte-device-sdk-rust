@@ -175,7 +175,7 @@ where
 mod tests {
     use super::*;
 
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
 
     use crate::client::tests::mock_client;
     use crate::store::{PropertyMapping, PropertyStore, StoredProp};

@@ -23,6 +23,8 @@ use rustls_platform_verifier::ConfigVerifierExt;
 
 /// Read an returns the certificates roots
 // TODO: this could be integrated with the Astarte SDK
-pub(crate) fn client_config() -> ClientConfig {
-    ClientConfig::with_platform_verifier()
+pub(crate) fn client_config() -> eyre::Result<ClientConfig> {
+    let config = ClientConfig::with_platform_verifier()?;
+
+    Ok(config)
 }

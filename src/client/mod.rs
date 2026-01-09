@@ -20,34 +20,34 @@
 
 use std::{future::Future, sync::Arc};
 
-use astarte_interfaces::{interface::Retention, mapping::path::MappingPathError, MappingPath};
+use astarte_interfaces::{MappingPath, interface::Retention, mapping::path::MappingPathError};
 use chrono::{DateTime, Utc};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    aggregate::AstarteObject,
-    error::{AggregationError, InterfaceTypeError},
-    logging::security::{notify_security_event, SecurityEvent},
-    retention::{
-        memory::{ItemValue, VolatileItemError},
-        Id, RetentionId, StoredRetention, StoredRetentionExt,
-    },
-    state::{SharedState, Status},
-    store::StoreCapabilities,
-    transport::{
-        mqtt::{error::MqttError, Mqtt},
-        Connection, Publish,
-    },
-    Timestamp,
-};
-use crate::{error::DynError, transport::Disconnect};
-use crate::{
+    Error,
     event::DeviceEvent,
     store::wrapper::StoreWrapper,
     types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject},
-    Error,
 };
+use crate::{
+    Timestamp,
+    aggregate::AstarteObject,
+    error::{AggregationError, InterfaceTypeError},
+    logging::security::{SecurityEvent, notify_security_event},
+    retention::{
+        Id, RetentionId, StoredRetention, StoredRetentionExt,
+        memory::{ItemValue, VolatileItemError},
+    },
+    state::{SharedState, Status},
+    store::StoreCapabilities,
+    transport::{
+        Connection, Publish,
+        mqtt::{Mqtt, error::MqttError},
+    },
+};
+use crate::{error::DynError, transport::Disconnect};
 
 mod individual;
 mod introspection;
@@ -419,7 +419,10 @@ where
                 if let Some(retention) = store.get_retention() {
                     data.store_publish(&id, sender, retention, false).await?;
                 } else {
-                    warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
+                    warn!(
+                        ?store,
+                        "storing interface with retention 'Stored' in volatile store since the store doesn't support retention"
+                    );
                     state.volatile_store.push_unsent(id, data).await;
                 }
             }
@@ -440,7 +443,10 @@ where
         C::Sender: Publish,
     {
         let Some(retention) = store.get_retention() else {
-            warn!(?store, "storing interface with retention 'Stored' in volatile store since the store doesn't support retention");
+            warn!(
+                ?store,
+                "storing interface with retention 'Stored' in volatile store since the store doesn't support retention"
+            );
             return Self::send_volatile(state, sender, data).await;
         };
 
@@ -742,14 +748,14 @@ pub(crate) mod tests {
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
+    use crate::Value;
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
     use crate::state::Status;
-    use crate::store::memory::MemoryStore;
     use crate::store::StoreCapabilities;
+    use crate::store::memory::MemoryStore;
     use crate::transport::mock::{MockCon, MockSender};
-    use crate::Value;
 
     use super::*;
 

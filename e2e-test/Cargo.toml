@@ -40,7 +40,7 @@ flume = { workspace = true, features = ["async"] }
 futures = { workspace = true }
 itertools = { workspace = true }
 phoenix-chan = { workspace = true }
-reqwest = { workspace = true, default-features = false }
+reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
 rustls = { workspace = true }
 rustls-platform-verifier = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -51,6 +51,3 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-
-[target.'cfg(macos)'.dependencies]
-reqwest = { workspace = true, features = ["macos-system-configuration"] }

@@ -25,15 +25,15 @@ use astarte_interfaces::{Interface, Schema};
 use tokio::fs;
 use tracing::{debug, error};
 
+use crate::Error;
 use crate::error::Report;
 use crate::introspection::{AddInterfaceError, DeviceIntrospection};
 use crate::prelude::DynamicIntrospection;
-use crate::retention::memory::VolatileStore;
 use crate::retention::StoredRetention;
+use crate::retention::memory::VolatileStore;
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::{Connection, Register};
-use crate::Error;
 
 use super::DeviceClient;
 
@@ -299,23 +299,23 @@ mod tests {
     use astarte_interfaces::schema::Reliability;
     use astarte_interfaces::{MappingPath, Properties};
     use chrono::Utc;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     use super::*;
 
+    use crate::AstarteData;
     use crate::client::tests::{mock_client, mock_client_with_store};
-    use crate::interfaces::tests::{mock_validated_collection, mock_validated_interface};
     use crate::interfaces::MappingRef;
+    use crate::interfaces::tests::{mock_validated_collection, mock_validated_interface};
     use crate::retention::StoredRetentionExt;
     use crate::store::{PropertyMapping, SqliteStore};
     use crate::test::{
-        for_update, E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_PROPERTY,
-        E2E_DEVICE_PROPERTY_NAME,
+        E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_PROPERTY,
+        E2E_DEVICE_PROPERTY_NAME, for_update,
     };
     use crate::validate::ValidatedIndividual;
-    use crate::AstarteData;
 
     #[tokio::test]
     async fn get_interface() {

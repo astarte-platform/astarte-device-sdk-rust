@@ -21,23 +21,23 @@ use std::{path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use rumqttc::Transport;
-use rustls::pki_types::PrivatePkcs8KeyDer;
 use rustls::RootCertStore;
+use rustls::pki_types::PrivatePkcs8KeyDer;
 use tokio::fs;
 use tracing::{debug, error, info, instrument, warn};
 use url::Url;
 
 use super::ClientId;
-use super::{tls::ClientAuth, CertificateFile, PrivateKeyFile};
-use crate::logging::security::{notify_security_event, SecurityEvent};
+use super::{CertificateFile, PrivateKeyFile, tls::ClientAuth};
+use crate::logging::security::{SecurityEvent, notify_security_event};
 use crate::transport::mqtt::config::tls::read_root_cert_store;
 use crate::{
     error::Report,
     transport::mqtt::{
+        PairingError,
         config::tls::{insecure_tls_config_builder, tls_config_builder},
         crypto::Bundle,
         pairing::ApiClient,
-        PairingError,
     },
 };
 

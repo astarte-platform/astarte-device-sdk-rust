@@ -25,7 +25,7 @@ use eyre::ensure;
 use tracing::{debug, instrument};
 
 use crate::api::ApiClient;
-use crate::{retry, AstarteClient};
+use crate::{AstarteClient, retry};
 
 #[instrument(skip_all)]
 pub(crate) async fn check_add(api: &ApiClient, client: &mut AstarteClient) -> eyre::Result<()> {

@@ -29,7 +29,7 @@
     missing_docs,
     rustdoc::missing_crate_level_docs
 )]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(astarte_device_sdk_docsrs, feature(doc_cfg))]
 #![cfg_attr(__coverage, feature(coverage_attribute))]
 
 pub mod _docs;
@@ -52,7 +52,6 @@ pub(crate) mod state;
 pub mod store;
 pub mod transport;
 pub mod types;
-pub(crate) mod utils;
 mod validate;
 
 /// Re-exported internal structs
@@ -72,25 +71,35 @@ pub use rumqttc;
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
 
 #[cfg(feature = "derive")]
-#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "derive")))]
 pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
 mod test {
     // Interfaces
-    pub(crate) const DEVICE_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json");
-    pub(crate) const DEVICE_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json");
+    pub(crate) const DEVICE_OBJECT: &str = include_str!(
+        "../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.DeviceDatastream.json"
+    );
+    pub(crate) const DEVICE_PROPERTIES: &str = include_str!(
+        "../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json"
+    );
     pub(crate) const DEVICE_PROPERTIES_NAME: &str =
         "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
 
-    pub(crate) const SERVER_OBJECT: &str = include_str!("../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.ServerDatastream.json");
+    pub(crate) const SERVER_OBJECT: &str = include_str!(
+        "../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.ServerDatastream.json"
+    );
     pub(crate) const SERVER_OBJECT_NAME: &str =
         "org.astarte-platform.rust.examples.object-datastream.ServerDatastream";
-    pub(crate) const SERVER_PROPERTIES: &str = include_str!("../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json");
+    pub(crate) const SERVER_PROPERTIES: &str = include_str!(
+        "../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.ServerProperties.json"
+    );
     #[cfg(feature = "message-hub")]
     pub(crate) const SERVER_PROPERTIES_NAME: &str =
         "org.astarte-platform.rust.examples.individual-properties.ServerProperties";
-    pub(crate) const SERVER_INDIVIDUAL: &str = include_str!("../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json");
+    pub(crate) const SERVER_INDIVIDUAL: &str = include_str!(
+        "../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json"
+    );
     pub(crate) const SERVER_INDIVIDUAL_NAME: &str =
         "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream";
 
@@ -134,16 +143,24 @@ mod test {
     }
 
     // Interfaces with retention
-    pub(crate) const VOLATILE_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream.json");
+    pub(crate) const VOLATILE_DEVICE_DATASTREAM: &str = include_str!(
+        "../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream.json"
+    );
     pub(crate) const VOLATILE_DEVICE_DATASTREAM_NAME: &str =
         "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceDatastream";
-    pub(crate) const STORED_DEVICE_DATASTREAM: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json");
+    pub(crate) const STORED_DEVICE_DATASTREAM: &str = include_str!(
+        "../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json"
+    );
     pub(crate) const STORED_DEVICE_DATASTREAM_NAME: &str =
         "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream";
-    pub(crate) const VOLATILE_DEVICE_OBJECT: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject.json");
+    pub(crate) const VOLATILE_DEVICE_OBJECT: &str = include_str!(
+        "../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject.json"
+    );
     pub(crate) const VOLATILE_DEVICE_OBJECT_NAME: &str =
         "org.astarte-platform.rust.examples.individual-datastream.VolatileDeviceObject";
-    pub(crate) const STORED_DEVICE_OBJECT: &str = include_str!("../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject.json");
+    pub(crate) const STORED_DEVICE_OBJECT: &str = include_str!(
+        "../examples/retention/interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject.json"
+    );
     pub(crate) const STORED_DEVICE_OBJECT_NAME: &str =
         "org.astarte-platform.rust.examples.individual-datastream.StoredDeviceObject";
 

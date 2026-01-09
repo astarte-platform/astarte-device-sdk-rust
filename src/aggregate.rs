@@ -18,8 +18,8 @@
 
 //! Value to send or receive from Astarte.
 
-use serde::ser::SerializeMap;
 use serde::Serialize;
+use serde::ser::SerializeMap;
 
 use crate::types::AstarteData;
 

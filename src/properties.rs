@@ -21,10 +21,10 @@
 use std::{future::Future, io::Write};
 
 use astarte_interfaces::{
-    interface::InterfaceTypeAggregation, schema::InterfaceType, MappingPath, Schema,
+    MappingPath, Schema, interface::InterfaceTypeAggregation, schema::InterfaceType,
 };
-use flate2::{bufread::ZlibDecoder, write::ZlibEncoder, Compression};
-use futures::{future, StreamExt, TryStreamExt};
+use flate2::{Compression, bufread::ZlibDecoder, write::ZlibEncoder};
+use futures::{StreamExt, TryStreamExt, future};
 use tracing::{debug, error, warn};
 
 use crate::{

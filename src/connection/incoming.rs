@@ -210,6 +210,7 @@ mod tests {
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
+    use crate::AstarteData;
     use crate::aggregate::AstarteObject;
     use crate::connection::tests::mock_connection;
     use crate::test::{
@@ -217,7 +218,6 @@ mod tests {
         E2E_SERVER_DATASTREAM_NAME, E2E_SERVER_PROPERTY, E2E_SERVER_PROPERTY_NAME, SERVER_OBJECT,
         SERVER_OBJECT_NAME, SERVER_PROPERTIES_NO_UNSET, SERVER_PROPERTIES_NO_UNSET_NAME,
     };
-    use crate::AstarteData;
 
     use super::*;
 

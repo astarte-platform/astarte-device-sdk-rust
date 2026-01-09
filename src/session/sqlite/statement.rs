@@ -20,7 +20,7 @@ use rusqlite::ToSql;
 
 use crate::session::IntrospectionInterface;
 use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
-use crate::store::sqlite::{statements::include_query, SqliteError};
+use crate::store::sqlite::{SqliteError, statements::include_query};
 
 impl WriteConnection {
     pub(crate) fn add_interfaces<S>(

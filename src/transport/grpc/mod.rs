@@ -38,15 +38,15 @@ use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
-    astarte_message::Payload as ProtoPayload, pbjson_types::Empty, AstarteMessage, InterfacesJson,
-    InterfacesName, MessageHubError, MessageHubEvent, Node,
+    AstarteMessage, InterfacesJson, InterfacesName, MessageHubError, MessageHubEvent, Node,
+    astarte_message::Payload as ProtoPayload,
 };
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
 use tracing::{error, trace, warn};
 use uuid::Uuid;
 
-use self::convert::{try_from_individual, try_from_property, MessageHubProtoError};
+use self::convert::{MessageHubProtoError, try_from_individual, try_from_property};
 use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
@@ -60,20 +60,20 @@ use crate::interfaces::MappingRef;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
 use crate::{
+    Error, Timestamp,
     builder::{ConnectionConfig, DeviceTransport},
     interfaces::{self, Interfaces},
     retention::StoredRetention,
-    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
+    store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
     types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    Error, Timestamp,
 };
 
 pub mod convert;
 pub mod store;
 
 #[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
 pub use astarte_message_hub_proto::tonic;
 
 /// Errors raised while using the [`Grpc`] transport
@@ -190,7 +190,7 @@ impl<S> GrpcClient<S> {
 
     async fn detach(&mut self) -> Result<(), GrpcError> {
         self.client
-            .detach(tonic::Request::new(Empty {}))
+            .detach(tonic::Request::new(()))
             .await
             .map(|_| ())
             .map_err(GrpcError::from)
@@ -202,8 +202,10 @@ where
     S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
+        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+
         self.client
-            .send(tonic::Request::new(data.into()))
+            .send(tonic::Request::new(data))
             .await
             .map_err(GrpcError::from)?;
 
@@ -211,8 +213,10 @@ where
     }
 
     async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
+        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+
         self.client
-            .send(tonic::Request::new(data.into()))
+            .send(tonic::Request::new(data))
             .await
             .map_err(GrpcError::from)?;
 
@@ -220,8 +224,10 @@ where
     }
 
     async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error> {
+        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+
         self.client
-            .send(tonic::Request::new(data.into()))
+            .send(tonic::Request::new(data))
             .await
             .map_err(GrpcError::from)?;
 
@@ -233,10 +239,10 @@ where
         id: RetentionId,
         data: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
-        let value = AstarteMessage::from(data);
+        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
 
         self.client
-            .send(tonic::Request::new(value))
+            .send(tonic::Request::new(data))
             .await
             .map_err(|e| Error::Grpc(GrpcError::from(e)))?;
 
@@ -250,10 +256,10 @@ where
         id: RetentionId,
         data: ValidatedObject,
     ) -> Result<(), crate::Error> {
-        let value = AstarteMessage::from(data);
+        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
 
         self.client
-            .send(tonic::Request::new(value))
+            .send(tonic::Request::new(data))
             .await
             .map_err(|e| Error::Grpc(GrpcError::from(e)))?;
 
@@ -288,11 +294,17 @@ where
     }
 
     fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error> {
-        Ok(AstarteMessage::from(data.clone()).encode_to_vec())
+        let data =
+            AstarteMessage::try_from(data.clone()).map_err(GrpcError::MessageHubProtoConversion)?;
+
+        Ok(data.encode_to_vec())
     }
 
     fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
-        Ok(AstarteMessage::from(data.clone()).encode_to_vec())
+        let data =
+            AstarteMessage::try_from(data.clone()).map_err(GrpcError::MessageHubProtoConversion)?;
+
+        Ok(data.encode_to_vec())
     }
 }
 
@@ -673,11 +685,9 @@ mod test {
     use std::str::FromStr;
 
     use astarte_message_hub_proto::tonic::Request;
-    use astarte_message_hub_proto::{
-        pbjson_types, tonic, AstarteDatastreamObject, AstartePropertyIndividual,
-    };
     use astarte_message_hub_proto::{AstarteDatastreamIndividual, AstarteMessage};
-    use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
+    use astarte_message_hub_proto::{AstarteDatastreamObject, AstartePropertyIndividual, tonic};
+    use astarte_message_hub_proto_mock::mockall::{Sequence, predicate};
     use chrono::Utc;
     use itertools::Itertools;
     use pretty_assertions::assert_eq;
@@ -890,10 +900,10 @@ mod test {
             });
         // when disconnect is called detach gets called internally
         mock_client_tx
-            .expect_detach::<Request<pbjson_types::Empty>>()
+            .expect_detach::<Request<()>>()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         let (mut client, _connection) =
             mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
@@ -931,10 +941,10 @@ mod test {
             .returning(|_i| Ok(tonic::Response::new(mock_stream([]))));
         // expect detach
         mock_client_tx
-            .expect_detach::<Request<pbjson_types::Empty>>()
+            .expect_detach::<Request<()>>()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         // first attach is called when the connection is created
         let (mut client, mut connection) =
@@ -979,7 +989,7 @@ mod test {
                 r.match_interfaces(&[Interface::from_str(DEVICE_PROPERTIES).unwrap()])
                     .unwrap()
             }))
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
         mock_client_tx
             .expect_remove_interfaces::<Request<astarte_message_hub_proto::InterfacesName>>()
             .times(1)
@@ -988,7 +998,7 @@ mod test {
                 r.match_interfaces(&[Interface::from_str(DEVICE_PROPERTIES).unwrap()])
                     .unwrap()
             }))
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
         mock_client_tx
             .expect_add_interfaces::<Request<astarte_message_hub_proto::InterfacesJson>>()
             .times(1)
@@ -1000,7 +1010,7 @@ mod test {
                 ])
                 .unwrap()
             }))
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
         mock_client_tx
             .expect_remove_interfaces::<Request<astarte_message_hub_proto::InterfacesName>>()
             .times(1)
@@ -1012,13 +1022,13 @@ mod test {
                 ])
                 .unwrap()
             }))
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
         // when disconnect is called detach is called
         mock_client_tx
-            .expect_detach::<Request<pbjson_types::Empty>>()
+            .expect_detach::<Request<()>>()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         let (mut client, _connection) =
             mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
@@ -1091,13 +1101,13 @@ mod test {
                     AstarteData::String(STRING_VALUE.to_string()),
                 )
             }))
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         mock_client_tx
-            .expect_detach::<Request<pbjson_types::Empty>>()
+            .expect_detach::<Request<()>>()
             .times(1)
             .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         let (mut client, _connection) =
             mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
@@ -1151,7 +1161,7 @@ mod test {
                     MockDeviceObject::mock_object(),
                 )
             })
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(pbjson_types::Empty {})));
+            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
         let (mut client, _connection) =
             mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
@@ -1184,7 +1194,7 @@ mod test {
         let proto_payload = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
             data: MockServerObject::mock_object()
                 .into_key_values()
-                .map(|(k, v)| (k, v.into()))
+                .map(|(k, v)| (k, v.try_into().unwrap()))
                 .collect(),
             timestamp: None,
         });

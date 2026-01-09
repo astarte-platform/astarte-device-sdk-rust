@@ -21,15 +21,15 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use astarte_device_sdk::astarte_interfaces::{error::Error as InterfaceError, Interface};
-use astarte_device_sdk::prelude::DynamicIntrospection;
 use astarte_device_sdk::AstarteData;
+use astarte_device_sdk::astarte_interfaces::{Interface, error::Error as InterfaceError};
+use astarte_device_sdk::prelude::DynamicIntrospection;
 use eyre::ensure;
 use tracing::{debug, instrument};
 
 use crate::api::ApiClient;
 use crate::data::InterfaceData;
-use crate::{retry, AstarteClient, Channel};
+use crate::{AstarteClient, Channel, retry};
 
 use super::individual::validate_individual;
 use super::property::validate_property;

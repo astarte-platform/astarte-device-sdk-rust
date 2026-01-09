@@ -21,8 +21,8 @@
 use astarte_interfaces::MappingPath;
 use tracing::debug;
 
-use crate::client::ValidatedObject;
 use crate::Error;
+use crate::client::ValidatedObject;
 use crate::{aggregate::AstarteObject, transport::Connection};
 
 use super::{DeviceClient, Publish};
@@ -59,7 +59,7 @@ mod tests {
     use astarte_interfaces::interface::Retention;
     use astarte_interfaces::schema::Reliability;
     use chrono::Utc;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

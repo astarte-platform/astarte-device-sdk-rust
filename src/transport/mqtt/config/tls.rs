@@ -22,17 +22,17 @@ use std::{io, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use rustls::{
+    ClientConfig, ConfigBuilder, RootCertStore,
     client::WantsClientCert,
     crypto::CryptoProvider,
     pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-    ClientConfig, ConfigBuilder, RootCertStore,
 };
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
 use crate::{
     error::Report,
-    logging::security::{notify_security_event, SecurityEvent},
+    logging::security::{SecurityEvent, notify_security_event},
     transport::mqtt::PairingError,
 };
 
@@ -248,8 +248,8 @@ pub(crate) fn tls_config_builder(
     Ok(builder)
 }
 
-pub(crate) fn insecure_tls_config_builder(
-) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
+pub(crate) fn insecure_tls_config_builder()
+-> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));

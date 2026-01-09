@@ -106,7 +106,7 @@ pub enum Error {
     Session(#[from] SessionError),
     /// Error returned by the gRPC transport
     #[cfg(feature = "message-hub")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),
 }

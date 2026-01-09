@@ -56,10 +56,10 @@ jobs:
       - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
-          toolchain: nightly-2025-09-26
+          toolchain: nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/install@cargo-docs-rs
-      - run: cargo +nightly-2025-09-26 docs-rs --locked
+      - run: cargo +nightly docs-rs --locked
   features:
     runs-on: ubuntu-24.04
     steps:
@@ -95,7 +95,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        msrv: [1.78]
+        msrv: [1.86]
     name: msrv / ${{ matrix.msrv }}
     steps:
       - uses: actions/checkout@v6

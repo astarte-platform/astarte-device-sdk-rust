@@ -60,12 +60,13 @@ mod tests {
     use astarte_interfaces::interface::Retention;
     use astarte_interfaces::schema::Reliability;
     use chrono::Utc;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     use super::*;
 
+    use crate::Client;
     use crate::client::tests::{mock_client, mock_client_with_store};
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, RetentionId, StoredRetention};
@@ -74,7 +75,6 @@ mod tests {
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_DATASTREAM,
         STORED_DEVICE_DATASTREAM_NAME, VOLATILE_DEVICE_DATASTREAM, VOLATILE_DEVICE_DATASTREAM_NAME,
     };
-    use crate::Client;
 
     #[tokio::test]
     async fn send_datastream_individual_connected_discard() {

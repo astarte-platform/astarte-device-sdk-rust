@@ -25,11 +25,11 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{quote, quote_spanned};
 use syn::{
+    Attribute, Expr, GenericParam, Generics, MetaNameValue, Token,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
-    Attribute, Expr, GenericParam, Generics, MetaNameValue, Token,
 };
 
 use crate::{case::RenameRule, event::FromEventDerive};

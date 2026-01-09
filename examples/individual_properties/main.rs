@@ -24,8 +24,8 @@ use futures::future::Either;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
-    transport::mqtt::MqttConfig, Value,
+    Value, builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
+    transport::mqtt::MqttConfig,
 };
 use tokio::task::JoinSet;
 use tracing::{error, info, level_filters::LevelFilter};
