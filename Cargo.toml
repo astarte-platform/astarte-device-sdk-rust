@@ -64,6 +64,8 @@ description = "A library that provides communication and pairing primitives to a
 default = ["interface-strict", "sqlite-trace"]
 # Enable and exports the derive macros
 derive = ["dep:astarte-device-sdk-derive"]
+# Enable the registration of the device using the FIDO Device Onboard protocol
+fdo = ["dep:astarte-device-fdo"]
 # Deprecated: Add the documentation and description to the interfaces
 interface-doc = []
 # Deprecated: Add stricter checks to the interfaces
@@ -76,6 +78,9 @@ sqlite-trace = ["rusqlite/trace"]
 webpki = ["dep:webpki-roots"]
 # Enable logging of security events onto a custom tracing target
 security-events = []
+# Enable the registration of the device using the FIDO Device Onboard protocol
+# NOTE: at the moment this is only supported on linux platforms
+tpm = ["astarte-device-fdo?/tpm"]
 # Compiles and uses the vendored version of the C dependencies
 vendored = ["rusqlite/bundled"]
 # Recreates the C bindings at buildtime, requires cmake, clang, and  bindgen-cli
@@ -99,6 +104,7 @@ path = "examples/retention/main.rs"
 required-features = ["derive"]
 
 [dependencies]
+astarte-device-fdo = { workspace = true, optional = true }
 astarte-device-sdk-derive = { workspace = true, optional = true }
 astarte-interfaces = { workspace = true }
 astarte-message-hub-proto = { workspace = true, optional = true }
@@ -167,6 +173,7 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
+astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
 astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = "0.1.1"
@@ -174,7 +181,7 @@ astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
 async-channel = "2.0.0"
 async-trait = "0.1.67"
-aws-lc-rs = "1.12.0"
+aws-lc-rs = "1.14.0"
 base64 = "0.22.1"
 bson = "3.0.0"
 bytes = "1.7.1"
@@ -191,8 +198,8 @@ mockall = "0.14.0"
 mockito = "1.4.0"
 phoenix-chan = "0.4.2"
 pretty_assertions = "1.4.1"
-proc-macro2 = "1.0.91"
-quote = "1.0.35"
+proc-macro2 = "1.0.93"
+quote = "1.0.38"
 rand = "0.10.0"
 rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
@@ -200,18 +207,18 @@ reqwest = { version = "0.13.0", default-features = false }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # for last diesel release compatibility
 rusqlite = ">=0.35.0"
-rustls = "0.23.27"
+rustls = "0.23.39"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.0"
-rustls-webpki = { version = "0.103.2", default-features = false }
-serde = "1.0.184"
+rustls-webpki = { version = "0.103.5", default-features = false }
+serde = "1.0.220"
 serde_json = "1.0.85"
-syn = "2.0.89"
+syn = "2.0.96"
 sync_wrapper = "1.0.2"
 tempfile = "3.6.0"
 thiserror = "2.0.12"
-tokio = "1.39.1"
+tokio = "1.48.0"
 tokio-stream = "0.1.0"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.0"
