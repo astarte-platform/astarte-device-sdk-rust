@@ -67,7 +67,7 @@ pub const DEFAULT_STORE_CAPACITY: NonZero<usize> = NonZero::<usize>::new(1_000_0
 /// Default timeout.
 /// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
 /// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Astarte builder error.
 ///

@@ -43,6 +43,7 @@ pub mod event;
 mod interfaces;
 pub mod introspection;
 pub(crate) mod logging;
+pub mod pairing;
 pub mod prelude;
 pub mod properties;
 pub mod retention;
