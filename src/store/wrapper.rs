@@ -25,7 +25,7 @@ use astarte_interfaces::Properties;
 use crate::types::AstarteData;
 
 use super::{
-    error::StoreError, OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
+    OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp, error::StoreError,
 };
 
 /// Wrapper for a generic [`PropertyStore`] to convert the error in [`Error`](crate::Error).
@@ -152,7 +152,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{memory::MemoryStore, tests::test_property_store, SqliteStore};
+    use crate::store::{SqliteStore, memory::MemoryStore, tests::test_property_store};
 
     #[tokio::test]
     async fn test_memory_wrapped() {

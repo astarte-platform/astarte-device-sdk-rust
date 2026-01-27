@@ -25,17 +25,17 @@ use chrono::Utc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, trace, warn};
 
+use crate::Timestamp;
 use crate::error::Report;
 use crate::retry::ExponentialIter;
 use crate::state::{SharedState, Status};
 use crate::transport::TransportError;
-use crate::Timestamp;
 use crate::{
+    Error,
     client::RecvError,
     event::DeviceEvent,
     store::wrapper::StoreWrapper,
     transport::{Connection, Publish, Receive, Reconnect},
-    Error,
 };
 
 mod incoming;
@@ -244,15 +244,15 @@ mod tests {
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
+    use crate::AstarteData;
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
-    use crate::store::memory::MemoryStore;
     use crate::store::StoreCapabilities;
+    use crate::store::memory::MemoryStore;
     use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
-    use crate::transport::mock::{MockCon, MockSender};
     use crate::transport::ReceivedEvent;
-    use crate::AstarteData;
+    use crate::transport::mock::{MockCon, MockSender};
 
     use super::*;
 

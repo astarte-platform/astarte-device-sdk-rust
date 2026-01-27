@@ -21,8 +21,8 @@
 use std::{io, path::PathBuf, time::Duration};
 
 use reqwest::{
-    header::{HeaderMap, HeaderValue},
     StatusCode, Url,
+    header::{HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
 use url::ParseError;
@@ -321,14 +321,12 @@ pub(crate) mod tests {
             &rcgen::PKCS_ECDSA_P256_SHA256,
         )
         .expect("couldn't parse Astarte CA private key");
-        let issuer = rcgen::CertificateParams::from_ca_cert_pem(ASTARTE_CA_PEM)
-            .expect("couldn't parse Astarte CA")
-            .self_signed(&issuer_key)
-            .expect("couldn't self sign CA");
+        let issuer = rcgen::Issuer::from_ca_cert_pem(ASTARTE_CA_PEM, issuer_key)
+            .expect("couldn't parse Astarte CA");
 
         rcgen::CertificateSigningRequestParams::from_pem(csr_pem)
             .expect("couldn't parse csr")
-            .signed_by(&issuer, &issuer_key)
+            .signed_by(&issuer)
             .unwrap()
             .pem()
     }

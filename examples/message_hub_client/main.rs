@@ -21,11 +21,11 @@
 use std::{f64, time::Duration};
 
 use astarte_device_sdk::{
+    DeviceClient, DeviceConnection,
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
-    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig},
-    DeviceClient, DeviceConnection,
+    transport::grpc::{Grpc, GrpcConfig, tonic::transport::Endpoint},
 };
 use eyre::OptionExt;
 use tokio::task::JoinSet;

@@ -20,12 +20,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use astarte_device_sdk::{AstarteData, Client, DeviceEvent};
-use eyre::{ensure, OptionExt};
+use eyre::{OptionExt, ensure};
 use tracing::{error, info, instrument};
 
+use crate::AstarteClient;
 use crate::api::ApiClient;
 use crate::data::InterfaceData;
-use crate::AstarteClient;
 
 #[derive(Debug)]
 struct ServerDatastream {}

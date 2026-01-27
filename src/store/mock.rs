@@ -20,13 +20,13 @@ use astarte_interfaces::Properties;
 use mockall::mock;
 
 use crate::{
-    session::{IntrospectionInterface, SessionError, StoredSession},
     AstarteData,
+    session::{IntrospectionInterface, SessionError, StoredSession},
 };
 
 use super::{
-    error::StoreError, MissingCapability, PropertyMapping, PropertyStore, StoreCapabilities,
-    StoredProp,
+    MissingCapability, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
+    error::StoreError,
 };
 
 /// trait that should be mocked to control which capabilities

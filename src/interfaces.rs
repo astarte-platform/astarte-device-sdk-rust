@@ -23,17 +23,17 @@ use std::ops::Deref;
 
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::schema::{Aggregation, InterfaceType};
-use astarte_interfaces::{error::Error as InterfaceError, Interface};
 use astarte_interfaces::{
     AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
 };
+use astarte_interfaces::{Interface, error::Error as InterfaceError};
 use itertools::Itertools;
 use tracing::{debug, trace, warn};
 
 use crate::error::AggregationError;
 use crate::session::IntrospectionInterface;
 use crate::validate::UserValidationError;
-use crate::{error::InterfaceTypeError, Error};
+use crate::{Error, error::InterfaceTypeError};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -116,7 +116,10 @@ impl Interfaces {
     pub(crate) fn get(&self, interface_name: &str) -> Option<&Interface> {
         #[cfg(debug_assertions)]
         if interface_name.ends_with(".json") {
-            warn!(interface_name, "the interface name passed ends in .json, this is commonly a BUG when the extension is copied from the interface file and should probably be removed");
+            warn!(
+                interface_name,
+                "the interface name passed ends in .json, this is commonly a BUG when the extension is copied from the interface file and should probably be removed"
+            );
         }
 
         self.interfaces.get(interface_name)
@@ -141,7 +144,7 @@ impl Interfaces {
                     path.as_str(),
                     Aggregation::Object,
                     Aggregation::Individual,
-                )))
+                )));
             }
             InterfaceTypeAggregation::DatastreamObject(datastream_object) => datastream_object,
             InterfaceTypeAggregation::Properties(_) => {
@@ -150,7 +153,7 @@ impl Interfaces {
                     path.as_str(),
                     InterfaceType::Datastream,
                     InterfaceType::Properties,
-                )))
+                )));
             }
         };
 
@@ -186,7 +189,7 @@ impl Interfaces {
                     path.as_str(),
                     Aggregation::Individual,
                     Aggregation::Object,
-                )))
+                )));
             }
             InterfaceTypeAggregation::Properties(_) => {
                 return Err(Error::InterfaceType(InterfaceTypeError::with_path(
@@ -194,7 +197,7 @@ impl Interfaces {
                     path.as_str(),
                     InterfaceType::Datastream,
                     InterfaceType::Properties,
-                )))
+                )));
             }
         };
 

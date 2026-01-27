@@ -22,19 +22,19 @@ use std::{borrow::Cow, collections::HashSet, num::TryFromIntError, time::Duratio
 
 use astarte_interfaces::schema::Reliability;
 use rusqlite::{
-    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
     ToSql,
+    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
 use tracing::{debug, error, instrument, trace};
 
 use crate::error::Report;
-use crate::store::sqlite::connection::WriteConnection;
-use crate::store::sqlite::SqliteError;
 use crate::store::SqliteStore;
+use crate::store::sqlite::SqliteError;
+use crate::store::sqlite::connection::WriteConnection;
 
 use super::{
-    duration_from_epoch, Id, PublishInfo, RetentionError, StoredInterface, StoredRetention,
-    TimestampMillis,
+    Id, PublishInfo, RetentionError, StoredInterface, StoredRetention, TimestampMillis,
+    duration_from_epoch,
 };
 
 mod statements;

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    logging::security::{notify_security_event, SecurityEvent},
+    logging::security::{SecurityEvent, notify_security_event},
     transport::mqtt::PairingError,
 };
 

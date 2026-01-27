@@ -21,18 +21,18 @@
 //! You can find more information about the protocol v1 in the [Astarte MQTT v1 Protocol](https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html).
 
 use astarte_interfaces::{
-    mapping::path::MappingPathError, DatastreamIndividual, DatastreamObject, InterfaceMapping,
-    MappingPath, Properties, Schema,
+    DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
+    mapping::path::MappingPathError,
 };
 use bson::Bson;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
+    Timestamp,
     aggregate::AstarteObject,
     interfaces::MappingRef,
-    types::{de::BsonConverter, AstarteData, TypeError},
-    Timestamp,
+    types::{AstarteData, TypeError, de::BsonConverter},
 };
 
 /// Errors that can occur while handling the payload.
@@ -42,17 +42,17 @@ pub enum PayloadError {
     /// Couldn't serialize the payload to bson.
     // NOTE: box the bson error since it's big in size
     #[error("couldn't serialize the payload")]
-    Serialize(#[from] Box<bson::ser::Error>),
+    Serialize(#[from] Box<bson::error::Error>),
     /// Couldn't deserialize the payload to bson.
     #[error("couldn't deserialize the payload")]
-    Deserialize(#[from] bson::de::Error),
+    Deserialize(#[from] bson::error::Error),
     /// Couldn't convert the value to [`AstarteData`]
     #[error("couldn't convert the value to AstarteData")]
     AstarteData(#[from] TypeError),
     /// Expected object, individual data deserialized
     // FIXME: remove in future release
-    #[error("expected object, individual data deserialized instead {0}")]
-    Object(Box<Bson>),
+    #[error("expected object, individual data deserialized instead")]
+    Object,
     /// Couldn't parse a mapping
     #[error("couldn't parse the mapping")]
     Mapping(#[from] MappingPathError),
@@ -60,6 +60,12 @@ pub enum PayloadError {
     #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]
     Unset,
 }
+
+/// Used to serialize to the correct type
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub(crate) struct BsonTimestamp(
+    #[serde(with = "bson::serde_helpers::datetime::FromChrono04DateTime")] pub(crate) Timestamp,
+);
 
 /// The payload of an MQTT message.
 ///
@@ -70,13 +76,8 @@ pub enum PayloadError {
 pub(crate) struct Payload<T> {
     #[serde(rename = "v")]
     pub(crate) value: T,
-    #[serde(
-        rename = "t",
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "bson::serde_helpers::chrono_datetime_as_bson_datetime_optional"
-    )]
-    pub(crate) timestamp: Option<Timestamp>,
+    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) timestamp: Option<BsonTimestamp>,
 }
 
 impl<T> Payload<T> {
@@ -92,7 +93,10 @@ impl<T> Payload<T> {
 
     /// Create a new payload with the given value and time-stamp.
     pub(crate) fn with_timestamp(value: T, timestamp: Option<Timestamp>) -> Self {
-        Self { value, timestamp }
+        Self {
+            value,
+            timestamp: timestamp.map(BsonTimestamp),
+        }
     }
 
     /// Serialize the payload to a BSON vector of bytes.
@@ -100,7 +104,7 @@ impl<T> Payload<T> {
     where
         T: serde::Serialize,
     {
-        let res = bson::to_vec(self).map_err(Box::new)?;
+        let res = bson::serialize_to_vec(self).map_err(Box::new)?;
 
         Ok(res)
     }
@@ -110,7 +114,7 @@ impl<T> Payload<T> {
     where
         T: serde::de::Deserialize<'a>,
     {
-        let res = bson::from_slice(buf)?;
+        let res = bson::deserialize_from_slice(buf)?;
 
         Ok(res)
     }
@@ -165,7 +169,7 @@ pub(super) fn deserialize_individual(
 
     let ast_val = AstarteData::try_from(hint)?;
 
-    Ok((ast_val, payload.timestamp))
+    Ok((ast_val, payload.timestamp.map(|v| v.0)))
 }
 
 pub(super) fn deserialize_object(
@@ -181,7 +185,14 @@ pub(super) fn deserialize_object(
 
     let doc = match payload.value {
         Bson::Document(document) => document,
-        data => return Err(PayloadError::Object(Box::new(data))),
+        data => {
+            error!(
+                data = ?data.element_type(),
+                "expected bson document for object datastream"
+            );
+
+            return Err(PayloadError::Object);
+        }
     };
 
     trace!("base path {path}");
@@ -214,13 +225,13 @@ pub(super) fn deserialize_object(
         })
         .collect::<Result<AstarteObject, _>>()?;
 
-    Ok((aggregate, payload.timestamp))
+    Ok((aggregate, payload.timestamp.map(|v| v.0)))
 }
 
 #[cfg(test)]
 mod test {
-    use astarte_interfaces::schema::MappingType;
     use astarte_interfaces::Interface;
+    use astarte_interfaces::schema::MappingType;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::str::FromStr;

@@ -26,19 +26,19 @@ use std::sync::Arc;
 
 use astarte_interfaces::Properties;
 use astarte_interfaces::Schema;
-use astarte_message_hub_proto::tonic;
 use astarte_message_hub_proto::PropertyFilter;
+use astarte_message_hub_proto::tonic;
 use tokio::sync::Mutex;
 
 use crate::{
+    AstarteData,
     store::MissingCapability,
     store::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp},
-    AstarteData,
 };
 
 use super::{
-    convert::{self, MessageHubProtoError},
     MsgHubClient,
+    convert::{self, MessageHubProtoError},
 };
 
 // Store implementation designed specifically for the grpc connection
@@ -194,18 +194,19 @@ impl PropertyStore for GrpcStore {
 mod test {
     use std::str::FromStr;
 
-    use astarte_interfaces::schema::Ownership;
     use astarte_interfaces::MappingPath;
     use astarte_interfaces::Properties;
     use astarte_interfaces::Schema;
-    use astarte_message_hub_proto::tonic;
+    use astarte_interfaces::schema::Ownership;
     use astarte_message_hub_proto::PropertyFilter;
     use astarte_message_hub_proto::PropertyIdentifier;
-    use astarte_message_hub_proto_mock::mockall::{predicate, Sequence};
+    use astarte_message_hub_proto::tonic;
+    use astarte_message_hub_proto_mock::mockall::{Sequence, predicate};
 
     use super::GrpcStore;
     use super::MsgHubClient;
     use super::PropertyStore;
+    use crate::AstarteData;
     use crate::interfaces::MappingRef;
     use crate::store::PropertyMapping;
     use crate::store::StoredProp;
@@ -217,7 +218,6 @@ mod test {
     use crate::test::E2E_SERVER_PROPERTY_NAME;
     use crate::test::SERVER_PROPERTIES;
     use crate::test::SERVER_PROPERTIES_NAME;
-    use crate::AstarteData;
 
     #[tokio::test]
     async fn test_grpc_store_grpc_client_calls() {

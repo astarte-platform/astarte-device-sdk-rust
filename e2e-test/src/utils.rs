@@ -20,8 +20,8 @@ use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
 
-use base64::prelude::*;
 use base64::Engine;
+use base64::prelude::*;
 use chrono::{DateTime, Utc};
 use eyre::bail;
 use eyre::eyre;

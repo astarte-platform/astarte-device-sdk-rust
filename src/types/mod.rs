@@ -29,7 +29,7 @@ use serde::Serialize;
 
 use crate::Timestamp;
 
-use self::de::{bson_array, ArrayType};
+use self::de::{ArrayType, bson_array};
 
 pub(crate) mod de;
 mod display;
@@ -701,7 +701,9 @@ pub(crate) mod test {
         assert!(AstarteData::Integer(0).eq_mapping_type(MappingType::Double));
 
         assert!(AstarteData::Integer(0).eq_mapping_type(MappingType::Integer));
-        assert!(!AstarteData::Double(0.0.try_into().unwrap()).eq_mapping_type(MappingType::Integer));
+        assert!(
+            !AstarteData::Double(0.0.try_into().unwrap()).eq_mapping_type(MappingType::Integer)
+        );
         assert!(AstarteData::Integer(0).eq_mapping_type(MappingType::LongInteger));
 
         assert!(AstarteData::LongInteger(0).eq_mapping_type(MappingType::LongInteger));

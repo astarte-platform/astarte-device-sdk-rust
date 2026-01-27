@@ -51,8 +51,8 @@ use std::{
 };
 
 use rumqttc::{
-    mqttbytes, ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError,
-    Transport,
+    ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError, Transport,
+    mqttbytes,
 };
 use sync_wrapper::SyncWrapper;
 use tokio::task::{JoinError, JoinHandle};
@@ -61,22 +61,22 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     error::Report,
     interfaces::Interfaces,
-    logging::security::{notify_security_event, notify_tls_error, SecurityEvent},
-    properties::{encode_set_properties, PropertiesError},
+    logging::security::{SecurityEvent, notify_security_event, notify_tls_error},
+    properties::{PropertiesError, encode_set_properties},
     retry::ExponentialIter,
     session::StoredSession,
     state::SharedState,
-    store::{wrapper::StoreWrapper, OptStoredProp, PropertyStore, StoreCapabilities},
+    store::{OptStoredProp, PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
     transport::mqtt::{
-        config::MqttTransportOptions, pairing::ApiClient, payload::Payload, AsyncClientExt,
+        AsyncClientExt, config::MqttTransportOptions, pairing::ApiClient, payload::Payload,
     },
 };
 
 use super::{
-    client::{AsyncClient, EventLoop},
-    config::{transport::TransportProvider, PartialConfig},
-    error::MqttError,
     ClientId, MqttConfig, PairingError, PayloadError, SessionData,
+    client::{AsyncClient, EventLoop},
+    config::{PartialConfig, transport::TransportProvider},
+    error::MqttError,
 };
 
 /// Errors while initializing the MQTT connection.
@@ -1206,16 +1206,16 @@ mod tests {
     use std::{str::FromStr, time::Duration};
 
     use astarte_interfaces::Interface;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
+        AstarteData,
         retention::memory::VolatileStore,
         session::{IntrospectionInterface, SessionError},
-        store::{memory::MemoryStore, mock::MockStore, StoredProp},
+        store::{StoredProp, memory::MemoryStore, mock::MockStore},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
-        AstarteData,
     };
 
     use super::*;

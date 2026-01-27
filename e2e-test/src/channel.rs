@@ -21,9 +21,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use eyre::{ensure, Context};
-use phoenix_chan::tungstenite::http::Uri;
+use eyre::{Context, ensure};
 use phoenix_chan::Message;
+use phoenix_chan::tungstenite::http::Uri;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -96,8 +96,10 @@ impl Channel {
 
         let uri = Uri::try_from(appengine_ws.to_string())?;
 
+        let tls: rustls::ClientConfig = crate::tls::client_config()?;
+        let tls = Arc::new(tls);
         let client = phoenix_chan::Client::builder(uri)?
-            .tls_config(Arc::new(crate::tls::client_config()))
+            .tls_config(tls)
             .connect()
             .await?;
         let client = Arc::new(client);

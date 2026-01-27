@@ -21,15 +21,15 @@ use std::time::Duration;
 
 use tracing::{debug, error, trace};
 
+use crate::Error;
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
 use crate::state::SharedState;
-use crate::store::wrapper::StoreWrapper;
 use crate::store::StoreCapabilities;
+use crate::store::wrapper::StoreWrapper;
 use crate::transport::{Connection, Publish, Receive, Reconnect};
-use crate::Error;
 
 use super::DeviceConnection;
 
@@ -257,16 +257,16 @@ mod tests {
     use std::time::Duration;
 
     use astarte_interfaces::MappingPath;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use tempfile::TempDir;
 
+    use crate::AstarteData;
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
     use crate::retention::{PublishInfo, RetentionId, StoredRetention, StoredRetentionExt};
     use crate::store::{SqliteStore, StoreCapabilities};
     use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
     use crate::transport::mock::MockSender;
     use crate::validate::ValidatedIndividual;
-    use crate::AstarteData;
 
     #[tokio::test]
     async fn reconnect_success_no_data() {

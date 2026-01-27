@@ -23,10 +23,10 @@ use std::fmt::Debug;
 use proc_macro2::Ident;
 use quote::{quote, quote_spanned};
 use syn::{
+    Expr, GenericParam, Generics, Variant,
     parse::{Parse, ParseStream},
     parse_quote,
     spanned::Spanned,
-    Expr, GenericParam, Generics, Variant,
 };
 
 use crate::{

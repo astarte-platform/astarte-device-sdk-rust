@@ -20,13 +20,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use astarte_device_sdk::{Client, DeviceEvent};
-use eyre::{ensure, eyre, OptionExt};
+use eyre::{OptionExt, ensure, eyre};
 use tracing::{info, instrument};
 
+use crate::AstarteClient;
 use crate::api::ApiClient;
 use crate::data::{InterfaceData, InterfaceDataObject};
 use crate::utils::convert_type_to_json;
-use crate::AstarteClient;
 
 #[derive(Debug)]
 struct ServerAggregate {}

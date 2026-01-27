@@ -21,12 +21,12 @@ use std::time::Duration;
 
 use astarte_device_sdk::prelude::PropAccess;
 use astarte_device_sdk::{AstarteData, Client, DeviceEvent, Value};
-use eyre::{bail, ensure, OptionExt};
+use eyre::{OptionExt, bail, ensure};
 use tracing::info;
 
-use crate::api::ApiClient;
-use crate::data::{all_type_data, InterfaceData};
 use crate::AstarteClient;
+use crate::api::ApiClient;
+use crate::data::{InterfaceData, all_type_data};
 
 #[derive(Debug)]
 struct ServerProperty {}

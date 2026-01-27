@@ -19,6 +19,6 @@
 //! Documentation and examples on how to use the library.
 
 #[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
 pub mod _connect_to_the_astarte_msghub;
 pub mod _get_started;

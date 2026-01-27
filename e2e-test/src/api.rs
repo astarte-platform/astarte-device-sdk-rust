@@ -21,7 +21,7 @@ use std::fmt::Debug;
 use astarte_device_sdk::AstarteData;
 use color_eyre::owo_colors::OwoColorize;
 use color_eyre::{Section, SectionExt};
-use eyre::{eyre, Context};
+use eyre::{Context, eyre};
 use phoenix_chan::tungstenite::http;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, ClientBuilder, Response, Url};
@@ -81,9 +81,10 @@ impl ApiClient {
         value.set_sensitive(true);
         let headers = HeaderMap::from_iter([(http::header::AUTHORIZATION, value)]);
 
+        let tls: rustls::ClientConfig = crate::tls::client_config()?;
         let client = ClientBuilder::new()
             .default_headers(headers)
-            .use_preconfigured_tls(crate::tls::client_config())
+            .use_preconfigured_tls(tls)
             .build()?;
 
         Ok(Self {

@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use astarte_interfaces::{error::Error as InterfaceError, Interface};
+use astarte_interfaces::{Interface, error::Error as InterfaceError};
 use tracing::debug;
 
 use crate::Error;

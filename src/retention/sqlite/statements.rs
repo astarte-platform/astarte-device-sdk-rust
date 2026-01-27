@@ -23,7 +23,7 @@ use tracing::{debug, instrument, trace, warn};
 
 use crate::retention::{Id, PublishInfo, StoredInterface};
 use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
-use crate::store::sqlite::{statements::include_query, SqliteError};
+use crate::store::sqlite::{SqliteError, statements::include_query};
 
 use super::{RetentionMapping, RetentionPublish, RetentionReliability, TimestampSecs};
 
@@ -123,8 +123,10 @@ impl WriteConnection {
             .map_err(SqliteError::Prepare)?;
 
         statement
-            .query_row((), |row| row.get::<_, usize>(0))
+            .query_row((), |row| row.get::<_, i64>(0))
             .map_err(SqliteError::Query)
+            // count is positive
+            .map(|value| value as usize)
     }
 
     /// Remove the N oldest elements from the store
@@ -134,6 +136,12 @@ impl WriteConnection {
                 "queries/retention/write/delete_n_oldest.sql"
             ))
             .map_err(SqliteError::Prepare)?;
+
+        let to_remove = i64::try_from(to_remove).unwrap_or_else(|_| {
+            warn!("removing only the last i64::MAX elements");
+
+            i64::MAX
+        });
 
         statement.execute([to_remove]).map_err(SqliteError::Query)
     }
@@ -353,7 +361,7 @@ pub(crate) mod tests {
 
     use crate::{
         retention::{
-            sqlite::tests::publish_with_expiry, Context, StoredRetention, TimestampMillis,
+            Context, StoredRetention, TimestampMillis, sqlite::tests::publish_with_expiry,
         },
         store::SqliteStore,
     };

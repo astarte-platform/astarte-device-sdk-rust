@@ -29,13 +29,27 @@ use crate::builder::DEFAULT_STORE_CAPACITY;
 use crate::error::Report;
 
 use super::options::{SqliteOptions, SqlitePragmas};
-use super::{SqliteError, SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE};
+use super::{SQLITE_BUSY_TIMEOUT, SQLITE_CACHE_SIZE, SqliteError};
 
 #[cfg(feature = "sqlite-trace")]
 /// Logs the execution of SQLite statements
-#[tracing::instrument(name = "statement", skip_all)]
-fn trace_sqlite(event: &str) {
-    tracing::trace!("{event}");
+#[tracing::instrument(name = "sqlite", skip_all)]
+fn trace_sqlite(event: rusqlite::trace::TraceEvent) {
+    match event {
+        rusqlite::trace::TraceEvent::Stmt(_stmt_ref, statement) => {
+            tracing::trace!(statement);
+        }
+        rusqlite::trace::TraceEvent::Profile(stmt_ref, duration) => {
+            tracing::trace!(sql = %stmt_ref.sql(), profile = ?duration);
+        }
+        rusqlite::trace::TraceEvent::Row(stmt_ref) => {
+            tracing::trace!(row = %stmt_ref.sql());
+        }
+        rusqlite::trace::TraceEvent::Close(conn_ref) => {
+            tracing::trace!(close = ?conn_ref.db_filename());
+        }
+        _ => {}
+    }
 }
 
 pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
@@ -109,7 +123,7 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
 
         self.set_pragma("journal_mode", "wal")?;
         self.set_pragma("max_page_count", &pragmas.max_page_count)?;
-        self.set_pragma("journal_size_limit", &pragmas.journal_size_limit)?;
+        self.set_pragma("journal_size_limit", &pragmas.journal_size_limit.get())?;
         self.set_pragma("wal_autocheckpoint", &pragmas.wal_autocheckpoint)?;
         self.set_pragma("foreign_keys", &true)?;
         self.set_pragma("busy_timeout", &SQLITE_BUSY_TIMEOUT)?;
@@ -173,10 +187,7 @@ impl SqliteConnection for WriteConnection {
             Connection::open_with_flags(db_file, flags).map_err(SqliteError::Connection)?;
 
         #[cfg(feature = "sqlite-trace")]
-        let mut connection = connection;
-
-        #[cfg(feature = "sqlite-trace")]
-        connection.trace(Some(trace_sqlite));
+        connection.trace_v2(rusqlite::trace::TraceEventCodes::all(), Some(trace_sqlite));
 
         let connection = Self {
             connection,
@@ -206,9 +217,7 @@ impl SqliteConnection for ReadConnection {
             Connection::open_with_flags(db_file, flags).map_err(SqliteError::Connection)?;
 
         #[cfg(feature = "sqlite-trace")]
-        let mut connection = connection;
-        #[cfg(feature = "sqlite-trace")]
-        connection.trace(Some(trace_sqlite));
+        connection.trace_v2(rusqlite::trace::TraceEventCodes::all(), Some(trace_sqlite));
 
         let conn = Self(connection);
 

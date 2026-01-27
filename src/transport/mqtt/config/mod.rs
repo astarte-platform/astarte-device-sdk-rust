@@ -32,21 +32,21 @@ use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
-    builder::{BuildConfig, ConnectionConfig, DeviceTransport, DEFAULT_CHANNEL_SIZE},
+    builder::{BuildConfig, ConnectionConfig, DEFAULT_CHANNEL_SIZE, DeviceTransport},
     error::Report,
-    logging::security::{notify_security_event, SecurityEvent},
-    store::{wrapper::StoreWrapper, StoreCapabilities},
+    logging::security::{SecurityEvent, notify_security_event},
+    store::{StoreCapabilities, wrapper::StoreWrapper},
     transport::mqtt::{
-        config::transport::TransportProvider, connection::MqttConnection, error::MqttError,
-        retention::MqttRetention, ClientId,
+        ClientId, config::transport::TransportProvider, connection::MqttConnection,
+        error::MqttError, retention::MqttRetention,
     },
 };
 
 use self::tls::is_env_ignore_ssl;
 
 use super::{
-    client::AsyncClient, pairing::ApiClient, registration::register_device_with_timeout, Mqtt,
-    MqttClient, PairingError, SharedState, DEFAULT_KEEP_ALIVE,
+    DEFAULT_KEEP_ALIVE, Mqtt, MqttClient, PairingError, SharedState, client::AsyncClient,
+    pairing::ApiClient, registration::register_device_with_timeout,
 };
 
 mod tls;
@@ -371,9 +371,9 @@ impl MqttConfig {
         let keep_alive = self.keepalive.as_secs();
         let conn_timeout = timeout.as_secs();
         if keep_alive <= conn_timeout {
-            return Err(PairingError::Config(
-                format!("Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)")
-            ));
+            return Err(PairingError::Config(format!(
+                "Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)"
+            )));
         }
 
         let mut net_opts = NetworkOptions::new();

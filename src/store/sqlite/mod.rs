@@ -20,19 +20,19 @@
 
 use std::{
     fmt::Debug,
-    num::{NonZeroU32, NonZeroU64, NonZeroUsize},
+    num::NonZero,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 
 use astarte_interfaces::{
-    schema::{MappingType, Ownership},
     Properties, Schema,
+    schema::{MappingType, Ownership},
 };
 use rusqlite::{
-    types::{FromSql, FromSqlError},
     ToSql,
+    types::{FromSql, FromSqlError},
 };
 use serde::{Deserialize, Serialize};
 use statements::include_query;
@@ -43,8 +43,7 @@ use self::{connection::SqliteConnection, options::SqliteOptions};
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::{
     transport::mqtt::payload::{Payload, PayloadError},
-    types::{de::BsonConverter, AstarteData, TypeError},
-    utils::const_conv::{const_non_zero_u32, const_non_zero_u64, const_non_zero_usize},
+    types::{AstarteData, TypeError, de::BsonConverter},
 };
 
 pub(crate) mod connection;
@@ -60,15 +59,16 @@ pub const SQLITE_BUSY_TIMEOUT: u16 = Duration::from_secs(5).as_millis() as u16;
 /// Cache size in kibibytes
 ///
 /// <https://www.sqlite.org/pragma.html#pragma_cache_size>
-pub const SQLITE_CACHE_SIZE: i16 = -(Size::MiB(const_non_zero_u64(2)).to_kibibytes_ceil() as i16);
+pub const SQLITE_CACHE_SIZE: i16 =
+    -(Size::MiB(NonZero::<u64>::new(2).unwrap()).to_kibibytes_ceil() as i16);
 /// Max journal size
 ///
 /// The default value specidfied in <https://www.sqlite.org/pragma.html#pragma_journal_size_limit> is -1
 /// which does not set an effective limit, therefore we assume a default size of 64 mebibytes
-pub const SQLITE_JOURNAL_SIZE_LIMIT: Size = Size::MiB(const_non_zero_u64(64));
+pub const SQLITE_JOURNAL_SIZE_LIMIT: Size = Size::MiB(NonZero::<u64>::new(64).unwrap());
 
 /// Default database size
-pub const SQLITE_DEFAULT_DB_MAX_SIZE: Size = Size::GiB(const_non_zero_u64(1));
+pub const SQLITE_DEFAULT_DB_MAX_SIZE: Size = Size::GiB(NonZero::<u64>::new(1).unwrap());
 
 /// SQLite maximum number of pages in the database.
 ///
@@ -82,7 +82,7 @@ pub const SQLITE_MAX_PAGE_COUNT: u32 = 4294967294;
 pub const SQLITE_WAL_AUTOCHECKPOINT: u32 = 1000;
 
 /// Maximum number of reader connections to create.
-pub(crate) const DEFAULT_MAX_READERS: NonZeroUsize = const_non_zero_usize(4);
+pub(crate) const DEFAULT_MAX_READERS: NonZero<usize> = NonZero::<usize>::new(4).unwrap();
 
 /// Error returned by the [`SqliteStore`].
 #[non_exhaustive]
@@ -209,36 +209,36 @@ pub enum ValueError {
 pub enum Size {
     /// Dimension expressed in KiloBytes
     #[serde(rename = "kb")]
-    Kb(NonZeroU64),
+    Kb(NonZero<u64>),
     /// Dimension expressed in MegaBytes
     #[serde(rename = "mb")]
-    Mb(NonZeroU64),
+    Mb(NonZero<u64>),
     /// Dimension expressed in GigaBytes
     #[serde(rename = "gb")]
-    Gb(NonZeroU64),
+    Gb(NonZero<u64>),
     /// Dimension expressed in KibiBytes
     #[serde(rename = "kib")]
-    KiB(NonZeroU64),
+    KiB(NonZero<u64>),
     /// Dimension expressed in MebiBytes
     #[serde(rename = "mib")]
-    MiB(NonZeroU64),
+    MiB(NonZero<u64>),
     /// Dimension expressed in GibiBytes
     #[serde(rename = "gib")]
-    GiB(NonZeroU64),
+    GiB(NonZero<u64>),
 }
 
 impl Size {
-    const ONE: NonZeroU32 = const_non_zero_u32(1);
+    const ONE: NonZero<u32> = NonZero::<u32>::new(1).unwrap();
 
-    const KB: NonZeroU64 = const_non_zero_u64(1000);
-    const MB: NonZeroU64 = const_non_zero_u64(1000 * 1000);
-    const GB: NonZeroU64 = const_non_zero_u64(1000 * 1000 * 1000);
-    const KI_B: NonZeroU64 = const_non_zero_u64(1024);
-    const MI_B: NonZeroU64 = const_non_zero_u64(1024 * 1024);
-    const GI_B: NonZeroU64 = const_non_zero_u64(1024 * 1024 * 1024);
+    const KB: NonZero<u64> = NonZero::<u64>::new(1000).unwrap();
+    const MB: NonZero<u64> = NonZero::<u64>::new(1000 * 1000).unwrap();
+    const GB: NonZero<u64> = NonZero::<u64>::new(1000 * 1000 * 1000).unwrap();
+    const KI_B: NonZero<u64> = NonZero::<u64>::new(1024).unwrap();
+    const MI_B: NonZero<u64> = NonZero::<u64>::new(1024 * 1024).unwrap();
+    const GI_B: NonZero<u64> = NonZero::<u64>::new(1024 * 1024 * 1024).unwrap();
 
     /// Convert the size to bytes
-    const fn to_bytes(self) -> NonZeroU64 {
+    const fn to_bytes(self) -> NonZero<u64> {
         match self {
             Size::Kb(kb) => kb.saturating_mul(Self::KB),
             Size::Mb(mb) => mb.saturating_mul(Self::MB),
@@ -255,7 +255,7 @@ impl Size {
 
     /// Approximate the max page count with the page size, with a minimum of 1 page
     #[instrument]
-    fn into_page_count(self, page_size: NonZeroU64) -> NonZeroU32 {
+    fn into_page_count(self, page_size: NonZero<u64>) -> NonZero<u32> {
         let value = u32::try_from(self.to_bytes().get().div_euclid(page_size.get()))
             // default value
             .unwrap_or(SQLITE_MAX_PAGE_COUNT);
@@ -263,13 +263,13 @@ impl Size {
         trace!(pages = value, "calculated pages");
 
         // we must have at least one page
-        NonZeroU32::new(value).unwrap_or(Self::ONE)
+        NonZero::<u32>::new(value).unwrap_or(Self::ONE)
     }
 
     /// Calculate the into_wall_autocheckpoint page count to be at 1/10 of the journal_size_limit
     ///  if it's less than 1000 pages.
     #[instrument]
-    fn into_wall_autocheckpoint(self, page_size: NonZeroU64) -> NonZeroU32 {
+    fn into_wall_autocheckpoint(self, page_size: NonZero<u64>) -> NonZero<u32> {
         let journal_pages = self.into_page_count(page_size);
 
         let pages = journal_pages
@@ -281,7 +281,7 @@ impl Size {
         trace!(pages, "calculated pages");
 
         // we must have at least one page
-        NonZeroU32::new(pages).unwrap_or(Self::ONE)
+        NonZero::<u32>::new(pages).unwrap_or(Self::ONE)
     }
 }
 
@@ -497,15 +497,26 @@ impl SqliteStore {
 
     #[instrument(skip(self))]
     async fn migrate(&self) -> Result<(), SqliteError> {
+        // Order is important
         const MIGRATIONS: &[&str] = &[
             include_query!("migrations/0001_init.sql"),
             include_query!("migrations/0002_unset_property.sql"),
             include_query!("migrations/0003_session.sql"),
         ];
+        const USER_VERSION: u32 = {
+            assert!(MIGRATIONS.len() < (u32::MAX as usize));
+
+            MIGRATIONS.len() as u32
+        };
 
         self.pool
             .acquire_writer(|writer| -> Result<(), SqliteError> {
-                let version = writer.get_pragma("user_version").unwrap_or(0usize);
+                // re-run migrations on error
+                let version: usize = writer
+                    .get_pragma::<u32>("user_version")
+                    .ok()
+                    .and_then(|value| usize::try_from(value).ok())
+                    .unwrap_or(0);
 
                 debug!(
                     current = version,
@@ -527,7 +538,7 @@ impl SqliteStore {
 
                 debug!(version = MIGRATIONS.len(), "setting new database version");
 
-                writer.set_pragma("user_version", &MIGRATIONS.len())?;
+                writer.set_pragma("user_version", &USER_VERSION)?;
 
                 info!("store migrated to new version");
 
@@ -542,7 +553,7 @@ impl SqliteStore {
     ///
     /// The new database size cannot be lower than the actual one.
     // FIXME this method should be removed and this option should be configurable only during object construction
-    pub async fn set_max_pages(&mut self, max: NonZeroU32) -> Result<(), SqliteError> {
+    pub async fn set_max_pages(&mut self, max: NonZero<u32>) -> Result<(), SqliteError> {
         self.pool.set_max_page_count(max).await
     }
 
@@ -773,7 +784,7 @@ mod tests {
             .await
             .unwrap();
 
-        let res = db.set_max_pages(NonZeroU32::new(1000).unwrap()).await;
+        let res = db.set_max_pages(NonZero::<u32>::new(1000).unwrap()).await;
 
         assert!(res.is_ok());
     }
@@ -783,7 +794,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let page_size: usize = db
+        let page_size: i64 = db
             .pool
             .acquire_writer(|writer| writer.get_pragma("page_size"))
             .await
@@ -792,7 +803,7 @@ mod tests {
         db.store_prop(StoredProp {
             interface: "interface",
             path: "/path",
-            value: &AstarteData::BinaryBlob(vec![1; page_size * 3]),
+            value: &AstarteData::BinaryBlob(vec![1; page_size as usize * 3]),
             interface_major: 0,
             ownership: Ownership::Device,
         })
@@ -800,7 +811,7 @@ mod tests {
         .unwrap();
 
         let err = db
-            .set_max_pages(NonZeroU32::new(1).unwrap())
+            .set_max_pages(NonZero::<u32>::new(1).unwrap())
             .await
             .unwrap_err();
 
@@ -827,7 +838,7 @@ mod tests {
             .await
             .unwrap();
 
-        db.set_max_pages(NonZeroU32::new(page_count).unwrap())
+        db.set_max_pages(NonZero::<u32>::new(page_count).unwrap())
             .await
             .unwrap();
 
@@ -855,7 +866,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let res = db.set_max_pages(NonZeroU32::new(10).unwrap()).await;
+        let res = db.set_max_pages(NonZero::<u32>::new(10).unwrap()).await;
 
         assert!(res.is_ok());
 
@@ -875,7 +886,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let size = Size::MiB(NonZeroU64::new(4).unwrap());
+        let size = Size::MiB(NonZero::<u64>::new(4).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
         db.set_db_max_size(size).await.unwrap();
@@ -894,7 +905,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
         // NOTE since the limit is set after the database is created we can't shrink an
@@ -907,7 +918,7 @@ mod tests {
 
     #[test]
     fn size_to_kibibytes_ceil_min() {
-        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_kibibytes_ceil(), 1);
     }
 
@@ -916,12 +927,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let size = Size::MiB(NonZeroU64::new(1).unwrap());
+        let size = Size::MiB(NonZero::<u64>::new(1).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
         assert!(db.set_journal_size_limit(size).await.is_ok());
 
-        let journal_size: u64 = db
+        let journal_size: i64 = db
             .pool
             .acquire_writer(|writer| writer.get_pragma("journal_size_limit"))
             .await
@@ -947,7 +958,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
         assert!(db.set_journal_size_limit(size).await.is_ok());
@@ -975,25 +986,25 @@ mod tests {
 
     #[test]
     fn size_to_bytes() {
-        let size = Size::Kb(NonZeroU64::new(1).unwrap());
+        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1000);
 
-        let size = Size::Mb(NonZeroU64::new(1).unwrap());
+        let size = Size::Mb(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1000 * 1000);
 
-        let size = Size::Gb(NonZeroU64::new(1).unwrap());
+        let size = Size::Gb(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1000 * 1000 * 1000);
     }
 
     #[test]
     fn size_to_kib() {
-        let size = Size::KiB(NonZeroU64::new(1).unwrap());
+        let size = Size::KiB(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1024);
 
-        let size = Size::MiB(NonZeroU64::new(1).unwrap());
+        let size = Size::MiB(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1024 * 1024);
 
-        let size = Size::GiB(NonZeroU64::new(1).unwrap());
+        let size = Size::GiB(NonZero::<u64>::new(1).unwrap());
         assert_eq!(size.to_bytes().get(), 1024 * 1024 * 1024);
     }
 

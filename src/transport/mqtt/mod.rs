@@ -43,11 +43,11 @@ use std::{
 };
 
 use astarte_interfaces::{
-    schema::{Ownership, Reliability},
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+    schema::{Ownership, Reliability},
 };
 use bytes::Bytes;
-use futures::{future::Either, TryFutureExt};
+use futures::{TryFutureExt, future::Either};
 use itertools::Itertools;
 use rumqttc::{AckOfPub, ClientError, QoS, SubAck, SubscribeFilter, Token, TokenError};
 use tracing::{debug, error, info, trace};
@@ -62,25 +62,25 @@ pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
 use crate::{
+    AstarteData, Error, Timestamp,
     aggregate::AstarteObject,
     client::RecvError,
     error::Report,
     interfaces::{self, DeviceIntrospection, Interfaces, MappingRef},
     properties,
     retention::{
-        mark_unsent_on_err, memory::VolatileStore, PublishInfo, RetentionId, StoredRetention,
+        PublishInfo, RetentionId, StoredRetention, mark_unsent_on_err, memory::VolatileStore,
     },
     session::{IntrospectionInterface, StoredSession},
     state::SharedState,
-    store::{wrapper::StoreWrapper, PropertyStore, StoreCapabilities},
+    store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-    AstarteData, Error, Timestamp,
 };
 use crate::{retention::RetentionError, store::OptStoredProp};
 
 use self::{
     client::AsyncClient,
-    components::{to_qos, ClientId},
+    components::{ClientId, to_qos},
     connection::MqttConnection,
     error::MqttError,
     retention::{MqttRetention, RetSender},
@@ -986,7 +986,7 @@ pub(crate) mod test {
 
     use astarte_interfaces::AggregationIndividual;
     use chrono::Utc;
-    use mockall::{predicate, Sequence};
+    use mockall::{Sequence, predicate};
     use mockito::Server;
     use pairing::tests::mock_verify_certificate;
     use properties::extract_set_properties;
@@ -1001,10 +1001,10 @@ pub(crate) mod test {
     };
 
     use crate::{
-        builder::{BuildConfig, ConnectionConfig, DeviceBuilder, DEFAULT_VOLATILE_CAPACITY},
+        builder::{BuildConfig, ConnectionConfig, DEFAULT_VOLATILE_CAPACITY, DeviceBuilder},
         retention::Context,
         session::SessionError,
-        store::{memory::MemoryStore, mock::MockStore, SqliteStore},
+        store::{SqliteStore, memory::MemoryStore, mock::MockStore},
         test::{
             DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, E2E_DEVICE_DATASTREAM,
             E2E_DEVICE_DATASTREAM_NAME, SERVER_INDIVIDUAL, SERVER_INDIVIDUAL_NAME,

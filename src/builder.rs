@@ -24,7 +24,7 @@ use std::fmt::Debug;
 use std::fs;
 use std::future::Future;
 use std::io;
-use std::num::NonZeroUsize;
+use std::num::NonZero;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -35,22 +35,21 @@ use astarte_interfaces::Interface;
 use tracing::debug;
 use tracing::info;
 
+use crate::Error;
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
 use crate::interfaces::Interfaces;
 use crate::introspection::AddInterfaceError;
-use crate::retention::memory::VolatileStore;
 use crate::retention::RetentionError;
 use crate::retention::StoredRetention;
+use crate::retention::memory::VolatileStore;
 use crate::state::SharedState;
-use crate::store::sqlite::SqliteError;
-use crate::store::wrapper::StoreWrapper;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
 use crate::store::StoreCapabilities;
+use crate::store::sqlite::SqliteError;
+use crate::store::wrapper::StoreWrapper;
 use crate::transport::Connection;
-use crate::utils::const_conv::const_non_zero_usize;
-use crate::Error;
 
 /// Default capacity of the channels
 ///
@@ -63,7 +62,7 @@ pub const DEFAULT_CHANNEL_SIZE: usize = 50;
 pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
-pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
+pub const DEFAULT_STORE_CAPACITY: NonZero<usize> = NonZero::<usize>::new(1_000_000).unwrap();
 
 /// Default timeout.
 /// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
@@ -132,7 +131,7 @@ pub struct BuildConfig<S> {
 pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
     pub(crate) channel_size: usize,
     pub(crate) volatile_retention: usize,
-    pub(crate) stored_retention: NonZeroUsize,
+    pub(crate) stored_retention: NonZero<usize>,
     pub(crate) store: S,
     pub(crate) connection_config: C,
     pub(crate) interfaces: Interfaces,
@@ -267,7 +266,7 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// Set the maximum number of elements that will be kept in memory
-    pub fn max_volatile_retention(mut self, items: NonZeroUsize) -> Self {
+    pub fn max_volatile_retention(mut self, items: NonZero<usize>) -> Self {
         self.volatile_retention = items.get();
 
         self
@@ -333,7 +332,7 @@ where
     S: StoredRetention,
 {
     /// Set the maximum number of elements that will be kept in the store
-    pub fn max_stored_retention(mut self, items: NonZeroUsize) -> Self {
+    pub fn max_stored_retention(mut self, items: NonZero<usize>) -> Self {
         self.stored_retention = items;
 
         self

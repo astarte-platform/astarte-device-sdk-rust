@@ -21,12 +21,12 @@ use rusqlite::OptionalExtension;
 use tracing::{instrument, warn};
 
 use crate::{
-    store::{OptStoredProp, StoredProp},
     AstarteData,
+    store::{OptStoredProp, StoredProp},
 };
 
 use super::connection::{ReadConnection, WriteConnection};
-use super::{into_stored_type, PropRecord, RecordOwnership, SqliteError, StoredRecord};
+use super::{PropRecord, RecordOwnership, SqliteError, StoredRecord, into_stored_type};
 
 macro_rules! include_query {
     ($file:expr) => {
@@ -282,25 +282,32 @@ impl ReadConnection {
 mod tests {
     use std::num::NonZeroU64;
 
-    use crate::store::sqlite::connection::SqliteConnection;
-    use crate::store::sqlite::{Size, SQLITE_JOURNAL_SIZE_LIMIT};
     use crate::store::SqliteStore;
+    use crate::store::sqlite::connection::SqliteConnection;
+    use crate::store::sqlite::{SQLITE_JOURNAL_SIZE_LIMIT, Size};
 
     #[tokio::test]
     async fn custom_journal_size_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
 
-        let journal_size: u64 = db
+        let journal_size: i64 = db
             .pool
             .acquire_writer(|writer| writer.get_pragma("journal_size_limit"))
             .await
             .unwrap();
 
         // check that journal size has been set to default
-        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT.to_bytes().get());
+        assert_eq!(
+            u64::try_from(journal_size).unwrap(),
+            SQLITE_JOURNAL_SIZE_LIMIT.to_bytes().get()
+        );
 
-        let new_journal_size = Size::MiB(NonZeroU64::new(100).unwrap()).to_bytes();
+        let new_journal_size: i64 = Size::MiB(NonZeroU64::new(100).unwrap())
+            .to_bytes()
+            .get()
+            .try_into()
+            .unwrap();
 
         // change journal size
         db.pool
@@ -317,12 +324,15 @@ mod tests {
         // reopen the db connection resets the journal size
         let db: SqliteStore = SqliteStore::connect(dir.as_ref()).await.unwrap();
 
-        let journal_size: u64 = db
+        let journal_size: i64 = db
             .pool
             .acquire_writer(|writer| writer.get_pragma("journal_size_limit"))
             .await
             .unwrap();
 
-        assert_eq!(journal_size, SQLITE_JOURNAL_SIZE_LIMIT.to_bytes().get());
+        assert_eq!(
+            journal_size,
+            SQLITE_JOURNAL_SIZE_LIMIT.to_bytes().get() as i64
+        );
     }
 }

@@ -20,11 +20,11 @@ use std::collections::HashMap;
 
 use astarte_device_sdk::prelude::PropAccess;
 use astarte_device_sdk::{AstarteData, Client};
-use eyre::{ensure, OptionExt};
+use eyre::{OptionExt, ensure};
 use tracing::{info, instrument};
 
 use crate::channel::IncomingData;
-use crate::data::{all_type_data, InterfaceData};
+use crate::data::{InterfaceData, all_type_data};
 use crate::utils::check_astarte_value;
 use crate::{AstarteClient, Channel};
 

@@ -355,7 +355,7 @@ mod tests {
     use astarte_interfaces::schema::Reliability;
     use pretty_assertions::assert_eq;
 
-    use crate::{aggregate::AstarteObject, retention::Context, AstarteData};
+    use crate::{AstarteData, aggregate::AstarteObject, retention::Context};
 
     use super::*;
 
@@ -867,7 +867,7 @@ mod tests {
         }
 
         let check_is_unsent_element = |item: &ItemValue| {
-            matches!(item, ItemValue::Individual(ref individual)
+            matches!(item, ItemValue::Individual(individual)
                 if individual.interface == "interface_check" && individual.version_major == 1)
         };
 
