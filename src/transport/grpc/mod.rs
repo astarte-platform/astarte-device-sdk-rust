@@ -202,7 +202,7 @@ where
     S: StoreCapabilities + Send + Sync,
 {
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
-        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
@@ -213,7 +213,7 @@ where
     }
 
     async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
-        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
@@ -224,7 +224,7 @@ where
     }
 
     async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error> {
-        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
@@ -239,7 +239,7 @@ where
         id: RetentionId,
         data: ValidatedIndividual,
     ) -> Result<(), crate::Error> {
-        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
@@ -256,7 +256,7 @@ where
         id: RetentionId,
         data: ValidatedObject,
     ) -> Result<(), crate::Error> {
-        let data = AstarteMessage::try_from(data).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
@@ -294,15 +294,13 @@ where
     }
 
     fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error> {
-        let data =
-            AstarteMessage::try_from(data.clone()).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data.clone());
 
         Ok(data.encode_to_vec())
     }
 
     fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
-        let data =
-            AstarteMessage::try_from(data.clone()).map_err(GrpcError::MessageHubProtoConversion)?;
+        let data = AstarteMessage::from(data.clone());
 
         Ok(data.encode_to_vec())
     }
@@ -1194,7 +1192,7 @@ mod test {
         let proto_payload = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
             data: MockServerObject::mock_object()
                 .into_key_values()
-                .map(|(k, v)| (k, v.try_into().unwrap()))
+                .map(|(k, v)| (k, v.into()))
                 .collect(),
             timestamp: None,
         });

@@ -113,11 +113,13 @@ fn convert_timestamp(
 ) -> Result<crate::Timestamp, MessageHubProtoError> {
     let val = timestamp.normalized();
 
-    let nanos = val.nanos.try_into().map_err(|_| {
-        error!(%timestamp, "couldn't convert sub nanoseconds");
-
-        MessageHubProtoError::Timestamp
-    })?;
+    let nanos = val
+        .nanos
+        .try_into()
+        .inspect_err(|_| {
+            error!(%timestamp, "couldn't convert sub nanoseconds");
+        })
+        .unwrap_or(0);
 
     chrono::Utc
         .timestamp_opt(val.seconds, nanos)
@@ -125,22 +127,15 @@ fn convert_timestamp(
         .ok_or(MessageHubProtoError::Timestamp)
 }
 
-/// Converts a [`prost_types::Timestamp`] into a [`chrono::DateTime<Utc>`]
-fn convert_chrono(
-    timestamp: crate::Timestamp,
-) -> Result<prost_types::Timestamp, MessageHubProtoError> {
-    let nanos = i32::try_from(timestamp.timestamp_subsec_nanos()).map_err(|_| {
-        error!(?timestamp, "couldn't convert sub nanoseconds");
+/// Converts a [`chrono::DateTime<Utc>`] into a [`prost_types::Timestamp`]
+fn convert_chrono(timestamp: crate::Timestamp) -> prost_types::Timestamp {
+    let nanos = i32::try_from(timestamp.timestamp_subsec_nanos()).unwrap_or(i32::MAX);
 
-        MessageHubProtoError::Timestamp
-    })?;
-
-    Ok(prost_types::Timestamp {
+    prost_types::Timestamp {
         seconds: timestamp.timestamp(),
         // this is always less than i32::MAX
         nanos,
     }
-    .normalized())
 }
 
 impl TryFrom<ProtoDataWrapper> for AstarteData {
@@ -179,10 +174,8 @@ impl TryFrom<ProtoDataWrapper> for AstarteData {
     }
 }
 
-impl TryFrom<AstarteData> for ProtoDataWrapper {
-    type Error = MessageHubProtoError;
-
-    fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
+impl From<AstarteData> for ProtoDataWrapper {
+    fn from(value: AstarteData) -> Self {
         let astarte_data = match value {
             AstarteData::Double(value) => ProtoData::Double(*value),
             AstarteData::Integer(value) => ProtoData::Integer(value),
@@ -190,7 +183,7 @@ impl TryFrom<AstarteData> for ProtoDataWrapper {
             AstarteData::LongInteger(value) => ProtoData::LongInteger(value),
             AstarteData::String(value) => ProtoData::String(value),
             AstarteData::BinaryBlob(value) => ProtoData::BinaryBlob(value),
-            AstarteData::DateTime(value) => ProtoData::DateTime(convert_chrono(value)?),
+            AstarteData::DateTime(value) => ProtoData::DateTime(convert_chrono(value)),
             AstarteData::DoubleArray(values) => {
                 ProtoData::DoubleArray(astarte_message_hub_proto::AstarteDoubleArray {
                     values: values.into_iter().map(Double::into).collect(),
@@ -216,18 +209,15 @@ impl TryFrom<AstarteData> for ProtoDataWrapper {
                 })
             }
             AstarteData::DateTimeArray(values) => {
-                let values = values
-                    .into_iter()
-                    .map(convert_chrono)
-                    .collect::<Result<Vec<prost_types::Timestamp>, MessageHubProtoError>>()?;
+                let values = values.into_iter().map(convert_chrono).collect();
 
                 ProtoData::DateTimeArray(astarte_message_hub_proto::AstarteDateTimeArray { values })
             }
         };
 
-        Ok(Self {
+        Self {
             astarte_data: Some(astarte_data),
-        })
+        }
     }
 }
 
@@ -258,65 +248,64 @@ impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
 }
 
 // For send individual
-impl TryFrom<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
-    type Error = MessageHubProtoError;
+impl From<ValidatedIndividual> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedIndividual) -> Self {
+        let timestamp = value.timestamp.map(convert_chrono);
 
-    fn try_from(value: ValidatedIndividual) -> Result<Self, Self::Error> {
-        let timestamp = value.timestamp.map(convert_chrono).transpose()?;
-
-        let data = value.data.try_into()?;
         let payload = Some(ProtoPayload::DatastreamIndividual(
             AstarteDatastreamIndividual {
-                data: Some(data),
+                data: Some(value.data.into()),
                 timestamp,
             },
         ));
 
-        Ok(astarte_message_hub_proto::AstarteMessage {
+        astarte_message_hub_proto::AstarteMessage {
             interface_name: value.interface,
             path: value.path,
             payload,
-        })
+        }
     }
 }
 
 // For send object
-impl TryFrom<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
-    type Error = MessageHubProtoError;
-
-    fn try_from(value: ValidatedObject) -> Result<Self, Self::Error> {
-        let timestamp = value.timestamp.map(convert_chrono).transpose()?;
+impl From<ValidatedObject> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedObject) -> Self {
+        let timestamp = value.timestamp.map(convert_chrono);
 
         let data = value
             .data
             .into_key_values()
-            .map(|(k, v)| ProtoDataWrapper::try_from(v).map(|v| (k, v)))
-            .collect::<Result<HashMap<String, ProtoDataWrapper>, MessageHubProtoError>>()?;
+            .map(|(k, v)| {
+                let v = ProtoDataWrapper::from(v);
+
+                (k, v)
+            })
+            .collect::<HashMap<String, ProtoDataWrapper>>();
 
         let payload = Some(ProtoPayload::DatastreamObject(
             astarte_message_hub_proto::AstarteDatastreamObject { data, timestamp },
         ));
 
-        Ok(astarte_message_hub_proto::AstarteMessage {
+        astarte_message_hub_proto::AstarteMessage {
             interface_name: value.interface,
             path: value.path,
             payload,
-        })
+        }
     }
 }
 
 // For send property
-impl TryFrom<ValidatedProperty> for astarte_message_hub_proto::AstarteMessage {
-    type Error = MessageHubProtoError;
+impl From<ValidatedProperty> for astarte_message_hub_proto::AstarteMessage {
+    fn from(value: ValidatedProperty) -> Self {
+        let data = ProtoDataWrapper::from(value.data);
 
-    fn try_from(value: ValidatedProperty) -> Result<Self, Self::Error> {
-        ProtoDataWrapper::try_from(value.data).map(|data| Self {
+        Self {
             interface_name: value.interface,
             path: value.path,
             payload: Some(ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual { data: Some(data) },
             )),
-        })
+        }
     }
 }
 
@@ -373,8 +362,8 @@ impl TryFrom<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
     fn try_from(value: DeviceEvent) -> Result<Self, Self::Error> {
         let payload = match value.data {
             Value::Individual { data, timestamp } => {
-                let data = data.try_into()?;
-                let timestamp = convert_chrono(timestamp)?;
+                let data = ProtoDataWrapper::from(data);
+                let timestamp = convert_chrono(timestamp);
 
                 ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
                     data: Some(data),
@@ -385,9 +374,12 @@ impl TryFrom<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
                 let data = data
                     .inner
                     .into_iter()
-                    .map(|(k, v)| ProtoDataWrapper::try_from(v).map(|v| (k, v)))
-                    .collect::<Result<HashMap<String, ProtoDataWrapper>, MessageHubProtoError>>()?;
-                let timestamp = convert_chrono(timestamp)?;
+                    .map(|(k, v)| {
+                        let v = ProtoDataWrapper::from(v);
+                        (k, v)
+                    })
+                    .collect::<HashMap<String, ProtoDataWrapper>>();
+                let timestamp = convert_chrono(timestamp);
 
                 ProtoPayload::DatastreamObject(astarte_message_hub_proto::AstarteDatastreamObject {
                     data,
@@ -396,7 +388,7 @@ impl TryFrom<DeviceEvent> for astarte_message_hub_proto::AstarteMessage {
             }
             Value::Property(prop) => ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual {
-                    data: prop.map(ProtoDataWrapper::try_from).transpose()?,
+                    data: prop.map(ProtoDataWrapper::from),
                 },
             ),
         };
@@ -460,7 +452,7 @@ pub(crate) mod test {
         ];
 
         for exp in cases {
-            let proto = ProtoDataWrapper::try_from(exp.clone()).unwrap();
+            let proto = ProtoDataWrapper::from(exp.clone());
             let astarte_type = AstarteData::try_from(proto).unwrap();
 
             assert_eq!(exp, astarte_type);
@@ -975,7 +967,7 @@ pub(crate) mod test {
 
         let payload: ProtoPayload =
             ProtoPayload::DatastreamIndividual(AstarteDatastreamIndividual {
-                data: Some(astarte_sdk_type_double.try_into().unwrap()),
+                data: Some(astarte_sdk_type_double.into()),
                 timestamp: None,
             });
 
