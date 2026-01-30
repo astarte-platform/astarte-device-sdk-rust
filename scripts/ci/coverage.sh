@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,93 +39,7 @@ CARGO_TARGET_DIR=$(
         jq '.target_directory' --raw-output
 )
 export CARGO_TARGET_DIR
-SRC_DIR="$(
-    cargo +nightly locate-project |
-        jq .root --raw-output |
-        xargs dirname
-)"
-export SRC_DIR
-export PROFS_DIR="$CARGO_TARGET_DIR/profs"
-export LLVM_PROFILE_FILE="$PROFS_DIR/coverage-%p-%m.profraw"
-export COVERAGE_OUT_DIR="$CARGO_TARGET_DIR/debug/coverage"
-
-# This require a nightly compiler
-#
-# Rustc options:
-#
-# - `instrument-coverage`: enable coverage for all
-# - `coverage-options=branch``: enable block and branch coverage (unstable option)
-#
-# See: https://doc.rust-lang.org/rustc/instrument-coverage.html
-export RUSTFLAGS="-Cinstrument-coverage -Zcoverage-options=branch --cfg=__coverage"
 export CARGO_INCREMENTAL=0
-
-src_crate='@MAIN_CRATE@'
-crates=(
-    '@MAIN_CRATE@'
-    '@CRATE@'
-)
-
-# Helpful for testing changes in the generation options
-if [[ ${1:-} != '--no-gen' ]]; then
-    mkdir -p "$COVERAGE_OUT_DIR"
-    mkdir -p "$PROFS_DIR"
-
-    for crate in "${crates[@]}"; do
-        cargo +nightly test --locked --all-features --tests --no-fail-fast -p "$crate"
-    done
-fi
-
-find_target_tool() {
-    local libdir
-    local tool_path
-
-    libdir=$(rustup run nightly rustc --print target-libdir)
-    tool_path=$(realpath "$libdir/../bin/$1")
-
-    echo "$tool_path"
-}
-
-rustup_llvm_profdata=$(find_target_tool llvm-profdata)
-rustup_llvm_cov=$(find_target_tool llvm-cov)
-
-LLVM_PROFDATA=${LLVM_PROFDATA:-$rustup_llvm_profdata}
-LLVM_COV=${LLVM_COV:-$rustup_llvm_cov}
-
-$LLVM_PROFDATA merge -sparse "$PROFS_DIR/"*.profraw -o "$PROFS_DIR/coverage.profdata"
-
-object_files() {
-    objects=$(
-        cargo +nightly test --tests --all-features --no-run --message-format=json "$@" |
-            jq -r "select(.profile.test == true) | .filenames[]" |
-            grep -v dSYM -
-    )
-
-    for obj in "${objects[@]}"; do
-        echo "-object=$obj"
-    done
-}
-
-export_lcov() {
-    local src
-    if [[ $1 == "$src_crate" ]]; then
-        src="$SRC_DIR/src"
-    else
-        src="$SRC_DIR/$1/src"
-    fi
-
-    obj_args=$(object_files -p "$p")
-
-    $LLVM_COV export \
-        -Xdemangler=rustfilt \
-        -format=lcov \
-        -ignore-filename-regex='/.cargo/registry' \
-        -instr-profile="$PROFS_DIR/coverage.profdata" \
-        -ignore-filename-regex='.*test\.rs' \
-        -ignore-filename-regex='.*mock\.rs' \
-        -sources "$src" "${obj_args[@]}" \
-        >"$COVERAGE_OUT_DIR/$1/lcov.info"
-}
 
 filter_lcov() {
     local src
@@ -181,27 +95,27 @@ filter_lcov() {
     fi
 }
 
-for p in "${crates[@]}"; do
-    mkdir -p "$COVERAGE_OUT_DIR/$p/"
-
-    export_lcov "$p"
-
-    filter_lcov "$p"
-
-    cp -v "$COVERAGE_OUT_DIR/$p/lcov.info" "$COVERAGE_OUT_DIR/coverage-$p.info"
-
-    if [[ -n "${EXPORT_FOR_CI:-}" ]]; then
-        cp -v "$COVERAGE_OUT_DIR/$p/lcov" "$PWD/coverage-$p.info"
-    fi
-
-    if [[ -n "${EXPORT_BASE_COMMIT:-}" ]]; then
-        commit=$(git rev-parse HEAD)
-        cp -v "$COVERAGE_OUT_DIR/$p/lcov.info" "$COVERAGE_OUT_DIR/baseline-$commit-$p.info"
-        echo "$commit" >"$COVERAGE_OUT_DIR/baseline-commit.txt"
-    fi
-done
-
-# Fixes the profraw being detected by codecov
 if [[ -n "${EXPORT_FOR_CI:-}" ]]; then
-    rm -rf "$CARGO_TARGET_DIR"
+    out_path="$PWD/coverage-astarte-message-hub.info"
+else
+    mkdir -p "$CARGO_TARGET_DIR/lcov"
+    out_path="$CARGO_TARGET_DIR/lcov/coverage-astarte-message-hub.info"
+fi
+
+# Currently branch coverage can be broken on nightly
+cargo +nightly llvm-cov \
+    --all-features -p "@MAIN_CRATE@" \
+    --lcov \
+    --output-path "$out_path"
+
+cargo llvm-cov report
+
+if [[ -z "${EXPORT_FOR_CI:-}" ]]; then
+    cargo llvm-cov report --html
+fi
+
+if [[ -n "${EXPORT_BASE_COMMIT:-}" ]]; then
+    commit=$(git rev-parse HEAD)
+    cp -v "$COVERAGE_OUT_DIR/$p/lcov.info" "$COVERAGE_OUT_DIR/baseline-$commit-$p.info"
+    echo "$commit" >"$COVERAGE_OUT_DIR/baseline-commit.txt"
 fi

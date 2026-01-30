@@ -36,9 +36,7 @@ jobs:
       - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
-      - uses: taiki-e/install-action@v2.49.43
-        with:
-          tool: cargo-nextest
+      - uses: taiki-e/install-action@cargo-nextest
       - run: cargo nextest run --locked --all-features --workspace
       # https://github.com/rust-lang/cargo/issues/6669
       - name: run doc test
@@ -79,7 +77,7 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@v2.49.43
         with:
-          tool: rustfilt
+          tool: rustfilt,cargo-llvm-cov
       - name: Generate coverage
         run: |
           EXPORT_FOR_CI=1 ./scripts/ci/coverage.sh
