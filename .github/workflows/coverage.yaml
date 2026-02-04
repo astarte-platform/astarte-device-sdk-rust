@@ -42,7 +42,7 @@ jobs:
             .github/codecov.yaml
           sparse-checkout-cone-mode: false
       - name: Download coverage artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: coverage
           github-token: ${{ github.token }}
@@ -75,7 +75,7 @@ jobs:
             .github/codecov.yaml
           sparse-checkout-cone-mode: false
       - name: Download coverage artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           name: test_results
           github-token: ${{ github.token }}
