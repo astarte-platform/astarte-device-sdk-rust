@@ -213,7 +213,12 @@ impl ReadConnection {
     pub(super) fn props_with_unset(
         &self,
         ownership: Ownership,
+        limit: usize,
+        offset: usize,
     ) -> Result<Vec<OptStoredProp>, SqliteError> {
+        let limit = i64::try_from(limit).map_err(|_| SqliteError::Conversion(limit))?;
+        let offset = i64::try_from(offset).map_err(|_| SqliteError::Conversion(offset))?;
+
         let ownership_par = RecordOwnership::from(ownership);
 
         let mut statement = self
@@ -223,7 +228,7 @@ impl ReadConnection {
             .map_err(SqliteError::Prepare)?;
 
         let v = statement
-            .query_map([ownership_par], |row| {
+            .query_map((ownership_par, limit, offset), |row| {
                 Ok(StoredRecord {
                     interface: row.get(0)?,
                     path: row.get(1)?,

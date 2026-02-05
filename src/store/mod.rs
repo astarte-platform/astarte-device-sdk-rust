@@ -269,6 +269,8 @@ where
     /// Retrieves all the device properties, including the one that were unset but not deleted.
     fn device_props_with_unset(
         &self,
+        limit: usize,
+        offset: usize,
     ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
 }
 
@@ -429,7 +431,11 @@ mod tests {
                 interface_major: 1,
                 ownership: Ownership::Device,
             }],
-            store.device_props_with_unset().await.unwrap().as_slice()
+            store
+                .device_props_with_unset(1, 0)
+                .await
+                .unwrap()
+                .as_slice()
         );
 
         // delete

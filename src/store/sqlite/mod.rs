@@ -124,6 +124,9 @@ pub enum SqliteError {
     /// Couldn't join the connection task
     #[error("couldn't join the connection task")]
     Join,
+    /// Conversion error for value to pass to sqlite
+    #[error("Can't convert value passed '{0}'")]
+    Conversion(usize),
 }
 
 /// Error when converting a u8 into the [`Ownership`] struct.
@@ -705,9 +708,13 @@ impl PropertyStore for SqliteStore {
             .await
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+    async fn device_props_with_unset(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.pool
-            .acquire_reader(|reader| reader.props_with_unset(Ownership::Device))
+            .acquire_reader(move |reader| reader.props_with_unset(Ownership::Device, limit, offset))
             .await
     }
 }

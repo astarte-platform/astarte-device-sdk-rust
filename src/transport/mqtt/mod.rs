@@ -867,16 +867,19 @@ impl SessionData {
     where
         S: PropertyStore,
     {
-        let device_properties = store.device_props_with_unset().await.map(|mut p| {
-            // Filter interfaces that are missing or have been updated
-            p.retain(|prop| {
-                interfaces
-                    .get(&prop.interface)
-                    .is_some_and(|interface| interface.version_major() == prop.interface_major)
-            });
+        let device_properties = store
+            .device_props_with_unset(usize::MAX, 0)
+            .await
+            .map(|mut p| {
+                // Filter interfaces that are missing or have been updated
+                p.retain(|prop| {
+                    interfaces
+                        .get(&prop.interface)
+                        .is_some_and(|interface| interface.version_major() == prop.interface_major)
+                });
 
-            p
-        });
+                p
+            });
 
         match device_properties {
             Ok(p) => p,

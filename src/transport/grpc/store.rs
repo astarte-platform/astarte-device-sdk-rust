@@ -184,9 +184,12 @@ impl PropertyStore for GrpcStore {
         Ok(())
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
-        // unused for grpc connection
-        Ok(vec![])
+    async fn device_props_with_unset(
+        &self,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<OptStoredProp>, Self::Err> {
+        Ok(Vec::new())
     }
 }
 

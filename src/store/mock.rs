@@ -94,6 +94,8 @@ mock! {
 
         async fn device_props_with_unset(
             &self,
+            limit: usize,
+            offset: usize,
         ) -> Result<Vec<super::OptStoredProp>, StoreError>;
     }
 
