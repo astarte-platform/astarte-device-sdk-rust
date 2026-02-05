@@ -22,7 +22,7 @@ use tracing::trace;
 
 use astarte_interfaces::Properties;
 
-use crate::types::AstarteData;
+use crate::{store::PropertyState, types::AstarteData};
 
 use super::{
     OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp, error::StoreError,
@@ -78,6 +78,18 @@ where
         self.store.store_prop(prop).await.map_err(StoreError::store)
     }
 
+    async fn update_state(
+        &self,
+        property: &PropertyMapping<'_>,
+        state: super::PropertyState,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        self.store
+            .update_state(property, state, expected)
+            .await
+            .map_err(StoreError::update_state)
+    }
+
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
@@ -98,6 +110,17 @@ where
     async fn delete_prop(&self, interface: &PropertyMapping<'_>) -> Result<(), Self::Err> {
         self.store
             .delete_prop(interface)
+            .await
+            .map_err(StoreError::delete)
+    }
+
+    async fn delete_expected_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        self.store
+            .delete_expected_prop(property, expected)
             .await
             .map_err(StoreError::delete)
     }
@@ -143,11 +166,12 @@ where
 
     async fn device_props_with_unset(
         &self,
+        state: PropertyState,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.store
-            .device_props_with_unset(limit, offset)
+            .device_props_with_unset(state, limit, offset)
             .await
             .map_err(StoreError::device_props)
     }

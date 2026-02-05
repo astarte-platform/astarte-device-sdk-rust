@@ -8,5 +8,6 @@ SELECT
 FROM propcache
 WHERE
     ownership = ?
+    AND state = ?
 ORDER BY interface, path
 LIMIT ? OFFSET ?;

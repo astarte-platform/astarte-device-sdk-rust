@@ -35,11 +35,12 @@ use tracing::{debug, error, info, instrument, trace};
 use self::connection::SqliteConnection;
 use self::pool::Connections;
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
-use crate::transport::mqtt::payload::{Payload, PayloadError};
-use crate::types::de::BsonConverter;
-use crate::types::{AstarteData, TypeError};
-
-pub use self::options::SqliteOptions;
+use crate::store::sqlite::options::SqliteOptions;
+use crate::{
+    store::PropertyState,
+    transport::mqtt::payload::{Payload, PayloadError},
+    types::{AstarteData, TypeError, de::BsonConverter},
+};
 
 pub(crate) mod connection;
 pub(crate) mod options;
@@ -325,6 +326,56 @@ impl Debug for PropRecord {
     }
 }
 
+/// Error when converting a u8 into the [`PropertyState`] struct.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid property state value {value}")]
+pub struct PropertyStateError {
+    value: u8,
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(u8)]
+enum RecordPropertyState {
+    Changed = 0,
+    Completed = 1,
+}
+
+impl From<PropertyState> for RecordPropertyState {
+    fn from(value: PropertyState) -> Self {
+        match value {
+            PropertyState::Changed => Self::Changed,
+            PropertyState::Completed => Self::Completed,
+        }
+    }
+}
+
+impl From<RecordPropertyState> for PropertyState {
+    fn from(value: RecordPropertyState) -> Self {
+        match value {
+            RecordPropertyState::Changed => Self::Changed,
+            RecordPropertyState::Completed => Self::Completed,
+        }
+    }
+}
+
+impl ToSql for RecordPropertyState {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok((*self as u8).into())
+    }
+}
+
+impl FromSql for RecordPropertyState {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let value = u8::column_result(value)?;
+
+        match value {
+            0 => Ok(RecordPropertyState::Changed),
+            1 => Ok(RecordPropertyState::Completed),
+            _ => Err(FromSqlError::Other(PropertyStateError { value }.into())),
+        }
+    }
+}
+
 /// Result of the load_all_props query
 #[derive(Debug, Clone)]
 struct StoredRecord {
@@ -516,6 +567,7 @@ impl SqliteStore {
             include_query!("migrations/0001_init.sql"),
             include_query!("migrations/0002_unset_property.sql"),
             include_query!("migrations/0003_session.sql"),
+            include_query!("migrations/0004_sent_properties.sql"),
         ];
         const USER_VERSION: u32 = {
             assert!(MIGRATIONS.len() < (u32::MAX as usize));
@@ -599,6 +651,25 @@ impl PropertyStore for SqliteStore {
         Ok(())
     }
 
+    async fn update_state(
+        &self,
+        property: &PropertyMapping<'_>,
+        state: PropertyState,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        let interface_name = property.interface_name().to_string();
+        let path = property.path().to_string();
+
+        let updated = self
+            .pool
+            .acquire_writer(move |writer| {
+                writer.update_state(&interface_name, &path, expected.as_ref(), state)
+            })
+            .await?;
+
+        Ok(updated > 0)
+    }
+
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
@@ -656,6 +727,24 @@ impl PropertyStore for SqliteStore {
             .await
     }
 
+    async fn delete_expected_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        let interface_name = property.interface_name().to_string();
+        let path = property.path().to_string();
+
+        let updated = self
+            .pool
+            .acquire_writer(move |writer| {
+                writer.delete_expected_prop(&interface_name, &path, expected.as_ref())
+            })
+            .await?;
+
+        Ok(updated > 0)
+    }
+
     async fn clear(&self) -> Result<(), Self::Err> {
         self.pool
             .acquire_writer(|writer| writer.clear_props())
@@ -698,11 +787,14 @@ impl PropertyStore for SqliteStore {
 
     async fn device_props_with_unset(
         &self,
+        state: PropertyState,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.pool
-            .acquire_reader(move |reader| reader.props_with_unset(Ownership::Device, limit, offset))
+            .acquire_reader(move |reader| {
+                reader.props_with_unset(Ownership::Device, state, limit, offset)
+            })
             .await
     }
 }
@@ -871,9 +963,10 @@ mod tests {
 
     #[tokio::test]
     async fn set_max_pages() {
-        let dir = tempfile::tempdir().unwrap();
+        let exp_count = 15;
+        let max = NonZero::new(exp_count).unwrap();
 
-        let max = NonZero::new(10).unwrap();
+        let dir = tempfile::tempdir().unwrap();
 
         let db = SqliteStore::options()
             .set_max_page_count(max)
@@ -886,8 +979,6 @@ mod tests {
             .acquire_writer(|writer| writer.get_pragma("max_page_count"))
             .await
             .unwrap();
-
-        let exp_count = 10;
 
         assert_eq!(page_count, exp_count);
     }

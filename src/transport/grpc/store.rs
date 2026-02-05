@@ -34,6 +34,7 @@ use tokio::sync::Mutex;
 use tracing::error;
 
 use crate::error::Report;
+use crate::store::PropertyState;
 use crate::store::error::StoreError;
 use crate::{
     AstarteData,
@@ -169,6 +170,18 @@ where
         Ok(())
     }
 
+    async fn update_state(
+        &self,
+        property: &PropertyMapping<'_>,
+        state: PropertyState,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        self.inner
+            .update_state(property, state, expected)
+            .await
+            .map_err(|e| GrpcStoreError::from(StoreError::update_state(e)))
+    }
+
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
@@ -209,6 +222,17 @@ where
             .map_err(StoreError::delete)?;
 
         Ok(())
+    }
+
+    async fn delete_expected_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        self.inner
+            .delete_expected_prop(property, expected)
+            .await
+            .map_err(|e| GrpcStoreError::StoreError(StoreError::delete(e)))
     }
 
     async fn clear(&self) -> Result<(), Self::Err> {
@@ -284,11 +308,12 @@ where
 
     async fn device_props_with_unset(
         &self,
+        state: PropertyState,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.inner
-            .device_props_with_unset(limit, offset)
+            .device_props_with_unset(state, limit, offset)
             .await
             .map_err(|e| GrpcStoreError::from(StoreError::device_props(e)))
     }

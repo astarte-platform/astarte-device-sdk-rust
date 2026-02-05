@@ -59,6 +59,7 @@ pub use self::config::MqttArgs;
 pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
+use crate::store::PropertyState;
 use crate::{
     AstarteData, Error, Timestamp,
     aggregate::AstarteObject,
@@ -848,8 +849,10 @@ impl SessionData {
     where
         S: PropertyStore,
     {
+        // NOTE get only the completed properties (already received by the server)
+        // the properties changed while offline will be resent after reconnecting
         let set_properties = store
-            .device_props_with_unset(i64::MAX as usize, 0)
+            .device_props_with_unset(PropertyState::Completed, i64::MAX as usize, 0)
             .await
             .map(|p| {
                 // Filter interfaces that are missing or have been updated

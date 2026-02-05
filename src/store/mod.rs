@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -227,6 +227,13 @@ where
         &self,
         prop: StoredProp<&str, &AstarteData>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    /// Update state flag of a property only if the value matches the expected one
+    fn update_state(
+        &self,
+        property: &PropertyMapping<'_>,
+        state: PropertyState,
+        expected: Option<AstarteData>,
+    ) -> impl Future<Output = Result<bool, Self::Err>> + Send;
     /// Load a property from the database.
     ///
     /// The property store should delete the property from the database if the major version of the
@@ -245,6 +252,12 @@ where
         &self,
         property: &PropertyMapping<'_>,
     ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    /// Delete a property from the database after checking that the value contained is the expected one
+    fn delete_expected_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        expected: Option<AstarteData>,
+    ) -> impl Future<Output = Result<bool, Self::Err>> + Send;
     /// Removes all saved properties from the database.
     fn clear(&self) -> impl Future<Output = Result<(), Self::Err>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
@@ -269,6 +282,7 @@ where
     /// Retrieves all the device properties, including the one that were unset but not deleted.
     fn device_props_with_unset(
         &self,
+        state: PropertyState,
         limit: usize,
         offset: usize,
     ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
@@ -279,6 +293,17 @@ where
 /// This is returned by getting all the properties (`load_all_props`) that have not been deleted
 /// yet, since they where not sent to Astarte.
 pub type OptStoredProp = StoredProp<String, Option<AstarteData>>;
+
+/// Specifies the state of the property stored in the database.
+/// When a property reaches the [`PropertyState::Completed`] state the property was
+/// sent using the client transport.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+pub enum PropertyState {
+    /// Property changed but not sent
+    Changed,
+    /// Property updated
+    Completed,
+}
 
 /// Data structure used to return stored properties by a database implementing the [`PropertyStore`]
 /// trait.
@@ -432,7 +457,7 @@ mod tests {
                 ownership: Ownership::Device,
             }],
             store
-                .device_props_with_unset(1, 0)
+                .device_props_with_unset(PropertyState::Changed, 1, 0)
                 .await
                 .unwrap()
                 .as_slice()
