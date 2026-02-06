@@ -86,7 +86,7 @@ mock! {
     }
 
     impl<S: StoreCapabilities> Reconnect  for Con<S> {
-        async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, Error> {
+        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<bool, Error>> + Send {
         }
     }
 }

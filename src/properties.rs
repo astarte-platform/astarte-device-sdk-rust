@@ -112,14 +112,14 @@ where
     ) -> Result<Option<AstarteData>, Error> {
         let path = MappingPath::try_from(path)?;
 
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces.get_property(interface_name, &path)?;
 
         self.try_load_prop(&mapping).await
     }
 
     async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let interface = interfaces
             .get(interface_name)
             .ok_or_else(|| Error::InterfaceNotFound {
@@ -275,6 +275,7 @@ pub(crate) mod tests {
     use astarte_interfaces::schema::Ownership;
 
     use crate::client::tests::mock_client_with_store;
+    use crate::state::ConnStatus;
     use crate::store::memory::MemoryStore;
     use crate::store::{SqliteStore, StoreCapabilities};
 
@@ -350,7 +351,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
 
-        let (sdk, _) = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], store);
+        let sdk = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], ConnStatus::Connected, store);
 
         let prop = sdk.property("org.Foo", "/bar").await.unwrap();
         assert_eq!(prop, Some(AstarteData::Boolean(true)));

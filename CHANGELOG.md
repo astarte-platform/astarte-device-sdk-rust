@@ -66,7 +66,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Forward port changes relese v0.9.10
+- Forward port changes release v0.9.10
   [#526](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/526)
 
 ## [v0.9.10] - 2025-11-12

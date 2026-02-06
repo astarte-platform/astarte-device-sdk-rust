@@ -23,7 +23,7 @@ use astarte_interfaces::{InterfaceMapping, MappingPath, Properties, Schema};
 use tracing::{debug, error, trace};
 
 use crate::interfaces::MappingRef;
-use crate::state::Status;
+use crate::state::ConnStatus;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
@@ -44,7 +44,7 @@ where
     where
         C::Sender: Publish,
     {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces.get_property(interface_name, path)?;
 
         let validated = ValidatedProperty::validate(mapping, data)?;
@@ -71,8 +71,8 @@ where
             mapping.interface().version_major()
         );
 
-        match self.state.status.connection() {
-            Status::Connected => {
+        match self.state.connection().await {
+            ConnStatus::Connected => {
                 self.sender.send_property(validated).await?;
 
                 trace!(
@@ -80,10 +80,10 @@ where
                     mapping.interface().version_major()
                 );
             }
-            Status::Disconnected => {
+            ConnStatus::Disconnected => {
                 trace!("property not sent since offline")
             }
-            Status::Closed => {
+            ConnStatus::Closed => {
                 return Err(Error::Disconnected);
             }
         }
@@ -141,7 +141,7 @@ where
     where
         C::Sender: Publish,
     {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces.get_property(interface_name, path)?;
 
         let validated = ValidatedUnset::validate(mapping)?;
@@ -151,18 +151,18 @@ where
         let property_mapping = PropertyMapping::from(&mapping);
         self.store.unset_prop(&property_mapping).await?;
 
-        match self.state.status.connection() {
-            Status::Connected => {
+        match self.state.connection().await {
+            ConnStatus::Connected => {
                 self.sender.unset(validated.clone()).await?;
 
                 debug!("deleting property {interface_name}{path} from store");
 
                 self.store.delete_prop(&property_mapping).await?;
             }
-            Status::Disconnected => {
+            ConnStatus::Disconnected => {
                 trace!("not deleting property from store, since disconnected");
             }
-            Status::Closed => {
+            ConnStatus::Closed => {
                 return Err(Error::Disconnected);
             }
         }
@@ -185,9 +185,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_property_connected() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
@@ -213,7 +211,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
@@ -230,9 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_property_offline() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Disconnected);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
@@ -243,7 +239,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
@@ -261,9 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_property_connected_already_stored() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
@@ -287,7 +281,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
@@ -305,9 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn unset_property_connected_already_stored() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
 
         let path = "/sensor_1/longinteger_endpoint";
 
@@ -330,7 +322,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
@@ -347,9 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_property_connected_already_stored_wrong_type() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
@@ -388,7 +378,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
@@ -405,9 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn unset_property_offline_already_stored() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Disconnected);
 
         let path = "/sensor_1/longinteger_endpoint";
 
@@ -417,7 +405,7 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces.read().await;
+        let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
             .get_property(E2E_DEVICE_PROPERTY_NAME, &path)

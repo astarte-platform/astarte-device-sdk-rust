@@ -56,7 +56,7 @@ pub(crate) mod mock {
     mock! {
         pub EventLoop{
             // If we don't return a future, the poll function will loop
-            pub fn poll(&mut self) -> impl std::future::Future<Output = Result<Event, ConnectionError>> + Send + 'static;
+            pub fn poll(&mut self) -> impl Future<Output = Result<Event, ConnectionError>> + Send;
             pub fn set_network_options(&mut self, network_options: NetworkOptions) -> &mut Self;
             pub fn clean(&mut self);
         }

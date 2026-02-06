@@ -18,15 +18,16 @@
 
 //! Client to send data to astarte, add interfaces or access properties.
 
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 use astarte_interfaces::{MappingPath, interface::Retention, mapping::path::MappingPathError};
 use chrono::{DateTime, Utc};
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     Error,
     event::DeviceEvent,
+    state::{ClientState, ConnStatus},
     store::wrapper::StoreWrapper,
     types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject},
@@ -40,7 +41,6 @@ use crate::{
         Id, RetentionId, StoredRetention, StoredRetentionExt,
         memory::{ItemValue, VolatileItemError},
     },
-    state::{SharedState, Status},
     store::StoreCapabilities,
     transport::{
         Connection, Publish,
@@ -334,14 +334,13 @@ where
 {
     // Sender of the connection.
     sender: C::Sender,
-    // We use flume instead of the mpsc channel for the DeviceEvents for the connection to che
-    // client since we need the Receiver end to be cloneable. Flume provides an async mpmc
-    // channel/queue that fits our needs and doesn't suffer from the "slow receiver" problem.
-    // Since it doesn't block the sender till all the receivers have read the msg. Unlike the
-    // Tokio broadcast channel (another mpmc channel implementation).
-    rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
+    // We use multi producer multi consumer instead of the mpsc channel for the DeviceEvents for the connection to che
+    // client since we need the Receiver end to be cloneable.
+    // The tokio Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
+    events: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
+    pub(crate) disconnect: async_channel::Sender<()>,
     pub(crate) store: StoreWrapper<C::Store>,
-    pub(crate) state: Arc<SharedState>,
+    pub(crate) state: ClientState,
 }
 
 impl<C> DeviceClient<C>
@@ -350,20 +349,22 @@ where
 {
     pub(crate) fn new(
         sender: C::Sender,
-        rx: flume::Receiver<Result<DeviceEvent, RecvError>>,
+        rx: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
         store: StoreWrapper<C::Store>,
-        state: Arc<SharedState>,
+        state: ClientState,
+        disconnect: async_channel::Sender<()>,
     ) -> Self {
         Self {
             sender,
-            rx,
+            events: rx,
             store,
             state,
+            disconnect,
         }
     }
 
     async fn send<T>(
-        state: &SharedState,
+        state: &ClientState,
         store: &StoreWrapper<C::Store>,
         sender: &mut C::Sender,
         data: T,
@@ -373,15 +374,21 @@ where
         C::Store: StoreCapabilities,
         C::Sender: Publish,
     {
-        match state.status.connection() {
-            Status::Connected => {
+        match state.connection().await {
+            ConnStatus::Connected => {
                 trace!("publish while connection is connected");
             }
-            Status::Disconnected => {
+            ConnStatus::Disconnected => {
                 trace!("publish while connection is offline");
                 return Self::offline_send(state, store, sender, data).await;
             }
-            Status::Closed => {
+            ConnStatus::Closed => {
+                trace!("publish while connection is closed");
+
+                if let Err(error) = Self::offline_send(state, store, sender, data).await {
+                    error!(%error, "couldn't store the send");
+                }
+
                 return Err(Error::Disconnected);
             }
         }
@@ -394,7 +401,7 @@ where
     }
 
     async fn offline_send<T>(
-        state: &SharedState,
+        state: &ClientState,
         store: &StoreWrapper<C::Store>,
         sender: &mut C::Sender,
         data: T,
@@ -409,12 +416,12 @@ where
                 debug!("drop publish with retention discard since disconnected");
             }
             Retention::Volatile { .. } => {
-                let id = state.retention_ctx.next();
+                let id = state.retention_ctx().next();
 
-                state.volatile_store.push_unsent(id, data).await;
+                state.volatile_store().push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
-                let id = state.retention_ctx.next();
+                let id = state.retention_ctx().next();
 
                 if let Some(retention) = store.get_retention() {
                     data.store_publish(&id, sender, retention, false).await?;
@@ -423,7 +430,7 @@ where
                         ?store,
                         "storing interface with retention 'Stored' in volatile store since the store doesn't support retention"
                     );
-                    state.volatile_store.push_unsent(id, data).await;
+                    state.volatile_store().push_unsent(id, data).await;
                 }
             }
         }
@@ -432,7 +439,7 @@ where
     }
 
     async fn send_stored<T>(
-        state: &SharedState,
+        state: &ClientState,
         store: &StoreWrapper<C::Store>,
         sender: &mut C::Sender,
         data: T,
@@ -451,14 +458,14 @@ where
         };
 
         // generate id after the check to avoid wasting an id generation in case it gets regenerated in send_volatile
-        let id = state.retention_ctx.next();
+        let id = state.retention_ctx().next();
 
         data.store_publish(&id, sender, retention, true).await?;
         data.send_stored(RetentionId::Stored(id), sender).await
     }
 
     async fn send_volatile<T>(
-        state: &SharedState,
+        state: &ClientState,
         sender: &mut C::Sender,
         data: T,
     ) -> Result<(), Error>
@@ -467,9 +474,9 @@ where
         C::Store: StoreCapabilities,
         C::Sender: Publish,
     {
-        let id = state.retention_ctx.next();
+        let id = state.retention_ctx().next();
 
-        state.volatile_store.push_sent(id, data.clone()).await;
+        state.volatile_store().push_sent(id, data.clone()).await;
         data.send_stored(RetentionId::Volatile(id), sender).await
     }
 }
@@ -480,7 +487,7 @@ where
 {
     /// Retrieve the expiry (not_after) timestamp of the current certificate
     pub async fn get_cert_expiry(&self) -> Option<DateTime<Utc>> {
-        *self.state.cert_expiry.lock().await
+        self.state.cert_expiry().await
     }
 
     /// Retrieve the expiry (not_after) timestamp of the current certificate
@@ -507,9 +514,10 @@ where
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
-            rx: self.rx.clone(),
+            events: self.events.clone(),
             store: self.store.clone(),
-            state: Arc::clone(&self.state),
+            state: self.state.clone(),
+            disconnect: self.disconnect.clone(),
         }
     }
 }
@@ -595,8 +603,8 @@ where
     }
 
     async fn recv(&self) -> Result<DeviceEvent, RecvError> {
-        self.rx
-            .recv_async()
+        self.events
+            .recv()
             .await
             .map_err(|_| RecvError::Disconnected)?
     }
@@ -608,9 +616,19 @@ where
     C::Sender: Disconnect,
 {
     async fn disconnect(&mut self) -> Result<(), Error> {
+        if self.state.connection().await == ConnStatus::Closed {
+            debug!("connection already closed");
+
+            return Ok(());
+        }
+
         self.sender.disconnect().await?;
 
-        self.state.status.close();
+        info!("device disconnected");
+
+        if let Err(error) = self.disconnect.try_send(()) {
+            error!(%error, "multiple clients trying to disconnect");
+        }
 
         Ok(())
     }
@@ -741,7 +759,9 @@ impl ClientPacket for ValidatedObject {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::ops::{Deref, DerefMut};
     use std::str::FromStr;
+    use std::sync::Arc;
 
     use astarte_interfaces::Interface;
     use chrono::Utc;
@@ -752,29 +772,54 @@ pub(crate) mod tests {
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
-    use crate::state::Status;
+    use crate::state::SharedState;
     use crate::store::StoreCapabilities;
     use crate::store::memory::MemoryStore;
     use crate::transport::mock::{MockCon, MockSender};
 
     use super::*;
 
+    pub(crate) struct TestClient<S>
+    where
+        S: StoreCapabilities,
+    {
+        client: DeviceClient<MockCon<S>>,
+        pub(crate) disconnect: async_channel::Receiver<()>,
+        pub(crate) events: async_channel::Sender<Result<DeviceEvent, RecvError>>,
+    }
+
+    impl<S> Deref for TestClient<S>
+    where
+        S: StoreCapabilities,
+    {
+        type Target = DeviceClient<MockCon<S>>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.client
+        }
+    }
+
+    impl<S> DerefMut for TestClient<S>
+    where
+        S: StoreCapabilities,
+    {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.client
+        }
+    }
+
     pub(crate) fn mock_client(
         interfaces: &[&str],
-    ) -> (
-        DeviceClient<MockCon<MemoryStore>>,
-        flume::Sender<Result<DeviceEvent, RecvError>>,
-    ) {
-        mock_client_with_store(interfaces, MemoryStore::new())
+        initial_status: ConnStatus,
+    ) -> TestClient<MemoryStore> {
+        mock_client_with_store(interfaces, initial_status, MemoryStore::new())
     }
 
     pub(crate) fn mock_client_with_store<S>(
         interfaces: &[&str],
+        initial_status: ConnStatus,
         store: S,
-    ) -> (
-        DeviceClient<MockCon<S>>,
-        flume::Sender<Result<DeviceEvent, RecvError>>,
-    )
+    ) -> TestClient<S>
     where
         S: StoreCapabilities,
     {
@@ -782,20 +827,34 @@ pub(crate) mod tests {
         let interfaces = Interfaces::from_iter(interfaces);
 
         let sender = MockSender::new();
-        let (tx, rx) = flume::bounded(DEFAULT_CHANNEL_SIZE);
-        let state = SharedState::new(
+        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE);
+        let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
+
+        let mut state = SharedState::new(
             interfaces,
             VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         );
 
-        let client = DeviceClient::new(sender, rx, StoreWrapper::new(store), Arc::new(state));
+        *state.status.get_mut() = initial_status;
 
-        (client, tx)
+        let client = DeviceClient::new(
+            sender,
+            events_rx,
+            StoreWrapper::new(store),
+            ClientState::new(Arc::new(state)),
+            disconnect_tx,
+        );
+
+        TestClient {
+            client,
+            disconnect: disconnect_rx,
+            events: events_tx,
+        }
     }
 
     #[test]
     fn client_must_be_clone() {
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
         client
@@ -810,7 +869,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn client_recv() {
-        let (client, tx) = mock_client(&[]);
+        let client = mock_client(&[], ConnStatus::Connected);
 
         let exp = DeviceEvent {
             interface: "interface".to_string(),
@@ -821,7 +880,7 @@ pub(crate) mod tests {
             },
         };
 
-        tx.send_async(Ok(exp.clone())).await.unwrap();
+        client.events.send(Ok(exp.clone())).await.unwrap();
 
         let event = client.recv().await.unwrap();
 
@@ -830,7 +889,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn client_disconnect_closed() {
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Disconnected);
 
         let mut seq = Sequence::new();
         client
@@ -842,6 +901,6 @@ pub(crate) mod tests {
 
         client.disconnect().await.unwrap();
 
-        assert_eq!(client.state.status.connection(), Status::Closed);
+        client.disconnect.recv().await.unwrap();
     }
 }

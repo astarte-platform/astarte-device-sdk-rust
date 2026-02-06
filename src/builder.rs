@@ -43,6 +43,7 @@ use crate::introspection::AddInterfaceError;
 use crate::retention::RetentionError;
 use crate::retention::StoredRetention;
 use crate::retention::memory::VolatileStore;
+use crate::state::ConnStatus;
 use crate::state::SharedState;
 use crate::store::PropertyStore;
 use crate::store::SqliteStore;
@@ -65,7 +66,7 @@ pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 pub const DEFAULT_STORE_CAPACITY: NonZero<usize> = NonZero::<usize>::new(1_000_000).unwrap();
 
 /// Default timeout.
-/// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
+/// This timeout is applied *both* the the transport implementations chosen (mqtt or grpc).
 /// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -388,8 +389,8 @@ where
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
     pub async fn build(self) -> Result<BuildRes<C::Conn>, Error> {
-        // We use the flume channel to have a cloneable receiver, see the comment on the DeviceClient for more information.
-        let (tx_connection, rx_client) = flume::bounded(self.channel_size);
+        let (events_tx, events_rx) = async_channel::bounded(self.channel_size);
+        let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
         let volatile_store = VolatileStore::with_capacity(self.volatile_retention);
 
@@ -412,7 +413,11 @@ where
         } = self.connection_config.connect(config).await?;
 
         // NOTE store the connection status
-        state.status.set_connected(connected);
+        *state.status.write().await = if connected {
+            ConnStatus::Connected
+        } else {
+            ConnStatus::Disconnected
+        };
 
         // set max retention items in the store
         if let Some(retention) = store.get_retention() {
@@ -426,10 +431,24 @@ where
             retention.reset_all_publishes().await?;
         }
 
-        let client =
-            DeviceClient::new(sender.clone(), rx_client, store.clone(), Arc::clone(&state));
+        let (client_state, connection_state) = state.split();
 
-        let connection = DeviceConnection::new(tx_connection, store, state, connection, sender);
+        let client = DeviceClient::new(
+            sender.clone(),
+            events_rx,
+            store.clone(),
+            client_state,
+            disconnect_tx,
+        );
+
+        let connection = DeviceConnection::new(
+            events_tx,
+            disconnect_rx,
+            store,
+            connection_state,
+            connection,
+            sender,
+        );
 
         Ok((client, connection))
     }

@@ -36,7 +36,7 @@ pub enum PairingError {
     /// Invalid credential secret.
     #[error("invalid credentials secret")]
     InvalidCredentials(#[source] io::Error),
-    /// Missing certificate crendential.
+    /// Missing certificate credential.
     #[error("missing certificate credential")]
     MissingCredentials,
     /// Couldn't parse the pairing URL.

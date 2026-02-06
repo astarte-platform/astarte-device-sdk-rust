@@ -16,14 +16,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use chrono::DateTime;
 use chrono::Utc;
-use tokio::sync::Mutex;
 use tokio::sync::RwLock;
-use tokio::sync::Semaphore;
 
 use crate::interfaces::Interfaces;
 use crate::retention;
@@ -34,79 +31,111 @@ use crate::retention::memory::VolatileStore;
 /// It's used to have a single allocation and dereference through a single [`Arc`].
 #[derive(Debug)]
 pub(crate) struct SharedState {
-    // should be locked during every action when modifying the introspection
-    // (adding or removing interfaces)
-    pub(crate) introspection: Semaphore,
     pub(crate) interfaces: RwLock<Interfaces>,
     pub(crate) volatile_store: VolatileStore,
     pub(crate) retention_ctx: retention::Context,
-    pub(crate) status: ConnectionStatus,
-    pub(crate) cert_expiry: Mutex<Option<DateTime<Utc>>>,
+    pub(crate) status: RwLock<ConnStatus>,
+    pub(crate) cert_expiry: RwLock<Option<DateTime<Utc>>>,
 }
 
 impl SharedState {
     pub(crate) fn new(interfaces: Interfaces, volatile_store: VolatileStore) -> Self {
         Self {
-            introspection: Semaphore::new(1),
             interfaces: RwLock::new(interfaces),
             volatile_store,
             retention_ctx: retention::Context::new(),
-            status: ConnectionStatus::new(),
-            cert_expiry: Mutex::new(None),
+            status: RwLock::new(ConnStatus::default()),
+            cert_expiry: RwLock::new(None),
         }
+    }
+
+    pub(crate) fn split(self: Arc<Self>) -> (ClientState, ConnectionState) {
+        (
+            ClientState::new(Arc::clone(&self)),
+            ConnectionState::new(self),
+        )
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Status {
-    Connected,
-    Disconnected,
-    Closed,
+/// State of the [`DeviceClient`](crate::DeviceClient)
+#[derive(Debug, Clone)]
+pub(crate) struct ClientState(Arc<SharedState>);
+
+impl ClientState {
+    pub(crate) fn new(shared_state: Arc<SharedState>) -> Self {
+        Self(shared_state)
+    }
+
+    pub(crate) fn interfaces(&self) -> &RwLock<Interfaces> {
+        &self.0.interfaces
+    }
+
+    pub(crate) fn volatile_store(&self) -> &VolatileStore {
+        &self.0.volatile_store
+    }
+
+    pub(crate) fn retention_ctx(&self) -> &retention::Context {
+        &self.0.retention_ctx
+    }
+
+    pub(crate) async fn connection(&self) -> ConnStatus {
+        *self.0.status.read().await
+    }
+
+    pub(crate) async fn cert_expiry(&self) -> Option<DateTime<Utc>> {
+        *self.0.cert_expiry.read().await
+    }
+}
+
+/// State of the [`DeviceConnection`](crate::DeviceConnection)
+#[derive(Debug, Clone)]
+pub(crate) struct ConnectionState(Arc<SharedState>);
+
+impl ConnectionState {
+    pub(crate) fn new(shared_state: Arc<SharedState>) -> Self {
+        Self(shared_state)
+    }
+
+    pub(crate) async fn set_connection(&self, status: ConnStatus) {
+        *self.0.status.write().await = status;
+    }
+
+    pub(crate) fn interfaces(&self) -> &RwLock<Interfaces> {
+        &self.0.interfaces
+    }
+
+    pub(crate) fn volatile_store(&self) -> &VolatileStore {
+        &self.0.volatile_store
+    }
 }
 
 /// Shared state of the connection
-#[derive(Debug)]
-pub(crate) struct ConnectionStatus {
-    /// Flag if the connection was closed gracefully
-    closed: AtomicBool,
-    /// Flag if we are connected
-    connected: AtomicBool,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ConnStatus {
+    /// Disconnected from Astarte.
+    #[default]
+    Disconnected,
+    /// Connected to Astarte.
+    Connected,
+    /// Connection closed with a disconnect.
+    Closed,
 }
 
-impl ConnectionStatus {
-    pub(crate) fn new() -> Self {
-        Self {
-            closed: AtomicBool::new(false),
-            // Do not assume we are connected
-            // NOTE it's the connection which will set the connected flag to true once the connection gets established
-            // this should happen after the [`ConnectionConfig`](crate::builder::ConnectionConfig) `connect` method
-            // to ensure the device is already marked as connected after the `build` function is called
-            connected: AtomicBool::new(false),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use pretty_assertions::assert_eq;
+
+    impl ConnectionState {
+        pub(crate) fn retention_ctx(&self) -> &retention::Context {
+            &self.0.retention_ctx
         }
     }
 
-    /// Set the state of the connection.
-    pub(crate) fn set_connected(&self, connected: bool) {
-        self.connected.store(connected, Ordering::Release);
-    }
-
-    pub(crate) fn close(&self) {
-        self.closed.store(true, Ordering::Release);
-    }
-
-    pub(crate) fn connection(&self) -> Status {
-        if self.closed.load(Ordering::Acquire) {
-            Status::Closed
-        } else if self.connected.load(Ordering::Acquire) {
-            Status::Connected
-        } else {
-            Status::Disconnected
-        }
-    }
-}
-
-impl Default for ConnectionStatus {
-    fn default() -> Self {
-        Self::new()
+    #[test]
+    fn default_connection_state() {
+        // Must start disconnected
+        assert_eq!(ConnStatus::default(), ConnStatus::Disconnected)
     }
 }

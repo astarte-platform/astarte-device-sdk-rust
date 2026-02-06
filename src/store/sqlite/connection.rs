@@ -95,7 +95,7 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
             };
 
             if *pragma_value != actual {
-                error!(%actual, "couldn't set pragam");
+                error!(%actual, "couldn't set pragma");
             }
 
             Ok(())
@@ -115,7 +115,7 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
     /// <https://www.sqlite.org/pragma.html#pragma_journal_size_limit>
     /// <https://www.sqlite.org/pragma.html#pragma_wal_autocheckpoint>
     ///
-    /// Applies also max pages database limit to the passsed connection
+    /// Applies also max pages database limit to the passed connection
     ///
     /// <https://www.sqlite.org/pragma.html#pragma_max_page_count>
     fn apply_pragmas(&self, options: &SqliteOptions) -> Result<(), SqliteError> {

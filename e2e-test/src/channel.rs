@@ -28,7 +28,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
-use tracing::{error, instrument, trace};
+use tracing::{error, info, instrument, trace};
 
 #[derive(Debug)]
 pub enum Reply {
@@ -189,6 +189,28 @@ impl Channel {
             return Ok(data);
         }
     }
+
+    #[instrument(skip(self))]
+    pub(crate) async fn next_device_disconnected(&mut self) -> eyre::Result<()> {
+        loop {
+            let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
+                .await
+                .wrap_err("waiting for new_event")?
+                .wrap_err("error receiving from channel")?;
+
+            let Ok(new_event) = reply.try_into_new_event() else {
+                continue;
+            };
+
+            let Ok(()) = new_event.payload.event.try_into_device_disconnected() else {
+                continue;
+            };
+
+            info!("Device disconnected from Astarte");
+
+            return Ok(());
+        }
+    }
 }
 
 impl Drop for Channel {
@@ -307,6 +329,14 @@ impl Event {
     pub fn try_into_device_connected(self) -> Result<DeviceConnected, Self> {
         if let Self::DeviceConnected(v) = self {
             Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+
+    pub fn try_into_device_disconnected(self) -> Result<(), Self> {
+        if let Self::DeviceDisconnected = self {
+            Ok(())
         } else {
             Err(self)
         }

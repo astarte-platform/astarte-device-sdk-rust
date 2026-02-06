@@ -36,7 +36,6 @@ chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive", "env"] }
 color-eyre = { workspace = true }
 eyre = { workspace = true }
-flume = { workspace = true, features = ["async"] }
 futures = { workspace = true }
 itertools = { workspace = true }
 phoenix-chan = { workspace = true }

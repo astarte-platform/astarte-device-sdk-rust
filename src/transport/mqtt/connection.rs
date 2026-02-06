@@ -351,8 +351,8 @@ impl MqttConnection {
                 .duration_since(start)
                 .is_ok_and(|d| d > timeout)
             {
-                // if the timeout is hit we will have a created transport but a connectiong status
-                info!("Timeout reached exiting connction loop without connection established");
+                // if the timeout is hit we will have a created transport but a connection status
+                info!("Timeout reached exiting connection loop without connection established");
                 break;
             }
 
@@ -451,7 +451,7 @@ impl MqttConnection {
         }
     }
 
-    /// Retruns true only if the state is connected and the session present is true
+    /// Returns true only if the state is connected and the session present is true
     pub(crate) fn is_session_present(&self) -> bool {
         matches!(
             &self.link,
@@ -462,7 +462,7 @@ impl MqttConnection {
         )
     }
 
-    /// Retruns true only if the state is connected
+    /// Returns true only if the state is connected
     pub(crate) fn is_connected(&self) -> bool {
         matches!(
             &self.link,
@@ -638,7 +638,7 @@ impl Disconnected {
             }
         };
 
-        *shared_state.cert_expiry.lock().await = conn.provider.fetch_cert_expiry(client_id).await;
+        *shared_state.cert_expiry.write().await = conn.provider.fetch_cert_expiry(client_id).await;
 
         debug!("created a new transport, reconnecting");
 
