@@ -237,14 +237,14 @@ where
         //
         // If we didn't keep track of the last disconnection, the error loop above would continue to
         // happen without timeouts, wasting device bandwidth and resources.
-        let timeout = Duration::from_secs(self.backoff.next());
+        let timeout = self.backoff.next();
 
         if self.wait_timeout(timeout).await.is_break() {
             return Ok(ControlFlow::Break(()));
         }
 
         while !self.connection.reconnect(&interfaces).await? {
-            let timeout = Duration::from_secs(self.backoff.next());
+            let timeout = self.backoff.next();
 
             if self.wait_timeout(timeout).await.is_break() {
                 return Ok(ControlFlow::Break(()));

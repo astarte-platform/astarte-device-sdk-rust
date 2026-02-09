@@ -30,7 +30,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::Timestamp;
 use crate::error::Report;
-use crate::retry::ExponentialIter;
+use crate::retry::RandomExponentialIter;
 use crate::state::{ConnStatus, ConnectionState};
 use crate::transport::TransportError;
 use crate::{
@@ -92,7 +92,7 @@ where
     sender: C::Sender,
     state: ConnectionState,
     resend: Option<JoinHandle<()>>,
-    backoff: ExponentialIter,
+    backoff: RandomExponentialIter,
 }
 
 impl<C> DeviceConnection<C>
@@ -106,6 +106,7 @@ where
         state: ConnectionState,
         connection: C,
         sender: C::Sender,
+        backoff: RandomExponentialIter,
     ) -> Self {
         Self {
             events,
@@ -114,7 +115,7 @@ where
             connection,
             sender,
             resend: None,
-            backoff: ExponentialIter::default(),
+            backoff,
             disconnect,
         }
     }
@@ -379,6 +380,7 @@ mod tests {
             ConnectionState::new(Arc::new(state)),
             connection,
             sender,
+            RandomExponentialIter::default(),
         );
 
         TestConnection {
