@@ -16,17 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::ops::ControlFlow;
 use std::time::Duration;
 
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::Error;
 use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
-use crate::state::SharedState;
+use crate::state::{ConnStatus, ConnectionState};
 use crate::store::StoreCapabilities;
 use crate::store::wrapper::StoreWrapper;
 use crate::transport::{Connection, Publish, Receive, Reconnect};
@@ -47,7 +47,7 @@ where
         };
 
         {
-            let interfaces = self.state.interfaces.read().await;
+            let interfaces = self.state.interfaces().read().await;
 
             retention.cleanup_introspection(&interfaces).await?;
         }
@@ -58,18 +58,20 @@ where
     }
 
     /// Reconnect the connection and resends all retention publishes
-    pub(crate) async fn reconnect_and_resend(&mut self) -> Result<(), Error>
+    pub(crate) async fn reconnect_and_resend(&mut self) -> Result<ControlFlow<()>, Error>
     where
         C: Reconnect + Receive,
         C::Sender: Publish + 'static,
     {
         self.cancel_prev_resend().await;
 
-        self.reconnect().await?;
+        if self.reconnect().await?.is_break() {
+            return Ok(ControlFlow::Break(()));
+        }
 
         self.resend_retention(true).await;
 
-        Ok(())
+        Ok(ControlFlow::Continue(()))
     }
 
     /// Send all the publishes from another task to not block the event loop.
@@ -77,10 +79,10 @@ where
     where
         C::Sender: Publish + 'static,
     {
-        let state = Arc::clone(&self.state);
+        let state = self.state.clone();
         let mut sender = self.sender.clone();
         let mut store = self.store.clone();
-        let limit = self.tx.capacity().unwrap_or(DEFAULT_CHANNEL_SIZE);
+        let limit = self.events.capacity().unwrap_or(DEFAULT_CHANNEL_SIZE);
 
         // The queue of unpublish packets could grow indefinitely, but the should all be sent at the
         // end.
@@ -89,7 +91,7 @@ where
         //       the event loop while polling, and it's not possible to send the data directly
         //       without also receiving. This is a big limitation of the current library.
         self.resend = Some(tokio::task::spawn(async move {
-            let _interfaces = state.interfaces.read().await;
+            let _interfaces = state.interfaces().read().await;
 
             let mut remaining_data = true;
 
@@ -149,7 +151,7 @@ where
 
     async fn resend_volatile_publishes(
         sender: &mut C::Sender,
-        state: &SharedState,
+        state: &ConnectionState,
         limit: usize,
     ) -> Result<usize, Error>
     where
@@ -157,13 +159,13 @@ where
     {
         let mut buf = Vec::new();
 
-        let count = state.volatile_store.get_unsent(&mut buf, limit).await;
+        let count = state.volatile_store().get_unsent(&mut buf, limit).await;
 
         trace!("loaded {count} volatile publishes");
 
         for (id, value) in buf.drain(..) {
             // mark as sent before so that no resend is tryed while in flight
-            state.volatile_store.mark_sent(&id, true).await;
+            state.volatile_store().mark_sent(&id, true).await;
 
             let id = RetentionId::Volatile(id);
 
@@ -210,12 +212,13 @@ where
         Ok(count)
     }
 
-    async fn reconnect(&mut self) -> Result<(), Error>
+    async fn reconnect(&mut self) -> Result<ControlFlow<()>, Error>
     where
         C: Reconnect,
     {
-        let interfaces = self.state.interfaces.read().await;
-        debug!("reconnecting");
+        let interfaces = self.state.interfaces().read().await;
+
+        info!("reconnecting");
 
         // Wait before trying to reconnect the first time, this will prevent cases where the
         // connection will loop that will keep throwing errors.
@@ -234,38 +237,56 @@ where
         //
         // If we didn't keep track of the last disconnection, the error loop above would continue to
         // happen without timeouts, wasting device bandwidth and resources.
-        let timeout = self.backoff.next();
+        let timeout = Duration::from_secs(self.backoff.next());
 
-        debug!("waiting {timeout} seconds before retrying");
-
-        tokio::time::sleep(Duration::from_secs(timeout)).await;
+        if self.wait_timeout(timeout).await.is_break() {
+            return Ok(ControlFlow::Break(()));
+        }
 
         while !self.connection.reconnect(&interfaces).await? {
-            let timeout = self.backoff.next();
+            let timeout = Duration::from_secs(self.backoff.next());
 
-            debug!("waiting {timeout} seconds before retrying");
-
-            tokio::time::sleep(Duration::from_secs(timeout)).await;
+            if self.wait_timeout(timeout).await.is_break() {
+                return Ok(ControlFlow::Break(()));
+            }
         }
 
         // Now we are reconnected
-        self.state.status.set_connected(true);
+        self.state.set_connection(ConnStatus::Connected).await;
 
-        Ok(())
+        Ok(ControlFlow::Continue(()))
+    }
+
+    async fn wait_timeout(&self, timeout: Duration) -> ControlFlow<()> {
+        debug!(seconds = timeout.as_secs(), "waiting before retrying");
+
+        let is_disconnected =
+            Self::run_until_disconnect(&self.disconnect, tokio::time::sleep(timeout))
+                .await
+                .is_none();
+
+        if is_disconnected {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ops::ControlFlow;
     use std::time::Duration;
 
     use astarte_interfaces::MappingPath;
+    use futures::FutureExt;
     use mockall::{Sequence, predicate};
     use tempfile::TempDir;
 
     use crate::AstarteData;
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
     use crate::retention::{PublishInfo, RetentionId, StoredRetention, StoredRetentionExt};
+    use crate::state::ConnStatus;
     use crate::store::{SqliteStore, StoreCapabilities};
     use crate::test::{STORED_DEVICE_DATASTREAM, STORED_DEVICE_DATASTREAM_NAME};
     use crate::transport::mock::MockSender;
@@ -273,7 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn reconnect_success_no_data() {
-        let (mut connection, _rx) = mock_connection(&[]);
+        let mut connection = mock_connection(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
 
@@ -283,7 +304,7 @@ mod tests {
             .with(predicate::always())
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| Ok(true));
+            .returning(|_| futures::future::ok(true).boxed());
 
         connection
             .sender
@@ -292,7 +313,9 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(MockSender::new);
 
-        connection.reconnect_and_resend().await.unwrap();
+        let control = connection.reconnect_and_resend().await.unwrap();
+
+        assert_eq!(control, ControlFlow::Continue(()));
     }
 
     #[tokio::test]
@@ -300,16 +323,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = SqliteStore::connect(tmp.path()).await.unwrap();
 
-        let (mut connection, _rx) = mock_connection_with_store(&[STORED_DEVICE_DATASTREAM], store);
+        let mut connection =
+            mock_connection_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);
 
-        let retention_id = connection.state.retention_ctx.next();
+        let retention_id = connection.state.retention_ctx().next();
         let path = "/endpoint1";
         let value = AstarteData::LongInteger(42);
         let bytes = [4, 2];
 
         let individual = {
             let mapping_path = MappingPath::try_from(path).unwrap();
-            let interfaces = connection.state.interfaces.read().await;
+            let interfaces = connection.state.interfaces().read().await;
             let mapping = interfaces
                 .get_individual(STORED_DEVICE_DATASTREAM_NAME, &mapping_path)
                 .unwrap();

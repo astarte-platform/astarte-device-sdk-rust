@@ -227,9 +227,9 @@ async fn apply_options(
 
         writer_g.replace(writer);
 
-        debug!("writer options applyed");
+        debug!("writer options applied");
     } else {
-        trace!("writer not connectd");
+        trace!("writer not connected");
     }
 
     let len = readers_g.len();
@@ -256,7 +256,7 @@ async fn apply_options(
 
         readers_g.push_back(reader);
 
-        debug!(i, "reader options applyed");
+        debug!(i, "reader options applied");
     }
 
     Ok(())
@@ -290,7 +290,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn should_survice_panic() {
+    async fn should_survive_panic() {
         let tpm = TempDir::new().unwrap();
 
         let pool = Connections::new(tpm.path().join("sdk.db"), SqliteOptions::default());

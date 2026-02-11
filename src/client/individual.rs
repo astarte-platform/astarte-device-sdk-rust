@@ -41,7 +41,7 @@ where
     where
         C::Sender: Publish,
     {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces.get_individual(interface_name, path)?;
 
         let validated = ValidatedIndividual::validate(mapping, data, timestamp)?;
@@ -70,6 +70,7 @@ mod tests {
     use crate::client::tests::{mock_client, mock_client_with_store};
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, RetentionId, StoredRetention};
+    use crate::state::ConnStatus;
     use crate::store::SqliteStore;
     use crate::test::{
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_DATASTREAM,
@@ -78,9 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_connected_discard() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Connected);
 
         let path = "/integer_endpoint";
         let value = 42;
@@ -117,9 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_connected_volatile() {
-        let (mut client, _tx) = mock_client(&[VOLATILE_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Connected);
 
         let path = "/endpoint1";
         let value = 42i64;
@@ -151,16 +148,14 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
     }
 
     #[tokio::test]
     async fn send_datastream_individual_connected_stored_no_retention_cap() {
-        let (mut client, _tx) = mock_client(&[STORED_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected);
 
         let path = "/endpoint2";
         let value = true;
@@ -194,7 +189,7 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
     }
@@ -203,9 +198,8 @@ mod tests {
     async fn send_datastream_individual_connected_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
         let store = SqliteStore::connect(tmp.path()).await.unwrap();
-        let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_DATASTREAM], store);
-
-        client.state.status.set_connected(true);
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);
 
         let path = "/endpoint2";
         let value = true;
@@ -286,9 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_offline_discard() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Disconnected);
 
         let path = "/integer_endpoint";
         let value = 42;
@@ -308,9 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_offline_volatile() {
-        let (mut client, _tx) = mock_client(&[VOLATILE_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Disconnected);
 
         let path = "/endpoint1";
         let value = 42i64;
@@ -330,16 +320,14 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
     }
 
     #[tokio::test]
     async fn send_datastream_individual_offline_stored_no_retention_cap() {
-        let (mut client, _tx) = mock_client(&[STORED_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Disconnected);
 
         let path = "/endpoint2";
         let value = true;
@@ -362,7 +350,7 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
     }
@@ -371,9 +359,8 @@ mod tests {
     async fn send_datastream_individual_offline_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
         let store = SqliteStore::connect(tmp.path()).await.unwrap();
-        let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_DATASTREAM], store);
-
-        client.state.status.set_connected(false);
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Disconnected, store);
 
         let path = "/endpoint2";
         let value = true;
@@ -405,6 +392,68 @@ mod tests {
             .send_individual(STORED_DEVICE_DATASTREAM_NAME, path, value.into())
             .await
             .unwrap();
+
+        let mut stored = Vec::new();
+        let read = client
+            .store
+            .store
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
+        assert_eq!(read, 1);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored.pop().unwrap().1,
+            PublishInfo {
+                interface: STORED_DEVICE_DATASTREAM_NAME.into(),
+                path: path.into(),
+                version_major: 0,
+                reliability: Reliability::Unique,
+                expiry: Some(Duration::from_secs(30)),
+                sent: false,
+                value: EXP_SER.into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_datastream_individual_closed_stored_sqlite() {
+        let tmp = TempDir::new().unwrap();
+        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Closed, store);
+
+        let path = "/endpoint2";
+        let value = true;
+        let exp = ValidatedIndividual {
+            interface: STORED_DEVICE_DATASTREAM_NAME.to_string(),
+            path: path.to_string(),
+            version_major: 0,
+            reliability: Reliability::Unique,
+            retention: Retention::Stored {
+                expiry: Some(Duration::from_secs(30)),
+            },
+            data: AstarteData::Boolean(value),
+            timestamp: None,
+        };
+        const EXP_SER: &[u8] = &[1, 2, 3, 4];
+
+        let mut seq = Sequence::new();
+
+        client
+            .sender
+            .expect_serialize_individual()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(exp))
+            .returning(|_| Ok(EXP_SER.to_vec()));
+
+        // Send
+        let err = client
+            .send_individual(STORED_DEVICE_DATASTREAM_NAME, path, value.into())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Disconnected));
 
         let mut stored = Vec::new();
         let read = client

@@ -94,7 +94,7 @@ where
     where
         F: FnMut(Option<&Interface>) -> O + Send,
     {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
 
         f(interfaces.get(interface_name))
     }
@@ -107,14 +107,7 @@ where
 {
     async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error> {
         // Lock for writing for the whole scope, even the checks
-        let _permit = self
-            .state
-            .introspection
-            .acquire()
-            .await
-            .map_err(|_| Error::Disconnected)?;
-
-        let interfaces = self.state.interfaces.read().await;
+        let mut interfaces = self.state.interfaces().write().await;
 
         let map_err = interfaces
             .validate(interface)
@@ -129,12 +122,10 @@ where
         self.sender.add_interface(&interfaces, &to_add).await?;
 
         if to_add.is_major_change() {
-            Self::cleanup_interface(&self.state.volatile_store, &self.store, &to_add).await;
+            Self::cleanup_interface(self.state.volatile_store(), &self.store, &to_add).await;
         }
 
-        drop(interfaces);
         debug!("adding interface to introspection");
-        let mut interfaces = self.state.interfaces.write().await;
 
         interfaces.add(to_add);
 
@@ -146,13 +137,7 @@ where
         I: IntoIterator<Item = Interface> + Send,
     {
         // Lock for writing for the whole scope, even the checks
-        let _permit = self
-            .state
-            .introspection
-            .acquire()
-            .await
-            .map_err(|_| Error::Disconnected)?;
-        let interfaces = self.state.interfaces.read().await;
+        let mut interfaces = self.state.interfaces().write().await;
 
         let to_add = interfaces
             .validate_many(iter)
@@ -172,14 +157,13 @@ where
             .filter(|interface| interface.is_major_change());
 
         for interface in major_changes {
-            Self::cleanup_interface(&self.state.volatile_store, &self.store, interface).await;
+            Self::cleanup_interface(self.state.volatile_store(), &self.store, interface).await;
         }
 
         let names = to_add.keys().cloned().collect();
 
-        drop(interfaces);
         debug!("adding interfaces to introspection");
-        let mut interfaces = self.state.interfaces.write().await;
+
         interfaces.extend(to_add);
 
         debug!("Interfaces added");
@@ -216,14 +200,7 @@ where
 
     async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error> {
         // Lock for writing for the whole scope, even the checks
-        let _permit = self
-            .state
-            .introspection
-            .acquire()
-            .await
-            .map_err(|_| Error::Disconnected)?;
-
-        let interfaces = self.state.interfaces.read().await;
+        let mut interfaces = self.state.interfaces().write().await;
 
         let Some(to_remove) = interfaces.get(interface_name) else {
             debug!("{interface_name} not found, skipping");
@@ -232,11 +209,10 @@ where
 
         self.sender.remove_interface(&interfaces, to_remove).await?;
 
-        Self::cleanup_interface(&self.state.volatile_store, &self.store, to_remove).await;
+        Self::cleanup_interface(self.state.volatile_store(), &self.store, to_remove).await;
 
-        drop(interfaces);
         debug!("removing interface from introspection");
-        let mut interfaces = self.state.interfaces.write().await;
+
         interfaces.remove(interface_name);
 
         Ok(true)
@@ -248,14 +224,7 @@ where
         I::IntoIter: Send,
     {
         // Lock for writing for the whole scope, even the checks
-        let _permit = self
-            .state
-            .introspection
-            .acquire()
-            .await
-            .map_err(|_| Error::Disconnected)?;
-
-        let interfaces = self.state.interfaces.read().await;
+        let mut interfaces = self.state.interfaces().write().await;
 
         let to_remove: HashMap<&str, &Interface> = interfaces_name
             .into_iter()
@@ -279,14 +248,13 @@ where
             .await?;
 
         for interface in to_remove.values() {
-            Self::cleanup_interface(&self.state.volatile_store, &self.store, interface).await;
+            Self::cleanup_interface(self.state.volatile_store(), &self.store, interface).await;
         }
 
         let removed_names: Vec<String> = to_remove.keys().map(|k| k.to_string()).collect();
 
-        drop(interfaces);
         debug!("removing interfaces from introspection");
-        let mut interfaces = self.state.interfaces.write().await;
+
         interfaces.remove_many(&removed_names);
 
         Ok(removed_names)
@@ -310,6 +278,7 @@ mod tests {
     use crate::interfaces::MappingRef;
     use crate::interfaces::tests::{mock_validated_collection, mock_validated_interface};
     use crate::retention::StoredRetentionExt;
+    use crate::state::ConnStatus;
     use crate::store::{PropertyMapping, SqliteStore};
     use crate::test::{
         E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_PROPERTY,
@@ -321,7 +290,7 @@ mod tests {
     async fn get_interface() {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let (client, _tx) = mock_client(&[E2E_DEVICE_AGGREGATE]);
+        let client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
 
         client
             .get_interface(interface.interface_name(), |i| {
@@ -340,7 +309,7 @@ mod tests {
     async fn add_interface_missing() {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
         client
@@ -371,7 +340,7 @@ mod tests {
     async fn add_interface_missing_from_str() {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
         client
@@ -405,7 +374,7 @@ mod tests {
     async fn add_interface_missing_from_file() {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
         client
@@ -441,13 +410,16 @@ mod tests {
     async fn add_interface_major_with_retention_volatile() {
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let (mut client, _tx) = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_0_1]);
+        let mut client = mock_client(
+            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
+            ConnStatus::Connected,
+        );
 
         client
             .state
-            .volatile_store
+            .volatile_store()
             .push_sent(
-                client.state.retention_ctx.next(),
+                client.state.retention_ctx().next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
                     path: "/sensor_1/volatile".to_string(),
@@ -481,7 +453,7 @@ mod tests {
             })
             .await;
 
-        assert!(client.state.volatile_store.pop_next().await.is_none());
+        assert!(client.state.volatile_store().pop_next().await.is_none());
     }
 
     #[tokio::test]
@@ -489,12 +461,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let (mut client, _tx) =
-            mock_client_with_store(&[for_update::E2E_DEVICE_DATASTREAM_0_1], store);
+        let mut client = mock_client_with_store(
+            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
+            ConnStatus::Connected,
+            store,
+        );
 
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let id = client.state.retention_ctx.next();
+        let id = client.state.retention_ctx().next();
         client
             .store
             .get_retention()
@@ -551,13 +526,16 @@ mod tests {
     async fn extend_interfaces_major_with_retention_volatile() {
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let (mut client, _tx) = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_0_1]);
+        let mut client = mock_client(
+            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
+            ConnStatus::Connected,
+        );
 
         client
             .state
-            .volatile_store
+            .volatile_store()
             .push_sent(
-                client.state.retention_ctx.next(),
+                client.state.retention_ctx().next(),
                 ValidatedIndividual {
                     interface: for_update::E2E_DEVICE_DATASTREAM_NAME.to_string(),
                     path: "/sensor_1/volatile".to_string(),
@@ -594,7 +572,7 @@ mod tests {
             })
             .await;
 
-        assert!(client.state.volatile_store.pop_next().await.is_none());
+        assert!(client.state.volatile_store().pop_next().await.is_none());
     }
 
     #[tokio::test]
@@ -602,12 +580,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let (mut client, _tx) =
-            mock_client_with_store(&[for_update::E2E_DEVICE_DATASTREAM_0_1], store);
+        let mut client = mock_client_with_store(
+            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
+            ConnStatus::Connected,
+            store,
+        );
 
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let id = client.state.retention_ctx.next();
+        let id = client.state.retention_ctx().next();
         client
             .store
             .get_retention()
@@ -665,7 +646,10 @@ mod tests {
 
     #[tokio::test]
     async fn extend_interfaces_nothing_to_add() {
-        let (mut client, _tx) = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_1_0]);
+        let mut client = mock_client(
+            &[for_update::E2E_DEVICE_DATASTREAM_1_0],
+            ConnStatus::Connected,
+        );
 
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
@@ -681,7 +665,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_present() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_AGGREGATE]);
+        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
 
         let to_remove = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
@@ -709,7 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_property() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_PROPERTY]);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
 
         let to_remove = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
 
@@ -762,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_not_found() {
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let removed = client
             .remove_interface(E2E_DEVICE_AGGREGATE_NAME)
@@ -779,7 +763,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_many_present() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_AGGREGATE]);
+        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
         client
@@ -806,7 +790,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_many_missing() {
-        let (mut client, _tx) = mock_client(&[]);
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let removed = client
             .remove_interfaces([E2E_DEVICE_AGGREGATE_NAME.to_string()])

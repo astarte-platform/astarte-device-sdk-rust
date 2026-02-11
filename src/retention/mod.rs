@@ -117,7 +117,7 @@ pub enum RetentionError {
     #[error("couldn't delete the publishes for interfaces")]
     DeleteInterfaceMany(#[source] DynError),
     /// Couldn't fetch all the publishes' interfaces.
-    #[error("couldn't fetch all the publishs' interfaces")]
+    #[error("couldn't fetch all the publishes' interfaces")]
     FetchInterfaces(#[source] DynError),
     /// Couldn't set the maximum capacity of items.
     #[error("couldn't set the mximum number of item to {capacity}")]

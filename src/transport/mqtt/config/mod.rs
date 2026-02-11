@@ -455,7 +455,7 @@ impl MqttConfig {
             realm: self.realm.clone(),
         };
 
-        let (retention_tx, retention_rx) = flume::bounded(config.channel_size);
+        let (retention_tx, retention_rx) = async_channel::bounded(config.channel_size);
         let retention = MqttRetention::new(retention_rx);
 
         let (connection, client) = match self
@@ -471,7 +471,7 @@ impl MqttConfig {
                     AsyncClient::new(mqtt_opts, self.bounded_channel_size);
                 eventloop.set_network_options(net_opts);
 
-                *state.cert_expiry.lock().await = provider
+                *state.cert_expiry.write().await = provider
                     .fetch_cert_expiry(ClientId {
                         realm: &self.realm,
                         device_id: &self.device_id,

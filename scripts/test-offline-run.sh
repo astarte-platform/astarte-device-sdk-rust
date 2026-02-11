@@ -26,7 +26,7 @@ URL=""
 REALM=""
 
 while getopts ":k:c:u:r:" opt; do
-  case $opt in
+    case $opt in
     c)
         CONFIG="$OPTARG"
         ;;
@@ -49,14 +49,14 @@ while getopts ":k:c:u:r:" opt; do
         usage
         exit 1
         ;;
-  esac
+    esac
 
-  # case $OPTARG in
-  #   -*)
-  #       echo "Option $opt needs a valid argument"
-  #       exit 1
-  #       ;;
-  # esac
+    # case $OPTARG in
+    #   -*)
+    #       echo "Option $opt needs a valid argument"
+    #       exit 1
+    #       ;;
+    # esac
 done
 
 STORE_DIR="$(mktemp -d)"
@@ -90,7 +90,7 @@ elif ! [ -z "$KEY" ]; then
 
     CONFIG="$STORE_DIR/device-local-offline.json"
     echo "Storing temp config in '$CONFIG'"
-    tee -a "$CONFIG" << END
+    tee -a "$CONFIG" <<END
     {
         "realm": "$REALM",
         "device_id": "$DEVICE_ID",
@@ -113,7 +113,7 @@ sudo ./scripts/offline/network_namespace/set_rules.sh 0ms 100%
 cargo b --example retention -F "derive"
 
 sudo ./scripts/offline/network_namespace/run.sh \
-  ./target/debug/examples/retention -c "$CONFIG" > "$STORE_DIR/offline_log.out" 2>&1 &
+    ./target/debug/examples/retention -c "$CONFIG" >"$STORE_DIR/offline_log.out" 2>&1 &
 
 RUNNING_EXAMPLE_PID=$!
 

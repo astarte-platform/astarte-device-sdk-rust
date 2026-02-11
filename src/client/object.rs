@@ -19,7 +19,7 @@
 //! Handles the sending of object datastream.
 
 use astarte_interfaces::MappingPath;
-use tracing::debug;
+use tracing::info;
 
 use crate::Error;
 use crate::client::ValidatedObject;
@@ -41,12 +41,12 @@ where
     where
         C::Sender: Publish,
     {
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let interface = interfaces.get_object(interface_name, path)?;
 
         let validated = ValidatedObject::validate(interface, path, data, timestamp)?;
 
-        debug!("sending object {}{}", interface_name, path);
+        info!(interface = interface_name, path = %path, "sending object",);
 
         Self::send(&self.state, &self.store, &mut self.sender, validated).await
     }
@@ -69,6 +69,7 @@ mod tests {
     use crate::interfaces::tests::DEVICE_OBJECT;
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, RetentionId, StoredRetention};
+    use crate::state::ConnStatus;
     use crate::store::SqliteStore;
     use crate::test::{
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_OBJECT,
@@ -78,7 +79,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_connected_discard() {
-        let (mut client, _tx) = mock_client(&[DEVICE_OBJECT]);
+        let mut client = mock_client(&[DEVICE_OBJECT], ConnStatus::Connected);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -114,8 +115,6 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|_| Ok(()));
 
-        client.state.status.set_connected(true);
-
         // Test the sent
         client
             .send_object_with_timestamp(interface, path, obj, timestamp)
@@ -125,9 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_connected_volatile() {
-        let (mut client, _tx) = mock_client(&[VOLATILE_DEVICE_OBJECT]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Connected);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -167,16 +164,14 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Object(expected));
     }
 
     #[tokio::test]
     async fn send_datastream_object_connected_stored_no_retention_cap() {
-        let (mut client, _tx) = mock_client(&[STORED_DEVICE_OBJECT]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Connected);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -216,7 +211,7 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Object(expected));
     }
@@ -225,9 +220,8 @@ mod tests {
     async fn send_datastream_object_connected_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
         let store = SqliteStore::connect(tmp.path()).await.unwrap();
-        let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_OBJECT], store);
-
-        client.state.status.set_connected(true);
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Connected, store);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -314,9 +308,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_offline_discard() {
-        let (mut client, _tx) = mock_client(&[DEVICE_OBJECT]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[DEVICE_OBJECT], ConnStatus::Disconnected);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -344,9 +336,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_offline_volatile() {
-        let (mut client, _tx) = mock_client(&[VOLATILE_DEVICE_OBJECT]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Disconnected);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -374,16 +364,14 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Object(expected));
     }
 
     #[tokio::test]
     async fn send_datastream_object_offline_stored_no_retention_cap() {
-        let (mut client, _tx) = mock_client(&[STORED_DEVICE_OBJECT]);
-
-        client.state.status.set_connected(false);
+        let mut client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Disconnected);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -412,7 +400,7 @@ mod tests {
             .await
             .unwrap();
 
-        let item = client.state.volatile_store.pop_next().await.unwrap();
+        let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Object(expected));
     }
@@ -421,9 +409,8 @@ mod tests {
     async fn send_datastream_object_offline_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
         let store = SqliteStore::connect(tmp.path()).await.unwrap();
-        let (mut client, _tx) = mock_client_with_store(&[STORED_DEVICE_OBJECT], store);
-
-        client.state.status.set_connected(false);
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Disconnected, store);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -487,10 +474,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_datastream_object_interface_not_found() {
-        let (mut client, _tx) = mock_client(&[]);
+    async fn send_datastream_object_closed_stored_sqlite() {
+        let tmp = TempDir::new().unwrap();
+        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let mut client = mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Closed, store);
 
-        client.state.status.set_connected(true);
+        let path = "/endpoint";
+        let value = AstarteObject::from_iter(
+            [
+                ("longinteger", AstarteData::LongInteger(42)),
+                ("boolean", AstarteData::Boolean(true)),
+            ]
+            .map(|(k, v)| (k.to_string(), v)),
+        );
+
+        let exp = ValidatedObject {
+            interface: STORED_DEVICE_OBJECT_NAME.to_string(),
+            path: path.to_string(),
+            version_major: 0,
+            reliability: Reliability::Guaranteed,
+            retention: Retention::Stored {
+                expiry: Some(Duration::from_secs(30)),
+            },
+            data: value.clone(),
+            timestamp: None,
+        };
+        const EXP_SER: &[u8] = &[1, 2, 3, 4];
+
+        let mut seq = Sequence::new();
+        client
+            .sender
+            .expect_serialize_object()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(exp))
+            .returning(|_| Ok(EXP_SER.to_vec()));
+
+        // Send
+        let err = client
+            .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Disconnected));
+
+        let mut stored = Vec::new();
+        let read = client
+            .store
+            .store
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
+
+        assert_eq!(read, 1);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored.pop().unwrap().1,
+            PublishInfo {
+                interface: STORED_DEVICE_OBJECT_NAME.into(),
+                path: path.into(),
+                version_major: 0,
+                reliability: Reliability::Guaranteed,
+                expiry: Some(Duration::from_secs(30)),
+                sent: false,
+                value: EXP_SER.into()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn send_datastream_object_interface_not_found() {
+        let mut client = mock_client(&[], ConnStatus::Connected);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -525,9 +578,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_wrong_aggregation() {
-        let (mut client, _tx) = mock_client(&[E2E_DEVICE_DATASTREAM]);
-
-        client.state.status.set_connected(true);
+        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Connected);
 
         let path = "/sensor_1";
         let timestamp = Utc::now();

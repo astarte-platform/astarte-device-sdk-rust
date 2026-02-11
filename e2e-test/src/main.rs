@@ -110,7 +110,7 @@ async fn main() -> eyre::Result<()> {
 
     retry(20, || async { api.is_healthy().await }).await?;
 
-    let (tx_cancel, mut cancel) = tokio::sync::broadcast::channel::<()>(2);
+    let (tx_cancel, cancel) = tokio::sync::broadcast::channel::<()>(2);
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
     let appengine = config.url.appengine_websocket()?;
@@ -120,7 +120,7 @@ async fn main() -> eyre::Result<()> {
         &config.run.token,
         &config.run.device_id,
         &mut tasks,
-        tx_cancel.subscribe(),
+        cancel,
     )
     .await?;
 
@@ -133,14 +133,7 @@ async fn main() -> eyre::Result<()> {
         .await?;
 
     tasks.spawn(async move {
-        tokio::select! {
-            res = cancel.recv() => {
-                res.wrap_err("couldn't cancel handle events")?;
-            }
-            res = connection.handle_events() => {
-                res.wrap_err("handle events errored")?;
-            }
-        }
+        connection.handle_events().await?;
 
         Ok(())
     });
@@ -162,6 +155,10 @@ async fn main() -> eyre::Result<()> {
         server::object::check(&api, &client).await?;
 
         device::interfaces::check_remove(&api, &mut client).await?;
+
+        client.disconnect().await?;
+
+        channel.next_device_disconnected().await?;
 
         info!("e2e completed successfully");
 

@@ -113,7 +113,7 @@ where
         ensure!(path == data_path);
 
         let Value::Property(None) = data else {
-            bail!("prop was not unseted")
+            bail!("prop was not unset")
         };
 
         info!(interface, path, "validated")

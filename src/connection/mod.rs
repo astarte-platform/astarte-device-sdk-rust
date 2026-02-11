@@ -19,16 +19,19 @@
 //! Connection to Astarte, for handling events and reconnection on error.
 
 use std::future::Future;
-use std::sync::Arc;
+use std::pin::pin;
+use std::time::Duration;
 
+use async_channel::SendError;
 use chrono::Utc;
+use futures::future::Either;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::Timestamp;
 use crate::error::Report;
 use crate::retry::ExponentialIter;
-use crate::state::{SharedState, Status};
+use crate::state::{ConnStatus, ConnectionState};
 use crate::transport::TransportError;
 use crate::{
     Error,
@@ -82,11 +85,12 @@ pub struct DeviceConnection<C>
 where
     C: Connection,
 {
-    tx: flume::Sender<Result<DeviceEvent, RecvError>>,
+    events: async_channel::Sender<Result<DeviceEvent, RecvError>>,
+    disconnect: async_channel::Receiver<()>,
     store: StoreWrapper<C::Store>,
     connection: C,
     sender: C::Sender,
-    state: Arc<SharedState>,
+    state: ConnectionState,
     resend: Option<JoinHandle<()>>,
     backoff: ExponentialIter,
 }
@@ -96,20 +100,22 @@ where
     C: Connection,
 {
     pub(crate) fn new(
-        tx: flume::Sender<Result<DeviceEvent, RecvError>>,
+        events: async_channel::Sender<Result<DeviceEvent, RecvError>>,
+        disconnect: async_channel::Receiver<()>,
         store: StoreWrapper<C::Store>,
-        state: Arc<SharedState>,
+        state: ConnectionState,
         connection: C,
         sender: C::Sender,
     ) -> Self {
         Self {
-            tx,
+            events,
             store,
             state,
             connection,
             sender,
             resend: None,
             backoff: ExponentialIter::default(),
+            disconnect,
         }
     }
 
@@ -148,19 +154,19 @@ where
 
     /// Keeps polling connection events
     #[instrument(skip(self))]
-    pub(super) async fn poll(&mut self) -> Result<Status, TransportError>
+    pub(super) async fn poll(&mut self) -> Result<ConnStatus, TransportError>
     where
         C: Receive + Reconnect,
         C::Sender: Publish + 'static,
     {
         trace!("polling connection");
         let Some(event) = self.connection.next_event().await? else {
-            trace!("disconnected");
+            info!("disconnected");
 
-            self.state.status.set_connected(false);
+            self.state.set_connection(ConnStatus::Disconnected).await;
 
             // This will check if the connection was closed
-            return Ok(self.state.status.connection());
+            return Ok(ConnStatus::Disconnected);
         };
 
         trace!("event received");
@@ -174,13 +180,59 @@ where
                 data,
             })?;
 
-        self.tx.send(Ok(event)).map_err(|err| {
+        self.send_to_clients(Ok(event)).await.map_err(|err| {
             debug!(error = %Report::new(err), "disconnected");
 
             TransportError::Transport(Error::Disconnected)
         })?;
 
-        Ok(self.state.status.connection())
+        Ok(ConnStatus::Connected)
+    }
+
+    async fn send_to_clients(
+        &self,
+        event: Result<DeviceEvent, RecvError>,
+    ) -> Result<(), SendError<Result<DeviceEvent, RecvError>>> {
+        let send = pin!(self.events.send(event));
+        let timeout = pin!(tokio::time::sleep(Duration::from_secs(10)));
+
+        match futures::future::select(send, timeout).await {
+            Either::Left((send_res, _)) => send_res.inspect(|()| trace!("event sent to device")),
+            Either::Right(((), send)) => {
+                warn!("slow to send Astarte events to client, maybe no one is consuming them");
+
+                send.await
+            }
+        }
+    }
+
+    async fn run_until_disconnect<F>(
+        disconnect: &async_channel::Receiver<()>,
+        f: F,
+    ) -> Option<F::Output>
+    where
+        F: Future,
+    {
+        if disconnect.is_empty() && disconnect.is_closed() {
+            return Some(f.await);
+        }
+
+        let disconnect = pin!(disconnect.recv());
+        let f = pin!(f);
+
+        match futures::future::select(disconnect, f).await {
+            Either::Left((Ok(()), _f)) => {
+                debug!("diconnect received");
+
+                None
+            }
+            Either::Left((Err(error), f)) => {
+                error!(%error, "diconnect closed");
+
+                Some(f.await)
+            }
+            Either::Right((f_out, _disconnect)) => Some(f_out),
+        }
     }
 }
 
@@ -189,8 +241,11 @@ where
     C: Connection,
 {
     fn drop(&mut self) {
-        self.state.introspection.close();
-        self.state.status.close();
+        let state = self.state.clone();
+
+        tokio::task::spawn(async move {
+            state.set_connection(ConnStatus::Closed).await;
+        });
     }
 }
 
@@ -204,11 +259,13 @@ where
 
         loop {
             match self.poll().await {
-                Ok(Status::Connected) => {}
-                Ok(Status::Disconnected) => {
-                    self.reconnect_and_resend().await?;
+                Ok(ConnStatus::Connected) => {}
+                Ok(ConnStatus::Disconnected) => {
+                    if self.reconnect_and_resend().await?.is_break() {
+                        break;
+                    }
                 }
-                Ok(Status::Closed) => {
+                Ok(ConnStatus::Closed) => {
                     break;
                 }
                 Err(TransportError::Transport(err)) => {
@@ -216,16 +273,13 @@ where
                 }
                 // send the error to the client
                 Err(TransportError::Recv(recv_err)) => {
-                    self.tx
-                        .send_async(Err(recv_err))
-                        .await
-                        .map_err(|send_err| {
-                            if let Err(err) = send_err.into_inner() {
-                                error!(error = %Report::new(err), "failed to send receive error");
-                            }
+                    self.events.send(Err(recv_err)).await.map_err(|send_err| {
+                        if let Err(err) = send_err.into_inner() {
+                            error!(error = %Report::new(err), "failed to send receive error");
+                        }
 
-                            Error::Disconnected
-                        })?;
+                        Error::Disconnected
+                    })?;
                 }
             }
         }
@@ -238,9 +292,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::ops::{ControlFlow, Deref, DerefMut};
     use std::str::FromStr;
+    use std::sync::Arc;
 
     use astarte_interfaces::{Interface, Schema};
+    use futures::FutureExt;
     use mockall::Sequence;
     use pretty_assertions::assert_eq;
 
@@ -248,6 +305,7 @@ mod tests {
     use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
+    use crate::state::SharedState;
     use crate::store::StoreCapabilities;
     use crate::store::memory::MemoryStore;
     use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
@@ -256,22 +314,47 @@ mod tests {
 
     use super::*;
 
+    pub(crate) struct TestConnection<S>
+    where
+        S: StoreCapabilities,
+    {
+        pub(crate) inner: DeviceConnection<MockCon<S>>,
+        pub(crate) events: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
+        pub(crate) disconnect: async_channel::Sender<()>,
+    }
+
+    impl<S> Deref for TestConnection<S>
+    where
+        S: StoreCapabilities,
+    {
+        type Target = DeviceConnection<MockCon<S>>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.inner
+        }
+    }
+
+    impl<S> DerefMut for TestConnection<S>
+    where
+        S: StoreCapabilities,
+    {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.inner
+        }
+    }
+
     pub(crate) fn mock_connection(
         interfaces: &[&str],
-    ) -> (
-        DeviceConnection<MockCon<MemoryStore>>,
-        flume::Receiver<Result<DeviceEvent, RecvError>>,
-    ) {
-        mock_connection_with_store(interfaces, MemoryStore::new())
+        initial_status: ConnStatus,
+    ) -> TestConnection<MemoryStore> {
+        mock_connection_with_store(interfaces, initial_status, MemoryStore::new())
     }
 
     pub(crate) fn mock_connection_with_store<S>(
         interfaces: &[&str],
+        initial_status: ConnStatus,
         store: S,
-    ) -> (
-        DeviceConnection<MockCon<S>>,
-        flume::Receiver<Result<DeviceEvent, RecvError>>,
-    )
+    ) -> TestConnection<S>
     where
         S: StoreCapabilities,
     {
@@ -280,26 +363,34 @@ mod tests {
 
         let connection = MockCon::new();
         let sender = MockSender::new();
-        let (tx, rx) = flume::bounded(DEFAULT_CHANNEL_SIZE);
-        let state = SharedState::new(
+        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE);
+        let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
+        let mut state = SharedState::new(
             interfaces,
             VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
         );
 
+        *state.status.get_mut() = initial_status;
+
         let connection = DeviceConnection::new(
-            tx,
+            events_tx,
+            disconnect_rx,
             StoreWrapper::new(store),
-            Arc::new(state),
+            ConnectionState::new(Arc::new(state)),
             connection,
             sender,
         );
 
-        (connection, rx)
+        TestConnection {
+            inner: connection,
+            events: events_rx,
+            disconnect: disconnect_tx,
+        }
     }
 
     #[tokio::test]
     async fn poll_disconnected() {
-        let (mut connection, _rx) = mock_connection(&[]);
+        let mut connection = mock_connection(&[], ConnStatus::Connected);
 
         let mut seq = Sequence::new();
 
@@ -313,12 +404,38 @@ mod tests {
 
         let status = connection.poll().await.unwrap();
 
-        assert_eq!(Status::Disconnected, status);
+        assert_eq!(status, ConnStatus::Disconnected);
+    }
+
+    #[tokio::test]
+    async fn reconnect_cancelled_for_disconnect() {
+        let mut connection = mock_connection(&[], ConnStatus::Disconnected);
+
+        let mut seq = Sequence::new();
+        connection
+            .connection
+            .expect_reconnect()
+            .times(0..)
+            .in_sequence(&mut seq)
+            .returning(|_| Box::pin(futures::future::pending()));
+
+        let disconnect = connection.disconnect;
+        let handle = tokio::spawn(async move { connection.inner.reconnect_and_resend().await });
+
+        disconnect.try_send(()).unwrap();
+
+        let status = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(status, ControlFlow::Break(()));
     }
 
     #[tokio::test]
     async fn poll_individual() {
-        let (mut connection, _rx) = mock_connection(&[E2E_SERVER_DATASTREAM]);
+        let mut connection = mock_connection(&[E2E_SERVER_DATASTREAM], ConnStatus::Disconnected);
 
         let endpoint = "/boolean_endpoint";
         let value = true;
@@ -330,7 +447,7 @@ mod tests {
             .expect_reconnect()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| Ok(true));
+            .returning(|_| futures::future::ok(true).boxed());
 
         connection
             .sender
@@ -373,10 +490,20 @@ mod tests {
             });
 
         // first ensure the status is connected (starts off with a disconnected status)
-        connection.reconnect_and_resend().await.unwrap();
+        let controlflow = connection.reconnect_and_resend().await.unwrap();
+
+        assert_eq!(controlflow, ControlFlow::Continue(()));
 
         let status = connection.poll().await.unwrap();
 
-        assert_eq!(Status::Connected, status);
+        assert_eq!(status, ConnStatus::Connected);
+
+        let event = connection.events.try_recv().unwrap().unwrap();
+
+        // Cannot eq the timestamp
+        assert_eq!(event.interface, E2E_SERVER_DATASTREAM_NAME);
+        assert_eq!(event.path, endpoint);
+        let data = event.data.try_into_individual().unwrap();
+        assert_eq!(data.0, AstarteData::Boolean(value));
     }
 }

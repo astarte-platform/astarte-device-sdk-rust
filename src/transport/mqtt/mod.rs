@@ -228,7 +228,7 @@ impl<S> MqttClient<S> {
             }
             Reliability::Guaranteed | Reliability::Unique => {
                 self.retention
-                    .send_async((id, notice))
+                    .send((id, notice))
                     .await
                     .map_err(|_| Error::Disconnected)?;
             }
@@ -1055,7 +1055,7 @@ pub(crate) mod test {
     {
         let client_id: ClientId = CLIENT_ID.into();
 
-        let (ret_tx, ret_rx) = flume::unbounded();
+        let (ret_tx, ret_rx) = async_channel::unbounded();
 
         let store = StoreWrapper::new(store);
 
@@ -2071,7 +2071,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_individual() {
+    async fn should_not_enqueue_sent_individual() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
@@ -2163,7 +2163,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_object() {
+    async fn should_not_enqueue_sent_object() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 

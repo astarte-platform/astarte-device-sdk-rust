@@ -46,7 +46,7 @@ where
         let path = MappingPath::try_from(path)
             .map_err(|err| TransportError::Recv(RecvError::InvalidEndpoint(err)))?;
 
-        let interfaces = self.state.interfaces.read().await;
+        let interfaces = self.state.interfaces().read().await;
         let Some(interface) = interfaces.get(interface) else {
             warn!("publish on missing interface");
 
@@ -213,6 +213,7 @@ mod tests {
     use crate::AstarteData;
     use crate::aggregate::AstarteObject;
     use crate::connection::tests::mock_connection;
+    use crate::state::ConnStatus;
     use crate::test::{
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, E2E_SERVER_DATASTREAM,
         E2E_SERVER_DATASTREAM_NAME, E2E_SERVER_PROPERTY, E2E_SERVER_PROPERTY_NAME, SERVER_OBJECT,
@@ -223,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_individual() {
-        let (mut connection, _rx) = mock_connection(&[E2E_SERVER_DATASTREAM]);
+        let mut connection = mock_connection(&[E2E_SERVER_DATASTREAM], ConnStatus::Connected);
 
         let timestamp = Utc::now();
         let value = Box::new((42, timestamp));
@@ -266,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_event_missing_interface() {
-        let (connection, _rx) = mock_connection(&[]);
+        let connection = mock_connection(&[], ConnStatus::Connected);
 
         let timestamp = Utc::now();
         let value = Box::new((42, timestamp));
@@ -285,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_event_missing_mapping() {
-        let (connection, _rx) = mock_connection(&[E2E_SERVER_DATASTREAM]);
+        let connection = mock_connection(&[E2E_SERVER_DATASTREAM], ConnStatus::Connected);
 
         let timestamp = Utc::now();
         let value = Box::new((42, timestamp));
@@ -308,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_object() {
-        let (mut connection, _rx) = mock_connection(&[SERVER_OBJECT]);
+        let mut connection = mock_connection(&[SERVER_OBJECT], ConnStatus::Connected);
 
         let timestamp = Utc::now();
         let obj = AstarteObject::from_iter(
@@ -362,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_property_set() {
-        let (mut connection, _rx) = mock_connection(&[E2E_SERVER_PROPERTY]);
+        let mut connection = mock_connection(&[E2E_SERVER_PROPERTY], ConnStatus::Connected);
 
         let value = Box::new(42);
         let endpoint = "/sensor1/integer_endpoint";
@@ -398,7 +399,7 @@ mod tests {
 
         assert_eq!(event, exp);
 
-        let interfaces = connection.state.interfaces.read().await;
+        let interfaces = connection.state.interfaces().read().await;
         let path = MappingPath::try_from(endpoint).unwrap();
         let mapping = interfaces
             .get_property(E2E_SERVER_PROPERTY_NAME, &path)
@@ -416,7 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_property_unset_success() {
-        let (mut connection, _rx) = mock_connection(&[E2E_SERVER_PROPERTY]);
+        let mut connection = mock_connection(&[E2E_SERVER_PROPERTY], ConnStatus::Connected);
 
         let value = Box::new([0u8; 0]);
         let endpoint = "/sensor1/integer_endpoint";
@@ -456,7 +457,7 @@ mod tests {
 
         assert_eq!(event, exp);
 
-        let interfaces = connection.state.interfaces.read().await;
+        let interfaces = connection.state.interfaces().read().await;
         let path = MappingPath::try_from(endpoint).unwrap();
         let mapping = interfaces
             .get_property(E2E_SERVER_PROPERTY_NAME, &path)
@@ -473,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_property_unset_error() {
-        let (mut connection, _rx) = mock_connection(&[SERVER_PROPERTIES_NO_UNSET]);
+        let mut connection = mock_connection(&[SERVER_PROPERTIES_NO_UNSET], ConnStatus::Connected);
 
         let value = Box::new([0u8; 0]);
         let endpoint = "/sensor1/enable";
@@ -515,7 +516,7 @@ mod tests {
         );
 
         let path = MappingPath::try_from(endpoint).unwrap();
-        let interfaces = connection.state.interfaces.read().await;
+        let interfaces = connection.state.interfaces().read().await;
         let mapping = interfaces
             .get_property(SERVER_PROPERTIES_NO_UNSET_NAME, &path)
             .unwrap();
@@ -532,7 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_wrong_ownership() {
-        let (connection, _rx) = mock_connection(&[E2E_DEVICE_DATASTREAM]);
+        let connection = mock_connection(&[E2E_DEVICE_DATASTREAM], ConnStatus::Connected);
 
         let timestamp = Utc::now();
         let value = Box::new((42, timestamp));

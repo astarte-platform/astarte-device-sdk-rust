@@ -34,8 +34,8 @@ use tracing::{debug, trace, warn};
 
 use crate::retention::RetentionId;
 
-pub(crate) type RetSender = flume::Sender<(RetentionId, Token<AckOfPub>)>;
-pub(crate) type RetReceiver = flume::Receiver<(RetentionId, Token<AckOfPub>)>;
+pub(crate) type RetSender = async_channel::Sender<(RetentionId, Token<AckOfPub>)>;
+pub(crate) type RetReceiver = async_channel::Receiver<(RetentionId, Token<AckOfPub>)>;
 
 pub(crate) struct MqttRetention {
     packets: HashMap<RetentionId, Token<AckOfPub>>,
@@ -52,7 +52,7 @@ impl MqttRetention {
 
     /// The retention client is disconnected and all packets have been handled
     pub(crate) fn is_empty(&self) -> bool {
-        self.rx.is_empty() && self.rx.is_disconnected() && self.packets.is_empty()
+        self.rx.is_empty() && self.packets.is_empty()
     }
 
     /// Discards retention packets and returns the id of received packets
@@ -61,7 +61,7 @@ impl MqttRetention {
 
         self.packets
             .drain()
-            .chain(self.rx.drain())
+            .chain(std::iter::from_fn(|| self.rx.try_recv().ok()))
             .filter_map(|(id, mut token)| token.check().map(|_| id).ok())
             .collect()
     }
@@ -75,7 +75,7 @@ impl MqttRetention {
 
         let mut count: usize = 0;
         // get all the already present publishes
-        for (id, notice) in self.rx.drain() {
+        while let Ok((id, notice)) = self.rx.try_recv() {
             let prev = self.packets.insert(id, notice);
 
             debug_assert!(prev.is_none(), "The IDs should be unique");
@@ -153,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_queue_and_get_next() {
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = async_channel::unbounded();
 
         let mut retention = MqttRetention::new(rx);
 
@@ -168,9 +168,9 @@ mod tests {
         let i3 = ctx.next();
         let (_t3, n3) = Resolver::new();
 
-        tx.send((RetentionId::Stored(i1), n1)).unwrap();
-        tx.send((RetentionId::Stored(i2), n2)).unwrap();
-        tx.send((RetentionId::Stored(i3), n3)).unwrap();
+        tx.try_send((RetentionId::Stored(i1), n1)).unwrap();
+        tx.try_send((RetentionId::Stored(i2), n2)).unwrap();
+        tx.try_send((RetentionId::Stored(i3), n3)).unwrap();
 
         assert_eq!(retention.queue(), 3);
 
