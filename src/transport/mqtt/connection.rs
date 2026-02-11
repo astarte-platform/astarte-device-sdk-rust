@@ -1528,7 +1528,7 @@ mod tests {
             .expect_device_props_with_unset()
             .once()
             .in_sequence(&mut seq)
-            .returning(|| Ok(Vec::new()));
+            .returning(|_, _| Ok(Vec::new()));
         // a clone is performed to pass the store over to the handshake task
         mock_store.expect_clone().once().returning({
             let interfaces = interfaces.clone();
@@ -1682,7 +1682,7 @@ mod tests {
         mock_store
             .expect_device_props_with_unset()
             .once()
-            .returning(|| Ok(Vec::new()));
+            .returning(|_, _| Ok(Vec::new()));
         // after a fast handshake we do not store or clear the old introspection
         // since it is up to date
 

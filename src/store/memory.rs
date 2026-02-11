@@ -217,7 +217,11 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+    async fn device_props_with_unset(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<OptStoredProp>, Self::Err> {
         let store = self.store.read().await;
 
         let props = store
@@ -226,6 +230,8 @@ impl PropertyStore for MemoryStore {
                 Ownership::Device => Some(OptStoredProp::from((k, v))),
                 Ownership::Server => None,
             })
+            .skip(offset)
+            .take(limit)
             .collect();
 
         Ok(props)

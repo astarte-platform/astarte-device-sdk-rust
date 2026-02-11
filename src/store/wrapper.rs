@@ -141,9 +141,13 @@ where
             .map_err(StoreError::delete_interface)
     }
 
-    async fn device_props_with_unset(&self) -> Result<Vec<OptStoredProp>, Self::Err> {
+    async fn device_props_with_unset(
+        &self,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<OptStoredProp>, Self::Err> {
         self.store
-            .device_props_with_unset()
+            .device_props_with_unset(limit, offset)
             .await
             .map_err(StoreError::device_props)
     }

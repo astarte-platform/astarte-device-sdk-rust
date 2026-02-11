@@ -7,4 +7,6 @@ SELECT
     ownership
 FROM propcache
 WHERE
-    ownership = ?;
+    ownership = ?
+ORDER BY interface, path
+LIMIT ? OFFSET ?;

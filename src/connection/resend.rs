@@ -80,6 +80,7 @@ where
         let state = Arc::clone(&self.state);
         let mut sender = self.sender.clone();
         let mut store = self.store.clone();
+        let limit = self.tx.capacity().unwrap_or(DEFAULT_CHANNEL_SIZE);
 
         // The queue of unpublish packets could grow indefinitely, but the should all be sent at the
         // end.
@@ -90,15 +91,37 @@ where
         self.resend = Some(tokio::task::spawn(async move {
             let _interfaces = state.interfaces.read().await;
 
-            // We exit on errors so the connection task should exit with the error.
-            if volatile {
-                if let Err(err) = Self::resend_volatile_publishes(&mut sender, &state).await {
-                    error!(error = %Report::new(&err), "error sending volatile retention");
-                }
-            }
+            let mut remaining_data = true;
 
-            if let Err(err) = Self::resend_stored_publishes(&mut store, &mut sender).await {
-                error!(error = %Report::new(&err), "error sending stored retention");
+            while remaining_data {
+                remaining_data = false;
+
+                if volatile {
+                    remaining_data |= match Self::resend_volatile_publishes(
+                        &mut sender,
+                        &state,
+                        limit,
+                    )
+                    .await
+                    {
+                        Ok(sent) => sent >= limit,
+                        Err(err) => {
+                            error!(error = %Report::new(&err), "error sending volatile retention");
+                            // in case of errors while sending we still exit the loop
+                            false
+                        }
+                    };
+                }
+
+                remaining_data |=
+                    match Self::resend_stored_publishes(&mut store, &mut sender, limit).await {
+                        Ok(sent) => sent >= limit,
+                        Err(err) => {
+                            error!(error = %Report::new(&err), "error sending stored retention");
+                            // in case of errors while sending we still exit the loop
+                            false
+                        }
+                    };
             }
         }));
     }
@@ -127,84 +150,64 @@ where
     async fn resend_volatile_publishes(
         sender: &mut C::Sender,
         state: &SharedState,
-    ) -> Result<(), Error>
+        limit: usize,
+    ) -> Result<usize, Error>
     where
         C::Sender: Publish,
     {
         let mut buf = Vec::new();
 
-        loop {
-            let count = state
-                .volatile_store
-                .get_unsent(&mut buf, DEFAULT_CHANNEL_SIZE)
-                .await;
+        let count = state.volatile_store.get_unsent(&mut buf, limit).await;
 
-            trace!("loaded {count} volatile publishes");
+        trace!("loaded {count} volatile publishes");
 
-            for (id, value) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
-                state.volatile_store.mark_sent(&id, true).await;
+        for (id, value) in buf.drain(..) {
+            // mark as sent before so that no resend is tryed while in flight
+            state.volatile_store.mark_sent(&id, true).await;
 
-                match value {
-                    ItemValue::Individual(individual) => {
-                        sender
-                            .send_individual_stored(RetentionId::Volatile(id), individual)
-                            .await?;
-                    }
-                    ItemValue::Object(object) => {
-                        sender
-                            .send_object_stored(RetentionId::Volatile(id), object)
-                            .await?;
-                    }
+            let id = RetentionId::Volatile(id);
+
+            match value {
+                ItemValue::Individual(individual) => {
+                    sender.send_individual_stored(id, individual).await?
                 }
-            }
-
-            if count == 0 || count < DEFAULT_CHANNEL_SIZE {
-                trace!("all volatile publishes sent");
-
-                break;
-            }
+                ItemValue::Object(object) => sender.send_object_stored(id, object).await?,
+            };
         }
 
-        Ok(())
+        Ok(count)
     }
 
     async fn resend_stored_publishes(
         store: &mut StoreWrapper<C::Store>,
         sender: &mut C::Sender,
-    ) -> Result<(), Error>
+        limit: usize,
+    ) -> Result<usize, Error>
     where
         C::Sender: Publish,
     {
         let Some(retention) = store.get_retention() else {
-            return Ok(());
+            return Ok(0);
         };
 
         let mut buf = Vec::new();
 
         debug!("start sending store publishes");
-        loop {
-            let count = retention
-                .unsent_publishes(DEFAULT_CHANNEL_SIZE, &mut buf)
-                .await?;
 
-            trace!("loaded {count} stored publishes");
+        let count = retention.unsent_publishes(limit, &mut buf).await?;
 
-            for (id, info) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
-                retention.update_sent_flag(&id, true).await?;
+        trace!("loaded {count} stored publishes");
 
-                sender.resend_stored(RetentionId::Stored(id), info).await?;
-            }
+        for (id, info) in buf.drain(..) {
+            // mark as sent before so that no resend is tryed while in flight
+            retention.update_sent_flag(&id, true).await?;
 
-            if count == 0 || count < DEFAULT_CHANNEL_SIZE {
-                trace!("all stored publishes sent");
+            let id = RetentionId::Stored(id);
 
-                break;
-            }
+            sender.resend_stored(id, info).await?;
         }
 
-        Ok(())
+        Ok(count)
     }
 
     async fn reconnect(&mut self) -> Result<(), Error>
