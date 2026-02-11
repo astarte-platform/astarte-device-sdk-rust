@@ -197,9 +197,10 @@ mod tests {
     #[tokio::test]
     async fn send_datastream_individual_connected_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
-        let mut client =
-            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);
+        let store = SqliteStore::options()
+            .with_writable_dir(tmp.path())
+            .await
+            .unwrap();
 
         let path = "/endpoint2";
         let value = true;
@@ -216,6 +217,8 @@ mod tests {
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
+        let mut client =
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);
         let mut seq = Sequence::new();
 
         client
@@ -358,7 +361,11 @@ mod tests {
     #[tokio::test]
     async fn send_datastream_individual_offline_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+
+        let store = SqliteStore::options()
+            .with_writable_dir(tmp.path())
+            .await
+            .unwrap();
         let mut client =
             mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Disconnected, store);
 
@@ -419,7 +426,10 @@ mod tests {
     #[tokio::test]
     async fn send_datastream_individual_closed_stored_sqlite() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(tmp.path())
+            .await
+            .unwrap();
         let mut client =
             mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Closed, store);
 

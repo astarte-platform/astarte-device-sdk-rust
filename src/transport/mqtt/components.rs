@@ -46,10 +46,7 @@ where
     S: Display,
 {
     /// Create a topic to subscribe on an interface
-    pub(crate) fn make_interface_wildcard<T>(&self, interface_name: T) -> String
-    where
-        T: Display,
-    {
+    pub(crate) fn make_interface_wildcard(&self, interface_name: &str) -> String {
         format!("{self}/{interface_name}/#")
     }
 }

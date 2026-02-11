@@ -50,7 +50,6 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteData")]
     AstarteData(#[from] TypeError),
     /// Expected object, individual data deserialized
-    // FIXME: remove in future release
     #[error("expected object, individual data deserialized instead")]
     Object,
     /// Couldn't parse a mapping

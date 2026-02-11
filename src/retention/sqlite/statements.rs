@@ -457,7 +457,10 @@ pub(crate) mod tests {
     async fn should_store_and_check_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -480,7 +483,10 @@ pub(crate) mod tests {
     async fn should_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -525,7 +531,10 @@ pub(crate) mod tests {
     async fn expiry_too_big() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mut mapping = RetentionMapping {
             interface: "com.Foo".into(),
@@ -557,7 +566,10 @@ pub(crate) mod tests {
     async fn should_store_and_check_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -597,7 +609,10 @@ pub(crate) mod tests {
     async fn should_store_and_replace_mapping() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -671,7 +686,10 @@ pub(crate) mod tests {
     async fn should_update_sent_flag() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -720,7 +738,10 @@ pub(crate) mod tests {
     async fn should_remove_sent_packet() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -760,7 +781,10 @@ pub(crate) mod tests {
     async fn should_delete_interface() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -812,7 +836,10 @@ pub(crate) mod tests {
     async fn should_get_all_packets() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -897,7 +924,10 @@ pub(crate) mod tests {
     async fn should_store_and_delete_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -939,7 +969,10 @@ pub(crate) mod tests {
     async fn should_resend_all_without_expired() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -1025,7 +1058,10 @@ pub(crate) mod tests {
     async fn should_get_unsent_publishes() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -1118,7 +1154,10 @@ pub(crate) mod tests {
     async fn should_get_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mapping1 = RetentionMapping {
             interface: "com.Foo".into(),
@@ -1162,7 +1201,10 @@ pub(crate) mod tests {
     async fn should_count_stored() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let id1 = Context::new().next();
         store
@@ -1183,7 +1225,10 @@ pub(crate) mod tests {
     async fn should_remove_oldest() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         // insert 3 elements and check removal properly works
         let ctx = Context::new();
@@ -1249,7 +1294,10 @@ pub(crate) mod tests {
     async fn should_delete_expired_and_do_nothing_on_delete() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";

@@ -138,15 +138,16 @@ we can spawn a tokio task (the equivalent of an OS thread but managed by the Tok
 connection messages. Ideally, two separate tasks should be used for both polling and transmission.
 
 ```no_run
-use astarte_device_sdk::{
-    builder::DeviceBuilder, prelude::*, store::SqliteStore, DeviceClient,
-    transport::mqtt::{Mqtt, MqttConfig}, DeviceConnection,
-};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::SqliteStore;
+use astarte_device_sdk::transport::mqtt::{Mqtt, MqttArgs, MqttConfig, Credential};
+use astarte_device_sdk::{DeviceClient, DeviceConnection};
 use color_eyre::eyre;
 use serde::Deserialize;
+use tokio::task::JoinSet;
 use tracing::{info, error};
 use tracing_subscriber;
-use tokio::task::JoinSet;
 
 /// structure used to deserialize the content of the config.json file containing the
 /// astarte device connection information
@@ -164,17 +165,17 @@ async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>, DeviceConnecti
     let file = tokio::fs::read_to_string("config.json").await?;
     let cfg: Config = serde_json::from_str(&file)?;
 
-    let mut mqtt_config = MqttConfig::with_credential_secret(
-        &cfg.realm,
-        &cfg.device_id,
-        &cfg.credentials_secret,
-        &cfg.pairing_url,
-    );
-    mqtt_config.ignore_ssl_errors();
+    let args = MqttArgs {
+      realm: "realm_id".to_string(),
+      device_id: "device_id".to_string(),
+      credential: Credential::secret("credential_secret"),
+      pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL"),
+    };
+    let mut mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
 
     // connect to a db in the current working directory
     // if it doesn't exist, the method will create it
-    let store = SqliteStore::connect_db("./store.db").await?;
+    let store = SqliteStore::options().with_db_file("./store.db").await?;
 
     let (client, connection) = DeviceBuilder::new()
         .store(store)

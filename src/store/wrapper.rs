@@ -169,7 +169,10 @@ mod tests {
     async fn test_sqlite_wrapped() {
         let dir = tempfile::tempdir().unwrap();
 
-        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db = SqliteStore::options()
+            .with_writable_dir(dir.as_ref())
+            .await
+            .unwrap();
 
         test_property_store(db).await;
     }

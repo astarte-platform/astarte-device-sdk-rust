@@ -1,6 +1,3 @@
-use std::path::PathBuf;
-
-use clap::Parser;
 /*
  * This file is part of Astarte.
  *
@@ -20,19 +17,26 @@ use clap::Parser;
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+
+use std::path::PathBuf;
+
+use astarte_device_sdk::transport::mqtt::registration::{RegisterDevice, register_device};
+use clap::Parser;
+use rustls_platform_verifier::BuilderVerifierExt;
 use serde::{Deserialize, Serialize};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Config {
     realm: String,
     device_id: String,
     pairing_token: String,
-    pairing_url: String,
+    pairing_url: Url,
 }
 
-#[derive(clap::Parser, Debug)]
+#[derive(Debug, clap::Parser)]
 struct Args {
     /// Path to the config file for the example
     #[arg(short, long)]
@@ -43,6 +47,7 @@ struct Args {
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     init_tracing()?;
+
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
@@ -61,13 +66,18 @@ async fn main() -> eyre::Result<()> {
 
     info!(%cfg.device_id, "attempting to register the device");
 
-    let credentials_secret = astarte_device_sdk::transport::mqtt::registration::register_device(
-        &cfg.pairing_token,
-        &cfg.pairing_url,
-        &cfg.realm,
-        &cfg.device_id,
-    )
-    .await?;
+    let tls = rustls::ClientConfig::builder()
+        .with_platform_verifier()?
+        .with_no_client_auth();
+
+    let args = RegisterDevice {
+        tls,
+        pairing_url: &cfg.pairing_url,
+        token: &cfg.pairing_token,
+        realm: &cfg.realm,
+        device_id: &cfg.device_id,
+    };
+    let credentials_secret = register_device(args).await?;
 
     info!(
         credentials_secret,

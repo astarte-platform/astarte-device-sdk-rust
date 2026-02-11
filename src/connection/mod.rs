@@ -20,7 +20,6 @@
 
 use std::future::Future;
 use std::pin::pin;
-use std::time::Duration;
 
 use async_channel::SendError;
 use chrono::Utc;
@@ -52,14 +51,21 @@ pub trait EventLoop {
     /// thread.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, Credential, MqttArgs};
+    /// use astarte_device_sdk::types::AstarteData;
+    /// use astarte_device_sdk::prelude::*;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs {
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (client, mut connection) = DeviceBuilder::new()
     ///         .store(MemoryStore::new())
@@ -195,12 +201,15 @@ where
         event: Result<DeviceEvent, RecvError>,
     ) -> Result<(), SendError<Result<DeviceEvent, RecvError>>> {
         let send = pin!(self.events.send(event));
-        let timeout = pin!(tokio::time::sleep(Duration::from_secs(10)));
+        let timeout = pin!(tokio::time::sleep(self.state.config().slow_receive));
 
         match futures::future::select(send, timeout).await {
             Either::Left((send_res, _)) => send_res.inspect(|()| trace!("event sent to device")),
             Either::Right(((), send)) => {
-                warn!("slow to send Astarte events to client, maybe no one is consuming them");
+                warn!(
+                    duration = ?self.state.config().slow_receive,
+                    "slow to send Astarte events to client, maybe no one is consuming them"
+                );
 
                 send.await
             }
@@ -296,6 +305,7 @@ mod tests {
     use std::ops::{ControlFlow, Deref, DerefMut};
     use std::str::FromStr;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use astarte_interfaces::{Interface, Schema};
     use futures::FutureExt;
@@ -303,7 +313,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::AstarteData;
-    use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
+    use crate::builder::{Config, DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
     use crate::state::SharedState;
@@ -364,11 +374,12 @@ mod tests {
 
         let connection = MockCon::new();
         let sender = MockSender::new();
-        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE);
+        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
         let mut state = SharedState::new(
+            Config::default(),
             interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
         );
 
         *state.status.get_mut() = initial_status;

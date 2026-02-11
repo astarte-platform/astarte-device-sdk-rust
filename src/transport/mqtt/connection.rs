@@ -47,23 +47,21 @@ use std::{
     collections::VecDeque,
     fmt::Display,
     sync::{Arc, OnceLock},
-    time::{Duration, SystemTime},
 };
 
 use rumqttc::{
-    ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, TokenError, Transport,
-    mqttbytes,
+    ClientError, ConnectionError, Event, Packet, Publish, QoS, StateError, Transport, mqttbytes,
 };
 use sync_wrapper::SyncWrapper;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
+    builder::Config,
     error::Report,
     interfaces::Interfaces,
     logging::security::{SecurityEvent, notify_security_event, notify_tls_error},
     properties::{PropertiesError, encode_set_properties},
-    retry::RandomExponentialIter,
     session::StoredSession,
     state::SharedState,
     store::{OptStoredProp, PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
@@ -75,7 +73,7 @@ use crate::{
 use super::{
     ClientId, MqttConfig, PairingError, PayloadError, SessionData,
     client::{AsyncClient, EventLoop},
-    config::{PartialConfig, transport::TransportProvider},
+    config::transport::TransportProvider,
     error::MqttError,
 };
 
@@ -88,13 +86,6 @@ enum InitError {
     Client {
         #[source]
         backtrace: ClientError,
-        ctx: &'static str,
-    },
-    /// Couldn't wait for the message acknowledgment.
-    #[error("couldn't wait the message acknowledgment for {ctx}")]
-    Ack {
-        #[source]
-        backtrace: TokenError,
         ctx: &'static str,
     },
     /// Couldn't serialize the device property payload.
@@ -118,10 +109,6 @@ impl InitError {
     const fn client(ctx: &'static str) -> impl Fn(ClientError) -> InitError {
         move |backtrace: ClientError| InitError::Client { backtrace, ctx }
     }
-
-    const fn ack(ctx: &'static str) -> impl Fn(TokenError) -> InitError {
-        move |backtrace: TokenError| InitError::Ack { backtrace, ctx }
-    }
 }
 
 #[derive(Debug)]
@@ -130,62 +117,114 @@ pub(crate) struct MqttConnectionEstablished {
     state: State,
 }
 
+impl MqttConnectionEstablished {
+    async fn reconnect<S>(
+        &mut self,
+        client_id: ClientId<&str>,
+        interfaces: &Interfaces,
+        store: &StoreWrapper<S>,
+        shared_state: &SharedState,
+        buff: &mut VecDeque<Publish>,
+    ) -> Result<bool, MqttError>
+    where
+        S: StoreCapabilities,
+    {
+        if self.state.is_connected() {
+            debug!("already connected");
+
+            return Ok(true);
+        }
+
+        loop {
+            let opt_publish = self
+                .state
+                .poll(
+                    &mut self.connection,
+                    client_id,
+                    interfaces,
+                    store,
+                    shared_state,
+                )
+                .await?;
+
+            if let Some(publish) = opt_publish {
+                debug!("publish received");
+
+                buff.push_back(publish);
+            }
+
+            match &self.state {
+                State::Connected(_) => {
+                    debug!("reconnected");
+
+                    break Ok(true);
+                }
+                State::Disconnected(_) | State::Connecting(_) => {
+                    debug!("error occurred");
+
+                    break Ok(false);
+                }
+                state => {
+                    trace!(?state, "polling next event");
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct NeedsTransport {
     mqtt_config: MqttConfig,
-    config: PartialConfig,
     client_sender: Arc<OnceLock<AsyncClient>>,
 }
 
 impl NeedsTransport {
-    async fn create_transport(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<Option<Connection>, MqttError> {
-        match self
-            .mqtt_config
-            .try_create_transport(&self.config, timeout)
-            .await
-        {
-            Ok(MqttTransportOptions {
-                mqtt_opts,
-                net_opts: _net_opts,
-                provider,
-            }) => {
-                let (client, mut eventloop) = AsyncClient::new(mqtt_opts, self.config.channel_size);
-
-                // NOTE we were never connected so we need to set the clean session to ensure no acks stored by the server will be returned
-                Connection::set_clean_session(&mut eventloop, true);
-
-                let connection = Connection {
-                    client: client.clone(),
-                    eventloop: SyncWrapper::new(eventloop),
-                    provider,
-                    session_synced: false,
-                };
-
-                let _ = self.client_sender.set(client);
-
-                Ok(Some(connection))
-            }
+    async fn create_transport(&mut self, config: &Config) -> Result<Option<Connection>, MqttError> {
+        let opt = match self.mqtt_config.try_create_transport(config).await {
+            Ok(opt) => opt,
             Err(MqttError::Pairing(PairingError::RequestNoNetwork(e))) => {
                 info!(error=%Report::new(e), "can't create the transport as network is still unreachable");
 
-                Ok(None)
+                return Ok(None);
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                return Err(e);
+            }
+        };
+
+        let MqttTransportOptions {
+            mqtt_opts,
+            net_opts: _net_opts,
+            provider,
+        } = opt;
+
+        let (client, mut eventloop) = AsyncClient::new(mqtt_opts, config.channel_size.get());
+
+        // NOTE we were never connected so we need to set the clean session to ensure no acks stored by the server will be returned
+        Connection::set_clean_session(&mut eventloop, true);
+
+        let connection = Connection {
+            client: client.clone(),
+            eventloop: SyncWrapper::new(eventloop),
+            provider,
+            session_synced: false,
+        };
+
+        if self.client_sender.set(client).is_err() {
+            error!("coudln't set the client sender, already set");
         }
+
+        Ok(Some(connection))
     }
 }
 
 /// State of the MQTT link, it will be changed one time only when it goes from
 /// being Absent to Established, this is why we allow large_enum_variant
 /// It should be Established for most of the application's lifetime.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub(crate) enum MqttLinkState {
     Absent(NeedsTransport),
-    Established(MqttConnectionEstablished),
+    Established(Box<MqttConnectionEstablished>),
 }
 
 impl MqttLinkState {
@@ -198,29 +237,19 @@ impl MqttLinkState {
         }
     }
 
-    fn is_link_connected(&self) -> bool {
-        matches!(
-            self,
-            MqttLinkState::Established(MqttConnectionEstablished {
-                state: State::Connected(..),
-                ..
-            })
-        )
-    }
-
     async fn ensure_established(
         &mut self,
-        timeout: Duration,
+        config: &Config,
     ) -> Result<Option<&mut MqttConnectionEstablished>, MqttError> {
         if let MqttLinkState::Absent(needs_transport) = self {
-            let Some(connection) = needs_transport.create_transport(timeout).await? else {
+            let Some(connection) = needs_transport.create_transport(config).await? else {
                 return Ok(None);
             };
 
-            *self = MqttLinkState::Established(MqttConnectionEstablished {
+            *self = MqttLinkState::Established(Box::new(MqttConnectionEstablished {
                 connection,
                 state: Connecting.into(),
-            });
+            }));
         }
 
         Ok(self.get_mut())
@@ -233,48 +262,19 @@ pub(crate) struct MqttConnection {
     link: MqttLinkState,
     /// Queue for the packet published while re/connecting.
     buff: VecDeque<Publish>,
-    timeout: Duration,
 }
 
 impl MqttConnection {
     pub(crate) fn without_transport(
         mqtt_config: MqttConfig,
-        config: PartialConfig,
         client_sender: Arc<OnceLock<AsyncClient>>,
-        timeout: Duration,
     ) -> Self {
         Self {
             link: MqttLinkState::Absent(NeedsTransport {
                 mqtt_config,
-                config,
                 client_sender,
             }),
             buff: VecDeque::new(),
-            timeout,
-        }
-    }
-
-    pub(crate) fn new(
-        client: AsyncClient,
-        eventloop: EventLoop,
-        provider: TransportProvider,
-        state: impl Into<State>,
-        timeout: Duration,
-    ) -> Self {
-        let connection = Connection {
-            client,
-            eventloop: SyncWrapper::new(eventloop),
-            provider,
-            session_synced: false,
-        };
-
-        Self {
-            link: MqttLinkState::Established(MqttConnectionEstablished {
-                connection,
-                state: state.into(),
-            }),
-            buff: VecDeque::new(),
-            timeout,
         }
     }
 
@@ -309,89 +309,6 @@ impl MqttConnection {
         }
     }
 
-    /// Wait for the connection to be established to the Astarte.
-    ///
-    /// This function assumes that the connection is valid, but will handle disconnection and
-    /// reconnection automatically.
-    pub(crate) async fn wait_connack<S>(
-        client: AsyncClient,
-        mut eventloop: EventLoop,
-        provider: TransportProvider,
-        client_id: ClientId<&str>,
-        store: &StoreWrapper<S>,
-        shared_state: &SharedState,
-        timeout: Duration,
-    ) -> Result<Self, MqttError>
-    where
-        S: PropertyStore + StoreCapabilities,
-    {
-        let interfaces = shared_state.interfaces.read().await;
-
-        let session_sync = Self::is_introspection_stored(&interfaces, store).await;
-        debug!(session_sync = session_sync, "Creating new mqtt connection");
-
-        // NOTE during the first connection we will always clean the session since the mqtt library can't
-        // persistently store inflight message
-        Connection::set_clean_session(&mut eventloop, true);
-
-        let mut mqtt_connection = Self::new(client, eventloop, provider, Connecting, timeout);
-        if let Some(link) = mqtt_connection.link.get_mut() {
-            link.connection.set_session_synced(session_sync);
-        }
-
-        let mut exp_back = RandomExponentialIter::default();
-
-        let start = SystemTime::now();
-
-        while !mqtt_connection
-            .reconnect(client_id, &interfaces, store, shared_state)
-            .await?
-        {
-            if SystemTime::now()
-                .duration_since(start)
-                .is_ok_and(|d| d > timeout)
-            {
-                // if the timeout is hit we will have a created transport but a connection status
-                info!("Timeout reached exiting connection loop without connection established");
-                break;
-            }
-
-            let backoff = exp_back.next();
-
-            debug!("waiting {} seconds before retrying", backoff.as_secs());
-
-            tokio::time::sleep(backoff).await;
-        }
-
-        Ok(mqtt_connection)
-    }
-
-    #[must_use]
-    pub(crate) async fn is_introspection_stored<S>(
-        interfaces: &Interfaces,
-        store: &StoreWrapper<S>,
-    ) -> bool
-    where
-        S: StoreCapabilities,
-    {
-        let Some(introspection) = store.get_session() else {
-            return false;
-        };
-
-        let stored = match introspection.load_introspection().await {
-            Ok(s) => s,
-            Err(err) => {
-                error!(
-                    error = %Report::new(err),
-                    "couldn't retrieve the introspection from the store",
-                );
-                return false;
-            }
-        };
-
-        !interfaces.is_empty() && interfaces.matches(&stored)
-    }
-
     /// Reconnect to astarte, wait till the state is [`Connected`].
     pub(crate) async fn reconnect<S>(
         &mut self,
@@ -403,74 +320,22 @@ impl MqttConnection {
     where
         S: PropertyStore + StoreCapabilities,
     {
-        if self.link.is_link_connected() {
-            debug!("already connected");
-
-            return Ok(true);
-        }
-
-        let Some(MqttConnectionEstablished { connection, state }) =
-            self.link.ensure_established(self.timeout).await?
-        else {
+        let Some(connection) = self.link.ensure_established(&shared_state.config).await? else {
             return Ok(false);
         };
 
-        loop {
-            let opt_publish = state
-                .poll(
-                    connection,
-                    client_id,
-                    interfaces,
-                    store,
-                    shared_state,
-                    self.timeout,
-                )
-                .await?;
-
-            if let Some(publish) = opt_publish {
-                debug!("publish received");
-
-                self.buff.push_back(publish);
-            }
-
-            match &state {
-                State::Connected(_) => {
-                    debug!("reconnected");
-
-                    break Ok(true);
-                }
-                State::Disconnected(_) | State::Connecting(_) => {
-                    debug!("error occurred");
-
-                    break Ok(false);
-                }
-                state => {
-                    trace!(?state, "polling next event");
-                }
-            }
-        }
+        connection
+            .reconnect(client_id, interfaces, store, shared_state, &mut self.buff)
+            .await
     }
 
     /// Returns true only if the state is connected and the session present is true
     pub(crate) fn is_session_present(&self) -> bool {
-        matches!(
-            &self.link,
-            MqttLinkState::Established(MqttConnectionEstablished {
-                state,
-                ..
-            }) if state.is_session_present()
-        )
-    }
+        let MqttLinkState::Established(established) = &self.link else {
+            return false;
+        };
 
-    /// Returns true only if the state is connected
-    pub(crate) fn is_connected(&self) -> bool {
-        matches!(
-            &self.link,
-            MqttLinkState::Established(MqttConnectionEstablished {
-                state,
-                ..
-            }) if state.is_connected()
-        )
+        established.state.is_session_present()
     }
 }
 
@@ -537,7 +402,6 @@ impl State {
         interfaces: &Interfaces,
         store: &StoreWrapper<S>,
         shared_state: &SharedState,
-        timeout: Duration,
     ) -> Result<Option<Publish>, PollError>
     where
         S: PropertyStore + StoreCapabilities,
@@ -547,7 +411,7 @@ impl State {
         let next = match self {
             State::Disconnected(disconnected) => {
                 disconnected
-                    .reconnect(conn, client_id, shared_state, timeout)
+                    .reconnect(conn, client_id, shared_state)
                     .await?
             }
             State::Connecting(connecting) => connecting.wait_connack(conn).await,
@@ -620,13 +484,12 @@ impl Disconnected {
         conn: &mut Connection,
         client_id: ClientId<&str>,
         shared_state: &SharedState,
-        timeout: Duration,
     ) -> Result<Next, PairingError> {
         let api = ApiClient::from_transport(
+            &shared_state.config,
             &conn.provider,
             client_id.realm,
             client_id.device_id,
-            timeout,
         )?;
 
         let transport = match conn.provider.validate_transport(&api).await {
@@ -669,7 +532,11 @@ pub(crate) struct Connecting;
 impl Connecting {
     async fn wait_connack(&mut self, conn: &mut Connection) -> Next {
         let event = match conn.eventloop_mut().poll().await {
-            Ok(event) => event,
+            Ok(event) => {
+                trace!("event received");
+
+                event
+            }
             Err(err) => return Next::handle_error(err),
         };
 
@@ -784,9 +651,7 @@ impl Handshake {
             client
                 .send_introspection(client_id, session_data.interfaces)
                 .await
-                .map_err(InitError::client("send introspection"))?
-                .await
-                .map_err(InitError::ack("introspection ack error"))?;
+                .map_err(InitError::client("send introspection"))?;
 
             if let Some(session) = store.get_session() {
                 trace!("Introspection sent successfully, storing");
@@ -853,25 +718,17 @@ impl Handshake {
                 QoS::ExactlyOnce,
             )
             .await
-            .map_err(InitError::client("subscribe consumer properties"))?
-            .await
-            .map_err(InitError::ack("subscribe consumer properties"))?;
+            .map_err(InitError::client("subscribe consumer properties"))?;
 
         debug!(
             "subscribing on {} server interfaces",
             server_interfaces.len()
         );
 
-        let notice = client
+        client
             .subscribe_interfaces(client_id, server_interfaces)
             .await
             .map_err(InitError::client("subscribe server interface"))?;
-
-        if let Some(notice) = notice {
-            notice
-                .await
-                .map_err(InitError::ack("subscribe server interface"))?;
-        }
 
         Ok(())
     }
@@ -891,9 +748,7 @@ impl Handshake {
                 "1",
             )
             .await
-            .map_err(InitError::client("empty cache"))?
-            .await
-            .map_err(InitError::ack("empty cache"))?;
+            .map_err(InitError::client("empty cache"))?;
 
         Ok(())
     }
@@ -919,9 +774,7 @@ impl Handshake {
                 payload,
             )
             .await
-            .map_err(InitError::client("purge device properties"))?
-            .await
-            .map_err(InitError::ack("purge device properties"))?;
+            .map_err(InitError::client("purge device properties"))?;
 
         Ok(())
     }
@@ -954,17 +807,14 @@ impl Handshake {
             client
                 .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
                 .await
-                .map_err(InitError::client("device property"))?
-                .await
-                .map_err(InitError::ack("device properties"))?;
+                .map_err(InitError::client("device property"))?;
 
             if prop.value.is_none() {
                 trace!("clearing unset property {}/{}", prop.interface, prop.path);
 
-                let _logged_error = store.delete_prop(&prop.into()).await.inspect_err(|e| {
-                    error!(error = %Report::new(e),
-                        "couldn't delete unset property, proceeding anyways to ensure connection")
-                });
+                if let Err(error) = store.delete_prop(&prop.into()).await {
+                    error!(error = %Report::new(error), "couldn't delete unset property, proceeding anyways to ensure connection")
+                }
             }
         }
 
@@ -1206,414 +1056,385 @@ mod tests {
     use std::{str::FromStr, time::Duration};
 
     use astarte_interfaces::Interface;
+    use futures::FutureExt;
     use mockall::{Sequence, predicate};
     use rumqttc::{AckOfPub, SubAck};
 
     use crate::{
         AstarteData,
+        builder::Config,
         retention::memory::VolatileStore,
-        session::{IntrospectionInterface, SessionError},
-        store::{StoredProp, memory::MemoryStore, mock::MockStore},
+        store::mock::MockStore,
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
     };
 
     use super::*;
 
-    trait ConnectionBehavior: Clone + Send + Sync {
-        fn subscribe_interfaces(&self, seq: &mut Sequence, client: &mut AsyncClient);
+    impl MqttConnection {
+        pub(crate) fn new(
+            client: AsyncClient,
+            eventloop: EventLoop,
+            provider: TransportProvider,
+            state: impl Into<State>,
+        ) -> Self {
+            let connection = Connection {
+                client,
+                eventloop: SyncWrapper::new(eventloop),
+                provider,
+                session_synced: false,
+            };
 
-        fn send_introspection(&self, seq: &mut Sequence, client: &mut AsyncClient);
-
-        fn send_empty_cache(&self, seq: &mut Sequence, client: &mut AsyncClient);
-
-        fn send_purge_properties(&self, seq: &mut Sequence, client: &mut AsyncClient);
-
-        fn send_properties(&self, seq: &mut Sequence, client: &mut AsyncClient);
-    }
-
-    #[derive(Clone)]
-    struct ConnectSuccess {
-        full_handshake: bool,
-        client_id: ClientId,
-        server_interfaces: Vec<String>,
-        device_properties: Vec<StoredProp>,
-    }
-
-    impl ConnectionBehavior for ConnectSuccess {
-        fn subscribe_interfaces(&self, seq: &mut Sequence, client: &mut AsyncClient) {
-            if !self.full_handshake {
-                return;
+            Self {
+                link: MqttLinkState::Established(Box::new(MqttConnectionEstablished {
+                    connection,
+                    state: state.into(),
+                })),
+                buff: VecDeque::new(),
             }
+        }
+    }
 
-            client
-                .expect_subscribe::<String>()
-                .once()
-                .in_sequence(seq)
-                .with(
-                    predicate::eq(format!("{}/control/consumer/properties", self.client_id)),
-                    predicate::always(),
-                )
-                .returning(|_topic, _qos| notify_success(SubAck::new(0, Vec::new())));
+    fn mock_receive_connack(
+        seq: &mut Sequence,
+        eventl: &mut EventLoop,
+        session_present: bool,
+        code: rumqttc::ConnectReturnCode,
+    ) {
+        eventl
+            .expect_poll()
+            .once()
+            .in_sequence(seq)
+            .returning(move || {
+                futures::future::ok(Event::Incoming(rumqttc::Packet::ConnAck(
+                    rumqttc::ConnAck {
+                        // NOTE the session present flag is true and the introspection matches
+                        session_present,
+                        code,
+                    },
+                )))
+                .boxed()
+            });
+    }
 
-            for interf in &self.server_interfaces {
+    fn mock_hanshacke_with_session(
+        seq: &mut Sequence,
+        store: &mut MockStore,
+        client: &mut AsyncClient,
+        props: Vec<OptStoredProp>,
+    ) {
+        store
+            .expect_device_props_with_unset()
+            .once()
+            .in_sequence(seq)
+            .returning({
+                let props = props.clone();
+
+                move |_, _| Ok(props.clone())
+            });
+
+        client.expect_clone().once().in_sequence(seq).returning({
+            let props = props.clone();
+
+            move || {
+                let mut client = AsyncClient::default();
+                let mut seq = Sequence::new();
+
+                for p in props.clone() {
+                    client
+                        .expect_publish::<String, Vec<u8>>()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .with(
+                            predicate::function(move |f: &String| {
+                                f.ends_with(p.interface.as_str())
+                            }),
+                            predicate::eq(QoS::ExactlyOnce),
+                            predicate::eq(false),
+                            predicate::always(),
+                        )
+                        .returning(|_, _, _, _| notify_success(AckOfPub::None));
+                }
+
                 client
-                    .expect_subscribe()
-                    .once()
-                    .in_sequence(seq)
-                    .with(
-                        predicate::eq(format!("{}/{}/#", self.client_id, interf)),
-                        predicate::always(),
-                    )
-                    .returning(|_: String, _| notify_success(SubAck::new(0, Vec::new())));
             }
-        }
+        });
 
-        fn send_introspection(&self, seq: &mut Sequence, client: &mut AsyncClient) {
-            if !self.full_handshake {
-                return;
-            }
-
-            client
-                .expect_publish::<String, String>()
-                .once()
-                .in_sequence(seq)
-                .with(
-                    predicate::eq(self.client_id.to_string()),
-                    predicate::always(),
-                    predicate::always(),
-                    predicate::always(),
-                )
-                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-        }
-
-        fn send_empty_cache(&self, seq: &mut Sequence, client: &mut AsyncClient) {
-            if !self.full_handshake {
-                return;
-            }
-
-            client
-                .expect_publish::<String, &str>()
-                .once()
-                .in_sequence(seq)
-                .with(
-                    predicate::eq(format!("{}/control/emptyCache", self.client_id)),
-                    predicate::always(),
-                    predicate::always(),
-                    predicate::eq("1"),
-                )
-                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-        }
-
-        fn send_purge_properties(&self, seq: &mut Sequence, client: &mut AsyncClient) {
-            if !self.full_handshake {
-                return;
-            }
-
-            client
-                .expect_publish::<String, Vec<u8>>()
-                .once()
-                .in_sequence(seq)
-                .with(
-                    predicate::eq(format!("{}/control/producer/properties", self.client_id)),
-                    predicate::eq(QoS::ExactlyOnce),
-                    predicate::always(),
-                    predicate::always(),
-                )
-                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-        }
-
-        fn send_properties(&self, _seq: &mut Sequence, client: &mut AsyncClient) {
-            for prop in &self.device_properties {
-                client
-                    .expect_publish::<String, Vec<u8>>()
-                    .once()
-                    .with(
-                        predicate::eq(format!(
-                            "{}/{}{}",
-                            self.client_id, prop.interface, prop.path
-                        )),
-                        predicate::always(),
-                        predicate::always(),
-                        predicate::always(),
-                    )
-                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
-            }
-        }
-    }
-
-    fn mock_client<CB>(seq: &mut Sequence, behavior: CB) -> AsyncClient
-    where
-        CB: ConnectionBehavior + 'static,
-    {
-        let mut client = AsyncClient::default();
-
-        client
+        store
             .expect_clone()
             .once()
             .in_sequence(seq)
             .returning(move || {
-                let mut client = AsyncClient::default();
+                let mut store = MockStore::new();
+                let mut seq = Sequence::new();
 
-                let mut seq = mockall::Sequence::new();
+                for p in props.iter().filter(|p| p.value.is_none()).cloned() {
+                    store
+                        .expect_unset_prop()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .withf(move |m| m.interface_name() == p.interface)
+                        .returning(|_| Ok(()));
+                }
 
-                behavior.subscribe_interfaces(&mut seq, &mut client);
+                store
+            });
+    }
 
-                behavior.send_introspection(&mut seq, &mut client);
+    fn mock_full_handshake(
+        seq: &mut Sequence,
+        store: &mut MockStore,
+        client: &mut AsyncClient,
+        client_id: ClientId,
+        server_interfaces: &[Interface],
+        props: Vec<OptStoredProp>,
+    ) {
+        store
+            .expect_device_props_with_unset()
+            .once()
+            .in_sequence(seq)
+            .returning({
+                let props = props.clone();
 
-                behavior.send_empty_cache(&mut seq, &mut client);
-
-                behavior.send_purge_properties(&mut seq, &mut client);
-
-                behavior.send_properties(&mut seq, &mut client);
-
-                client
+                move |_, _| Ok(props.clone())
             });
 
-        client
+        client.expect_clone().once().in_sequence(seq).returning({
+            let props = props.clone();
+            let server_interfaces = server_interfaces.to_vec();
+
+            move || {
+                let mut client = AsyncClient::default();
+                let mut seq = Sequence::new();
+
+                client
+                    .expect_subscribe::<String>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq(format!("{client_id}/control/consumer/properties")),
+                        predicate::eq(QoS::ExactlyOnce),
+                    )
+                    .returning(|_, _| notify_success(SubAck::new(0, vec![])));
+
+                for i in server_interfaces.clone() {
+                    client
+                        .expect_subscribe::<String>()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .with(
+                            predicate::eq(format!("{client_id}/{}/#", i.interface_name())),
+                            predicate::eq(QoS::ExactlyOnce),
+                        )
+                        .returning(|_, _| notify_success(SubAck::new(0, vec![])));
+                }
+
+                // Introspection
+                client
+                    .expect_publish::<String, String>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq(client_id.to_string()),
+                        predicate::eq(QoS::ExactlyOnce),
+                        predicate::eq(false),
+                        predicate::always(),
+                    )
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+                // Introspection
+                client
+                    .expect_publish::<String, &str>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq(format!("{client_id}/control/emptyCache")),
+                        predicate::eq(QoS::ExactlyOnce),
+                        predicate::eq(false),
+                        predicate::eq("1"),
+                    )
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+                client
+                    .expect_publish::<String, Vec<u8>>()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(
+                        predicate::eq(format!("{client_id}/control/producer/properties")),
+                        predicate::eq(QoS::ExactlyOnce),
+                        predicate::eq(false),
+                        predicate::always(),
+                    )
+                    .returning(|_, _, _, _| notify_success(AckOfPub::None));
+
+                for p in props.clone() {
+                    client
+                        .expect_publish::<String, Vec<u8>>()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .with(
+                            predicate::eq(format!(
+                                "{client_id}/{}{}",
+                                p.interface.as_str(),
+                                p.path
+                            )),
+                            predicate::eq(QoS::ExactlyOnce),
+                            predicate::eq(false),
+                            predicate::always(),
+                        )
+                        .returning(|_, _, _, _| notify_success(AckOfPub::None));
+                }
+
+                client
+            }
+        });
+
+        store
+            .expect_clone()
+            .once()
+            .in_sequence(seq)
+            .returning(move || {
+                let mut store = MockStore::new();
+                let mut seq = Sequence::new();
+
+                store
+                    .expect_return_session()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with()
+                    .returning(|| true);
+
+                store
+                    .expect_clear_introspection()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with()
+                    .return_const(());
+
+                store
+                    .expect_return_session()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with()
+                    .returning(|| true);
+
+                store
+                    .expect_store_introspection()
+                    .once()
+                    .in_sequence(&mut seq)
+                    .with(predicate::always())
+                    .returning(|_| ());
+
+                for p in props.iter().filter(|p| p.value.is_none()).cloned() {
+                    store
+                        .expect_unset_prop()
+                        .once()
+                        .in_sequence(&mut seq)
+                        .withf(move |m| m.interface_name() == p.interface)
+                        .returning(|_| Ok(()));
+                }
+
+                store
+            });
+    }
+
+    fn mock_wait_acks(seq: &mut Sequence, eventl: &mut EventLoop) {
+        eventl.expect_poll().in_sequence(seq).once().returning(|| {
+            trace!("pending the poll");
+
+            futures::future::pending().boxed()
+        });
     }
 
     #[tokio::test]
     async fn test_connect_client_response() {
-        let mut seq = mockall::Sequence::new();
         let client_id = ClientId {
             realm: "realm",
             device_id: "device_id",
         };
         let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
-        let prop = StoredProp {
+        let prop = OptStoredProp {
             interface: DEVICE_PROPERTIES_NAME.to_string(),
             path: "/sensor1/name".to_string(),
-            value: AstarteData::String("temperature".to_string()),
+            value: Some(AstarteData::String("temperature".to_string())),
             interface_major: 0,
             ownership: interface.ownership(),
         };
 
-        let behavior = ConnectSuccess {
-            full_handshake: true,
-            client_id: client_id.into(),
-            server_interfaces: vec![server_interface.interface_name().to_owned()],
-            device_properties: vec![prop.clone()],
+        let mut eventl = EventLoop::new();
+        let mut store = MockStore::new();
+        let mut client = AsyncClient::default();
+        let mut seq = Sequence::new();
+
+        // Connecting
+        mock_receive_connack(
+            &mut seq,
+            &mut eventl,
+            false,
+            rumqttc::ConnectReturnCode::Success,
+        );
+        // Handshake
+        mock_full_handshake(
+            &mut seq,
+            &mut store,
+            &mut client,
+            client_id.into(),
+            std::slice::from_ref(&server_interface),
+            vec![prop],
+        );
+        // WaitAcks
+        mock_wait_acks(&mut seq, &mut eventl);
+
+        let provider = TransportProvider::configure(
+            "http://api.astarte.localhost/pairing".parse().unwrap(),
+            "secret".to_string(),
+            None,
+            true,
+        )
+        .await
+        .expect("failed to configure transport provider");
+
+        let mut connection = MqttConnectionEstablished {
+            connection: Connection {
+                client,
+                eventloop: SyncWrapper::new(eventl),
+                provider,
+                session_synced: false,
+            },
+            state: State::Connecting(Connecting),
         };
 
-        let mut eventl = EventLoop::new();
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(move || {
-                Box::pin(async move {
-                    tokio::task::yield_now().await;
+        let store = StoreWrapper::new(store);
+        let shared_state = SharedState::new(
+            Config::default(),
+            Interfaces::from_iter([server_interface, interface]),
+            VolatileStore::with_capacity(1),
+        );
 
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                        rumqttc::ConnAck {
-                            // a session present doesn't matter if the introspection does not match
-                            session_present: true,
-                            code: rumqttc::ConnectReturnCode::Success,
-                        },
-                    )))
-                })
-            });
-        let client = mock_client(&mut seq, behavior);
-        // Catch other call to poll
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-
-                    Ok(Event::Incoming(rumqttc::Packet::PingReq))
-                })
-            });
-
-        let interfaces = [
-            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(DEVICE_OBJECT).unwrap(),
-            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
-        ];
-
-        let interfaces = Interfaces::from_iter(interfaces);
-        let store = StoreWrapper::new(MemoryStore::new());
-        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
-
-        store
-            .store_prop(prop.as_prop_ref())
-            .await
-            .expect("Error while storing test property");
-
-        let connection = tokio::time::timeout(
-            Duration::from_secs(3),
-            MqttConnection::wait_connack(
-                client,
-                eventl,
-                TransportProvider::configure(
-                    "http://api.astarte.localhost/pairing".parse().unwrap(),
-                    "secret".to_string(),
-                    None,
-                    true,
-                )
-                .await
-                .expect("failed to configure transport provider"),
+        let connected = tokio::time::timeout(
+            Duration::from_secs(2),
+            connection.reconnect(
                 client_id,
+                &*shared_state.interfaces.read().await,
                 &store,
                 &shared_state,
-                Duration::from_secs(10),
+                &mut VecDeque::new(),
             ),
         )
         .await
-        .expect("timeout reached")
-        .expect("failed to connect");
+        .unwrap()
+        .unwrap();
 
-        assert!(connection.link.is_link_connected());
-    }
-
-    #[tokio::test]
-    async fn test_connect_store_load_error() {
-        let mut seq = mockall::Sequence::new();
-        let client_id = ClientId {
-            realm: "realm",
-            device_id: "device_id",
-        };
-        let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
-
-        let mut mock_store = MockStore::new();
-        // enable session capability
-        mock_store.expect_return_session().return_const(true);
-
-        // NOTE an error while loading the stored introspection can happen
-        // the error will be logged and the connection will continue with a full
-        // handshake
-        mock_store
-            .expect_load_introspection()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| Err(SessionError::load_introspection("test load error")));
-
-        let behavior = ConnectSuccess {
-            full_handshake: true,
-            client_id: client_id.into(),
-            server_interfaces: vec![server_interface.interface_name().to_owned()],
-            device_properties: vec![],
-        };
-
-        let interfaces = [
-            Interface::from_str(DEVICE_PROPERTIES).unwrap(),
-            Interface::from_str(DEVICE_OBJECT).unwrap(),
-            Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
-        ];
-        let interfaces = Interfaces::from_iter(interfaces);
-
-        let mut eventl = EventLoop::new();
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(move || {
-                Box::pin(async move {
-                    tokio::task::yield_now().await;
-
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                        rumqttc::ConnAck {
-                            session_present: false,
-                            code: rumqttc::ConnectReturnCode::Success,
-                        },
-                    )))
-                })
-            });
-        // properties will be fetched to be sent during a full handshake
-        mock_store
-            .expect_device_props_with_unset()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|_, _| Ok(Vec::new()));
-        // a clone is performed to pass the store over to the handshake task
-        mock_store.expect_clone().once().returning({
-            let interfaces = interfaces.clone();
-            move || {
-                let mut mock_store = MockStore::new();
-                // enable session capability
-                mock_store.expect_return_session().return_const(true);
-                let mut seq = Sequence::new();
-
-                // when performing a full handshake we clear the introspection
-                // to ensure a consistent state or a full handshake
-                mock_store
-                    .expect_clear_introspection()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .return_const(());
-
-                mock_store
-                    .expect_store_introspection()
-                    .once()
-                    .in_sequence(&mut seq)
-                    .with(predicate::function({
-                        let expected = interfaces.clone();
-                        move |actual| expected.matches(actual)
-                    }))
-                    .return_const(());
-
-                mock_store
-            }
-        });
-        let client = mock_client(&mut seq, behavior);
-        // Catch other call to poll
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-
-                    Ok(Event::Incoming(rumqttc::Packet::PingReq))
-                })
-            });
-
-        let mock_store = StoreWrapper::new(mock_store);
-        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
-
-        let connection = tokio::time::timeout(
-            Duration::from_secs(3),
-            MqttConnection::wait_connack(
-                client,
-                eventl,
-                TransportProvider::configure(
-                    "http://api.astarte.localhost/pairing".parse().unwrap(),
-                    "secret".to_string(),
-                    None,
-                    true,
-                )
-                .await
-                .expect("failed to configure transport provider"),
-                client_id,
-                &mock_store,
-                &shared_state,
-                Duration::from_secs(10),
-            ),
-        )
-        .await
-        .expect("timeout reached")
-        .expect("failed to connect");
-
-        assert!(connection.link.is_link_connected());
+        assert!(connected);
     }
 
     #[tokio::test]
     async fn test_connect_store_fast_handshake() {
-        let mut seq = mockall::Sequence::new();
         let client_id = ClientId {
             realm: "realm",
             device_id: "device_id",
         };
-        let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
-
-        let mut mock_store = MockStore::new();
-        // enable session capability
-        mock_store.expect_return_session().return_const(true);
 
         let interfaces = [
             Interface::from_str(DEVICE_PROPERTIES).unwrap(),
@@ -1621,100 +1442,61 @@ mod tests {
             Interface::from_str(SERVER_INDIVIDUAL).unwrap(),
         ];
 
-        // NOTE by returning the same interfaces as registered in the device introspeciton
-        // only a faster and simpler handshake will be performed
-        mock_store
-            .expect_load_introspection()
-            .once()
-            .in_sequence(&mut seq)
-            .returning({
-                let interfaces = interfaces.clone();
-                move || {
-                    let interfaces: Vec<IntrospectionInterface> =
-                        interfaces.iter().map(|i| i.into()).collect();
-
-                    Ok(interfaces)
-                }
-            });
-
-        let behavior = ConnectSuccess {
-            full_handshake: false,
-            client_id: client_id.into(),
-            server_interfaces: vec![server_interface.interface_name().to_owned()],
-            device_properties: vec![],
-        };
-
         let mut eventl = EventLoop::new();
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(move || {
-                Box::pin(async move {
-                    tokio::task::yield_now().await;
+        let mut store = MockStore::new();
+        let mut client = AsyncClient::default();
+        let mut seq = Sequence::new();
 
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(
-                        rumqttc::ConnAck {
-                            // NOTE the session present flag is true and the introspection matches
-                            session_present: true,
-                            code: rumqttc::ConnectReturnCode::Success,
-                        },
-                    )))
-                })
-            });
-        let client = mock_client(&mut seq, behavior);
-        // Catch other call to poll
-        eventl
-            .expect_poll()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| {
-                Box::pin(async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+        // Connecting
+        mock_receive_connack(
+            &mut seq,
+            &mut eventl,
+            true,
+            rumqttc::ConnectReturnCode::Success,
+        );
+        // Handshake
+        mock_hanshacke_with_session(&mut seq, &mut store, &mut client, Vec::new());
+        // Wait ask
+        mock_wait_acks(&mut seq, &mut eventl);
 
-                    Ok(Event::Incoming(rumqttc::Packet::PingReq))
-                })
-            });
-
-        // a clone is performed to pass the store over to the handshake task
-        mock_store.expect_clone().once().returning(MockStore::new);
-        // properties will be fetched to be sent after connection
-        mock_store
-            .expect_device_props_with_unset()
-            .once()
-            .returning(|_, _| Ok(Vec::new()));
-        // after a fast handshake we do not store or clear the old introspection
-        // since it is up to date
-
-        // session storage
         let interfaces = Interfaces::from_iter(interfaces);
-        let shared_state = SharedState::new(interfaces, VolatileStore::with_capacity(1));
-
-        let mock_store = StoreWrapper::new(mock_store);
-
-        let connection = tokio::time::timeout(
-            Duration::from_secs(3),
-            MqttConnection::wait_connack(
-                client,
-                eventl,
-                TransportProvider::configure(
-                    "http://api.astarte.localhost/pairing".parse().unwrap(),
-                    "secret".to_string(),
-                    None,
-                    true,
-                )
-                .await
-                .expect("failed to configure transport provider"),
-                client_id,
-                &mock_store,
-                &shared_state,
-                Duration::from_secs(10),
-            ),
+        let shared_state = SharedState::new(
+            Config::default(),
+            interfaces.clone(),
+            VolatileStore::with_capacity(1),
+        );
+        let store = StoreWrapper::new(store);
+        let provider = TransportProvider::configure(
+            "http://api.astarte.localhost/pairing".parse().unwrap(),
+            "secret".to_string(),
+            None,
+            true,
         )
         .await
-        .expect("timeout reached")
-        .expect("failed to connect");
+        .expect("failed to configure transport provider");
 
-        assert!(connection.link.is_link_connected());
+        let mut connection = MqttConnectionEstablished {
+            connection: Connection {
+                client,
+                eventloop: SyncWrapper::new(eventl),
+                provider,
+                // Session ok
+                session_synced: true,
+            },
+            state: State::Connecting(Connecting),
+        };
+
+        let connected = connection
+            .reconnect(
+                client_id,
+                &interfaces,
+                &store,
+                &shared_state,
+                &mut VecDeque::new(),
+            )
+            .await
+            .unwrap();
+
+        assert!(connected);
     }
 }

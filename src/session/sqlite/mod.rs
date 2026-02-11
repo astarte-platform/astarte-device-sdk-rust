@@ -100,7 +100,10 @@ mod tests {
     async fn should_add_or_replace_interface() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         const TO_ADD_NAME: &str = "com.test.Test1";
         const TO_ADD_NAME_1: &str = "com.test.TestDifferent";
@@ -178,7 +181,10 @@ mod tests {
     async fn should_remove_interface() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         const TO_REMOVE_NAME: &str = "com.test.Test1";
         const TO_REMOVE_NAME_1: &str = "com.test.TestDifferent";
@@ -261,7 +267,10 @@ mod tests {
     async fn should_clear_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         const TO_ADD_NAME: &str = "com.test.Test1";
         const TO_ADD_NAME_1: &str = "com.test.TestDifferent";
@@ -307,7 +316,10 @@ mod tests {
     async fn should_store_introspection() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         const TO_ADD_NAME: &str = "com.test.Test1";
         const TO_ADD_NAME_1: &str = "com.test.TestDifferent";

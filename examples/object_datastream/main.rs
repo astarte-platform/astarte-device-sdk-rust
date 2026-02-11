@@ -20,6 +20,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
 use chrono::Utc;
 use clap::Parser;
 use futures::future::Either;
@@ -33,13 +34,14 @@ use tokio::task::JoinSet;
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 #[derive(Serialize, Deserialize)]
 struct Config {
     realm: String,
     device_id: String,
     credentials_secret: String,
-    pairing_url: String,
+    pairing_url: Url,
 }
 
 #[derive(Debug, IntoAstarteObject)]
@@ -115,16 +117,22 @@ async fn main() -> eyre::Result<()> {
         .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
         .unwrap_or_else(|| "./examples/object_datastream/configuration.json".to_string());
     let file = std::fs::read_to_string(file_path)?;
-    let cfg: Config = serde_json::from_str(&file)?;
 
-    let mut mqtt_config = MqttConfig::with_credential_secret(
-        &cfg.realm,
-        &cfg.device_id,
-        &cfg.credentials_secret,
-        &cfg.pairing_url,
-    );
+    let Config {
+        realm,
+        device_id,
+        credentials_secret,
+        pairing_url,
+    } = serde_json::from_str(&file)?;
 
-    mqtt_config.ignore_ssl_errors();
+    let args = MqttArgs {
+        realm,
+        device_id,
+        credential: Credential::secret(credentials_secret),
+        pairing_url,
+    };
+
+    let mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
 
     info!("looping");
     // Create an Astarte Device (also performs the connection)

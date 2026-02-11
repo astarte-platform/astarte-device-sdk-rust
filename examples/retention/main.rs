@@ -21,6 +21,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use astarte_device_sdk::aggregate::AstarteObject;
+use astarte_device_sdk::store::SqliteStore;
+use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
 use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
 use clap::Parser;
 use futures::future::Either;
@@ -28,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 const INDIVIDUAL_STORED: &str = include_str!(
     "./interfaces/org.astarte-platform.rust.examples.individual-datastream.StoredDeviceDatastream.json"
@@ -85,7 +88,7 @@ struct Config {
     realm: String,
     device_id: String,
     credentials_secret: String,
-    pairing_url: String,
+    pairing_url: Url,
 }
 
 #[derive(Parser, Debug)]
@@ -172,6 +175,7 @@ async fn main() -> eyre::Result<()> {
         .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
         .unwrap_or_else(|| "./examples/retention/configuration.json".to_string());
     let file = std::fs::read_to_string(file_path).unwrap();
+
     let Config {
         realm,
         device_id,
@@ -179,10 +183,14 @@ async fn main() -> eyre::Result<()> {
         pairing_url,
     } = serde_json::from_str(&file)?;
 
-    let mut mqtt_config =
-        MqttConfig::with_credential_secret(&realm, &device_id, &credentials_secret, &pairing_url);
+    let args = MqttArgs {
+        realm,
+        device_id,
+        credential: Credential::secret(credentials_secret),
+        pairing_url,
+    };
 
-    mqtt_config.ignore_ssl_errors();
+    let mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
 
     let mut tmp_dir = std::env::temp_dir();
 
@@ -190,10 +198,12 @@ async fn main() -> eyre::Result<()> {
 
     std::fs::create_dir_all(&tmp_dir)?;
 
+    let store = SqliteStore::options().with_writable_dir(&tmp_dir).await?;
+
     // Create an Astarte Device (also performs the connection)
     let (mut client, connection) = DeviceBuilder::new()
-        .store_dir(&tmp_dir)
-        .await?
+        .writable_dir(&tmp_dir)
+        .store(store)
         .interface_str(INDIVIDUAL_STORED)?
         .interface_str(INDIVIDUAL_VOLATILE)?
         .interface_str(OBJECT_STORED)?

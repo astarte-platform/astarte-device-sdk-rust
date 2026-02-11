@@ -24,14 +24,11 @@ use astarte_device_sdk::client::{ClientDisconnect, RecvError};
 use astarte_device_sdk::properties::PropAccess;
 use astarte_device_sdk::store::StoredProp;
 use astarte_device_sdk::transport::Connection;
-use astarte_device_sdk::{AstarteData, DeviceEvent, Error};
+use astarte_device_sdk::{AstarteData, Client, DeviceEvent, Error};
 use mockall::mock;
 
 // Export public facing dependencies
 pub use mockall;
-
-// FIXME: remove, still present for backwards compatibility
-pub use astarte_device_sdk::Client;
 
 pub trait DeviceIntrospection {
     fn get_interface<F, O>(&self, interface_name: &str, f: F) -> impl Future<Output = O> + Send
