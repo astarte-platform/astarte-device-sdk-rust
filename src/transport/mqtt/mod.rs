@@ -24,7 +24,7 @@
 
 pub(crate) mod client;
 mod components;
-mod config;
+pub(crate) mod config;
 mod connection;
 pub mod crypto;
 pub mod error;

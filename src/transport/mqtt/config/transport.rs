@@ -205,7 +205,7 @@ impl TransportProvider {
 
     /// Retrieves an already stored certificate or creates a new one
     /// It also verifies certificate data that can be checked for validity locally
-    async fn retrieve_credentials(
+    pub(crate) async fn retrieve_credentials(
         &self,
         client: &ApiClient<'_>,
     ) -> Result<ClientAuth, PairingError> {
