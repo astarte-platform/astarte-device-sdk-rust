@@ -32,7 +32,7 @@ edition = "2024"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.86"
+rust-version = "1.88"
 
 [package]
 name = "astarte-device-sdk"
@@ -218,7 +218,3 @@ url = "2.4.0"
 uuid = "1.1.2"
 webpki-roots = "1.0.0"
 x509-parser = "0.18.0"
-
-# Waiting on https://github.com/rusticata/x509-parser/pull/229
-[patch.crates-io]
-x509-parser = { git = 'https://github.com/cpu/x509-parser', rev = "1055ca17581b96d8431de4c696187869fc12587a" }
