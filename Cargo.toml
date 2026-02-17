@@ -111,6 +111,7 @@ chrono = { workspace = true, features = ["serde"] }
 flate2.workspace = true
 futures = { workspace = true }
 itertools = { workspace = true }
+rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
 rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
 reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
@@ -188,8 +189,9 @@ mockall = "0.14.0"
 mockito = "1.4.0"
 phoenix-chan = "0.4.2"
 pretty_assertions = "1.4.1"
-proc-macro2 = "1.0.83"
+proc-macro2 = "1.0.91"
 quote = "1.0.35"
+rand = "0.10.0"
 rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.13.0", default-features = false }
@@ -203,7 +205,7 @@ rustls-platform-verifier = "0.6.0"
 rustls-webpki = { version = "0.103.2", default-features = false }
 serde = "1.0.184"
 serde_json = "1.0.85"
-syn = "2.0.87"
+syn = "2.0.89"
 sync_wrapper = "1.0.2"
 tempfile = "3.6.0"
 thiserror = "2.0.12"

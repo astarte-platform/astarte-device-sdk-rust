@@ -63,7 +63,7 @@ use crate::{
     interfaces::Interfaces,
     logging::security::{SecurityEvent, notify_security_event, notify_tls_error},
     properties::{PropertiesError, encode_set_properties},
-    retry::ExponentialIter,
+    retry::RandomExponentialIter,
     session::StoredSession,
     state::SharedState,
     store::{OptStoredProp, PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
@@ -339,7 +339,7 @@ impl MqttConnection {
             link.connection.set_session_synced(session_sync);
         }
 
-        let mut exp_back = ExponentialIter::default();
+        let mut exp_back = RandomExponentialIter::default();
 
         let start = SystemTime::now();
 
@@ -358,9 +358,9 @@ impl MqttConnection {
 
             let backoff = exp_back.next();
 
-            debug!("waiting {backoff} seconds before retrying");
+            debug!("waiting {} seconds before retrying", backoff.as_secs());
 
-            tokio::time::sleep(Duration::from_secs(backoff)).await;
+            tokio::time::sleep(backoff).await;
         }
 
         Ok(mqtt_connection)
