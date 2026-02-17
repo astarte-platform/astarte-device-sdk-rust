@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -143,7 +143,10 @@ async fn main() -> eyre::Result<()> {
     });
 
     tasks.spawn(async move {
-        channel::register_triggers(&mut channel).await?;
+        retry(10, || channel::register_triggers(&channel)).await?;
+
+        // NOTE: the event is lost since the device is already registered
+        // channel.next_device_connected().await?;
 
         device::interfaces::check_add(&api, &mut client).await?;
 
@@ -192,6 +195,8 @@ async fn main() -> eyre::Result<()> {
             }
             Ok(Err(err)) => {
                 error!(error = %err, "task returned an error");
+
+                tasks.abort_all();
 
                 if ret_res.is_ok() {
                     ret_res = Err(err);

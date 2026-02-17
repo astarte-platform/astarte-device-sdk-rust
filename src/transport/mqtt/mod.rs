@@ -689,7 +689,7 @@ impl<S> Mqtt<S> {
 
         let stored_props = self.store.server_props().await?;
 
-        for ref stored_prop in stored_props {
+        for stored_prop in &stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
