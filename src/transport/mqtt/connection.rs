@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -351,8 +351,8 @@ impl MqttConnection {
                 .duration_since(start)
                 .is_ok_and(|d| d > timeout)
             {
-                // if the timeout is hit we will have a created transport but a connectiong status
-                info!("Timeout reached exiting connction loop without connection established");
+                // if the timeout is hit we will have a created transport but a connections status
+                info!("Timeout reached exiting connection loop without connection established");
                 break;
             }
 
@@ -451,7 +451,7 @@ impl MqttConnection {
         }
     }
 
-    /// Retruns true only if the state is connected and the session present is true
+    /// Returns true only if the state is connected and the session present is true
     pub(crate) fn is_session_present(&self) -> bool {
         matches!(
             &self.link,
@@ -462,7 +462,7 @@ impl MqttConnection {
         )
     }
 
-    /// Retruns true only if the state is connected
+    /// Returns true only if the state is connected
     pub(crate) fn is_connected(&self) -> bool {
         matches!(
             &self.link,

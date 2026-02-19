@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 - 2025 SECO Mind Srl
+# Copyright 2022-2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -163,13 +163,12 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 litemap = { workspace = true }
 zerofrom = { workspace = true }
 
-[lints.rust]
-# config used for coverage generation
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(__coverage)'] }
-
 [package.metadata.docs.rs]
 all-features = true
-rustc-args = ["--cfg=docsrs"]
+rustc-args = ["--cfg=astarte_device_sdk_docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(astarte_device_sdk_docsrs)', 'cfg(__coverage)'] }
 
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.11.2" }

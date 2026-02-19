@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -898,7 +898,7 @@ mod tests {
 
         // set the max size considering the default page size of 4096 bytes
         // NOTE since the limit is set after the database is created we can't shrink an
-        // already created database this means that settin a 1KB limit is currently not supported
+        // already created database this means that setting a 1KB limit is currently not supported
         // even a 1 page limit (4096B) would not work
         let res = db.set_db_max_size(size).await;
 

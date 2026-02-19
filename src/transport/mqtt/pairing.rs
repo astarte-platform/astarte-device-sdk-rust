@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ pub enum PairingError {
     /// Invalid credential secret.
     #[error("invalid credentials secret")]
     InvalidCredentials(#[source] io::Error),
-    /// Missing certificate crendential.
+    /// Missing certificate credential.
     #[error("missing certificate credential")]
     MissingCredentials,
     /// Couldn't parse the pairing URL.
