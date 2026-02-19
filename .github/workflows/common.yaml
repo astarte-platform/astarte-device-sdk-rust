@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2025, 2026 SECO Mind Srl
+# Copyright 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: warmup-caches
+name: common
 on:
   workflow_call:
   workflow_dispatch:
@@ -26,17 +26,31 @@ defaults:
   run:
     shell: bash
 env:
-  CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
+  CLICOLOR: 1
 jobs:
-  build:
+  check-copyright:
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
-    name: build
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.sha }}
+      HEAD_REF: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
-      - uses: mozilla-actions/sccache-action@v0.0.9
-      - name: Build with all features
-        run: cargo build --locked --all-targets --all-features --workspace
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7.3.0
+      - run: |
+          ./scripts/ci/add-copyright-to-modified.sh "$BASE_REF" "$HEAD_REF"
+          git diff --exit-code --name-only
+  spelling:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: crate-ci/typos@v1.43.4
+  conventional-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: crate-ci/committed@v1.1.10

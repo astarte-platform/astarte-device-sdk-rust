@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 - 2025 SECO Mind Srl
+# Copyright 2022-2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,32 +31,32 @@ env:
   RUSTC_WRAPPER: "sccache"
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
-  MAIN_PACKAGE: astarte-device-sdk
+  MAIN_PACKAGE: "astarte-device-sdk"
 jobs:
   fmt:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - name: Check formatting
         run: cargo fmt --check --all
   clippy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo clippy
         run: cargo clippy --locked --all-targets --all-features --workspace
   doc:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
-          toolchain: nightly-2025-09-26
+          toolchain: nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
@@ -65,9 +65,9 @@ jobs:
   features:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
@@ -78,12 +78,12 @@ jobs:
   minimal-versions:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
       - name: install rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+        uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - name: install rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+        uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
           toolchain: nightly
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -100,9 +100,9 @@ jobs:
         msrv: [1.72]
     name: msrv / ${{ matrix.msrv }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
           toolchain: ${{ matrix.msrv }}
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -114,8 +114,8 @@ jobs:
     if: startsWith(github.base_ref, 'release-') || startsWith(github.ref, 'release-')
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
       - name: Check library API semver breakages
         uses: obi1kenobi/cargo-semver-checks-action@v2
@@ -126,8 +126,8 @@ jobs:
     name: stable / for-publish
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/install-deps
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.14.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
       - uses: mozilla-actions/sccache-action@v0.0.9
-      - run: ./scripts/check-for-publish.sh
+      - run: ./scripts/ci/check-for-publish.sh

@@ -1,22 +1,20 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2023 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2023, 2026 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
 //! End to end tests for the Astarte SDK.
 //!
@@ -179,11 +177,11 @@ async fn main() -> eyre::Result<()> {
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
 
-    let device_cpy = client.clone();
-    let test_cfg_cpy = test_cfg.clone();
-    let rx_data_ind_datastream_cpy = rx_data_ind_datastream.clone();
-    let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
-    let rx_data_ind_prop_cpy = rx_data_ind_prop.clone();
+    let device_cp = client.clone();
+    let test_cfg_cp = test_cfg.clone();
+    let rx_data_ind_datastream_cp = rx_data_ind_datastream.clone();
+    let rx_data_agg_datastream_cp = rx_data_agg_datastream.clone();
+    let rx_data_ind_prop_cp = rx_data_ind_prop.clone();
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
@@ -193,18 +191,18 @@ async fn main() -> eyre::Result<()> {
     // Add the remaining interfaces
     let additional_interfaces = read_additional_interfaces()?;
     debug!("adding {} interfaces", additional_interfaces.len());
-    device_cpy.extend_interfaces(additional_interfaces).await?;
+    device_cp.extend_interfaces(additional_interfaces).await?;
 
     tasks.spawn(async move {
         // Run datastream tests
-        test_datastream_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_datastream_server_to_device(&test_cfg_cpy, &rx_data_ind_datastream_cpy).await?;
+        test_datastream_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_datastream_server_to_device(&test_cfg_cp, &rx_data_ind_datastream_cp).await?;
         // Run aggregate tests
-        test_aggregate_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_aggregate_server_to_device(&test_cfg_cpy, &rx_data_agg_datastream_cpy).await?;
+        test_aggregate_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_aggregate_server_to_device(&test_cfg_cp, &rx_data_agg_datastream_cp).await?;
         // Run properties tests
-        test_property_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_property_server_to_device(&test_cfg_cpy, &rx_data_ind_prop_cpy).await?;
+        test_property_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_property_server_to_device(&test_cfg_cp, &rx_data_ind_prop_cp).await?;
 
         info!("Test datastreams completed successfully");
         handle_events.abort();

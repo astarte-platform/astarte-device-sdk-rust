@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2022 - 2025 SECO Mind Srl
+# Copyright 2022-2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -131,7 +131,10 @@ tokio-multi-thread = ["tokio/rt-multi-thread"]
 
 [package.metadata.docs.rs]
 all-features = true
-rustc-args = ["--cfg=docsrs"]
+rustc-args = ["--cfg=astarte_device_sdk_docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(astarte_device_sdk_docsrs)'] }
 
 [workspace.dependencies]
 astarte-device-sdk = { path = "./", version = "=0.9.10" }
@@ -172,7 +175,7 @@ syn = "2.0.87"
 sync_wrapper = "1.0.0"
 tempfile = "3.6.0"
 thiserror = "2.0.8"
-tokio = "1.36.0"
+tokio = "1.43.0"
 tokio-stream = "0.1.0"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.0"

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ async fn main() -> Result<(), DynError> {
         .await?
         .build()
         .await;
-    let device_cpy = client.clone();
+    let device_cp = client.clone();
 
     println!("Connection to Astarte established.");
 
@@ -94,14 +94,14 @@ async fn main() -> Result<(), DynError> {
 
         println!("Properties values at startup:");
         // Check the value of the name property for sensors 1
-        if let Ok(name) = get_name_for_sensor(&device_cpy, 1).await {
+        if let Ok(name) = get_name_for_sensor(&device_cp, 1).await {
             println!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
             if name != *"None" {
                 i = name.strip_prefix("name number ").unwrap().parse().unwrap();
             }
         }
         // Check the value of the name property for sensors 2
-        if let Ok(name) = get_name_for_sensor(&device_cpy, 2).await {
+        if let Ok(name) = get_name_for_sensor(&device_cp, 2).await {
             println!("  - Property \"name\" for sensor 2 has value: \"{name}\"");
         }
 
@@ -110,7 +110,7 @@ async fn main() -> Result<(), DynError> {
 
         // Send in a loop the change of the property "name" of sensor 1
         loop {
-            device_cpy
+            device_cp
                 .send(
                     "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
                     "/1/name",

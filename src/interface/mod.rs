@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -84,10 +84,10 @@ pub struct Interface {
     version_minor: i32,
     ownership: Ownership,
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "interface-doc")))]
     description: Option<String>,
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "interface-doc")))]
     doc: Option<String>,
     pub(crate) inner: InterfaceType,
 }
@@ -139,14 +139,14 @@ impl Interface {
     }
 
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the interface description
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
     }
 
     #[cfg(feature = "interface-doc")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "interface-doc")))]
+    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "interface-doc")))]
     /// Returns the interface documentation.
     pub fn doc(&self) -> Option<&str> {
         self.doc.as_deref()
@@ -691,9 +691,10 @@ where
 ///
 /// See [Retention](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-retention)
 /// for more information.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum Retention {
     /// Data is discarded.
+    #[default]
     Discard,
     /// Data is kept in a cache in memory.
     Volatile {
@@ -776,19 +777,14 @@ impl Retention {
     }
 }
 
-impl Default for Retention {
-    fn default() -> Self {
-        Self::Discard
-    }
-}
-
 /// Defines if data should be expired from the database after a given interval.
 ///
 /// See [Database Retention Policy](https://docs.astarte-platform.org/astarte/latest/040-interface_schema.html#astarte-mapping-schema-database_retention_policy)
 /// for more information.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum DatabaseRetention {
     /// Data will never expire.
+    #[default]
     NoTtl,
     /// Data will live for the ttl.
     UseTtl {
@@ -809,12 +805,6 @@ impl DatabaseRetention {
                 mapping.database_retention_ttl = Some(ttl.as_secs().try_into().unwrap_or(i64::MAX));
             }
         }
-    }
-}
-
-impl Default for DatabaseRetention {
-    fn default() -> Self {
-        Self::NoTtl
     }
 }
 
