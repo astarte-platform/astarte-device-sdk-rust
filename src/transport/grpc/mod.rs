@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ pub mod convert;
 pub mod store;
 
 #[cfg(feature = "message-hub")]
-#[cfg_attr(docsrs, doc(cfg(feature = "message-hub")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
 pub use astarte_message_hub_proto::tonic;
 
 /// Errors raised while using the [`Grpc`] transport
