@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -1991,7 +1991,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_individual() {
+    async fn should_not_enqueue_sent_individual() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
@@ -2083,7 +2083,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_object() {
+    async fn should_not_enqueue_sent_object() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -142,7 +142,7 @@ where
             trace!("loaded {count} volatile publishes");
 
             for (id, value) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
+                // mark as sent before so that no resend is tried while in flight
                 state.volatile_store.mark_sent(&id, true).await;
 
                 match value {
@@ -191,7 +191,7 @@ where
             trace!("loaded {count} stored publishes");
 
             for (id, info) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
+                // mark as sent before so that no resend is tried while in flight
                 retention.update_sent_flag(&id, true).await?;
 
                 sender.resend_stored(RetentionId::Stored(id), info).await?;

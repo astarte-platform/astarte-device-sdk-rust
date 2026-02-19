@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -285,7 +285,7 @@ impl MqttConnection {
         }
     }
 
-    /// Retruns true only if the state is connected and the session present is true
+    /// Returns true only if the state is connected and the session present is true
     pub(crate) fn is_session_present(&self) -> bool {
         self.state.is_session_present()
     }
