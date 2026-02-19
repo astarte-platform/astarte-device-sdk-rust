@@ -251,7 +251,7 @@ pub trait ClientDisconnect {
 pub struct DeviceClient<S> {
     pub(crate) interfaces: Arc<RwLock<Interfaces>>,
     // We use flume instead of the mpsc channel for the DeviceEvents for the connection to che
-    // client since we need the Receiver end to be clonable. Flume provides an async mpmc
+    // client since we need the Receiver end to be cloneable. Flume provides an async mpmc
     // channel/queue that fits our needs and doesn't suffer from the "slow receiver" problem.
     // Since it doesn't block the sender till all the receivers have read the msg. Unlike the
     // Tokio broadcast channel (another mpmc channel implementation).

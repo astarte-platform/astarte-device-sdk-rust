@@ -752,7 +752,7 @@ where
             trace!("loaded {count} volatile publishes");
 
             for (id, value) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
+                // mark as sent before so that no resend is tried while in flight
                 self.volatile_store.mark_sent(&id, true).await;
 
                 match value {
@@ -802,7 +802,7 @@ where
             trace!("loaded {count} stored publishes");
 
             for (id, info) in buf.drain(..) {
-                // mark as sent before so that no resend is tryed while in flight
+                // mark as sent before so that no resend is tried while in flight
                 retention.update_sent_flag(&id, true).await?;
 
                 self.sender

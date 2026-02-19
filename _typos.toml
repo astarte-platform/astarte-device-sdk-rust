@@ -1,0 +1,10 @@
+[files]
+extend-exclude = [
+  "assets/**/*.svg",
+  "assets/**/*.ico",
+]
+
+[default.extend-identifiers]
+flate2 = "flate2"
+typ = "typ"
+clea = "clea"

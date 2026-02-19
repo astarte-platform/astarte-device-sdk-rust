@@ -283,7 +283,7 @@ mod tests {
             .in_sequence(&mut seq)
             .returning(|_| notify_success(SubAck::new(0, Vec::new())));
 
-        let introspection_cpy = introspection.clone();
+        let introspection_cp = introspection.clone();
 
         client
             .expect_publish::<String, String>()
@@ -294,7 +294,7 @@ mod tests {
 
                 intro.sort_unstable();
 
-                publish == "realm/device_id" && intro == introspection_cpy
+                publish == "realm/device_id" && intro == introspection_cp
             })
             .returning(|_, _, _, _| notify_success(AckOfPub::None));
 

@@ -482,7 +482,7 @@ mod tests {
         let (id, item) = buf.pop().unwrap();
         assert_eq!((id, item), (id_info_3, ItemValue::Individual(info3)));
 
-        // the expired elemen get evicted
+        // the expired element get evicted
         assert_eq!(store.store.len(), 1);
     }
 

@@ -179,11 +179,11 @@ async fn main() -> eyre::Result<()> {
     let rx_data_agg_datastream = Arc::new(Mutex::new((String::new(), HashMap::new())));
     let rx_data_ind_prop = Arc::new(Mutex::new((String::new(), HashMap::new())));
 
-    let device_cpy = client.clone();
-    let test_cfg_cpy = test_cfg.clone();
-    let rx_data_ind_datastream_cpy = rx_data_ind_datastream.clone();
-    let rx_data_agg_datastream_cpy = rx_data_agg_datastream.clone();
-    let rx_data_ind_prop_cpy = rx_data_ind_prop.clone();
+    let device_cp = client.clone();
+    let test_cfg_cp = test_cfg.clone();
+    let rx_data_ind_datastream_cp = rx_data_ind_datastream.clone();
+    let rx_data_agg_datastream_cp = rx_data_agg_datastream.clone();
+    let rx_data_ind_prop_cp = rx_data_ind_prop.clone();
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
@@ -193,18 +193,18 @@ async fn main() -> eyre::Result<()> {
     // Add the remaining interfaces
     let additional_interfaces = read_additional_interfaces()?;
     debug!("adding {} interfaces", additional_interfaces.len());
-    device_cpy.extend_interfaces(additional_interfaces).await?;
+    device_cp.extend_interfaces(additional_interfaces).await?;
 
     tasks.spawn(async move {
         // Run datastream tests
-        test_datastream_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_datastream_server_to_device(&test_cfg_cpy, &rx_data_ind_datastream_cpy).await?;
+        test_datastream_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_datastream_server_to_device(&test_cfg_cp, &rx_data_ind_datastream_cp).await?;
         // Run aggregate tests
-        test_aggregate_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_aggregate_server_to_device(&test_cfg_cpy, &rx_data_agg_datastream_cpy).await?;
+        test_aggregate_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_aggregate_server_to_device(&test_cfg_cp, &rx_data_agg_datastream_cp).await?;
         // Run properties tests
-        test_property_device_to_server(&device_cpy, &test_cfg_cpy).await?;
-        test_property_server_to_device(&test_cfg_cpy, &rx_data_ind_prop_cpy).await?;
+        test_property_device_to_server(&device_cp, &test_cfg_cp).await?;
+        test_property_server_to_device(&test_cfg_cp, &rx_data_ind_prop_cp).await?;
 
         info!("Test datastreams completed successfully");
         handle_events.abort();

@@ -1320,7 +1320,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_individual() {
+    async fn should_not_enqueue_sent_individual() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
@@ -1419,7 +1419,7 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn should_not_enque_sent_object() {
+    async fn should_not_enqueue_sent_object() {
         let dir = TempDir::new().unwrap();
         let store = SqliteStore::connect(dir.path()).await.unwrap();
 
