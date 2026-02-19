@@ -96,10 +96,10 @@ filter_lcov() {
 }
 
 if [[ -n "${EXPORT_FOR_CI:-}" ]]; then
-    out_path="$PWD/coverage-astarte-message-hub.info"
+    out_path="$PWD/coverage-@MAIN_CRATE@.info"
 else
     mkdir -p "$CARGO_TARGET_DIR/lcov"
-    out_path="$CARGO_TARGET_DIR/lcov/coverage-astarte-message-hub.info"
+    out_path="$CARGO_TARGET_DIR/lcov/coverage-@MAIN_CRATE@.info"
 fi
 
 # Currently branch coverage can be broken on nightly
