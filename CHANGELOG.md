@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.10.7](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.10.6...v0.10.7) - 2026-02-19
+
+### Fixed
+
+    - *(doc)* fix flag to build on docs.rs
+        
+### Other
+
+    - forward port release v0.9.11
+        
+
 ## [0.9.11](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-v0.9.10...astarte-device-sdk-v0.9.11) - 2026-02-19
 
 ### Fixed
