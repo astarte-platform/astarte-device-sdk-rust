@@ -50,7 +50,7 @@ component_management:
         branches:
           - "!main"
   individual_components:
-    - component_id: astarte-device-sdk
+    - component_id: "astarte-device-sdk"
       name: device-sdk
       paths:
         - src/**

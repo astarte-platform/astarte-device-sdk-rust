@@ -25,4 +25,4 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get -y install libsqlite3-dev libssl-dev
+        sudo apt-get -y install libsqlite3-dev
