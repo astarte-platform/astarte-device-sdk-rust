@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
 pub const DEFAULT_STORE_CAPACITY: NonZeroUsize = const_non_zero_usize(1_000_000);
 
 /// Default timeout.
-/// This timeout is applied *both* the the trasnport implementations chosen (mqtt or grpc).
+/// This timeout is applied *both* the the transport implementations chosen (mqtt or grpc).
 /// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 

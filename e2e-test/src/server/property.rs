@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ where
         ensure!(path == data_path);
 
         let Value::Property(None) = data else {
-            bail!("prop was not unseted")
+            bail!("prop was not unset")
         };
 
         info!(interface, path, "validated")

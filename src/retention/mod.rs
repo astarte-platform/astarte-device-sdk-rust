@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,7 +117,7 @@ pub enum RetentionError {
     #[error("couldn't delete the publishes for interfaces")]
     DeleteInterfaceMany(#[source] DynError),
     /// Couldn't fetch all the publishes' interfaces.
-    #[error("couldn't fetch all the publishs' interfaces")]
+    #[error("couldn't fetch all the publishes' interfaces")]
     FetchInterfaces(#[source] DynError),
     /// Couldn't set the maximum capacity of items.
     #[error("couldn't set the mximum number of item to {capacity}")]

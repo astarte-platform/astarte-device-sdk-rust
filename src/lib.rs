@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@
     missing_docs,
     rustdoc::missing_crate_level_docs
 )]
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(astarte_device_sdk_docsrs, feature(doc_cfg))]
 #![cfg_attr(__coverage, feature(coverage_attribute))]
 
 pub mod _docs;
@@ -72,7 +72,7 @@ pub use rumqttc;
 pub(crate) type Timestamp = chrono::DateTime<chrono::Utc>;
 
 #[cfg(feature = "derive")]
-#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
+#[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "derive")))]
 pub use astarte_device_sdk_derive::*;
 
 #[cfg(test)]
