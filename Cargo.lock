@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "astarte-device-sdk-derive",
  "astarte-interfaces",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-derive"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -243,7 +243,7 @@ dependencies = [
 
 [[package]]
 name = "astarte-device-sdk-mock"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "astarte-device-sdk",
  "chrono",
@@ -897,7 +897,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e2e-test"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "astarte-device-sdk",
  "async-channel",

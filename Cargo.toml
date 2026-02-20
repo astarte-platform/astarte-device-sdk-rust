@@ -27,7 +27,7 @@ members = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.package]
-version = "0.11.2"
+version = "0.11.3"
 edition = "2021"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
@@ -171,8 +171,8 @@ rustc-args = ["--cfg=astarte_device_sdk_docsrs"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(astarte_device_sdk_docsrs)', 'cfg(__coverage)'] }
 
 [workspace.dependencies]
-astarte-device-sdk = { path = "./", version = "=0.11.2" }
-astarte-device-sdk-derive = { version = "=0.11.2", path = "./astarte-device-sdk-derive" }
+astarte-device-sdk = { path = "./", version = "=0.11.3" }
+astarte-device-sdk-derive = { version = "=0.11.3", path = "./astarte-device-sdk-derive" }
 astarte-interfaces = "0.1.1"
 astarte-message-hub-proto = "0.8.1"
 astarte-message-hub-proto-mock = "0.8.1"
