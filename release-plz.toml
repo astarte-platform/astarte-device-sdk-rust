@@ -64,31 +64,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
 """
 
 body = """
-
-## [{{ version }}]\
+{% if version -%}
+    ## [{{ version | trim_start_matches(pat="v") }}]\
     {%- if release_link -%}\
         ({{ release_link }})\
     {% endif %} \
     - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+    ## [Unreleased]
+{% endif -%}
+
 {% for group, commits in commits | filter(attribute="merge_commit", value=false) | group_by(attribute="group") %}
 ### {{ group | upper_first }}
 
-    {% for commit in commits | unique(attribute="message")  %}
+{% for commit in commits | unique(attribute="message")  %}
         {%- if commit.scope -%}
             - _({{commit.scope}})_ {% if commit.breaking %}[**breaking**] {% endif %}\
                 {{ commit.message }}\
                 {%- if commit.links %} \
                     ({% for link in commit.links %}[{{link.text}}]({{link.href}}) {% endfor -%})\
-                {% endif %}
+                {%- endif -%}
         {% else -%}
             - {% if commit.breaking %}[**breaking**] {% endif %}{{ commit.message }}
-        {% endif -%}
-    {% endfor -%}
+        {%- endif %}
+{% endfor %}
 {% endfor %}
 """
 
@@ -102,9 +104,4 @@ commit_parsers = [
   { message = "^security", group = "Security" },
   { message = ".*forward port", group = "other" },
   { message = "^.*", skip = true },
-]
-
-postprocessors = [
-  # Format the rendered changelog using `dprint`
-  { pattern = ".*", replace = "npx prettier --stdin-filepath CHANGELOG.md" },
 ]
