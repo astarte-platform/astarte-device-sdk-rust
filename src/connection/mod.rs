@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -223,12 +223,12 @@ where
 
         match futures::future::select(disconnect, f).await {
             Either::Left((Ok(()), _f)) => {
-                debug!("diconnect received");
+                debug!("disconnect received");
 
                 None
             }
             Either::Left((Err(error), f)) => {
-                error!(%error, "diconnect closed");
+                error!(%error, "disconnect closed");
 
                 Some(f.await)
             }

@@ -2,7 +2,7 @@
 
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,18 +23,35 @@
 #
 # For example
 #
-#   git status --short | cut -f 2 -d ' ' | ./scripts/copyright.sh
+#   git status --short | cut -f 2 -d ' ' | ./scripts/ci/copyright.sh
 #
 
 set -exEuo pipefail
 
 annotate() {
-    reuse annotate \
+    # ignored files
+    if [[ "$*" == LICENSES/* ]]; then
+        echo "skipping licence files"
+        return
+    fi
+    if [[ "$*" == *.snap || "$*" == *.snap.cbor ]]; then
+        echo "skipping licence files"
+        return
+    fi
+
+    # Diff could include deleted files
+    if [[ ! -e "$*" ]]; then
+        echo "skipping not existing"
+        return
+    fi
+
+    uv run reuse annotate \
         --copyright 'SECO Mind Srl' \
         --copyright-prefix string \
         --merge-copyrights \
         --license 'Apache-2.0' \
         --template apache-2 \
+        --skip-unrecognised \
         "$@"
 }
 
@@ -47,9 +64,9 @@ fi
 # Read from stdin line by line
 while read -r line; do
     if [[ $line == '' ]]; then
-        echo "Empty line, skipping" 1>&2
-        continue
-    fi
+        echo "Empty line, skipping"
 
-    annotate "$line"
-done </dev/stdin
+    else
+        annotate "$line"
+    fi
+done
