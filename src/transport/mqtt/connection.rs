@@ -64,10 +64,8 @@ use crate::{
     properties::{PropertiesError, encode_set_properties},
     session::StoredSession,
     state::SharedState,
-    store::{OptStoredProp, PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
-    transport::mqtt::{
-        AsyncClientExt, config::MqttTransportOptions, pairing::ApiClient, payload::Payload,
-    },
+    store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
+    transport::mqtt::{AsyncClientExt, config::MqttTransportOptions, pairing::ApiClient},
 };
 
 use super::{
@@ -608,7 +606,7 @@ impl Handshake {
                 "introspection already synchronized"
             );
 
-            Self::prop_handshake(client, client_id, store, session_data)
+            None
         } else {
             debug!(
                 session_present = self.session_present,
@@ -625,7 +623,7 @@ impl Handshake {
                 session.clear_introspection().await;
             }
 
-            Self::full_handshake(client, client_id, store, session_data)
+            Some(Self::full_handshake(client, client_id, store, session_data))
         };
 
         Next::state(WaitAcks {
@@ -665,40 +663,6 @@ impl Handshake {
 
             Self::purge_device_properties(&client, client_id, &session_data.device_properties)
                 .await?;
-
-            Self::send_device_properties(
-                &client,
-                client_id,
-                &store,
-                &session_data.device_properties,
-            )
-            .await?;
-
-            Ok(())
-        })
-    }
-
-    fn prop_handshake<S>(
-        client: AsyncClient,
-        client_id: ClientId,
-        store: StoreWrapper<S>,
-        session_data: SessionData,
-    ) -> JoinHandle<Result<(), InitError>>
-    where
-        S: PropertyStore,
-    {
-        // NOTE send device properties even if synchronized because they could
-        // have been updated while disconnected
-        tokio::spawn(async move {
-            let client_id = client_id.as_ref();
-
-            Self::send_device_properties(
-                &client,
-                client_id,
-                &store,
-                &session_data.device_properties,
-            )
-            .await?;
 
             Ok(())
         })
@@ -757,14 +721,10 @@ impl Handshake {
     async fn purge_device_properties(
         client: &AsyncClient,
         client_id: ClientId<&str>,
-        device_properties: &[OptStoredProp],
+        device_properties: &[String],
     ) -> Result<(), InitError> {
-        let iter = device_properties
-            .iter()
-            .filter(|val| val.value.is_some())
-            .map(|val| format!("{}{}", val.interface, val.path));
-
-        let payload = encode_set_properties(iter).map_err(InitError::PurgeProperties)?;
+        let payload =
+            encode_set_properties(device_properties).map_err(InitError::PurgeProperties)?;
 
         client
             .publish(
@@ -775,48 +735,6 @@ impl Handshake {
             )
             .await
             .map_err(InitError::client("purge device properties"))?;
-
-        Ok(())
-    }
-
-    /// Sends the passed device owned properties
-    async fn send_device_properties<S>(
-        client: &AsyncClient,
-        client_id: ClientId<&str>,
-        store: &StoreWrapper<S>,
-        device_properties: &[OptStoredProp],
-    ) -> Result<(), InitError>
-    where
-        S: PropertyStore,
-    {
-        for prop in device_properties {
-            let topic = format!("{}/{}{}", client_id, prop.interface, prop.path);
-
-            debug!(
-                "sending device-owned property = {}{}",
-                prop.interface, prop.path
-            );
-
-            let payload = match &prop.value {
-                Some(value) => Payload::new(value).to_vec()?,
-                // Unset the property
-                None => Vec::new(),
-            };
-
-            // Don't wait for the ack since it's not fundamental for the connection
-            client
-                .publish(topic, rumqttc::QoS::ExactlyOnce, false, payload)
-                .await
-                .map_err(InitError::client("device property"))?;
-
-            if prop.value.is_none() {
-                trace!("clearing unset property {}/{}", prop.interface, prop.path);
-
-                if let Err(error) = store.delete_prop(&prop.into()).await {
-                    error!(error = %Report::new(error), "couldn't delete unset property, proceeding anyways to ensure connection")
-                }
-            }
-        }
 
         Ok(())
     }
@@ -831,7 +749,7 @@ impl From<Handshake> for State {
 /// Waits for all the packets sent in the [`Init`] to be ACK-ed by Astarte.
 #[derive(Debug)]
 pub(crate) struct WaitAcks {
-    handle: JoinHandle<Result<(), InitError>>,
+    handle: Option<JoinHandle<Result<(), InitError>>>,
     session_present: bool,
 }
 
@@ -842,29 +760,21 @@ impl WaitAcks {
     /// packets in are sent correctly and the handle can advance to completion. Eventual published
     /// packets are returned.
     async fn wait_connection(&mut self, conn: &mut Connection) -> Next {
-        tokio::select! {
-            // Join handle is cancel safe
-            res = &mut self.handle => {
-                debug!("task joined");
+        if let Some(handle) = self.handle.as_mut() {
+            tokio::select! {
+                // Join handle is cancel safe
+                res = handle => {
+                    debug!("task joined");
 
-                Self::handle_join(res, conn, self.session_present)
-            }
-            // I hope this is cancel safe
-            res = conn.eventloop_mut().poll() => {
-                debug!("next event polled");
-
-                match res {
-                    Ok(Event::Incoming(rumqttc::Packet::ConnAck(connack))) => {
-                        debug!("connack received, initializing connection");
-
-                        Next::state(Handshake {
-                            session_present: connack.session_present,
-                        })
-                    }
-                    Ok(event) => Next::handle_event(event),
-                    Err(err) => Next::handle_error(err),
+                    Self::handle_join(res, conn, self.session_present)
+                }
+                // I hope this is cancel safe
+                res = conn.eventloop_mut().poll() => {
+                    Self::handle_poll(res)
                 }
             }
+        } else {
+            Next::state(Connected::new(self.session_present))
         }
     }
 
@@ -897,14 +807,32 @@ impl WaitAcks {
             }
         }
     }
+
+    fn handle_poll(res: Result<Event, ConnectionError>) -> Next {
+        debug!("next event polled");
+
+        match res {
+            Ok(Event::Incoming(rumqttc::Packet::ConnAck(connack))) => {
+                debug!("connack received, initializing connection");
+
+                Next::state(Handshake {
+                    session_present: connack.session_present,
+                })
+            }
+            Ok(event) => Next::handle_event(event),
+            Err(err) => Next::handle_error(err),
+        }
+    }
 }
 
 /// Abort the task when there a change of state (e.g. [`Disconnected`]) while the handle is not
 /// finished.
 impl Drop for WaitAcks {
     fn drop(&mut self) {
-        if !self.handle.is_finished() {
-            self.handle.abort();
+        if let Some(handle) = self.handle.as_ref() {
+            if !handle.is_finished() {
+                handle.abort();
+            }
         }
     }
 }
@@ -1064,7 +992,7 @@ mod tests {
         AstarteData,
         builder::Config,
         retention::memory::VolatileStore,
-        store::mock::MockStore,
+        store::{OptStoredProp, mock::MockStore},
         test::{DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, SERVER_INDIVIDUAL},
         transport::mqtt::test::notify_success,
     };
@@ -1117,7 +1045,7 @@ mod tests {
             });
     }
 
-    fn mock_hanshacke_with_session(
+    fn mock_handshake_with_session(
         seq: &mut Sequence,
         store: &mut MockStore,
         client: &mut AsyncClient,
@@ -1133,32 +1061,11 @@ mod tests {
                 move |_, _| Ok(props.clone())
             });
 
-        client.expect_clone().once().in_sequence(seq).returning({
-            let props = props.clone();
-
-            move || {
-                let mut client = AsyncClient::default();
-                let mut seq = Sequence::new();
-
-                for p in props.clone() {
-                    client
-                        .expect_publish::<String, Vec<u8>>()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .with(
-                            predicate::function(move |f: &String| {
-                                f.ends_with(p.interface.as_str())
-                            }),
-                            predicate::eq(QoS::ExactlyOnce),
-                            predicate::eq(false),
-                            predicate::always(),
-                        )
-                        .returning(|_, _, _, _| notify_success(AckOfPub::None));
-                }
-
-                client
-            }
-        });
+        client
+            .expect_clone()
+            .once()
+            .in_sequence(seq)
+            .returning(AsyncClient::default);
 
         store
             .expect_clone()
@@ -1200,7 +1107,6 @@ mod tests {
             });
 
         client.expect_clone().once().in_sequence(seq).returning({
-            let props = props.clone();
             let server_interfaces = server_interfaces.to_vec();
 
             move || {
@@ -1267,24 +1173,6 @@ mod tests {
                     )
                     .returning(|_, _, _, _| notify_success(AckOfPub::None));
 
-                for p in props.clone() {
-                    client
-                        .expect_publish::<String, Vec<u8>>()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .with(
-                            predicate::eq(format!(
-                                "{client_id}/{}{}",
-                                p.interface.as_str(),
-                                p.path
-                            )),
-                            predicate::eq(QoS::ExactlyOnce),
-                            predicate::eq(false),
-                            predicate::always(),
-                        )
-                        .returning(|_, _, _, _| notify_success(AckOfPub::None));
-                }
-
                 client
             }
         });
@@ -1325,15 +1213,6 @@ mod tests {
                     .with(predicate::always())
                     .returning(|_| ());
 
-                for p in props.iter().filter(|p| p.value.is_none()).cloned() {
-                    store
-                        .expect_unset_prop()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .withf(move |m| m.interface_name() == p.interface)
-                        .returning(|_| Ok(()));
-                }
-
                 store
             });
     }
@@ -1354,6 +1233,11 @@ mod tests {
         };
         let server_interface = Interface::from_str(SERVER_INDIVIDUAL).unwrap();
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
+
+        let mut eventl = EventLoop::new();
+        let mut store = MockStore::new();
+        let mut client = AsyncClient::default();
+        let mut seq = Sequence::new();
         let prop = OptStoredProp {
             interface: DEVICE_PROPERTIES_NAME.to_string(),
             path: "/sensor1/name".to_string(),
@@ -1361,11 +1245,6 @@ mod tests {
             interface_major: 0,
             ownership: interface.ownership(),
         };
-
-        let mut eventl = EventLoop::new();
-        let mut store = MockStore::new();
-        let mut client = AsyncClient::default();
-        let mut seq = Sequence::new();
 
         // Connecting
         mock_receive_connack(
@@ -1455,9 +1334,9 @@ mod tests {
             rumqttc::ConnectReturnCode::Success,
         );
         // Handshake
-        mock_hanshacke_with_session(&mut seq, &mut store, &mut client, Vec::new());
-        // Wait ask
-        mock_wait_acks(&mut seq, &mut eventl);
+        mock_handshake_with_session(&mut seq, &mut store, &mut client, Vec::new());
+        // if the session is present we avoid polling here
+        // mock_wait_acks(&mut seq, &mut eventl);
 
         let interfaces = Interfaces::from_iter(interfaces);
         let shared_state = SharedState::new(

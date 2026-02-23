@@ -34,7 +34,7 @@ use itertools::Itertools;
 use tracing::error;
 
 use crate::aggregate::AstarteObject;
-use crate::store::StoredProp;
+use crate::store::{OptStoredProp, StoredProp};
 use crate::types::{Double, TypeError};
 use crate::validate::ValidatedUnset;
 use crate::{DeviceEvent, Timestamp, Value};
@@ -304,6 +304,21 @@ impl From<ValidatedProperty> for astarte_message_hub_proto::AstarteMessage {
             path: value.path,
             payload: Some(ProtoPayload::PropertyIndividual(
                 astarte_message_hub_proto::AstartePropertyIndividual { data: Some(data) },
+            )),
+        }
+    }
+}
+
+// To convert a stored property
+impl From<OptStoredProp> for astarte_message_hub_proto::AstarteMessage {
+    fn from(prop: OptStoredProp) -> Self {
+        Self {
+            interface_name: prop.interface,
+            path: prop.path,
+            payload: Some(ProtoPayload::PropertyIndividual(
+                astarte_message_hub_proto::AstartePropertyIndividual {
+                    data: prop.value.map(Into::into),
+                },
             )),
         }
     }

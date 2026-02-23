@@ -121,8 +121,8 @@ pub enum SqliteError {
     /// Couldn't join the connection task
     #[error("couldn't join the connection task")]
     Join,
-    /// Conversion error for value to pass to sqlite
-    #[error("Can't convert value passed '{0}'")]
+    /// Couldn't convert passed input
+    #[error("couldn't convert passed input")]
     Conversion(usize),
 }
 

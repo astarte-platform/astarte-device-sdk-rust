@@ -521,27 +521,24 @@ impl Default for Context {
     }
 }
 
-pub(crate) async fn mark_unsent_on_err<S>(store: &S, volatile: &VolatileStore, id: &RetentionId)
+pub(crate) async fn stored_mark_unsent<S>(store: &S, id: &Id)
 where
     S: StoreCapabilities,
 {
-    match id {
-        RetentionId::Volatile(id) => {
-            volatile.mark_sent(id, false).await;
-        }
-        RetentionId::Stored(id) => {
-            let Some(retention) = store.get_retention() else {
-                return;
-            };
+    let Some(retention) = store.get_retention() else {
+        return;
+    };
 
-            let update_result = retention.update_sent_flag(id, false).await;
+    let update_result = retention.update_sent_flag(id, false).await;
 
-            if let Err(e) = update_result {
-                warn!(error=%Report::new(e),
-                    "error in the store implementation while marking a record as not sent");
-            }
-        }
+    if let Err(e) = update_result {
+        warn!(error=%Report::new(e),
+            "error in the store implementation while marking a record as not sent");
     }
+}
+
+pub(crate) async fn volatile_mark_unsent(volatile: &VolatileStore, id: &Id) {
+    volatile.mark_sent(id, false).await;
 }
 
 #[cfg(test)]

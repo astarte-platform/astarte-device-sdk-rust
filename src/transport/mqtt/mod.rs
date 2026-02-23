@@ -66,9 +66,7 @@ use crate::{
     error::Report,
     interfaces::{self, DeviceIntrospection, Interfaces, MappingRef},
     properties,
-    retention::{
-        PublishInfo, RetentionId, StoredRetention, mark_unsent_on_err, memory::VolatileStore,
-    },
+    retention::{PublishInfo, RetentionId, StoredRetention, memory::VolatileStore},
     session::{IntrospectionInterface, StoredSession},
     state::SharedState,
     store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
@@ -304,13 +302,9 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, validated.reliability, notice?).await?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -335,13 +329,9 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, validated.reliability, notice?).await?;
+        self.mark_sent(id, validated.reliability, notice).await?;
 
         Ok(())
     }
@@ -363,15 +353,34 @@ where
                 to_qos(data.reliability),
                 data.value.into(),
             )
-            .await;
+            .await?;
 
-        if notice.is_err() {
-            mark_unsent_on_err(&self.store, &self.state.volatile_store, &id).await;
-        }
-
-        self.mark_sent(id, data.reliability, notice?).await?;
+        self.mark_sent(id, data.reliability, notice).await?;
 
         Ok(())
+    }
+
+    /// Resend previously stored property.
+    async fn resend_stored_property(
+        &mut self,
+        property_data: OptStoredProp,
+    ) -> Result<(), crate::Error> {
+        let buf = property_data
+            .value
+            .as_ref()
+            .map(|d| payload::serialize_individual(d, None))
+            .unwrap_or(Ok(Vec::new()))
+            .map_err(MqttError::Payload)?;
+
+        self.send(
+            &property_data.interface,
+            &property_data.path,
+            QoS::ExactlyOnce,
+            buf,
+        )
+        .await
+        .map(drop)
+        .map_err(Error::Mqtt)
     }
 
     async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {
@@ -823,7 +832,7 @@ pub(crate) struct SessionData {
     interfaces: String,
     interfaces_stored: Vec<IntrospectionInterface>,
     server_interfaces: Vec<String>,
-    device_properties: Vec<OptStoredProp>,
+    device_properties: Vec<String>,
 }
 
 impl SessionData {
@@ -835,25 +844,29 @@ impl SessionData {
             .collect()
     }
 
-    async fn load_device_properties<S>(interfaces: &Interfaces, store: &S) -> Vec<OptStoredProp>
+    async fn load_set_device_properties<S>(interfaces: &Interfaces, store: &S) -> Vec<String>
     where
         S: PropertyStore,
     {
-        let device_properties = store
-            .device_props_with_unset(usize::MAX, 0)
+        let set_properties = store
+            .device_props_with_unset(i64::MAX as usize, 0)
             .await
-            .map(|mut p| {
+            .map(|p| {
                 // Filter interfaces that are missing or have been updated
-                p.retain(|prop| {
-                    interfaces
-                        .get(&prop.interface)
-                        .is_some_and(|interface| interface.version_major() == prop.interface_major)
-                });
-
-                p
+                p.iter()
+                    .filter(|prop| {
+                        prop.value
+                            .as_ref()
+                            .and_then(|_| interfaces.get(&prop.interface))
+                            .is_some_and(|interface| {
+                                interface.version_major() == prop.interface_major
+                            })
+                    })
+                    .map(|val| format!("{}{}", val.interface, val.path))
+                    .collect::<Vec<String>>()
             });
 
-        match device_properties {
+        match set_properties {
             Ok(p) => p,
             Err(e) => {
                 error!(error = %Report::new(e), "error while loading device properties from the store");
@@ -868,7 +881,7 @@ impl SessionData {
     {
         let server_interfaces = Self::filter_server_interfaces(interfaces);
         let interfaces_stored: Vec<IntrospectionInterface> = interfaces.into();
-        let device_properties = Self::load_device_properties(interfaces, store).await;
+        let device_properties = Self::load_set_device_properties(interfaces, store).await;
 
         Self {
             interfaces: interfaces.get_introspection_string(),

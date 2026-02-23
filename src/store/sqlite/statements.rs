@@ -216,7 +216,7 @@ impl ReadConnection {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<OptStoredProp>, SqliteError> {
-        let limit = i64::try_from(limit).map_err(|_| SqliteError::Conversion(limit))?;
+        let limit = i64::try_from(limit).map_err(|_| SqliteError::Conversion(offset))?;
         let offset = i64::try_from(offset).map_err(|_| SqliteError::Conversion(offset))?;
 
         let ownership_par = RecordOwnership::from(ownership);

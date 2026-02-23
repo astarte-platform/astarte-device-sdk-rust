@@ -33,13 +33,13 @@ use crate::{
     validate::{ValidatedIndividual, ValidatedObject},
 };
 use crate::{
-    Timestamp,
     aggregate::AstarteObject,
     error::{AggregationError, InterfaceTypeError},
     logging::security::{SecurityEvent, notify_security_event},
     retention::{
         Id, RetentionId, StoredRetention, StoredRetentionExt,
         memory::{ItemValue, VolatileItemError},
+        stored_mark_unsent, volatile_mark_unsent,
     },
     store::StoreCapabilities,
     transport::{
@@ -496,7 +496,15 @@ where
         let id = state.retention_ctx().next();
 
         data.store_publish(&id, sender, retention, true).await?;
-        data.send_stored(RetentionId::Stored(id), sender).await
+
+        let result = data.send_stored(RetentionId::Stored(id), sender).await;
+
+        if result.is_err() {
+            error!("error while sending stored marking unsent");
+            stored_mark_unsent(store, &id).await;
+        }
+
+        result
     }
 
     async fn send_volatile<T>(
@@ -512,7 +520,15 @@ where
         let id = state.retention_ctx().next();
 
         state.volatile_store().push_sent(id, data.clone()).await;
-        data.send_stored(RetentionId::Volatile(id), sender).await
+
+        let result = data.send_stored(RetentionId::Volatile(id), sender).await;
+
+        if result.is_err() {
+            error!("error while sending volatile marking unsent");
+            volatile_mark_unsent(state.volatile_store(), &id).await;
+        }
+
+        result
     }
 }
 

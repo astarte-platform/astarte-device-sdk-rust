@@ -36,7 +36,7 @@ use crate::{
     client::RecvError,
     interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
-    store::StoreCapabilities,
+    store::{OptStoredProp, StoreCapabilities},
     types::AstarteData,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedProperty, ValidatedUnset},
 };
@@ -123,6 +123,12 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
+    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+
+    /// Resend previously stored property.
+    fn resend_stored_property(
+        &mut self,
+        property_data: OptStoredProp,
     ) -> impl Future<Output = Result<(), crate::Error>> + Send;
 
     /// Sends validated property values over this connection
