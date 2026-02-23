@@ -1,7 +1,7 @@
 <!--
 This file is part of Astarte.
 
-Copyright 2025 SECO Mind Srl
+Copyright 2025, 2026 SECO Mind Srl
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,38 +22,59 @@ SPDX-License-Identifier: Apache-2.0
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.11.3](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.11.2...v0.11.3) - 2026-02-20
 
-### Changed
+### Fixed
 
-- Bump MSRV to 1.86 and move to 2024 edition
-  [#547](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/547)
+- _(doc)_ fix flag to build on docs.rs
 
-## [v0.11.2] - 2026-01-09
+### Other
+
+- forward port release v0.10.7
+- forward port release v0.9.11
+
+
+## [0.10.7](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.10.6...v0.10.7) - 2026-02-19
+
+### Fixed
+
+- _(doc)_ fix flag to build on docs.rs
+
+### Other
+
+- forward port release v0.9.11
+
+## [0.9.11](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-v0.9.10...astarte-device-sdk-v0.9.11) - 2026-02-19
+
+### Fixed
+
+- _(doc)_ fix flag to build on docs.rs
+
+## [0.11.2] - 2026-01-09
 
 ### Changed
 
 - Forward port changes release v0.10.6.
   [#550](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/550)
 
-## [v0.10.6] - 2026-01-09
+## [0.10.6] - 2026-01-09
 
 ### Fixed
 
 - Use only send_async on retention channel.
   [#545](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/545)
 
-## [v0.11.1] - 2026-01-09
+## [0.11.1] - 2026-01-09
 
 ### Changed
 
 - Changed serialization of security-events.
   [#540](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/540)
 
-## [v0.11.0] - 2025-12-18
+## [0.11.0] - 2025-12-18
 
 ### Added
 
@@ -62,14 +83,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Add a user configurable send timeout applied to mqtt send function calls.
   [#539](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/539)
 
-## [v0.10.5] - 2025-11-18
+## [0.10.5] - 2025-11-18
 
 ### Fixed
 
 - Forward port changes release v0.9.10
   [#526](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/526)
 
-## [v0.9.10] - 2025-11-12
+## [0.9.10] - 2025-11-12
 
 ### Fixed
 
@@ -78,28 +99,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Fix the resend process after a reconnection
   [#523](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/523)
 
-## [v0.10.4] - 2025-09-19
+## [0.10.4] - 2025-09-19
 
 ### Changed
 
 - Forward port release v0.9.9
   [#516](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/516)
 
-## [v0.9.9] - 2025-09-18
+## [0.9.9] - 2025-09-18
 
 ### Changed
 
 - Forward port release v0.8.7
   [#514](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/514)
 
-## [v0.8.7] - 2025-09-18
+## [0.8.7] - 2025-09-18
 
 ### Changed
 
 - Forward port release v0.7.6
   [#512](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/512)
 
-## [v0.7.6] - 2025-09-17
+## [0.7.6] - 2025-09-17
 
 ### Changed
 
