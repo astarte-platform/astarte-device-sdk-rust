@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,17 +18,19 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use eyre::{Context, ensure};
+use eyre::{Context, bail, ensure, eyre};
 use phoenix_chan::Message;
 use phoenix_chan::tungstenite::http::Uri;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio::task::JoinSet;
-use tracing::{error, info, instrument, trace};
+use tracing::{debug, error, info, instrument, trace};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Reply {
@@ -75,7 +77,7 @@ pub(crate) struct Channel {
     room: String,
     device_id: String,
     client: Arc<phoenix_chan::Client>,
-    joined: bool,
+    joined: AtomicBool,
     rx: async_channel::Receiver<Reply>,
 }
 
@@ -104,21 +106,27 @@ impl Channel {
             .await?;
         let client = Arc::new(client);
 
-        let room = format!("rooms:{realm}:e2e_test_{device_id}");
+        let uuid = Uuid::now_v7();
+
+        let room = format!("rooms:{realm}:e2e_test_{uuid}_{device_id}");
 
         let rx = spawn_channel_recv(&client, tasks, cancel);
 
-        Ok(Self {
+        let this = Self {
             room,
-            device_id: device_id.to_string(),
             client,
-            joined: false,
+            joined: AtomicBool::new(false),
             rx,
-        })
+            device_id: device_id.to_string(),
+        };
+
+        this.join().await?;
+
+        Ok(this)
     }
 
     #[instrument(skip(self))]
-    async fn wait_for(&mut self, id: usize) -> eyre::Result<()> {
+    async fn wait_for(&self, id: usize) -> eyre::Result<()> {
         trace!("waiting for response");
 
         loop {
@@ -151,18 +159,20 @@ impl Channel {
     }
 
     #[instrument(skip(self))]
-    pub(crate) async fn join(&mut self) -> eyre::Result<()> {
+    pub(crate) async fn join(&self) -> eyre::Result<()> {
         let id = self.client.join(&self.room).await?;
 
         self.wait_for(id).await?;
 
-        self.joined = true;
+        self.joined
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map_err(|joined| eyre!("cmp exchange failed joined={joined}"))?;
 
         Ok(())
     }
 
     #[instrument(skip(self, trigger), fields(trigger_name = trigger.name))]
-    pub(crate) async fn watch(&mut self, trigger: TransitiveTrigger<'_>) -> eyre::Result<()> {
+    pub(crate) async fn watch(&self, trigger: TransitiveTrigger<'_>) -> eyre::Result<()> {
         let id = self.client.send(&self.room, "watch", trigger).await?;
 
         self.wait_for(id).await?;
@@ -171,8 +181,10 @@ impl Channel {
     }
 
     #[instrument(skip(self))]
-    pub(crate) async fn next_data_event(&mut self) -> eyre::Result<IncomingData> {
-        loop {
+    pub(crate) async fn next_data_event(&self) -> eyre::Result<IncomingData> {
+        for i in 0.. {
+            debug!(i, "waiting for next device data event");
+
             let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
                 .await
                 .wrap_err("waiting for new_event")?
@@ -188,11 +200,15 @@ impl Channel {
 
             return Ok(data);
         }
+
+        bail!("never received data event")
     }
 
     #[instrument(skip(self))]
     pub(crate) async fn next_device_disconnected(&mut self) -> eyre::Result<()> {
-        loop {
+        for i in 0.. {
+            debug!(i, "waiting for next device disconnected");
+
             let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
                 .await
                 .wrap_err("waiting for new_event")?
@@ -210,12 +226,14 @@ impl Channel {
 
             return Ok(());
         }
+
+        bail!("never received disconnect")
     }
 }
 
 impl Drop for Channel {
     fn drop(&mut self) {
-        if !self.joined {
+        if !self.joined.load(Ordering::Relaxed) {
             return;
         }
 
@@ -235,14 +253,38 @@ impl Drop for Channel {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TriggerTarget<'a> {
+    #[default]
+    AllDevices,
+    DeviceId(&'a str),
+    GroupName(&'a str),
+}
+
+impl<'a> TriggerTarget<'a> {
+    /// Returns `true` if the trigger target is [`AllDevices`].
+    ///
+    /// [`AllDevices`]: TriggerTarget::AllDevices
+    #[must_use]
+    pub(crate) fn is_all_devices(&self) -> bool {
+        matches!(self, Self::AllDevices)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TransitiveTrigger<'a> {
     pub(crate) name: &'a str,
-    pub(crate) device_id: &'a str,
+    #[serde(
+        default,
+        flatten,
+        skip_serializing_if = "TriggerTarget::is_all_devices"
+    )]
+    pub(crate) target: TriggerTarget<'a>,
     pub(crate) simple_trigger: SimpleTrigger<'a>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum SimpleTrigger<'a> {
     DeviceTrigger {
@@ -258,7 +300,7 @@ pub(crate) enum SimpleTrigger<'a> {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceTriggerCondition {
     DeviceConnected,
@@ -267,7 +309,7 @@ pub enum DeviceTriggerCondition {
     DeviceEmptyCacheReceived,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataTriggerCondition {
     IncomingData,
@@ -418,14 +460,13 @@ async fn recv_phx_events(
     }
 }
 
-pub(crate) async fn register_triggers(channel: &mut Channel) -> eyre::Result<()> {
-    channel.join().await?;
-    let device_id = &channel.device_id.clone();
+pub(crate) async fn register_triggers(channel: &Channel) -> eyre::Result<()> {
+    let device_id = channel.device_id.as_str();
 
     channel
         .watch(TransitiveTrigger {
             name: &format!("connectiontrigger-{device_id}"),
-            device_id,
+            target: TriggerTarget::DeviceId(device_id),
             simple_trigger: SimpleTrigger::DeviceTrigger {
                 on: DeviceTriggerCondition::DeviceConnected,
                 device_id,
@@ -436,7 +477,7 @@ pub(crate) async fn register_triggers(channel: &mut Channel) -> eyre::Result<()>
     channel
         .watch(TransitiveTrigger {
             name: &format!("disconnectiontrigger-{device_id}"),
-            device_id,
+            target: TriggerTarget::DeviceId(device_id),
             simple_trigger: SimpleTrigger::DeviceTrigger {
                 on: DeviceTriggerCondition::DeviceDisconnected,
                 device_id,
@@ -447,7 +488,7 @@ pub(crate) async fn register_triggers(channel: &mut Channel) -> eyre::Result<()>
     channel
         .watch(TransitiveTrigger {
             name: &format!("errortrigger-{device_id}"),
-            device_id,
+            target: TriggerTarget::DeviceId(device_id),
             simple_trigger: SimpleTrigger::DeviceTrigger {
                 on: DeviceTriggerCondition::DeviceError,
                 device_id,
@@ -458,7 +499,7 @@ pub(crate) async fn register_triggers(channel: &mut Channel) -> eyre::Result<()>
     channel
         .watch(TransitiveTrigger {
             name: &format!("datatrigger-{device_id}"),
-            device_id,
+            target: TriggerTarget::DeviceId(device_id),
             simple_trigger: SimpleTrigger::DataTrigger {
                 on: DataTriggerCondition::IncomingData,
                 device_id,
@@ -474,6 +515,8 @@ pub(crate) async fn register_triggers(channel: &mut Channel) -> eyre::Result<()>
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -481,7 +524,7 @@ mod tests {
         let device_id = "FdUczQZzSoyFnKDl-srB0w";
         let trigger = TransitiveTrigger {
             name: &format!("connectiontrigger-{device_id}"),
-            device_id,
+            target: TriggerTarget::DeviceId(device_id),
             simple_trigger: SimpleTrigger::DeviceTrigger {
                 on: DeviceTriggerCondition::DeviceConnected,
                 device_id,

@@ -46,7 +46,9 @@ use sync_wrapper::SyncWrapper;
 use tracing::{error, trace, warn};
 use uuid::Uuid;
 
-use self::convert::{MessageHubProtoError, try_from_individual, try_from_property};
+use self::convert::{
+    MessageHubProtoError, try_from_individual, try_from_object, try_from_property,
+};
 use self::store::GrpcStore;
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
@@ -535,14 +537,13 @@ impl Receive for Grpc {
             )));
         };
 
-        let data = AstarteObject::try_from(data).map_err(|err| {
+        let (data, timestamp) = try_from_object(data).map_err(|err| {
             RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(err))
         })?;
 
         trace!("object received");
 
-        // FIXME: replace None with the actual timestamp
-        Ok((data, None))
+        Ok((data, timestamp))
     }
 }
 
@@ -635,9 +636,6 @@ where
 
         let store = StoreWrapper::new(GrpcStore::new(client.clone()));
 
-        // HACK: disable the volatile retention
-        config.state.volatile_store.set_capacity(0).await;
-
         let state = Arc::clone(&config.state);
 
         let sender = GrpcClient::new(client.clone(), store.clone(), state);
@@ -647,8 +645,6 @@ where
             sender,
             connection,
             store,
-            // NOTE if the attach is successful we have correctly established a connection with the grpc server
-            connected: true,
         })
     }
 }
@@ -691,6 +687,7 @@ mod test {
     use pretty_assertions::assert_eq;
     use uuid::uuid;
 
+    use crate::builder::Config;
     use crate::retention::memory::VolatileStore;
     use crate::test::{
         DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, E2E_DEVICE_PROPERTY,
@@ -811,8 +808,9 @@ mod test {
 
         let node_data = NodeData::try_from(&interfaces)?;
         let state = SharedState::new(
+            Config::default(),
             interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
         );
 
         let client = GrpcClient::new(message_hub_client_tx, store, Arc::new(state));
@@ -871,7 +869,7 @@ mod test {
             return false;
         };
 
-        let Ok(data) = AstarteObject::try_from(data.clone()) else {
+        let Ok((data, _timestamp)) = try_from_object(data.clone()) else {
             return false;
         };
 

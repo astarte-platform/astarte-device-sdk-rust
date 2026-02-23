@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use std::io::{IsTerminal, stdout};
 
 use astarte_device_sdk::DeviceClient;
 use astarte_device_sdk::store::SqliteStore;
-use astarte_device_sdk::transport::mqtt::{Credential, Mqtt};
+use astarte_device_sdk::transport::mqtt::{Credential, Mqtt, MqttArgs};
 use clap::Parser;
 use eyre::{Context, eyre};
 use tokio::task::JoinSet;
@@ -94,16 +94,16 @@ async fn main() -> eyre::Result<()> {
         }
     };
 
-    let mut mqtt_config = MqttConfig::new(
-        &config.run.realm,
-        &config.run.device_id,
-        Credential::paring_token(config.run.pairing_token.clone()),
-        config.url.pairing_url()?,
-    );
+    let mut mqtt_config = MqttConfig::new(MqttArgs {
+        realm: config.run.realm.to_string(),
+        device_id: config.run.device_id.to_string(),
+        credential: Credential::paring_token(config.run.pairing_token.clone()),
+        pairing_url: config.url.pairing_url()?,
+    });
 
     // Ignore SSL for local testing
     if config.url.ignore_ssl {
-        mqtt_config.ignore_ssl_errors();
+        mqtt_config = mqtt_config.ignore_ssl_errors();
     }
 
     let api = config.api_client()?;
@@ -124,9 +124,13 @@ async fn main() -> eyre::Result<()> {
     )
     .await?;
 
+    let store = SqliteStore::options()
+        .with_writable_dir(&config.run.store_dir)
+        .await?;
+
     let (mut client, connection) = DeviceBuilder::new()
-        .store_dir(&config.run.store_dir)
-        .await?
+        .writable_dir(&config.run.store_dir)
+        .store(store)
         .interface_directory(INTERFACE_DIR)?
         .connection(mqtt_config)
         .build()
@@ -139,7 +143,10 @@ async fn main() -> eyre::Result<()> {
     });
 
     tasks.spawn(async move {
-        channel::register_triggers(&mut channel).await?;
+        retry(10, || channel::register_triggers(&channel)).await?;
+
+        // NOTE: the event is lost since the device is already registered
+        // channel.next_device_connected().await?;
 
         device::interfaces::check_add(&api, &mut client).await?;
 
@@ -188,6 +195,8 @@ async fn main() -> eyre::Result<()> {
             }
             Ok(Err(err)) => {
                 error!(error = %err, "task returned an error");
+
+                tasks.abort_all();
 
                 if ret_res.is_ok() {
                     ret_res = Err(err);

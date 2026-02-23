@@ -18,6 +18,7 @@
 
 use std::{num::NonZeroU32, path::PathBuf, time::Duration};
 
+use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
 use clap::Parser;
 use eyre::OptionExt;
 use futures::future::Either;
@@ -30,13 +31,14 @@ use astarte_device_sdk::{
 use tokio::task::JoinSet;
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Config {
     realm: String,
     device_id: String,
     credentials_secret: String,
-    pairing_url: String,
+    pairing_url: Url,
 }
 
 #[derive(Parser, Debug)]
@@ -139,20 +141,26 @@ async fn main() -> eyre::Result<()> {
         .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
         .unwrap_or_else(|| "./examples/individual_properties/configuration.json".to_string());
     let file = std::fs::read_to_string(file_path)?;
-    let cfg: Config = serde_json::from_str(&file)?;
+    let Config {
+        realm,
+        device_id,
+        credentials_secret,
+        pairing_url,
+    } = serde_json::from_str(&file)?;
 
     // Open the database, create it if it does not exists
-    let db =
-        SqliteStore::connect_db("examples/individual_properties/astarte-example-db.sqlite").await?;
+    let db = SqliteStore::options()
+        .with_db_file("examples/individual_properties/astarte-example-db.sqlite")
+        .await?;
 
-    let mut mqtt_config = MqttConfig::with_credential_secret(
-        &cfg.realm,
-        &cfg.device_id,
-        &cfg.credentials_secret,
-        &cfg.pairing_url,
-    );
+    let args = MqttArgs {
+        realm,
+        device_id,
+        credential: Credential::secret(credentials_secret),
+        pairing_url,
+    };
 
-    mqtt_config.ignore_ssl_errors();
+    let mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
 
     // Create an Astarte Device (also performs the connection)
     let (mut client, connection) = DeviceBuilder::new()

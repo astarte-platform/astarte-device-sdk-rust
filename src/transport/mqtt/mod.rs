@@ -34,22 +34,19 @@ pub mod registration;
 mod retention;
 pub mod topic;
 
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-    future::{Future, IntoFuture},
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use std::collections::HashMap;
+use std::fmt::{Debug, Display};
+use std::future::{Future, IntoFuture};
+use std::sync::{Arc, OnceLock};
 
+use astarte_interfaces::schema::{Ownership, Reliability};
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
-    schema::{Ownership, Reliability},
 };
 use bytes::Bytes;
 use futures::{TryFutureExt, future::Either};
 use itertools::Itertools;
-use rumqttc::{AckOfPub, ClientError, QoS, SubAck, SubscribeFilter, Token, TokenError};
+use rumqttc::{AckOfPub, ClientError, QoS, Token, TokenError};
 use tracing::{debug, error, info, trace};
 
 use super::{
@@ -58,6 +55,7 @@ use super::{
 };
 
 pub use self::config::Credential;
+pub use self::config::MqttArgs;
 pub use self::config::MqttConfig;
 pub use self::pairing::PairingError;
 pub use self::payload::PayloadError;
@@ -88,7 +86,7 @@ use self::{
 };
 
 /// Default keep alive interval in seconds for the MQTT connection.
-pub const DEFAULT_KEEP_ALIVE: u64 = 30;
+pub const DEFAULT_KEEP_ALIVE: u64 = 15;
 
 /// Struct representing an MQTT connection handler for an Astarte device.
 ///
@@ -101,7 +99,6 @@ pub struct MqttClient<S> {
     retention: RetSender,
     store: StoreWrapper<S>,
     state: Arc<SharedState>,
-    send_timeout: Duration,
 }
 
 impl<S> MqttClient<S> {
@@ -111,7 +108,6 @@ impl<S> MqttClient<S> {
         retention: RetSender,
         store: StoreWrapper<S>,
         state: Arc<SharedState>,
-        send_timeout: Duration,
     ) -> Self {
         Self {
             client_id,
@@ -119,30 +115,6 @@ impl<S> MqttClient<S> {
             retention,
             store,
             state,
-            send_timeout,
-        }
-    }
-
-    /// Create a new client.
-    pub(crate) fn new(
-        client_id: ClientId,
-        mqtt_client: AsyncClient,
-        retention: RetSender,
-        store: StoreWrapper<S>,
-        state: Arc<SharedState>,
-        send_timeout: Duration,
-    ) -> Self {
-        let client = OnceLock::new();
-        client.set(mqtt_client).unwrap(); // NOTE this should never panic or block
-        let client = Arc::new(client);
-
-        Self {
-            client_id,
-            client,
-            retention,
-            store,
-            state,
-            send_timeout,
         }
     }
 
@@ -262,7 +234,7 @@ impl<S> MqttClient<S> {
     where
         F: Future<Output = Result<T, MqttError>>,
     {
-        tokio::time::timeout(self.send_timeout, fut)
+        tokio::time::timeout(self.state.config.send_timeout, fut)
             .await
             .map_err(MqttError::Timeout)?
     }
@@ -717,7 +689,7 @@ impl<S> Mqtt<S> {
 
         let stored_props = self.store.server_props().await?;
 
-        for ref stored_prop in stored_props {
+        for stored_prop in &stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
@@ -920,9 +892,9 @@ trait AsyncClientExt {
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> impl Future<Output = Result<Option<Token<SubAck>>, ClientError>> + Send
+    ) -> impl Future<Output = Result<(), ClientError>> + Send
     where
-        S: Display + Debug + Send + Sync;
+        S: AsRef<str> + Send + Sync;
 }
 
 impl AsyncClientExt for AsyncClient {
@@ -944,42 +916,20 @@ impl AsyncClientExt for AsyncClient {
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<Option<Token<SubAck>>, ClientError>
+    ) -> Result<(), ClientError>
     where
-        S: Display + Debug + Send + Sync,
+        S: AsRef<str> + Send + Sync,
     {
-        // should not subscribe if there are no interfaces
-        if interfaces_names.is_empty() {
-            debug!("empty subscribe many");
+        for if_name in interfaces_names {
+            let if_name = if_name.as_ref();
 
-            return Ok(None);
-        } else if interfaces_names.len() == 1 {
-            trace!("subscribing on single interface");
+            debug!(interface = if_name, "subscribing on interface");
 
-            let name = &interfaces_names[0];
-
-            return self
-                .subscribe(
-                    client_id.make_interface_wildcard(name),
-                    rumqttc::QoS::ExactlyOnce,
-                )
-                .await
-                .map(Some);
+            self.subscribe(client_id.make_interface_wildcard(if_name), QoS::ExactlyOnce)
+                .await?;
         }
 
-        trace!("subscribing on {interfaces_names:?}");
-
-        let topics = interfaces_names
-            .iter()
-            .map(|name| SubscribeFilter {
-                path: client_id.make_interface_wildcard(name),
-                qos: rumqttc::QoS::ExactlyOnce,
-            })
-            .collect_vec();
-
-        debug!("topics {topics:?}");
-
-        self.subscribe_many(topics).await.map(Some)
+        Ok(())
     }
 }
 
@@ -990,21 +940,11 @@ pub(crate) mod test {
     use astarte_interfaces::AggregationIndividual;
     use chrono::Utc;
     use mockall::{Sequence, predicate};
-    use mockito::Server;
-    use pairing::tests::mock_verify_certificate;
-    use properties::extract_set_properties;
-    use rumqttc::{
-        ClientError, ConnAck, ConnectReturnCode, ConnectionError, Event as MqttEvent, Packet, QoS,
-        Resolver, UnsubAck,
-    };
+    use rumqttc::{ClientError, QoS, Resolver, SubAck, UnsubAck};
     use tempfile::TempDir;
-    use test::{
-        client::NEW_LOCK,
-        pairing::tests::{mock_create_certificate, mock_get_broker_url},
-    };
 
     use crate::{
-        builder::{BuildConfig, ConnectionConfig, DEFAULT_VOLATILE_CAPACITY, DeviceBuilder},
+        builder::{Config, DEFAULT_VOLATILE_CAPACITY},
         retention::Context,
         session::SessionError,
         store::{SqliteStore, memory::MemoryStore, mock::MockStore},
@@ -1071,8 +1011,9 @@ pub(crate) mod test {
         let interfaces = interfaces.iter().map(|i| Interface::from_str(i).unwrap());
 
         let state = Arc::new(SharedState::new(
+            Config::default(),
             Interfaces::from_iter(interfaces),
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
         ));
 
         let mqtt = Mqtt::new(
@@ -1082,21 +1023,19 @@ pub(crate) mod test {
                 eventloop,
                 transport_provider,
                 self::connection::Connected::new(true),
-                Duration::from_secs(10),
             ),
             MqttRetention::new(ret_rx),
             store.clone(),
             Arc::clone(&state),
         );
 
-        let mqtt_client = MqttClient::new(
+        let mqtt_client = MqttClient {
             client_id,
-            client,
-            ret_tx,
+            client: Arc::new(OnceLock::from(client)),
             store,
             state,
-            Duration::from_secs(5),
-        );
+            retention: ret_tx,
+        };
 
         (mqtt_client, mqtt)
     }
@@ -1278,310 +1217,6 @@ pub(crate) mod test {
             .extend_interfaces(&interfaces, &to_add)
             .await
             .expect_err("Didn't return the error");
-    }
-
-    #[tokio::test]
-    async fn should_reconnect() {
-        let _m = NEW_LOCK.lock().await;
-
-        let dir = TempDir::new().unwrap();
-
-        let ctx = AsyncClient::new_context();
-        ctx.expect().once().returning(|_, _| {
-            let mut client = AsyncClient::default();
-            let mut ev_loop = EventLoop::default();
-
-            let mut seq = mockall::Sequence::new();
-
-            ev_loop
-                .expect_set_network_options()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|_| EventLoop::default());
-
-            client
-                .expect_clone()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    let mut client = AsyncClient::default();
-
-                    let mut seq = mockall::Sequence::new();
-
-                    client
-                        .expect_clone()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .returning(|| {
-                            let mut client = AsyncClient::default();
-
-                            let mut seq = mockall::Sequence::new();
-
-                            client
-                                .expect_subscribe::<String>()
-                                .with(
-                                    predicate::eq(
-                                        "realm/device_id/control/consumer/properties".to_string(),
-                                    ),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                )
-                                .once()
-                                .in_sequence(&mut seq)
-                                .returning(|_, _| notify_success(SubAck::new(0, Vec::new())));
-
-                            client
-                                .expect_publish::<String, String>()
-                                .with(
-                                    predicate::eq("realm/device_id".to_string()),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                    predicate::eq(false),
-                                    predicate::eq(String::new()),
-                                )
-                                .once()
-                                .in_sequence(&mut seq)
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, &str>()
-                                .once()
-                                .in_sequence(&mut seq)
-                                .with(
-                                    predicate::eq("realm/device_id/control/emptyCache".to_string()),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                    predicate::eq(false),
-                                    predicate::eq("1"),
-                                )
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                                .expect_publish::<String, Vec<u8>>()
-                                .with(
-                                    predicate::eq(
-                                        "realm/device_id/control/producer/properties".to_string(),
-                                    ),
-                                    predicate::eq(QoS::ExactlyOnce),
-                                    predicate::eq(false),
-                                    predicate::function(|payload: &Vec<u8>| {
-                                        extract_set_properties(payload).unwrap().is_empty()
-                                    }),
-                                )
-                                .once()
-                                .in_sequence(&mut seq)
-                                .returning(|_, _, _, _| notify_success(AckOfPub::None));
-
-                            client
-                        });
-
-                    client
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
-                            rustls::Error::AlertReceived(
-                                rustls::AlertDescription::CertificateExpired,
-                            ),
-                        )))
-                    })
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        tokio::task::yield_now().await;
-
-                        Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
-                            session_present: false,
-                            code: ConnectReturnCode::Success,
-                        })))
-                    })
-                });
-
-            // This guaranties we can keep polling while we are waiting for the ACKs.
-            ev_loop.expect_poll().returning(|| {
-                Box::pin(async {
-                    tokio::task::yield_now().await;
-
-                    Ok(MqttEvent::Outgoing(rumqttc::Outgoing::Publish(0)))
-                })
-            });
-
-            (client, ev_loop)
-        });
-
-        let mut server = Server::new_async().await;
-
-        let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server).create_async().await;
-        let mock_verify = mock_verify_certificate(&mut server).create_async().await;
-
-        let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
-
-        let config = MqttConfig::new(
-            "realm",
-            "device_id",
-            Credential::secret("secret"),
-            server.url(),
-        );
-
-        tokio::time::timeout(
-            Duration::from_secs(3),
-            config.connect(BuildConfig {
-                store: builder.store,
-                channel_size: builder.channel_size,
-                writable_dir: builder.writable_dir,
-                state: Arc::new(SharedState::new(
-                    builder.interfaces,
-                    VolatileStore::with_capacity(builder.volatile_retention),
-                )),
-                connection_timeout: Duration::from_secs(10),
-                send_timeout: Duration::from_secs(10),
-            }),
-        )
-        .await
-        .expect("timeout expired")
-        .unwrap();
-
-        mock_url.assert_async().await;
-        mock_cert.assert_async().await;
-        mock_verify.assert_async().await;
-    }
-
-    #[tokio::test]
-    async fn should_reconnect_fast_handshake() {
-        let _m = NEW_LOCK.lock().await;
-
-        let dir = TempDir::new().unwrap();
-
-        let ctx = AsyncClient::new_context();
-        ctx.expect().once().returning(|_, _| {
-            let mut client = AsyncClient::default();
-            let mut ev_loop = EventLoop::default();
-
-            let mut seq = mockall::Sequence::new();
-
-            ev_loop
-                .expect_set_network_options()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|_| EventLoop::default());
-
-            client
-                .expect_clone()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    let mut client = AsyncClient::default();
-
-                    let mut seq = mockall::Sequence::new();
-
-                    client
-                        .expect_clone()
-                        .once()
-                        .in_sequence(&mut seq)
-                        .returning(AsyncClient::default);
-
-                    client
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        Err(ConnectionError::Tls(rumqttc::TlsError::TLS(
-                            rustls::Error::AlertReceived(
-                                rustls::AlertDescription::CertificateExpired,
-                            ),
-                        )))
-                    })
-                });
-
-            ev_loop
-                .expect_poll()
-                .once()
-                .in_sequence(&mut seq)
-                .returning(|| {
-                    Box::pin(async {
-                        tokio::task::yield_now().await;
-
-                        Ok(MqttEvent::Incoming(Packet::ConnAck(ConnAck {
-                            session_present: true,
-                            code: ConnectReturnCode::Success,
-                        })))
-                    })
-                });
-
-            // This guaranties we can keep polling while we are waiting for the ACKs.
-            ev_loop.expect_poll().returning(|| {
-                Box::pin(async {
-                    tokio::task::yield_now().await;
-
-                    Ok(MqttEvent::Outgoing(rumqttc::Outgoing::Publish(0)))
-                })
-            });
-
-            (client, ev_loop)
-        });
-
-        let mut server = Server::new_async().await;
-
-        let mock_url = mock_get_broker_url(&mut server).create_async().await;
-        let mock_cert = mock_create_certificate(&mut server).create_async().await;
-        let mock_verify = mock_verify_certificate(&mut server).create_async().await;
-
-        let builder = DeviceBuilder::new()
-            .interface_str(crate::test::DEVICE_OBJECT)
-            .unwrap()
-            .store_dir(dir.path())
-            .await
-            .unwrap();
-
-        let config = MqttConfig::new(
-            "realm",
-            "device_id",
-            Credential::secret("secret"),
-            server.url(),
-        );
-
-        // add the interfaces to the store so that a fast handshake will be performed
-        let introspection_interfaces: Vec<IntrospectionInterface<&str>> =
-            From::from(&builder.interfaces);
-        builder
-            .store
-            .add_interfaces(&introspection_interfaces)
-            .await
-            .unwrap();
-
-        tokio::time::timeout(
-            Duration::from_secs(3),
-            config.connect(BuildConfig {
-                store: builder.store,
-                channel_size: builder.channel_size,
-                writable_dir: builder.writable_dir,
-                state: Arc::new(SharedState::new(
-                    builder.interfaces,
-                    VolatileStore::with_capacity(builder.volatile_retention),
-                )),
-                connection_timeout: Duration::from_secs(10),
-                send_timeout: Duration::from_secs(10),
-            }),
-        )
-        .await
-        .expect("timeout expired")
-        .unwrap();
-
-        mock_url.assert_async().await;
-        mock_cert.assert_async().await;
-        mock_verify.assert_async().await;
     }
 
     #[tokio::test]
@@ -2073,7 +1708,10 @@ pub(crate) mod test {
     #[tokio::test]
     async fn should_not_enqueue_sent_individual() {
         let dir = TempDir::new().unwrap();
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let eventl = EventLoop::default();
         let mut client = AsyncClient::default();
@@ -2165,7 +1803,10 @@ pub(crate) mod test {
     #[tokio::test]
     async fn should_not_enqueue_sent_object() {
         let dir = TempDir::new().unwrap();
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let eventl = EventLoop::default();
         let mut client = AsyncClient::default();
@@ -2246,7 +1887,10 @@ pub(crate) mod test {
     #[should_panic]
     async fn message_enqueued_twice_panics() {
         let dir = TempDir::new().unwrap();
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let eventl = EventLoop::default();
         let mut client = AsyncClient::default();

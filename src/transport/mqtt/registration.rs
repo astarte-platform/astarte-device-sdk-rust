@@ -1,111 +1,75 @@
-/*
- * This file is part of Astarte.
- *
- * Copyright 2021 SECO Mind Srl
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// This file is part of Astarte.
+//
+// Copyright 2021, 2026 SECO Mind Srl
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! Provides static functions for registering a new device to an Astarte Cluster.
 
-use std::time::Duration;
-
 use base64::Engine;
-use reqwest::{StatusCode, Url};
-use serde::{Deserialize, Serialize};
+use reqwest::Url;
 use uuid::Uuid;
 
-use crate::{
-    logging::security::{SecurityEvent, notify_security_event},
-    transport::mqtt::PairingError,
-};
+use crate::{builder::Config, transport::mqtt::PairingError};
 
-use super::pairing::ApiData;
+use super::pairing::{ApiClient, ClientArgs};
 
-#[derive(Debug, Serialize)]
-struct MqttV1HwId<'a> {
-    hw_id: &'a str,
+/// Arguments for the register device call
+pub struct RegisterDevice<'a> {
+    /// TLS client configuration
+    pub tls: rustls::ClientConfig,
+    /// Pairing url for astarte.
+    ///
+    /// For example <http://api.astarte.localhost/pairing>
+    pub pairing_url: &'a Url,
+    /// Pairing token.
+    ///
+    /// A JWT with the claim to register a device.
+    pub token: &'a str,
+    /// Realm to register the device to
+    pub realm: &'a str,
+    /// Device ID to register.
+    pub device_id: &'a str,
 }
 
-#[derive(Debug, Deserialize)]
-struct MqttV1Credential {
-    credentials_secret: String,
-}
+impl<'a> From<&RegisterDevice<'a>> for ClientArgs<'a> {
+    fn from(value: &RegisterDevice<'a>) -> Self {
+        let RegisterDevice {
+            pairing_url,
+            token,
+            realm,
+            device_id,
+            ..
+        } = value;
 
-/// Obtain a credentials secret from the astarte API
-pub async fn register_device_with_timeout(
-    token: &str,
-    pairing_url: &str,
-    realm: &str,
-    device_id: &str,
-    timeout: Duration,
-) -> Result<String, PairingError> {
-    let mut url = Url::parse(pairing_url)?;
-
-    url.path_segments_mut()
-        .map_err(|_| url::ParseError::RelativeUrlWithCannotBeABaseBase)?
-        .push("v1")
-        .push(realm)
-        .push("agent")
-        .push("devices");
-
-    let payload = ApiData::new(MqttV1HwId { hw_id: device_id });
-
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
-    let response = client
-        .post(url)
-        .bearer_auth(token)
-        .json(&payload)
-        .send()
-        .await?;
-
-    match response.status() {
-        StatusCode::CREATED => {
-            let res: ApiData<MqttV1Credential> = response.json().await?;
-
-            notify_security_event(SecurityEvent::CriticalOperationAuthSuccessful);
-
-            Ok(res.data.credentials_secret)
-        }
-        status_code => {
-            let raw_response = response.text().await?;
-
-            notify_security_event(SecurityEvent::CriticalOperationAuthFailed);
-
-            Err(PairingError::Api {
-                status: status_code,
-                body: raw_response,
-            })
+        ClientArgs {
+            realm,
+            device_id,
+            pairing_url,
+            token,
         }
     }
 }
 
-/// Obtain a credentials secret from the astarte API with a default timeout of 10 seconds
-pub async fn register_device(
-    token: &str,
-    pairing_url: &str,
-    realm: &str,
-    device_id: &str,
-) -> Result<String, PairingError> {
-    register_device_with_timeout(
-        token,
-        pairing_url,
-        realm,
-        device_id,
-        Duration::from_secs(10),
-    )
-    .await
+/// Obtain a credentials secret from the astarte API
+pub async fn register_device<'a>(args: RegisterDevice<'a>) -> Result<String, PairingError> {
+    let config = Config::default();
+
+    ApiClient::create(ClientArgs::from(&args), &config, args.tls)?
+        .register_device()
+        .await
 }
 
 /// Generate a random device Id with UUIDv4.

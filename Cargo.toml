@@ -148,6 +148,7 @@ mockall = { workspace = true }
 mockito = { workspace = true }
 pretty_assertions = { workspace = true }
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
+rustls-platform-verifier.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal", "test-util"] }
 tokio-stream = { workspace = true, features = ["net"] }

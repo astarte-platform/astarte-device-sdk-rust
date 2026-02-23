@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -459,7 +459,10 @@ mod tests {
     #[tokio::test]
     async fn add_interface_major_with_retention_stored() {
         let dir = TempDir::new().unwrap();
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mut client = mock_client_with_store(
             &[for_update::E2E_DEVICE_DATASTREAM_0_1],
@@ -578,7 +581,10 @@ mod tests {
     #[tokio::test]
     async fn extend_interfaces_major_with_retention_stored() {
         let dir = TempDir::new().unwrap();
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let mut client = mock_client_with_store(
             &[for_update::E2E_DEVICE_DATASTREAM_0_1],

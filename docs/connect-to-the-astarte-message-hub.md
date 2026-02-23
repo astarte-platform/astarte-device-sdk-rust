@@ -1,7 +1,7 @@
 <!--
 This file is part of Astarte.
 
-Copyright 2025 SECO Mind Srl
+Copyright 2025, 2026 SECO Mind Srl
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -141,15 +141,13 @@ to the MessageHub. The parameter to configure is the gRPC
 [Endpoint](crate::transport::grpc::tonic::transport::Endpoint) where the MessageHub is listening on
 (`https://127.0.0.1:50051`).
 
-<!--
 To store the Properties[^1] on the device we will use the
 [`SqliteStore`](crate::store::sqlite::SqliteStore), which uses an SQLite database for persistent
-storage. It's enabled and setup automatically by calling the
-[`store_dir`](crate::builder::DeviceBuilder::store_dir) function on the builder.
+storage. It can be configured by calling the [`store`](crate::builder::DeviceBuilder::store)
+function on the builder.
 
 [^1]: To know more on what Properties are, see the
     [Astarte documentation on Properties](https://docs.astarte-platform.org/astarte/latest/030-interface.html#properties)
--->
 
 On the [`DeviceConnection`](crate::connection::DeviceConnection) you need call the
 [`handle_events`](crate::connection::DeviceConnection), which is a blocking method that will handle
@@ -158,15 +156,15 @@ all the connection events. So, to not block the main task, we will use the
 program.
 
 ```no_run
-use astarte_device_sdk::{
-    builder::DeviceBuilder,
-    prelude::*,
-    transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
-    DeviceClient, DeviceConnection,
-};
+use astarte_device_sdk::{DeviceClient, DeviceConnection};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::sqlite::SqliteStore;
+use astarte_device_sdk::transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore};
 use tokio::task::JoinSet;
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
 /// Unique ID for the current application to identify to the message hub with.
@@ -180,14 +178,16 @@ async fn init() -> eyre::Result<(
     DeviceClient<Grpc>,
     DeviceConnection<Grpc>,
 )> {
-    tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
+    tokio::fs::create_dir_all(STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(&MESSAGE_HUB_URL);
     let grpc_config = GrpcConfig::new(NODE_UUID, endpoint);
 
+    let store = SqliteStore::options().with_writable_dir(STORE_DIRECTORY).await?;
+
     let (client, connection) = DeviceBuilder::new()
-        .store_dir(STORE_DIRECTORY)
-        .await?
+        .writable_dir(STORE_DIRECTORY)
+        .store(store)
         .connection(grpc_config)
         .build()
         .await?;
@@ -299,6 +299,7 @@ function that we declared previously.
 #     builder::DeviceBuilder,
 #     prelude::*,
 #     transport::grpc::{tonic::transport::Endpoint, Grpc, GrpcConfig, store::GrpcStore},
+#     store::sqlite::SqliteStore,
 #     DeviceClient, DeviceConnection,
 # };
 #
@@ -316,14 +317,16 @@ async fn init() -> eyre::Result<(
     DeviceClient<Grpc>,
     DeviceConnection<Grpc>,
 )> {
-    tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
+    tokio::fs::create_dir_all(STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(&MESSAGE_HUB_URL);
     let grpc_config = GrpcConfig::new(NODE_UUID, endpoint);
 
+    let store = SqliteStore::options().with_writable_dir(STORE_DIRECTORY).await?;
+
     let (client, connection) = DeviceBuilder::new()
-        .store_dir(STORE_DIRECTORY)
-        .await?
+        .writable_dir(STORE_DIRECTORY)
+        .store(store)
         .interface_str(AGGREGATED_DEVICE)?
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?
@@ -448,8 +451,8 @@ introspection.
 Finally, we can send data to the MessageHub. We implement a task similar to the receive one, in a
 loop every 2 seconds we send the data to all the interfaces. The property one will set and save the
 value, and will only send it once to the Server since it doesn't change. While for the `Aggregated`
-interface we create a struct and derive the [`IntoAstarteObject`](crate::IntoAstarteObject) that will
-convert the Rust struct in an Object Aggregate to send.
+interface we create a struct and derive the [`IntoAstarteObject`](crate::IntoAstarteObject) that
+will convert the Rust struct in an Object Aggregate to send.
 
 ```no_run
 # use astarte_device_sdk::{

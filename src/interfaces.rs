@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2021 - 2025 SECO Mind Srl
+// Copyright 2021-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,7 +31,6 @@ use itertools::Itertools;
 use tracing::{debug, trace, warn};
 
 use crate::error::AggregationError;
-use crate::session::IntrospectionInterface;
 use crate::validate::UserValidationError;
 use crate::{Error, error::InterfaceTypeError};
 
@@ -318,24 +317,6 @@ impl Interfaces {
             .values()
             .filter(|i| !removed.contains_key(i.interface_name()))
     }
-
-    pub(crate) fn matches<S: AsRef<str>>(&self, stored: &[IntrospectionInterface<S>]) -> bool {
-        stored.len() == self.len()
-            && stored.iter().all(|stored_i| {
-                self.get(stored_i.name().as_ref()).is_some_and(|i| {
-                    i.version_major() == stored_i.version_major()
-                        && i.version_minor() == stored_i.version_minor()
-                })
-            })
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.interfaces.len()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.interfaces.is_empty()
-    }
 }
 
 impl FromIterator<Interface> for Interfaces {
@@ -499,11 +480,11 @@ pub(crate) mod tests {
 
     use super::*;
 
-    use crate::builder::DeviceBuilder;
+    use crate::session::IntrospectionInterface;
     use crate::test::{
         E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_DATASTREAM,
         E2E_DEVICE_DATASTREAM_NAME, E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME,
-        E2E_SERVER_PROPERTY,
+        E2E_SERVER_DATASTREAM, E2E_SERVER_PROPERTY,
     };
 
     pub(crate) const DEVICE_OBJECT: &str = r#"
@@ -539,6 +520,22 @@ pub(crate) mod tests {
         }
         "#;
 
+    impl Interfaces {
+        pub(crate) fn matches<S: AsRef<str>>(&self, stored: &[IntrospectionInterface<S>]) -> bool {
+            stored.len() == self.len()
+                && stored.iter().all(|stored_i| {
+                    self.get(stored_i.name().as_ref()).is_some_and(|i| {
+                        i.version_major() == stored_i.version_major()
+                            && i.version_minor() == stored_i.version_minor()
+                    })
+                })
+        }
+
+        pub(crate) fn len(&self) -> usize {
+            self.interfaces.len()
+        }
+    }
+
     pub(crate) fn mock_validated_interface(interface: Interface, major_change: bool) -> Validated {
         Validated {
             interface,
@@ -558,16 +555,13 @@ pub(crate) mod tests {
 
     #[test]
     fn test_get_introspection_string() {
-        let mut options = DeviceBuilder::new();
-        options = options
-            .interface_directory("examples/individual_datastream/interfaces")
-            .expect("Failed to set interface directory");
-
-        let ifa = options.interfaces;
+        let ifa = Interfaces::from_iter(
+            [E2E_DEVICE_DATASTREAM, E2E_SERVER_DATASTREAM].map(|i| Interface::from_str(i).unwrap()),
+        );
 
         let expected = [
-            "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream:0:1",
-            "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1",
+            "org.astarte-platform.rust.e2etest.DeviceDatastream:0:1",
+            "org.astarte-platform.rust.e2etest.ServerDatastream:0:1",
         ];
 
         let intro = ifa.get_introspection_string();

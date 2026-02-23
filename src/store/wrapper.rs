@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -169,7 +169,10 @@ mod tests {
     async fn test_sqlite_wrapped() {
         let dir = tempfile::tempdir().unwrap();
 
-        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db = SqliteStore::options()
+            .with_writable_dir(dir.as_ref())
+            .await
+            .unwrap();
 
         test_property_store(db).await;
     }

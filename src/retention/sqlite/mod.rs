@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -419,7 +419,10 @@ mod tests {
     async fn should_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -460,7 +463,10 @@ mod tests {
     async fn set_max_retention_exec_vacuum() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         // initialize the store with 2 elements and then set the capacity to 1.
         // this should cause the vacuum to be called, since the store is full and we are setting a lower capacity.
@@ -500,7 +506,10 @@ mod tests {
     async fn should_remove_expired_and_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         // suppose we can only store 2 publishes and we try storing 3 publishes: the new one should replace the expired one
         let capacity = NonZeroUsize::new(2).unwrap();
@@ -575,7 +584,10 @@ mod tests {
     async fn should_remove_oldest_and_store_publish() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         // create a store which can only store 2 publishes.
         // try storing 3 publishes: a new one should replace the oldest one.
@@ -648,7 +660,10 @@ mod tests {
     async fn should_mark_received() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let interface = "com.Foo";
         let path = "/bar";
@@ -682,7 +697,10 @@ mod tests {
     async fn should_fetch_all_interfaces() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let publish_info = publish_with_expiry("/bar", None);
 
@@ -705,7 +723,10 @@ mod tests {
     async fn should_mark_sent_and_reset() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let publish_info = publish_with_expiry("/bar", None);
 

@@ -17,19 +17,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::VecDeque;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock, Semaphore};
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{error, instrument, trace, warn};
 
 use crate::error::Report;
 use crate::store::sqlite::connection::SqliteConnection;
 
+use super::SqliteError;
 use super::connection::{ReadConnection, WriteConnection};
 use super::options::SqliteOptions;
-use super::{Size, SqliteError};
 
 type HandleResult<C, O, E> = Result<(C, Result<O, E>), E>;
 
@@ -150,116 +149,6 @@ impl Connections {
 
         out
     }
-
-    // FIXME: remove in next release.
-    pub(crate) async fn set_max_page_count(&self, count: NonZeroU32) -> Result<(), SqliteError> {
-        let mut writer_g = self.writer.lock().await;
-        let mut readers_g = self.readers.lock().await;
-
-        let mut options_g = self.options.write().await;
-        let mut options = *options_g;
-
-        options.set_max_page_count(count);
-
-        apply_options(&mut writer_g, &mut readers_g, options).await?;
-
-        *options_g = options;
-
-        Ok(())
-    }
-
-    // FIXME: remove in next release.
-    pub(crate) async fn set_db_max_size(&self, size: Size) -> Result<(), SqliteError> {
-        let mut writer_g = self.writer.lock().await;
-        let mut readers_g = self.readers.lock().await;
-
-        let mut options_g = self.options.write().await;
-        let mut options = *options_g;
-
-        options.set_db_max_size(size);
-
-        apply_options(&mut writer_g, &mut readers_g, options).await?;
-
-        *options_g = options;
-
-        Ok(())
-    }
-
-    // FIXME: remove in next release.
-    pub(crate) async fn set_journal_size_limit(&self, size: Size) -> Result<(), SqliteError> {
-        let mut writer_g = self.writer.lock().await;
-        let mut readers_g = self.readers.lock().await;
-
-        let mut options_g = self.options.write().await;
-        let mut options = *options_g;
-
-        options.set_journal_size_limit(size);
-
-        apply_options(&mut writer_g, &mut readers_g, options).await?;
-
-        *options_g = options;
-
-        Ok(())
-    }
-}
-
-#[instrument(skip(writer_g, readers_g))]
-async fn apply_options(
-    writer_g: &mut Option<WriteConnection>,
-    readers_g: &mut VecDeque<ReadConnection>,
-    options: SqliteOptions,
-) -> Result<(), SqliteError> {
-    trace!("applyign options");
-
-    if let Some(writer) = writer_g.take() {
-        let writer =
-            tokio::task::spawn_blocking(move || -> Result<WriteConnection, SqliteError> {
-                writer.apply_pragmas(&options)?;
-
-                Ok(writer)
-            })
-            .await
-            .map_err(|err| {
-                error!(error = %Report::new(err), "couldn't join sqlite task");
-
-                SqliteError::Join
-            })??;
-
-        writer_g.replace(writer);
-
-        debug!("writer options applied");
-    } else {
-        trace!("writer not connected");
-    }
-
-    let len = readers_g.len();
-    for i in 0..len {
-        trace!(i, "applying to reader");
-
-        let Some(reader) = readers_g.pop_front() else {
-            warn!(i, "no more readers");
-
-            break;
-        };
-
-        let reader = tokio::task::spawn_blocking(move || -> Result<ReadConnection, SqliteError> {
-            reader.apply_pragmas(&options)?;
-
-            Ok(reader)
-        })
-        .await
-        .map_err(|err| {
-            error!(error = %Report::new(err), "couldn't join sqlite task");
-
-            SqliteError::Join
-        })??;
-
-        readers_g.push_back(reader);
-
-        debug!(i, "reader options applied");
-    }
-
-    Ok(())
 }
 
 // Drop to manually close all the readers before the writer.
@@ -304,24 +193,5 @@ mod tests {
         let res: Result<(), SqliteError> = pool.acquire_reader(|_reader| panic!()).await;
 
         assert!(matches!(res.unwrap_err(), SqliteError::Join));
-    }
-
-    #[tokio::test]
-    async fn apply_options() {
-        let tpm = TempDir::new().unwrap();
-
-        let pool = Connections::new(tpm.path().join("sdk.db"), SqliteOptions::default());
-
-        // create connections
-        pool.acquire_writer::<_, _, SqliteError>(|_writer| Ok(()))
-            .await
-            .unwrap();
-        pool.acquire_reader::<_, _, SqliteError>(|_reader| Ok(()))
-            .await
-            .unwrap();
-
-        pool.set_max_page_count(NonZeroU32::new(42).unwrap())
-            .await
-            .unwrap();
     }
 }

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,6 @@ pub enum PayloadError {
     #[error("couldn't convert the value to AstarteData")]
     AstarteData(#[from] TypeError),
     /// Expected object, individual data deserialized
-    // FIXME: remove in future release
     #[error("expected object, individual data deserialized instead")]
     Object,
     /// Couldn't parse a mapping

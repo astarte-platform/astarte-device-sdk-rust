@@ -18,33 +18,28 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{
-    fmt::Debug,
-    num::NonZero,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::fmt::Debug;
+use std::num::NonZero;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
-use astarte_interfaces::{
-    Properties, Schema,
-    schema::{MappingType, Ownership},
-};
-use rusqlite::{
-    ToSql,
-    types::{FromSql, FromSqlError},
-};
+use astarte_interfaces::schema::{MappingType, Ownership};
+use astarte_interfaces::{Properties, Schema};
+use rusqlite::ToSql;
+use rusqlite::types::{FromSql, FromSqlError};
 use serde::{Deserialize, Serialize};
 use statements::include_query;
 use tracing::{debug, error, info, instrument, trace};
 
+use self::connection::SqliteConnection;
 use self::pool::Connections;
-use self::{connection::SqliteConnection, options::SqliteOptions};
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
-use crate::{
-    transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteData, TypeError, de::BsonConverter},
-};
+use crate::transport::mqtt::payload::{Payload, PayloadError};
+use crate::types::de::BsonConverter;
+use crate::types::{AstarteData, TypeError};
+
+pub use self::options::SqliteOptions;
 
 pub(crate) mod connection;
 pub(crate) mod options;
@@ -82,7 +77,9 @@ pub const SQLITE_MAX_PAGE_COUNT: u32 = 4294967294;
 pub const SQLITE_WAL_AUTOCHECKPOINT: u32 = 1000;
 
 /// Maximum number of reader connections to create.
-pub(crate) const DEFAULT_MAX_READERS: NonZero<usize> = NonZero::<usize>::new(4).unwrap();
+///
+/// This is the default if we cannot access the available_parallelism
+pub const DEFAULT_MAX_READERS: NonZero<usize> = NonZero::<usize>::new(4).unwrap();
 
 /// Error returned by the [`SqliteStore`].
 #[non_exhaustive]
@@ -436,6 +433,11 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    /// Configures the SQLite connection
+    pub fn options() -> SqliteOptions {
+        SqliteOptions::default()
+    }
+
     /// Creates a SQLite database for the Astarte device.
     async fn new(db_file: PathBuf, options: SqliteOptions) -> Result<Self, SqliteError> {
         let sqlite_store = SqliteStore {
@@ -463,21 +465,28 @@ impl SqliteStore {
     /// # Example
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::store::sqlite::SqliteStore;
+    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, SqliteOptions};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let store = SqliteStore::connect("/val/lib/astarte/").await.unwrap();
+    ///     let store = SqliteStore::with_writable_dir("/val/lib/astarte/", SqliteOptions::default())
+    ///         .await
+    ///         .expect("should connect");
     /// }
     /// ```
-    // FIXME in a later version we could accept SqliteStoreOptions here instead on relying on setters
-    // this is to avoid setting the default pragmas before the user overrides them by using
-    // the setters
-    pub async fn connect(writable_path: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        // TODO: rename the database to store.db since it doesn't contain only  properties
-        let db = writable_path.as_ref().join("prop-cache.db");
+    pub async fn with_writable_dir(
+        writable_path: impl AsRef<Path>,
+        options: SqliteOptions,
+    ) -> Result<Self, SqliteError> {
+        let path = writable_path.as_ref();
 
-        let options = SqliteOptions::default();
+        if let Err(error) = tokio::fs::create_dir_all(path).await {
+            error!(%error,path = %path.display(), "couldn't create writable path for database");
+        }
+
+        // TODO: rename this since it doesn't store only properties
+        let db = path.join("prop-cache.db");
+
         Self::new(db, options).await
     }
 
@@ -486,15 +495,17 @@ impl SqliteStore {
     /// # Example
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::store::sqlite::SqliteStore;
+    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, SqliteOptions};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let store = SqliteStore::connect_db("/val/lib/astarte/store.db").await.unwrap();
+    ///     let store = SqliteStore::with_db_file("/val/lib/astarte/store.db", SqliteOptions::default()).await.unwrap();
     /// }
     /// ```
-    pub async fn connect_db(database_file: impl AsRef<Path>) -> Result<Self, SqliteError> {
-        let options = SqliteOptions::default();
+    pub async fn with_db_file(
+        database_file: impl AsRef<Path>,
+        options: SqliteOptions,
+    ) -> Result<Self, SqliteError> {
         Self::new(database_file.as_ref().to_path_buf(), options).await
     }
 
@@ -550,29 +561,6 @@ impl SqliteStore {
             .await?;
 
         Ok(())
-    }
-
-    /// Set the maximum number of pages
-    ///
-    /// The new database size cannot be lower than the actual one.
-    // FIXME this method should be removed and this option should be configurable only during object construction
-    pub async fn set_max_pages(&mut self, max: NonZero<u32>) -> Result<(), SqliteError> {
-        self.pool.set_max_page_count(max).await
-    }
-
-    /// Set the maximum number of pages based on the actual maximum size of the db file
-    // FIXME this method should be removed and this option should be configurable only during object construction
-    pub async fn set_db_max_size(&mut self, size: Size) -> Result<(), SqliteError> {
-        self.pool.set_db_max_size(size).await
-    }
-
-    /// Set journal size limit for the current database connection.
-    /// This will allow to set the limit a value as low as 1KB however
-    /// the wal_autocheckpoint will be set to 1 page (4096 bytes) even if
-    /// this is larger than the journal size.
-    // FIXME this method should be removed and this option should be configurable only during object construction
-    pub async fn set_journal_size_limit(&mut self, size: Size) -> Result<(), SqliteError> {
-        self.pool.set_journal_size_limit(size).await
     }
 }
 
@@ -740,7 +728,10 @@ mod tests {
     async fn test_sqlite_store() {
         let dir = tempfile::tempdir().unwrap();
 
-        let db = SqliteStore::connect(dir.path()).await.unwrap();
+        let db = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         test_property_store(db).await;
     }
@@ -750,7 +741,10 @@ mod tests {
         let dir1 = tempfile::tempdir().unwrap();
         let dir2 = tempfile::tempdir().unwrap();
 
-        let db1 = SqliteStore::connect(dir1.path()).await.unwrap();
+        let db1 = SqliteStore::options()
+            .with_writable_dir(dir1.path())
+            .await
+            .unwrap();
 
         let test = |store: SqliteStore| async move {
             let value = AstarteData::Integer(42);
@@ -776,49 +770,44 @@ mod tests {
 
         (test)(db1).await;
 
-        let db2 = SqliteStore::connect(dir2.path()).await.unwrap();
+        let db2 = SqliteStore::options()
+            .with_writable_dir(dir2.path())
+            .await
+            .unwrap();
 
         (test)(db2).await;
     }
 
     #[tokio::test]
-    async fn skip_set_max_pages() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
-
-        db.pool
-            .acquire_writer(|writer| writer.set_pragma("max_page_count", &1000))
-            .await
-            .unwrap();
-
-        let res = db.set_max_pages(NonZero::<u32>::new(1000).unwrap()).await;
-
-        assert!(res.is_ok());
-    }
-
-    #[tokio::test]
     async fn set_max_pages_cannot_shrink() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let page_size: i64 = db
-            .pool
-            .acquire_writer(|writer| writer.get_pragma("page_size"))
+        {
+            let db = SqliteStore::options()
+                .with_writable_dir(dir.path())
+                .await
+                .unwrap();
+
+            let page_size: i64 = db
+                .pool
+                .acquire_writer(|writer| writer.get_pragma("page_size"))
+                .await
+                .unwrap();
+
+            db.store_prop(StoredProp {
+                interface: "interface",
+                path: "/path",
+                value: &AstarteData::BinaryBlob(vec![1; usize::try_from(page_size).unwrap() * 3]),
+                interface_major: 0,
+                ownership: Ownership::Device,
+            })
             .await
             .unwrap();
+        }
 
-        db.store_prop(StoredProp {
-            interface: "interface",
-            path: "/path",
-            value: &AstarteData::BinaryBlob(vec![1; page_size as usize * 3]),
-            interface_major: 0,
-            ownership: Ownership::Device,
-        })
-        .await
-        .unwrap();
-
-        let err = db
-            .set_max_pages(NonZero::<u32>::new(1).unwrap())
+        let err = SqliteStore::options()
+            .set_max_page_count(NonZero::new(1).unwrap())
+            .with_writable_dir(dir.path())
             .await
             .unwrap_err();
 
@@ -833,23 +822,35 @@ mod tests {
     #[tokio::test]
     async fn store_cannot_exceed_max_pages() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let (page_size, page_count): (u32, u32) = db
-            .pool
-            .acquire_writer(|writer| -> Result<_, SqliteError> {
-                let size = writer.get_pragma("page_size")?;
-                let count = writer.get_pragma("page_count")?;
-                Ok((size, count))
-            })
+        let (page_size, page_count) = {
+            let db = SqliteStore::options()
+                .with_writable_dir(dir.path())
+                .await
+                .unwrap();
+
+            db.pool
+                .acquire_writer(|writer| -> Result<_, SqliteError> {
+                    let size = writer.get_pragma::<i64>("page_size")?;
+                    let count = writer.get_pragma::<i64>("page_count")?;
+                    Ok((size, count))
+                })
+                .await
+                .unwrap()
+        };
+
+        let max_page_count = u32::try_from(page_count)
+            .ok()
+            .and_then(NonZero::new)
+            .unwrap();
+
+        let db = SqliteStore::options()
+            .set_max_page_count(max_page_count)
+            .with_writable_dir(dir.path())
             .await
             .unwrap();
 
-        db.set_max_pages(NonZero::<u32>::new(page_count).unwrap())
-            .await
-            .unwrap();
-
-        let size = (page_size * page_count + 1) as usize;
+        let size = usize::try_from(page_size * page_count + 1).unwrap();
 
         let err = db
             .store_prop(StoredProp {
@@ -871,11 +872,14 @@ mod tests {
     #[tokio::test]
     async fn set_max_pages() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let res = db.set_max_pages(NonZero::<u32>::new(10).unwrap()).await;
+        let max = NonZero::new(10).unwrap();
 
-        assert!(res.is_ok());
+        let db = SqliteStore::options()
+            .set_max_page_count(max)
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let page_count: u32 = db
             .pool
@@ -891,12 +895,12 @@ mod tests {
     #[tokio::test]
     async fn set_db_max_size() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
-        let size = Size::MiB(NonZero::<u64>::new(4).unwrap());
-
-        // set the max size considering the default page size of 4096 bytes
-        db.set_db_max_size(size).await.unwrap();
+        let db = SqliteStore::options()
+            .set_db_max_size(Size::MiB(NonZero::new(4).unwrap()))
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let max_page_count: u32 = db
             .pool
@@ -910,17 +914,18 @@ mod tests {
     #[tokio::test]
     async fn set_db_max_size_min() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
-
-        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
         // set the max size considering the default page size of 4096 bytes
         // NOTE since the limit is set after the database is created we can't shrink an
         // already created database this means that setting a 1KB limit is currently not supported
         // even a 1 page limit (4096B) would not work
-        let res = db.set_db_max_size(size).await;
+        let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
-        assert!(res.is_err());
+        SqliteStore::options()
+            .set_db_max_size(size)
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap_err();
     }
 
     #[test]
@@ -932,12 +937,14 @@ mod tests {
     #[tokio::test]
     async fn set_journal_size_limit() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
         let size = Size::MiB(NonZero::<u64>::new(1).unwrap());
 
-        // set the max size considering the default page size of 4096 bytes
-        assert!(db.set_journal_size_limit(size).await.is_ok());
+        let db = SqliteStore::options()
+            .set_journal_size_limit(size)
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let journal_size: i64 = db
             .pool
@@ -963,12 +970,14 @@ mod tests {
     #[tokio::test]
     async fn set_journal_size_limit_min() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = SqliteStore::connect(dir.path()).await.unwrap();
 
         let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
-        // set the max size considering the default page size of 4096 bytes
-        assert!(db.set_journal_size_limit(size).await.is_ok());
+        let db = SqliteStore::options()
+            .set_journal_size_limit(size)
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         let journal_size: u32 = db
             .pool

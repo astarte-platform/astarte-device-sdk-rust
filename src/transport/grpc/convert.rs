@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -108,7 +108,7 @@ pub(crate) fn map_set_stored_properties(
 }
 
 /// Converts a [`prost_types::Timestamp`] into a [`chrono::DateTime<Utc>`]
-fn convert_timestamp(
+pub(crate) fn convert_timestamp(
     timestamp: prost_types::Timestamp,
 ) -> Result<crate::Timestamp, MessageHubProtoError> {
     let val = timestamp.normalized();
@@ -322,20 +322,7 @@ impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
     }
 }
 
-// For deserialize object
-impl TryFrom<AstarteDatastreamObject> for AstarteObject {
-    type Error = MessageHubProtoError;
-
-    fn try_from(value: AstarteDatastreamObject) -> Result<Self, Self::Error> {
-        value
-            .data
-            .into_iter()
-            .map(|(k, value)| AstarteData::try_from(value).map(|v| (k, v)))
-            .collect()
-    }
-}
-
-// For deserialize individual
+/// For deserialize individual
 pub(crate) fn try_from_individual(
     individual: AstarteDatastreamIndividual,
 ) -> Result<(AstarteData, Option<Timestamp>), MessageHubProtoError> {
@@ -345,6 +332,21 @@ pub(crate) fn try_from_individual(
         .try_into()?;
 
     let timestamp = individual.timestamp.map(convert_timestamp).transpose()?;
+
+    Ok((data, timestamp))
+}
+
+/// For deserialize object
+pub(crate) fn try_from_object(
+    value: AstarteDatastreamObject,
+) -> Result<(AstarteObject, Option<Timestamp>), MessageHubProtoError> {
+    let data = value
+        .data
+        .into_iter()
+        .map(|(k, value)| AstarteData::try_from(value).map(|v| (k, v)))
+        .collect::<Result<AstarteObject, MessageHubProtoError>>()?;
+
+    let timestamp = value.timestamp.map(convert_timestamp).transpose()?;
 
     Ok((data, timestamp))
 }

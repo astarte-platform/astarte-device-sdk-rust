@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ use astarte_device_sdk::{
     builder::DeviceBuilder,
     client::RecvError,
     prelude::*,
+    store::SqliteStore,
     transport::grpc::{Grpc, GrpcConfig, tonic::transport::Endpoint},
 };
 use eyre::OptionExt;
@@ -70,9 +71,13 @@ async fn init() -> eyre::Result<(DeviceClient<Grpc>, DeviceConnection<Grpc>)> {
     let endpoint = Endpoint::from_static(MESSAGE_HUB_URL);
     let grpc_config = GrpcConfig::new(NODE_UUID, endpoint);
 
+    let store = SqliteStore::options()
+        .with_writable_dir(STORE_DIRECTORY)
+        .await?;
+
     let (client, connection) = DeviceBuilder::new()
-        .store_dir(STORE_DIRECTORY)
-        .await?
+        .writable_dir(STORE_DIRECTORY)
+        .store(store)
         .interface_str(AGGREGATED_DEVICE)?
         .interface_str(INDIVIDUAL_DEVICE)?
         .interface_str(INDIVIDUAL_SERVER)?

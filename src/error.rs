@@ -25,6 +25,7 @@ use astarte_interfaces::error::Error as InterfaceError;
 use astarte_interfaces::mapping::path::MappingPathError;
 use astarte_interfaces::schema::{Aggregation, InterfaceType, Ownership};
 
+use crate::builder::BuilderError;
 use crate::introspection::AddInterfaceError;
 use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
@@ -87,9 +88,9 @@ pub enum Error {
     /// Invalid interface type between the interface and the data.
     #[error(transparent)]
     InterfaceType(#[from] InterfaceTypeError),
-    /// Infallible conversion.
-    #[error(transparent)]
-    Infallible(#[from] Infallible),
+    /// Couldn't build the device connection and client
+    #[error("couldn't build the device connection and client")]
+    Builder(#[from] BuilderError),
     /// Error returned by the MQTT connection.
     #[error(transparent)]
     Mqtt(#[from] MqttError),
@@ -109,6 +110,10 @@ pub enum Error {
     #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
     #[error(transparent)]
     Grpc(#[from] crate::transport::grpc::GrpcError),
+    /// Infallible error
+    #[doc(hidden)]
+    #[error(transparent)]
+    Infallible(#[from] Infallible),
 }
 
 /// Aggregation error.

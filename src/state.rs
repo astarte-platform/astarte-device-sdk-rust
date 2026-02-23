@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
+use crate::builder::Config;
 use crate::interfaces::Interfaces;
 use crate::retention;
 use crate::retention::memory::VolatileStore;
@@ -30,7 +31,8 @@ use crate::retention::memory::VolatileStore;
 ///
 /// It's used to have a single allocation and dereference through a single [`Arc`].
 #[derive(Debug)]
-pub(crate) struct SharedState {
+pub struct SharedState {
+    pub(crate) config: Config,
     pub(crate) interfaces: RwLock<Interfaces>,
     pub(crate) volatile_store: VolatileStore,
     pub(crate) retention_ctx: retention::Context,
@@ -39,8 +41,13 @@ pub(crate) struct SharedState {
 }
 
 impl SharedState {
-    pub(crate) fn new(interfaces: Interfaces, volatile_store: VolatileStore) -> Self {
+    pub(crate) fn new(
+        config: Config,
+        interfaces: Interfaces,
+        volatile_store: VolatileStore,
+    ) -> Self {
         Self {
+            config,
             interfaces: RwLock::new(interfaces),
             volatile_store,
             retention_ctx: retention::Context::new(),
@@ -54,6 +61,11 @@ impl SharedState {
             ClientState::new(Arc::clone(&self)),
             ConnectionState::new(self),
         )
+    }
+
+    /// Gets the config for the retention
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 }
 
@@ -106,6 +118,10 @@ impl ConnectionState {
 
     pub(crate) fn volatile_store(&self) -> &VolatileStore {
         &self.0.volatile_store
+    }
+
+    pub(crate) fn config(&self) -> &Config {
+        &self.0.config
     }
 }
 

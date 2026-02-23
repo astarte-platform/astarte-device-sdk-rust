@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -137,15 +137,22 @@ pub trait Client: Clone {
     /// Send an individual datastream on an interface.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::prelude::*;
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::types::AstarteData;
     /// use chrono::{TimeZone, Utc};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs{
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connection(mqtt_config).build().await.unwrap();
@@ -166,15 +173,22 @@ pub trait Client: Clone {
     /// Send an individual datastream on an interface, with an explicit timestamp.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::prelude::*;
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::types::AstarteData;
     /// use chrono::{TimeZone, Utc};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs{
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connection(mqtt_config).build().await.unwrap();
@@ -209,10 +223,11 @@ pub trait Client: Clone {
     /// Send an object datastream on an interface, with an explicit timestamp.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, Credential, MqttArgs};
+    /// use astarte_device_sdk::types::AstarteData;
+    /// use astarte_device_sdk::prelude::*;
     /// # #[cfg(feature = "derive")]
     /// use astarte_device_sdk::IntoAstarteObject;
     /// # #[cfg(not(feature = "derive"))]
@@ -227,7 +242,13 @@ pub trait Client: Clone {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs {
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connection(mqtt_config).build().await.unwrap();
@@ -253,15 +274,22 @@ pub trait Client: Clone {
     /// Send an individual datastream on an interface.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::prelude::*;
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::types::AstarteData;
     /// use chrono::{TimeZone, Utc};
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs{
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (mut client, connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connection(mqtt_config).build().await.unwrap();
@@ -282,14 +310,21 @@ pub trait Client: Clone {
     /// Unset a device property.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::memory::MemoryStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::prelude::*;
+    /// use astarte_device_sdk::store::memory::MemoryStore;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::types::AstarteData;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let args = MqttArgs {
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(MemoryStore::new())
     ///         .connection(mqtt_config).build().await.unwrap();
@@ -769,7 +804,7 @@ pub(crate) mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::Value;
-    use crate::builder::{DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
+    use crate::builder::{Config, DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
     use crate::interfaces::Interfaces;
     use crate::retention::memory::VolatileStore;
     use crate::state::SharedState;
@@ -827,12 +862,13 @@ pub(crate) mod tests {
         let interfaces = Interfaces::from_iter(interfaces);
 
         let sender = MockSender::new();
-        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE);
+        let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
         let mut state = SharedState::new(
+            Config::default(),
             interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY),
+            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
         );
 
         *state.status.get_mut() = initial_status;

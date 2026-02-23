@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 //! It defines the `SqliteStoreOptions` struct which holds the editable options.
 
 use std::num::NonZero;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tracing::{error, instrument, trace, warn};
@@ -31,6 +32,7 @@ use crate::error::Report;
 use super::connection::SqliteConnection;
 use super::{
     DEFAULT_MAX_READERS, SQLITE_DEFAULT_DB_MAX_SIZE, SQLITE_JOURNAL_SIZE_LIMIT, Size, SqliteError,
+    SqliteStore,
 };
 
 /// Choices of limit of the size of the sqlite database
@@ -47,7 +49,7 @@ pub enum SizeLimit {
 
 /// SQLite options that can be set externally to tweak the behaviour of the connections.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
-pub(crate) struct SqliteOptions {
+pub struct SqliteOptions {
     // Maximum number of read connection to open
     max_readers: Option<NonZero<usize>>,
     // Maximum size of the database file.
@@ -73,7 +75,7 @@ impl SqliteOptions {
     /// This is the max number of readers and they are lazily created, so this number it's safe to
     /// be more than the actual available_parallelism.
     #[instrument]
-    pub(crate) fn max_readers(&self) -> NonZero<usize> {
+    pub fn max_readers(&self) -> NonZero<usize> {
         match self.max_readers {
             Some(readers) => readers,
             None => {
@@ -87,29 +89,54 @@ impl SqliteOptions {
     }
 
     /// Returns the db_size_limit or the default one
-    pub(crate) fn db_size_limit(&self) -> SizeLimit {
+    pub fn db_size_limit(&self) -> SizeLimit {
         self.db_size_limit
             .unwrap_or(SizeLimit::DbMaxSize(SQLITE_DEFAULT_DB_MAX_SIZE))
     }
 
     /// Returns the journal_size_limit or the default one
-    fn journal_size_limit(&self) -> Size {
+    pub fn journal_size_limit(&self) -> Size {
         self.journal_size_limit.unwrap_or(SQLITE_JOURNAL_SIZE_LIMIT)
     }
 
     /// Sets the database size limit
-    pub(crate) fn set_db_max_size(&mut self, db_size_limit: Size) {
+    #[must_use]
+    pub fn set_db_max_size(mut self, db_size_limit: Size) -> Self {
         self.db_size_limit = Some(SizeLimit::DbMaxSize(db_size_limit));
+
+        self
     }
 
     /// Sets the database size limit
-    pub(crate) fn set_max_page_count(&mut self, max_page_count: NonZero<u32>) {
+    #[must_use]
+    pub fn set_max_page_count(mut self, max_page_count: NonZero<u32>) -> Self {
         self.db_size_limit = Some(SizeLimit::MaxPageCount(max_page_count));
+
+        self
     }
 
     /// Sets the journal size limit
-    pub(crate) fn set_journal_size_limit(&mut self, journal_size_limit: Size) {
+    #[must_use]
+    pub fn set_journal_size_limit(mut self, journal_size_limit: Size) -> Self {
         self.journal_size_limit = Some(journal_size_limit);
+
+        self
+    }
+
+    /// Connect to the SQLite database using the default db name in the writable path.
+    pub async fn with_writable_dir(
+        self,
+        writable_path: impl AsRef<Path>,
+    ) -> Result<SqliteStore, SqliteError> {
+        SqliteStore::with_writable_dir(writable_path, self).await
+    }
+
+    /// Connect to the SQLite database give as a filename.
+    pub async fn with_db_file(
+        self,
+        database_file: impl AsRef<Path>,
+    ) -> Result<SqliteStore, SqliteError> {
+        SqliteStore::with_db_file(database_file.as_ref().to_path_buf(), self).await
     }
 }
 

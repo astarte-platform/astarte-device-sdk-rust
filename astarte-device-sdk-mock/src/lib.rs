@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,14 +24,11 @@ use astarte_device_sdk::client::{ClientDisconnect, RecvError};
 use astarte_device_sdk::properties::PropAccess;
 use astarte_device_sdk::store::StoredProp;
 use astarte_device_sdk::transport::Connection;
-use astarte_device_sdk::{AstarteData, DeviceEvent, Error};
+use astarte_device_sdk::{AstarteData, Client, DeviceEvent, Error};
 use mockall::mock;
 
 // Export public facing dependencies
 pub use mockall;
-
-// FIXME: remove, still present for backwards compatibility
-pub use astarte_device_sdk::Client;
 
 pub trait DeviceIntrospection {
     fn get_interface<F, O>(&self, interface_name: &str, f: F) -> impl Future<Output = O> + Send

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -61,17 +61,23 @@ pub trait PropAccess {
     /// Get the value of a property given the interface and path.
     ///
     /// ```no_run
-    /// use astarte_device_sdk::{
-    ///     store::sqlite::SqliteStore, builder::DeviceBuilder,
-    ///     transport::mqtt::MqttConfig, types::AstarteData, prelude::*,
-    /// };
+    /// use astarte_device_sdk::builder::DeviceBuilder;
+    /// use astarte_device_sdk::prelude::*;
+    /// use astarte_device_sdk::store::sqlite::SqliteStore;
+    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::types::AstarteData;
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let database = SqliteStore::connect_db("/path/to/database/store.db")
-    ///         .await
-    ///         .unwrap();
-    ///     let mqtt_config = MqttConfig::with_credential_secret("realm_id", "device_id", "credential_secret", "pairing_url");
+    ///     let database = SqliteStore::options().with_db_file("/path/to/database/store.db").await.unwrap();
+    ///     let args = MqttArgs{
+    ///         realm: "realm_id".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("credential_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
+    ///     };
+    ///     let mqtt_config = MqttConfig::new(args);
+    ///
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
     ///         .connection(mqtt_config)
@@ -419,7 +425,7 @@ pub(crate) mod tests {
 
         let db = dir.path().join("prop-cache.db");
 
-        let store = SqliteStore::connect_db(&db).await.unwrap();
+        let store = SqliteStore::options().with_db_file(&db).await.unwrap();
 
         test_prop_access_for_store(store).await;
     }
@@ -428,7 +434,10 @@ pub(crate) mod tests {
     async fn test_in_sqlite_property_access() {
         let dir = tempfile::tempdir().unwrap();
 
-        let store = SqliteStore::connect(dir.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(dir.path())
+            .await
+            .unwrap();
 
         test_prop_access_for_store(store).await;
     }

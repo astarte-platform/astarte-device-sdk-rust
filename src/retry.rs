@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 use rand::{RngExt, rngs::SmallRng};
 use tracing::trace;
 
+use crate::builder::{DEFAULT_BACKOFF_MAXIMUM_DELAY, DEFAULT_BACKOFF_RESET_INTERVAL};
+
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExponentialIter {
@@ -33,10 +35,6 @@ pub(crate) struct ExponentialIter {
 }
 
 impl ExponentialIter {
-    pub const DEFAULT_MAXIMUM_RETRY_TIMEOUT: Duration = Duration::from_secs(256);
-
-    pub const DEFAULT_RESET_RETRY_INTERVAL: Duration = Duration::from_secs(256 * 4);
-
     pub(crate) fn new(max: Duration, reset_after: Duration) -> Self {
         Self {
             n: 0,
@@ -77,8 +75,8 @@ impl Default for ExponentialIter {
     fn default() -> Self {
         Self {
             n: 0,
-            max: Self::DEFAULT_MAXIMUM_RETRY_TIMEOUT,
-            reset_after: Self::DEFAULT_RESET_RETRY_INTERVAL,
+            max: DEFAULT_BACKOFF_MAXIMUM_DELAY,
+            reset_after: DEFAULT_BACKOFF_RESET_INTERVAL,
             last: None,
         }
     }

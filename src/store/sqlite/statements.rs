@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -294,7 +294,10 @@ mod tests {
     #[tokio::test]
     async fn custom_journal_size_unchanged() {
         let dir = tempfile::tempdir().unwrap();
-        let db = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db = SqliteStore::options()
+            .with_writable_dir(dir.as_ref())
+            .await
+            .unwrap();
 
         let journal_size: i64 = db
             .pool
@@ -327,7 +330,10 @@ mod tests {
         drop(db);
 
         // reopen the db connection resets the journal size
-        let db: SqliteStore = SqliteStore::connect(dir.as_ref()).await.unwrap();
+        let db: SqliteStore = SqliteStore::options()
+            .with_writable_dir(dir.as_ref())
+            .await
+            .unwrap();
 
         let journal_size: i64 = db
             .pool

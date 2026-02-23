@@ -16,13 +16,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::num::NonZero;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
 use tracing::{debug, error, info, trace};
 
 use crate::Error;
-use crate::builder::DEFAULT_CHANNEL_SIZE;
 use crate::error::Report;
 use crate::retention::memory::ItemValue;
 use crate::retention::{RetentionId, StoredRetention, StoredRetentionExt};
@@ -82,7 +82,7 @@ where
         let state = self.state.clone();
         let mut sender = self.sender.clone();
         let mut store = self.store.clone();
-        let limit = self.events.capacity().unwrap_or(DEFAULT_CHANNEL_SIZE);
+        let limit = self.state.config().channel_size;
 
         // The queue of unpublish packets could grow indefinitely, but the should all be sent at the
         // end.
@@ -106,7 +106,7 @@ where
                     )
                     .await
                     {
-                        Ok(sent) => sent >= limit,
+                        Ok(sent) => sent >= limit.get(),
                         Err(err) => {
                             error!(error = %Report::new(&err), "error sending volatile retention");
                             // in case of errors while sending we still exit the loop
@@ -117,7 +117,7 @@ where
 
                 remaining_data |=
                     match Self::resend_stored_publishes(&mut store, &mut sender, limit).await {
-                        Ok(sent) => sent >= limit,
+                        Ok(sent) => sent >= limit.get(),
                         Err(err) => {
                             error!(error = %Report::new(&err), "error sending stored retention");
                             // in case of errors while sending we still exit the loop
@@ -152,14 +152,17 @@ where
     async fn resend_volatile_publishes(
         sender: &mut C::Sender,
         state: &ConnectionState,
-        limit: usize,
+        limit: NonZero<usize>,
     ) -> Result<usize, Error>
     where
         C::Sender: Publish,
     {
         let mut buf = Vec::new();
 
-        let count = state.volatile_store().get_unsent(&mut buf, limit).await;
+        let count = state
+            .volatile_store()
+            .get_unsent(&mut buf, limit.get())
+            .await;
 
         trace!("loaded {count} volatile publishes");
 
@@ -183,7 +186,7 @@ where
     async fn resend_stored_publishes(
         store: &mut StoreWrapper<C::Store>,
         sender: &mut C::Sender,
-        limit: usize,
+        limit: NonZero<usize>,
     ) -> Result<usize, Error>
     where
         C::Sender: Publish,
@@ -196,7 +199,7 @@ where
 
         debug!("start sending store publishes");
 
-        let count = retention.unsent_publishes(limit, &mut buf).await?;
+        let count = retention.unsent_publishes(limit.get(), &mut buf).await?;
 
         trace!("loaded {count} stored publishes");
 
@@ -321,7 +324,10 @@ mod tests {
     #[tokio::test]
     async fn sqlite_init_stored_retention_simple() {
         let tmp = TempDir::new().unwrap();
-        let store = SqliteStore::connect(tmp.path()).await.unwrap();
+        let store = SqliteStore::options()
+            .with_writable_dir(tmp.path())
+            .await
+            .unwrap();
 
         let mut connection =
             mock_connection_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);

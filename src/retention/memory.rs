@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -84,17 +84,6 @@ impl VolatileStore {
 
     pub(crate) async fn delete_interface(&self, interface_name: &str) -> usize {
         self.store.lock().await.delete_interface(interface_name)
-    }
-
-    /// This method will swap the capacity.
-    #[cfg(feature = "message-hub")]
-    pub(crate) async fn set_capacity(&self, capacity: usize) {
-        self.store.lock().await.set_capacity(capacity);
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
-        self.store.lock().await.pop_next()
     }
 }
 
@@ -190,23 +179,6 @@ impl State {
         self.store.len() == self.store.capacity()
     }
 
-    /// A capacity of 0 will make every push into this store a noop.
-    #[cfg(feature = "message-hub")]
-    fn set_capacity(&mut self, capacity: usize) {
-        let current = self.store.capacity();
-
-        if capacity < current {
-            let diff = self.store.len().saturating_sub(capacity);
-            self.store.drain(..diff);
-            self.store.shrink_to_fit();
-        }
-
-        // Number of elements that needed to be reserved
-        let additional = capacity.saturating_sub(self.store.len());
-
-        self.store.reserve_exact(additional);
-    }
-
     fn delete_interface(&mut self, interface_name: &str) -> usize {
         let now = SystemTime::now();
 
@@ -226,20 +198,11 @@ impl State {
 
         count
     }
-
-    #[cfg(test)]
-    fn pop_next(&mut self) -> Option<ItemValue> {
-        let now = SystemTime::now();
-
-        std::iter::from_fn(|| self.store.pop_front())
-            .find(|item| !item.is_expired(now))
-            .map(|item| item.value)
-    }
 }
 
 impl Default for State {
     fn default() -> Self {
-        Self::with_capacity(DEFAULT_VOLATILE_CAPACITY)
+        Self::with_capacity(DEFAULT_VOLATILE_CAPACITY.get())
     }
 }
 
@@ -358,6 +321,22 @@ mod tests {
     use crate::{AstarteData, aggregate::AstarteObject, retention::Context};
 
     use super::*;
+
+    impl VolatileStore {
+        pub(crate) async fn pop_next(&self) -> Option<ItemValue> {
+            self.store.lock().await.pop_next()
+        }
+    }
+
+    impl State {
+        fn pop_next(&mut self) -> Option<ItemValue> {
+            let now = SystemTime::now();
+
+            std::iter::from_fn(|| self.store.pop_front())
+                .find(|item| !item.is_expired(now))
+                .map(|item| item.value)
+        }
+    }
 
     #[test]
     fn should_be_full() {
@@ -741,27 +720,6 @@ mod tests {
             store.store.pop_front().map(|e| e.value).unwrap(),
             ItemValue::Object(object)
         );
-    }
-
-    #[cfg(feature = "message-hub")]
-    #[tokio::test]
-    async fn test_modify_store_capacity() {
-        let store = VolatileStore::with_capacity(10);
-
-        store.set_capacity(20).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 20);
-
-        store.set_capacity(4).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 4);
-    }
-
-    #[cfg(feature = "message-hub")]
-    #[tokio::test]
-    async fn should_allow_zero_capacity() {
-        let store = VolatileStore::default();
-
-        store.set_capacity(0).await;
-        assert_eq!(store.store.lock().await.store.capacity(), 0);
     }
 
     #[test]

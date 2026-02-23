@@ -45,10 +45,8 @@ use crate::retention::StoredRetention;
 use crate::retention::memory::VolatileStore;
 use crate::retry::ExponentialIter;
 use crate::retry::RandomExponentialIter;
-use crate::state::ConnStatus;
 use crate::state::SharedState;
 use crate::store::PropertyStore;
-use crate::store::SqliteStore;
 use crate::store::StoreCapabilities;
 use crate::store::sqlite::SqliteError;
 use crate::store::wrapper::StoreWrapper;
@@ -59,18 +57,36 @@ use crate::transport::Connection;
 /// This constant is the default bounded channel size for *both* the rumqttc AsyncClient and
 /// EventLoop and the internal channel used by the [`DeviceClient`] and [`DeviceConnection`] to send
 /// events data to the external receiver and between each component.
-pub const DEFAULT_CHANNEL_SIZE: usize = 50;
+pub const DEFAULT_CHANNEL_SIZE: NonZero<usize> = NonZero::new(50).unwrap();
 
 /// Default capacity for the number of packets with retention volatile to store in memory.
-pub const DEFAULT_VOLATILE_CAPACITY: usize = 1000;
+pub const DEFAULT_VOLATILE_CAPACITY: NonZero<usize> = NonZero::new(1000).unwrap();
 
 /// Default capacity for the number of packets w ith retention store to store in memory.
-pub const DEFAULT_STORE_CAPACITY: NonZero<usize> = NonZero::<usize>::new(1_000_000).unwrap();
+pub const DEFAULT_STORE_CAPACITY: NonZero<usize> = NonZero::new(1_000_000).unwrap();
 
-/// Default timeout.
-/// This timeout is applied *both* the the transport implementations chosen (mqtt or grpc).
-/// This is not the complete timeout of the whole connection process, it's a timeout applied per request.
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// Default connection timeout.
+///
+/// This is the timeout for establishing a connection for the transport.
+pub const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Default send and receive timeout.
+///
+/// This is not the complete timeout of the whole connection process, it's a timeout applied per
+/// request.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Default receiver warning threshold.
+pub const DEFAULT_SLOW_RECEIVE_THRESHOLDS: Duration = Duration::from_secs(10);
+
+/// Default maximum delay for the backoff.
+pub const DEFAULT_BACKOFF_MAXIMUM_DELAY: Duration = Duration::from_secs(256);
+
+/// Default reset interval for the backoff.
+pub const DEFAULT_BACKOFF_RESET_INTERVAL: Duration = Duration::from_secs(256 * 4);
+
+/// Default random jitter percentage to add/subtract to the delay.
+pub const DEFAULT_BACKOFF_JITTER_PERCENTAGE: u8 = 50;
 
 /// Astarte builder error.
 ///
@@ -110,6 +126,46 @@ pub enum BuilderError {
     Retention(#[from] RetentionError),
 }
 
+/// Configuration options and parameters for the connection.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Config {
+    /// Optional writable directory
+    pub writable_dir: Option<PathBuf>,
+    /// Channel size
+    pub channel_size: NonZero<usize>,
+    /// Connection timeout
+    pub connection_timeout: Duration,
+    /// Send or write timeout
+    pub send_timeout: Duration,
+    /// Recv or read timeout
+    pub recv_timeout: Duration,
+    /// Slow receiver threshold for warning
+    pub slow_receive: Duration,
+    /// Maximum period the backoff will wait for.
+    pub exponential_backoff_max: Duration,
+    /// Period till we reset the exponential backoff to the default value.
+    pub exponential_backoff_reset: Duration,
+    /// Percentage jitter to add to the backoff.
+    pub exponential_backoff_jitter: u8,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            writable_dir: None,
+            channel_size: DEFAULT_CHANNEL_SIZE,
+            connection_timeout: DEFAULT_CONNECTION_TIMEOUT,
+            send_timeout: DEFAULT_REQUEST_TIMEOUT,
+            recv_timeout: DEFAULT_REQUEST_TIMEOUT,
+            slow_receive: DEFAULT_SLOW_RECEIVE_THRESHOLDS,
+            exponential_backoff_max: DEFAULT_BACKOFF_MAXIMUM_DELAY,
+            exponential_backoff_reset: DEFAULT_BACKOFF_RESET_INTERVAL,
+            exponential_backoff_jitter: RandomExponentialIter::DEFAULT_RANDOM_JITTER_RANGE,
+        }
+    }
+}
+
 /// Marker struct to identify a builder with no store configured
 #[derive(Debug, Clone, Copy)]
 pub struct NoStore;
@@ -120,30 +176,22 @@ pub struct NoConnect;
 /// Struct used to pass the connection configuration to the [`ConnectionConfig`]
 #[derive(Debug)]
 pub struct BuildConfig<S> {
-    pub(crate) channel_size: usize,
-    pub(crate) writable_dir: Option<PathBuf>,
-    pub(crate) store: S,
-    pub(crate) state: Arc<SharedState>,
-    pub(crate) connection_timeout: Duration,
-    pub(crate) send_timeout: Duration,
+    /// Store used for the connection.
+    pub store: S,
+    /// Shared state of the connection.
+    pub state: Arc<SharedState>,
 }
 
 /// Structure used to store the configuration options for an instance of [`DeviceClient`] and
 /// [`DeviceConnection`].
 #[derive(Debug)]
 pub struct DeviceBuilder<C = NoConnect, S = NoStore> {
-    pub(crate) channel_size: usize,
-    pub(crate) volatile_retention: usize,
-    pub(crate) stored_retention: NonZero<usize>,
-    pub(crate) store: S,
-    pub(crate) connection_config: C,
-    pub(crate) interfaces: Interfaces,
-    pub(crate) writable_dir: Option<PathBuf>,
-    pub(crate) connection_timeout: Duration,
-    pub(crate) send_timeout: Duration,
-    pub(crate) exponential_backoff_max: Duration,
-    pub(crate) exponential_backoff_reset: Duration,
-    pub(crate) exponential_backoff_jitter: u8,
+    config: Config,
+    interfaces: Interfaces,
+    stored_retention: NonZero<usize>,
+    volatile_retention: NonZero<usize>,
+    store: S,
+    connection_config: C,
 }
 
 impl DeviceBuilder<NoConnect, NoStore> {
@@ -163,18 +211,12 @@ impl DeviceBuilder<NoConnect, NoStore> {
     /// ```
     pub fn new() -> Self {
         Self {
-            channel_size: DEFAULT_CHANNEL_SIZE,
             volatile_retention: DEFAULT_VOLATILE_CAPACITY,
             stored_retention: DEFAULT_STORE_CAPACITY,
-            writable_dir: None,
             interfaces: Interfaces::new(),
             connection_config: NoConnect,
             store: NoStore,
-            connection_timeout: DEFAULT_REQUEST_TIMEOUT,
-            send_timeout: DEFAULT_REQUEST_TIMEOUT,
-            exponential_backoff_max: ExponentialIter::DEFAULT_MAXIMUM_RETRY_TIMEOUT,
-            exponential_backoff_reset: ExponentialIter::DEFAULT_RESET_RETRY_INTERVAL,
-            exponential_backoff_jitter: RandomExponentialIter::DEFAULT_RANDOM_JITTER_RANGE,
+            config: Config::default(),
         }
     }
 }
@@ -242,41 +284,27 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// This method configures the bounded channel size.
-    pub fn channel_size(mut self, size: usize) -> Self {
-        self.channel_size = size;
+    pub fn channel_size(mut self, size: NonZero<usize>) -> Self {
+        self.config.channel_size = size;
 
         self
     }
 
     /// Configure a writable directory for the device.
-    pub fn writable_dir<P>(mut self, path: P) -> Result<Self, BuilderError>
+    pub fn writable_dir<P>(mut self, path: P) -> Self
     where
         P: AsRef<Path>,
     {
-        let path = path.as_ref();
-        let metadata = path
-            .metadata()
-            .map_err(|err| BuilderError::DirectoryMetadata {
-                path: path.to_owned(),
-                backtrace: err,
-            })?;
+        let path = path.as_ref().to_path_buf();
 
-        if !metadata.is_dir() {
-            return Err(BuilderError::NotADirectory(path.to_owned()));
-        }
+        self.config.writable_dir = Some(path.to_owned());
 
-        if metadata.permissions().readonly() {
-            return Err(BuilderError::DirectoryReadonly(path.to_owned()));
-        }
-
-        self.writable_dir = Some(path.to_owned());
-
-        Ok(self)
+        self
     }
 
     /// Set the maximum number of elements that will be kept in memory
     pub fn max_volatile_retention(mut self, items: NonZero<usize>) -> Self {
-        self.volatile_retention = items.get();
+        self.volatile_retention = items;
 
         self
     }
@@ -284,14 +312,24 @@ impl<S, C> DeviceBuilder<S, C> {
     /// Set the timeout used while performing individual HTTP calls
     /// and used while waiting for a connection to the MQTT server.
     pub fn connection_timeout(mut self, timeout: Duration) -> Self {
-        self.connection_timeout = timeout;
+        self.config.connection_timeout = timeout;
 
         self
     }
 
     /// Set the timeout used while sending data on the connection transport
     pub fn send_timeout(mut self, timeout: Duration) -> Self {
-        self.send_timeout = timeout;
+        self.config.send_timeout = timeout;
+
+        self
+    }
+
+    /// Set the threshold for slow reception of the Astarte Device
+    ///
+    /// If the events are not dequeued in a timely manner this could impact the state of the Astarte
+    /// connection.
+    pub fn slow_receive_threshold(mut self, threshold: Duration) -> Self {
+        self.config.slow_receive = threshold;
 
         self
     }
@@ -300,9 +338,12 @@ impl<S, C> DeviceBuilder<S, C> {
     /// Used by the connection to wait in between connection retries.
     /// The timeout is an exponential timeout with a random jitter added, this duration limits the maximum
     /// of the exponential part of the timeout, the random jitter will be added on top of this maximum.
+    ///
+    /// ```text
     /// exponential + random(-jitter..+jitter)
+    /// ```
     pub fn exponential_backoff_max(mut self, duration: Duration) -> Self {
-        self.exponential_backoff_max = duration;
+        self.config.exponential_backoff_max = duration;
 
         self
     }
@@ -310,7 +351,7 @@ impl<S, C> DeviceBuilder<S, C> {
     /// Reset timeout interval, after this interval of time the exponential part of the timeout
     /// will be reset to 0.
     pub fn exponential_backoff_reset(mut self, interval: Duration) -> Self {
-        self.exponential_backoff_reset = interval;
+        self.config.exponential_backoff_reset = interval;
 
         self
     }
@@ -320,30 +361,13 @@ impl<S, C> DeviceBuilder<S, C> {
     /// ranging from -50% to +50% of the exponential timeout.
     /// Values grater than 100 will be clamped to 100.
     pub fn exponential_backoff_jitter(mut self, percentage: u8) -> Self {
-        self.exponential_backoff_jitter = percentage;
+        self.config.exponential_backoff_jitter = percentage;
 
         self
     }
 }
 
 impl<C> DeviceBuilder<C, NoStore> {
-    /// Configure a writable directory and initializes the [`SqliteStore`] in it.
-    pub async fn store_dir<P>(
-        mut self,
-        path: P,
-    ) -> Result<DeviceBuilder<C, SqliteStore>, BuilderError>
-    where
-        P: AsRef<Path>,
-    {
-        let path = path.as_ref();
-
-        self = self.writable_dir(path)?;
-
-        let store = SqliteStore::connect(path).await?;
-
-        Ok(self.store(store))
-    }
-
     /// Set the backing storage for the device.
     ///
     /// This will store and retrieve the device's properties.
@@ -352,18 +376,12 @@ impl<C> DeviceBuilder<C, NoStore> {
         S: PropertyStore,
     {
         DeviceBuilder {
-            interfaces: self.interfaces,
-            connection_config: self.connection_config,
-            store,
-            stored_retention: self.stored_retention,
-            channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
-            writable_dir: self.writable_dir,
-            connection_timeout: self.connection_timeout,
-            send_timeout: self.send_timeout,
-            exponential_backoff_max: self.exponential_backoff_max,
-            exponential_backoff_reset: self.exponential_backoff_reset,
-            exponential_backoff_jitter: self.exponential_backoff_jitter,
+            config: self.config,
+            stored_retention: self.stored_retention,
+            connection_config: self.connection_config,
+            interfaces: self.interfaces,
+            store,
         }
     }
 }
@@ -394,30 +412,12 @@ where
     {
         DeviceBuilder {
             interfaces: self.interfaces,
-            connection_config,
             store: self.store,
-            channel_size: self.channel_size,
             volatile_retention: self.volatile_retention,
             stored_retention: self.stored_retention,
-            writable_dir: self.writable_dir,
-            connection_timeout: self.connection_timeout,
-            send_timeout: self.send_timeout,
-            exponential_backoff_max: self.exponential_backoff_max,
-            exponential_backoff_reset: self.exponential_backoff_reset,
-            exponential_backoff_jitter: self.exponential_backoff_jitter,
+            config: self.config,
+            connection_config,
         }
-    }
-}
-
-// NOTE: Currently volatile retention is not supported for the Grpc connection.
-// Currently messages won't be retained or stored (see [`crate::transport::store::GrpcStore`])
-impl<S> DeviceBuilder<S, crate::transport::mqtt::MqttConfig> {
-    /// Sets the number of elements with retention volatile that will be kept in memory if
-    /// disconnected.
-    pub fn volatile_retention(mut self, items: usize) -> Self {
-        self.volatile_retention = items;
-
-        self
     }
 }
 
@@ -432,35 +432,44 @@ where
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
     pub async fn build(self) -> Result<BuildRes<C::Conn>, Error> {
-        let (events_tx, events_rx) = async_channel::bounded(self.channel_size);
+        if let Some(path) = &self.config.writable_dir {
+            tokio::fs::create_dir_all(path)
+                .await
+                .map_err(|backtrace| BuilderError::Io {
+                    path: path.clone(),
+                    backtrace,
+                })?;
+        }
+
+        let (events_tx, events_rx) = async_channel::bounded(self.config.channel_size.get());
         let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
-        let volatile_store = VolatileStore::with_capacity(self.volatile_retention);
+        let volatile_store = VolatileStore::with_capacity(self.volatile_retention.get());
 
-        let state = Arc::new(SharedState::new(self.interfaces, volatile_store));
+        let backoff = RandomExponentialIter::with_jitter(
+            ExponentialIter::new(
+                self.config.exponential_backoff_max,
+                self.config.exponential_backoff_reset,
+            ),
+            self.config.exponential_backoff_jitter,
+        );
+
+        let state = Arc::new(SharedState::new(
+            self.config,
+            self.interfaces,
+            volatile_store,
+        ));
 
         let config = BuildConfig {
             store: self.store,
-            channel_size: self.channel_size,
-            writable_dir: self.writable_dir,
             state: Arc::clone(&state),
-            connection_timeout: self.connection_timeout,
-            send_timeout: self.send_timeout,
         };
 
         let DeviceTransport {
             connection,
             sender,
             store,
-            connected,
         } = self.connection_config.connect(config).await?;
-
-        // NOTE store the connection status
-        *state.status.write().await = if connected {
-            ConnStatus::Connected
-        } else {
-            ConnStatus::Disconnected
-        };
 
         // set max retention items in the store
         if let Some(retention) = store.get_retention() {
@@ -482,11 +491,6 @@ where
             store.clone(),
             client_state,
             disconnect_tx,
-        );
-
-        let backoff = RandomExponentialIter::with_jitter(
-            ExponentialIter::new(self.exponential_backoff_max, self.exponential_backoff_reset),
-            self.exponential_backoff_jitter,
         );
 
         let connection = DeviceConnection::new(
@@ -517,7 +521,6 @@ where
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
     pub(crate) store: StoreWrapper<C::Store>,
-    pub(crate) connected: bool,
 }
 
 /// Crate private connection implementation.
@@ -573,6 +576,7 @@ mod test {
     use mockall::Sequence;
     use tempfile::TempDir;
 
+    use crate::store::memory::MemoryStore;
     use crate::test::DEVICE_PROPERTIES;
     use crate::transport::mock::{MockCon, MockConfig, MockSender};
 
@@ -606,51 +610,9 @@ mod test {
     fn should_get_writable_path() {
         let dir = TempDir::new().unwrap();
 
-        let builder = DeviceBuilder::new().writable_dir(dir.path()).unwrap();
+        let builder = DeviceBuilder::new().writable_dir(dir.path());
 
-        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
-    }
-
-    #[tokio::test]
-    async fn should_dir_with_store() {
-        let dir = TempDir::new().unwrap();
-
-        let builder = DeviceBuilder::new().store_dir(dir.path()).await.unwrap();
-
-        assert_eq!(builder.writable_dir, Some(dir.path().to_owned()))
-    }
-
-    #[tokio::test]
-    async fn should_dir_with_store_error() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path();
-
-        DeviceBuilder::new()
-            .store_dir(path.join("not existing "))
-            .await
-            .expect_err("Should error for non existing directory");
-        let file = path.join("file");
-
-        tokio::fs::write(&file, "content").await.unwrap();
-
-        DeviceBuilder::new()
-            .store_dir(file)
-            .await
-            .expect_err("Should error for file and not dir");
-
-        let readonly = path.join("dir");
-        tokio::fs::create_dir(&readonly).await.unwrap();
-
-        let mut perm = readonly.metadata().unwrap().permissions();
-
-        perm.set_readonly(true);
-
-        tokio::fs::set_permissions(&readonly, perm).await.unwrap();
-
-        DeviceBuilder::new()
-            .store_dir(readonly)
-            .await
-            .expect_err("Should error for readonly");
+        assert_eq!(builder.config.writable_dir, Some(dir.path().to_owned()))
     }
 
     #[tokio::test]
@@ -658,7 +620,7 @@ mod test {
         let dir = TempDir::new().unwrap();
 
         // TODO: add expectations
-        let mut config = MockConfig::<SqliteStore>::new();
+        let mut config = MockConfig::<MemoryStore>::new();
         let mut seq = Sequence::new();
 
         let tmp_path = Some(dir.path().to_path_buf());
@@ -669,13 +631,10 @@ mod test {
             .in_sequence(&mut seq)
             .withf(
                 move |BuildConfig {
-                          channel_size,
-                          writable_dir,
                           state,
                           ..
                       }| {
-                    channel_size == channel_size
-                        && *writable_dir == tmp_path
+                        state.config.writable_dir == tmp_path
                         && state.interfaces.try_read().unwrap().get("org.astarte-platform.rust.examples.individual-properties.DeviceProperties").is_some()
                 },
             )
@@ -688,16 +647,14 @@ mod test {
                     connection: MockCon::new(),
                     sender,
                     store: StoreWrapper::new(config.store),
-                    connected: true,
                 })
             });
 
         let (_client, _connection) = tokio::time::timeout(
             Duration::from_secs(3),
             DeviceBuilder::new()
-                .store_dir(dir.path())
-                .await
-                .unwrap()
+                .writable_dir(dir.path())
+                .store(MemoryStore::default())
                 .interface_str(DEVICE_PROPERTIES)
                 .unwrap()
                 .connection(config)
@@ -706,5 +663,26 @@ mod test {
         .await
         .unwrap()
         .unwrap();
+    }
+
+    #[test]
+    fn test_get_introspection_string() {
+        let options = DeviceBuilder::new()
+            .interface_directory("examples/individual_datastream/interfaces")
+            .expect("Failed to set interface directory");
+
+        let ifa = options.interfaces;
+
+        let expected = [
+            "org.astarte-platform.rust.examples.individual-datastream.DeviceDatastream:0:1",
+            "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream:0:1",
+        ];
+
+        let intro = ifa.get_introspection_string();
+        let mut res: Vec<&str> = intro.split(';').collect();
+
+        res.sort_unstable();
+
+        assert_eq!(res, expected);
     }
 }

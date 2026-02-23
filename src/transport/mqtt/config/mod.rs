@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,12 +28,11 @@ use std::{
     time::Duration,
 };
 use tokio::fs;
-use tracing::{debug, warn};
+use tracing::debug;
 use url::Url;
 
 use crate::{
-    builder::{BuildConfig, ConnectionConfig, DEFAULT_CHANNEL_SIZE, DeviceTransport},
-    error::Report,
+    builder::{BuildConfig, Config, ConnectionConfig, DEFAULT_REQUEST_TIMEOUT, DeviceTransport},
     logging::security::{SecurityEvent, notify_security_event},
     store::{StoreCapabilities, wrapper::StoreWrapper},
     transport::mqtt::{
@@ -45,8 +44,8 @@ use crate::{
 use self::tls::is_env_ignore_ssl;
 
 use super::{
-    DEFAULT_KEEP_ALIVE, Mqtt, MqttClient, PairingError, SharedState, client::AsyncClient,
-    pairing::ApiClient, registration::register_device_with_timeout,
+    Mqtt, MqttClient, PairingError,
+    pairing::{ApiClient, ClientArgs},
 };
 
 mod tls;
@@ -73,8 +72,8 @@ pub enum Credential {
     /// ## Note
     ///
     /// You need to set a writable directory on the builder to store the registered credential
-    /// secret used for authentication. You can either use the [`crate::builder::DeviceBuilder::writable_dir`] or
-    /// [`crate::builder::DeviceBuilder::store_dir`] methods.
+    /// secret used for authentication. You can set it with the
+    /// [`crate::builder::DeviceBuilder::writable_dir`] methods.
     ParingToken {
         /// The JWT secret to pair the device to astarte.
         pairing_token: String,
@@ -112,35 +111,36 @@ impl Debug for Credential {
     }
 }
 
+/// Arguments to create the MQTT options.
+#[derive(Debug)]
+pub struct MqttArgs {
+    /// Astarte realm of the device.
+    pub realm: String,
+    /// Device id.
+    pub device_id: String,
+    /// Credential to use to connect to Astarte.
+    pub credential: Credential,
+    /// Astarte pairing url.
+    ///
+    /// Example <http://api.astarte.localhost/pairing>
+    pub pairing_url: Url,
+}
+
 /// Configuration for the mqtt connection
 ///
 /// As a default this configuration:
 ///
 /// - does not ignore SSL errors.
 /// - has a keepalive of 30 seconds
-/// - has a default bounded channel size of [`crate::builder::DEFAULT_CHANNEL_SIZE`]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MqttConfig {
     pub(crate) realm: String,
     pub(crate) device_id: String,
     #[serde(flatten)]
     pub(crate) credential: Credential,
-    pub(crate) pairing_url: String,
+    pub(crate) pairing_url: Url,
     pub(crate) ignore_ssl_errors: bool,
     pub(crate) keepalive: Duration,
-    pub(crate) bounded_channel_size: usize,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PartialConfig {
-    pub(crate) writable_dir: Option<PathBuf>,
-    pub(crate) channel_size: usize,
-}
-
-pub(crate) struct MqttTransport<S> {
-    pub(crate) connection: Mqtt<S>,
-    pub(crate) client: MqttClient<S>,
-    pub(crate) connected: bool,
 }
 
 pub(crate) struct MqttTransportOptions {
@@ -152,151 +152,70 @@ pub(crate) struct MqttTransportOptions {
 impl MqttConfig {
     /// Create a new instance of MqttConfig
     ///
-    /// ```no_run
-    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, Credential};
+    /// ```
+    /// use astarte_device_sdk::transport::mqtt::{MqttArgs, MqttConfig, Credential};
     ///
     /// #[tokio::main]
     /// async fn main(){
-    ///     let realm = "realm_name";
-    ///     let device_id = "device_id";
-    ///     let credentials_secret = Credential::secret("device_credentials_secret");
-    ///     let pairing_url = "astarte_cluster_pairing_url";
+    ///     let args = MqttArgs {
+    ///         realm: "realm_name".to_string(),
+    ///         device_id: "device_id".to_string(),
+    ///         credential: Credential::secret("device_credentials_secret"),
+    ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("should be a valid url"),
+    ///     };
     ///
-    ///     let mut mqtt_options = MqttConfig::new(realm, device_id, credentials_secret, pairing_url);
+    ///     let mut mqtt = MqttConfig::new(args);
     /// }
     /// ```
-    pub fn new(
-        realm: impl Into<String>,
-        device_id: impl Into<String>,
-        credential: Credential,
-        pairing_url: impl Into<String>,
-    ) -> Self {
-        Self {
-            realm: realm.into(),
-            device_id: device_id.into(),
+    pub fn new(args: MqttArgs) -> Self {
+        let MqttArgs {
+            realm,
+            device_id,
             credential,
-            pairing_url: pairing_url.into(),
+            pairing_url,
+        } = args;
+
+        Self {
+            realm,
+            device_id,
+            credential,
+            pairing_url,
             ignore_ssl_errors: false,
-            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
-            bounded_channel_size: DEFAULT_CHANNEL_SIZE,
+            keepalive: DEFAULT_REQUEST_TIMEOUT,
         }
-    }
-
-    /// Create a new instance with the given credentials for authentication.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::transport::mqtt::MqttConfig;
-    ///
-    /// #[tokio::main]
-    /// async fn main(){
-    ///     let realm = "realm_name";
-    ///     let device_id = "device_id";
-    ///     let credentials_secret = "device_credentials_secret";
-    ///     let pairing_url = "astarte_cluster_pairing_url";
-    ///
-    ///     let mut mqtt_options =
-    ///         MqttConfig::with_credential_secret(realm, device_id, credentials_secret, pairing_url);
-    /// }
-    /// ```
-    pub fn with_credential_secret(
-        realm: impl Into<String>,
-        device_id: impl Into<String>,
-        credentials_secret: impl Into<String>,
-        pairing_url: impl Into<String>,
-    ) -> Self {
-        Self::new(
-            realm,
-            device_id,
-            Credential::secret(credentials_secret),
-            pairing_url,
-        )
-    }
-
-    /// Create a new instance with the given paring token to register the device with.
-    ///
-    /// ## Note
-    ///
-    /// Remember to set a writable directory on the builder to store the credentials secret after
-    /// registration.
-    ///
-    /// ```no_run
-    /// use astarte_device_sdk::transport::mqtt::MqttConfig;
-    /// use astarte_device_sdk::builder::DeviceBuilder;
-    ///
-    /// # type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<()> {
-    ///     let realm = "realm_name";
-    ///     let device_id = "device_id";
-    ///     let pairing_token = "device_credentials_secret";
-    ///     let pairing_url = "astarte_cluster_pairing_url";
-    ///
-    ///     let mut mqtt_options = MqttConfig::with_credential_secret(realm, device_id, pairing_token, pairing_url);
-    ///
-    ///     let builder = DeviceBuilder::new()
-    ///         .store_dir("/some/dir").await?
-    ///         .connection(mqtt_options);
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    pub fn with_pairing_token(
-        realm: impl Into<String>,
-        device_id: impl Into<String>,
-        pairing_token: impl Into<String>,
-        pairing_url: impl Into<String>,
-    ) -> Self {
-        Self::new(
-            realm,
-            device_id,
-            Credential::paring_token(pairing_token),
-            pairing_url,
-        )
     }
 
     /// Configure the keep alive timeout.
     ///
     /// The MQTT broker will be pinged when no data exchange has append
     /// for the duration of the keep alive timeout.
-    pub fn keepalive(&mut self, duration: Duration) -> &mut Self {
+    pub fn keepalive(mut self, duration: Duration) -> Self {
         self.keepalive = duration;
 
         self
     }
 
     /// Ignore TLS/SSL certificate errors.
-    pub fn ignore_ssl_errors(&mut self) -> &mut Self {
+    pub fn ignore_ssl_errors(mut self) -> Self {
         self.ignore_ssl_errors = true;
 
         self
     }
 
-    /// Sets the size for the underlying bounded channel used by the eventloop of [`rumqttc`].
-    pub fn bounded_channel_size(&mut self, bounded_channel_size: usize) -> &mut Self {
-        self.bounded_channel_size = bounded_channel_size;
-
-        self
-    }
-
     /// Retrieves the credentials for the connection
-    async fn credentials(
-        &mut self,
-        writable_dir: &Option<PathBuf>,
-        timeout: Duration,
-    ) -> Result<String, MqttError> {
+    async fn credentials(&mut self, config: &Config) -> Result<String, MqttError> {
         // We need to clone to not return something owning a mutable reference to self
         match &self.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
             Credential::ParingToken { pairing_token } => {
                 debug!("pairing token provided, retrieving credentials secret");
 
-                let Some(dir) = &writable_dir else {
+                let Some(dir) = &config.writable_dir else {
                     return Err(MqttError::NoStorePairingToken);
                 };
 
                 let secret = self
-                    .read_secret_or_register(dir, pairing_token, timeout)
+                    .read_secret_or_register(config, dir, pairing_token)
                     .await?;
 
                 self.credential = Credential::secret(secret.clone());
@@ -309,9 +228,9 @@ impl MqttConfig {
     /// Register the device and stores the credentials secret in the given directory
     async fn read_secret_or_register(
         &self,
+        config: &Config,
         store_dir: &Path,
         pairing_token: &str,
-        timeout: Duration,
     ) -> Result<String, PairingError> {
         let credential_file = store_dir.join(CREDENTIAL_FILE);
 
@@ -328,14 +247,31 @@ impl MqttConfig {
             }
         }
 
-        let secret = register_device_with_timeout(
-            pairing_token,
-            &self.pairing_url,
-            &self.realm,
-            &self.device_id,
-            timeout,
-        )
-        .await?;
+        let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
+
+        if insecure_ssl {
+            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
+        }
+
+        let tls = if insecure_ssl {
+            tls::insecure_tls_config_builder()?.with_no_client_auth()
+        } else {
+            let roots = tls::read_root_cert_store().await?;
+            tls::tls_config_builder(Arc::new(roots))?.with_no_client_auth()
+        };
+
+        let client = ApiClient::create(
+            ClientArgs {
+                realm: &self.realm,
+                device_id: &self.device_id,
+                pairing_url: &self.pairing_url,
+                token: pairing_token,
+            },
+            config,
+            tls,
+        )?;
+
+        let secret = client.register_device().await?;
 
         // We can register the device multiple times with the same pairing token if the device
         // hasn't connected. If the call to write the file fails, we will just re-register the
@@ -370,9 +306,9 @@ impl MqttConfig {
 
         let keep_alive = self.keepalive.as_secs();
         let conn_timeout = timeout.as_secs();
-        if keep_alive <= conn_timeout {
+        if keep_alive >= conn_timeout {
             return Err(PairingError::Config(format!(
-                "Keep alive ({keep_alive}s) should be greater than the connection timeout ({conn_timeout}s)"
+                "Keep alive ({keep_alive}s) should be less than the connection timeout ({conn_timeout}s)"
             )));
         }
 
@@ -391,15 +327,11 @@ impl MqttConfig {
 
     pub(crate) async fn try_create_transport(
         &mut self,
-        config: &PartialConfig,
-        timeout: Duration,
+        config: &Config,
     ) -> Result<MqttTransportOptions, MqttError> {
-        let secret = self.credentials(&config.writable_dir, timeout).await?;
+        let secret = self.credentials(config).await?;
 
-        let pairing_url = self
-            .pairing_url
-            .parse()
-            .map_err(|err| MqttError::Pairing(PairingError::InvalidUrl(err)))?;
+        let pairing_url = self.pairing_url.clone();
 
         let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
 
@@ -416,7 +348,7 @@ impl MqttConfig {
         .await
         .map_err(MqttError::Pairing)?;
 
-        let client = ApiClient::from_transport(&provider, &self.realm, &self.device_id, timeout)
+        let client = ApiClient::from_transport(config, &provider, &self.realm, &self.device_id)
             .map_err(MqttError::Pairing)?;
 
         let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
@@ -427,7 +359,7 @@ impl MqttConfig {
             .map_err(MqttError::Pairing)?;
 
         let (mqtt_opts, net_opts) = self
-            .build_mqtt_opts(transport, &borker_url, timeout)
+            .build_mqtt_opts(transport, &borker_url, config.connection_timeout)
             .map_err(MqttError::Pairing)?;
 
         debug!("{:?}", mqtt_opts);
@@ -436,110 +368,6 @@ impl MqttConfig {
             mqtt_opts,
             net_opts,
             provider,
-        })
-    }
-
-    pub(crate) async fn try_connect<S>(
-        &mut self,
-        store_wrapper: &StoreWrapper<S>,
-        state: Arc<SharedState>,
-        config: PartialConfig,
-        connection_timeout: Duration,
-        send_timeout: Duration,
-    ) -> Result<MqttTransport<S>, MqttError>
-    where
-        S: StoreCapabilities,
-    {
-        let client_id = ClientId {
-            device_id: self.device_id.clone(),
-            realm: self.realm.clone(),
-        };
-
-        let (retention_tx, retention_rx) = async_channel::bounded(config.channel_size);
-        let retention = MqttRetention::new(retention_rx);
-
-        let (connection, client) = match self
-            .try_create_transport(&config, connection_timeout)
-            .await
-        {
-            Ok(MqttTransportOptions {
-                mqtt_opts,
-                net_opts,
-                provider,
-            }) => {
-                let (client, mut eventloop) =
-                    AsyncClient::new(mqtt_opts, self.bounded_channel_size);
-                eventloop.set_network_options(net_opts);
-
-                *state.cert_expiry.write().await = provider
-                    .fetch_cert_expiry(ClientId {
-                        realm: &self.realm,
-                        device_id: &self.device_id,
-                    })
-                    .await;
-
-                // NOTE if this function times out no error is returned
-                // but the connection will be in a Connecting state
-                let connection = MqttConnection::wait_connack(
-                    client.clone(),
-                    eventloop,
-                    provider,
-                    client_id.as_ref(),
-                    store_wrapper,
-                    &state,
-                    connection_timeout,
-                )
-                .await?;
-
-                let client = MqttClient::new(
-                    client_id.clone(),
-                    client,
-                    retention_tx,
-                    store_wrapper.clone(),
-                    Arc::clone(&state),
-                    send_timeout,
-                );
-
-                (connection, client)
-            }
-            // handle timeout errors differently by creating a connection and a client without a transport
-            Err(MqttError::Pairing(PairingError::RequestNoNetwork(e))) => {
-                warn!(error=%Report::new(e), "got a timeout while creating the transport, initializing offline device");
-
-                let client = MqttClient::without_transport(
-                    client_id.clone(),
-                    retention_tx,
-                    store_wrapper.clone(),
-                    Arc::clone(&state),
-                    send_timeout,
-                );
-                let connection = MqttConnection::without_transport(
-                    self.clone(),
-                    config.clone(),
-                    // NOTE pass client to connection so that the [`AsyncClient`] used by the clients can be updated.
-                    Arc::clone(&client.client),
-                    connection_timeout,
-                );
-
-                (connection, client)
-            }
-            Err(e) => return Err(e),
-        };
-
-        let connected = connection.is_connected();
-
-        let connection = Mqtt::new(
-            client_id,
-            connection,
-            retention,
-            store_wrapper.clone(),
-            state,
-        );
-
-        Ok(MqttTransport {
-            connection,
-            client,
-            connected,
         })
     }
 }
@@ -553,33 +381,45 @@ where
     type Err = MqttError;
 
     async fn connect(
-        mut self,
+        self,
         config: BuildConfig<S>,
     ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
-        let store_wrapper = StoreWrapper::new(config.store);
+        let BuildConfig { store, state } = config;
 
-        let MqttTransport {
+        let store_wrapper = StoreWrapper::new(store);
+        let client_id = ClientId {
+            device_id: self.device_id.clone(),
+            realm: self.realm.clone(),
+        };
+
+        let (retention_tx, retention_rx) = async_channel::bounded(state.config.channel_size.get());
+        let retention = MqttRetention::new(retention_rx);
+
+        let client = MqttClient::without_transport(
+            client_id.clone(),
+            retention_tx,
+            store_wrapper.clone(),
+            Arc::clone(&state),
+        );
+
+        let connection = MqttConnection::without_transport(
+            self.clone(),
+            // NOTE pass client to connection so that the [`AsyncClient`] used by the clients can be updated.
+            Arc::clone(&client.client),
+        );
+
+        let connection = Mqtt::new(
+            client_id,
             connection,
-            client,
-            connected,
-        } = self
-            .try_connect(
-                &store_wrapper,
-                config.state,
-                PartialConfig {
-                    writable_dir: config.writable_dir.clone(),
-                    channel_size: config.channel_size,
-                },
-                config.connection_timeout,
-                config.send_timeout,
-            )
-            .await?;
+            retention,
+            store_wrapper.clone(),
+            state,
+        );
 
         Ok(DeviceTransport {
             sender: client,
             connection,
             store: store_wrapper,
-            connected,
         })
     }
 }
@@ -646,35 +486,62 @@ mod tests {
 
     #[test]
     fn test_default_mqtt_config() {
-        let mqtt_config = MqttConfig::with_credential_secret("test", "test", "test", "test");
+        let args = MqttArgs {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            credential: Credential::secret("secret"),
+            pairing_url: "http://api.astarte.localhost/pairing".parse().unwrap(),
+        };
 
-        assert_eq!(mqtt_config.realm, "test");
-        assert_eq!(mqtt_config.device_id, "test");
-        assert_eq!(mqtt_config.credential, Credential::secret("test"));
-        assert_eq!(mqtt_config.pairing_url, "test");
-        assert_eq!(mqtt_config.keepalive, Duration::from_secs(30));
-        assert!(!mqtt_config.ignore_ssl_errors);
+        let mqtt_config = MqttConfig::new(args);
+
+        let exp = MqttConfig {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            credential: Credential::secret("secret"),
+            pairing_url: "http://api.astarte.localhost/pairing".parse().unwrap(),
+            ignore_ssl_errors: false,
+            keepalive: Duration::from_secs(15),
+        };
+
+        assert_eq!(mqtt_config, exp)
     }
 
     #[test]
     fn test_override_mqtt_config() {
-        let mut mqtt_config = MqttConfig::with_credential_secret("test", "test", "test", "test");
+        let args = MqttArgs {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            credential: Credential::secret("secret"),
+            pairing_url: "http://api.astarte.localhost/pairing".parse().unwrap(),
+        };
 
-        mqtt_config
+        let mqtt_config = MqttConfig::new(args)
             .ignore_ssl_errors()
             .keepalive(Duration::from_secs(60));
 
-        assert_eq!(mqtt_config.realm, "test");
-        assert_eq!(mqtt_config.device_id, "test");
-        assert_eq!(mqtt_config.credential, Credential::secret("test"));
-        assert_eq!(mqtt_config.pairing_url, "test");
-        assert_eq!(mqtt_config.keepalive, Duration::from_secs(60));
-        assert!(mqtt_config.ignore_ssl_errors);
+        let exp = MqttConfig {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            credential: Credential::secret("secret"),
+            pairing_url: "http://api.astarte.localhost/pairing".parse().unwrap(),
+            ignore_ssl_errors: true,
+            keepalive: Duration::from_secs(60),
+        };
+
+        assert_eq!(mqtt_config, exp)
     }
 
     #[test]
     fn test_redacted_credentials_secret() {
-        let mqtt_config = MqttConfig::with_credential_secret("test", "test", "secret=", "test");
+        let args = MqttArgs {
+            realm: "realm".to_string(),
+            device_id: "device_id".to_string(),
+            credential: Credential::secret("secret"),
+            pairing_url: "http://api.astarte.localhost/pairing".parse().unwrap(),
+        };
+
+        let mqtt_config = MqttConfig::new(args);
 
         let debug_string = format!("{mqtt_config:?}");
 
