@@ -379,12 +379,16 @@ impl WriteConnection {
         let removed = self.free_retention_items(0)?;
 
         if removed > 0 {
-            if let Err(err) = self.execute("VACUUM", []) {
-                error!(error = %Report::new(err), "failed to vacuum the database");
-            }
+            self.vacuum();
         }
 
         Ok(())
+    }
+
+    fn vacuum(&mut self) {
+        if let Err(err) = self.execute("VACUUM", []) {
+            error!(error = %Report::new(err), "failed to vacuum the database");
+        }
     }
 }
 

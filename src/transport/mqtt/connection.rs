@@ -829,10 +829,10 @@ impl WaitAcks {
 /// finished.
 impl Drop for WaitAcks {
     fn drop(&mut self) {
-        if let Some(handle) = self.handle.as_ref() {
-            if !handle.is_finished() {
-                handle.abort();
-            }
+        if let Some(handle) = self.handle.as_ref()
+            && !handle.is_finished()
+        {
+            handle.abort();
         }
     }
 }
