@@ -43,7 +43,7 @@ use crate::{
 };
 
 pub(crate) mod connection;
-pub(crate) mod options;
+pub mod options;
 pub(crate) mod pool;
 pub(crate) mod statements;
 
@@ -516,7 +516,7 @@ impl SqliteStore {
     /// # Example
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, SqliteOptions};
+    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, options::SqliteOptions};
     ///
     /// #[tokio::main]
     /// async fn main() {
@@ -546,7 +546,7 @@ impl SqliteStore {
     /// # Example
     ///
     /// ```no_run
-    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, SqliteOptions};
+    /// # use astarte_device_sdk::store::sqlite::{SqliteStore, options::SqliteOptions};
     ///
     /// #[tokio::main]
     /// async fn main() {
