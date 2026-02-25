@@ -63,6 +63,7 @@ fi
 while read -r line; do
     if [[ $line == '' ]]; then
         echo "Empty line, skipping" 1>&2
+
         continue
     fi
 
