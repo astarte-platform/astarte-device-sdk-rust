@@ -36,4 +36,4 @@ git_file_names() {
     git diff --name-only "$base" "$head"
 }
 
-git_file_names | ./scripts/ci/copyright.sh
+git_file_names | xargs --max-args 1 -P "$(nproc)" ./scripts/ci/copyright.sh

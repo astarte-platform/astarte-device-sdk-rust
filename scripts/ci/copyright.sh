@@ -35,7 +35,11 @@ annotate() {
         return
     fi
     if [[ "$*" == *.snap || "$*" == *.snap.cbor ]]; then
-        echo "skipping licence files"
+        echo "skipping test snapshot files"
+        return
+    fi
+    if [[ "$*" == migrations/**.sql || "$*" == queries/**.sql ]]; then
+        echo "skipping sql files"
         return
     fi
 
