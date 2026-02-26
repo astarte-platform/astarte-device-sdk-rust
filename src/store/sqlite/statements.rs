@@ -195,6 +195,22 @@ impl WriteConnection {
 
         Ok(())
     }
+
+    #[instrument(skip_all)]
+    pub(super) fn reset_state(&self, ownership: Ownership) -> Result<(), SqliteError> {
+        let mut statement = self
+            .prepare_cached(include_query!("queries/properties/write/reset_state.sql"))
+            .map_err(SqliteError::Prepare)?;
+
+        statement
+            .execute((
+                RecordPropertyState::Changed,
+                RecordOwnership::from(ownership),
+            ))
+            .map_err(SqliteError::Query)?;
+
+        Ok(())
+    }
 }
 
 fn query_prop_row(

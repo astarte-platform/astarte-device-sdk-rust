@@ -797,6 +797,12 @@ impl PropertyStore for SqliteStore {
             })
             .await
     }
+
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+        self.pool
+            .acquire_writer(move |writer| writer.reset_state(ownership))
+            .await
+    }
 }
 
 /// Deserialize a property from the store.

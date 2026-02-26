@@ -317,6 +317,13 @@ where
             .await
             .map_err(|e| GrpcStoreError::from(StoreError::device_props(e)))
     }
+
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+        self.inner
+            .reset_state(ownership)
+            .await
+            .map_err(|e| GrpcStoreError::from(StoreError::reset_state(e)))
+    }
 }
 
 #[cfg(test)]

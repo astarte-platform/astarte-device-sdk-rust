@@ -286,6 +286,8 @@ where
         limit: usize,
         offset: usize,
     ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
+    /// Resets the state of properties
+    fn reset_state(&self, ownership: Ownership) -> impl Future<Output = Result<(), Self::Err>> + Send;
 }
 
 /// A property that may be unset.

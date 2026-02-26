@@ -20,6 +20,7 @@ use std::num::NonZero;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use astarte_interfaces::schema::Ownership;
 use tracing::{debug, error, info, trace};
 
 use crate::Error;
@@ -31,7 +32,7 @@ use crate::retention::{
 use crate::state::{ConnStatus, ConnectionState};
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoreCapabilities};
-use crate::transport::{Connection, Publish, Receive, Reconnect};
+use crate::transport::{AttemptStatus, Connection, Publish, Receive, Reconnect};
 
 use super::DeviceConnection;
 
@@ -129,6 +130,9 @@ where
                     }
                 }
             }
+
+            // after everything got resent we are connected
+            state.set_connection(ConnStatus::Connected).await;
         }));
     }
 
@@ -312,16 +316,39 @@ where
             return Ok(ControlFlow::Break(()));
         }
 
-        while !self.connection.reconnect(&interfaces).await? {
-            let timeout = self.backoff.next();
+        let session;
 
-            if self.wait_timeout(timeout).await.is_break() {
-                return Ok(ControlFlow::Break(()));
+        loop {
+            let attempt_status = self.connection.reconnect(&interfaces).await?;
+
+            match attempt_status {
+                AttemptStatus::Connected { session_present } => {
+                    session = session_present;
+                    break;
+                }
+                AttemptStatus::Disconnected => {
+                    let timeout = self.backoff.next();
+
+                    if self.wait_timeout(timeout).await.is_break() {
+                        return Ok(ControlFlow::Break(()));
+                    }
+                }
             }
         }
 
-        // Now we are reconnected
-        self.state.set_connection(ConnStatus::Connected).await;
+        // if we are connected but the session is not present we have to cleanup the retention data
+        if !session {
+            // when the session is not present we reset the sent flags for stored messages
+            info!("the session is not present after reconnection we will resend the packets");
+
+            if let Some(retention) = self.store.get_retention() {
+                retention.reset_all_publishes().await?;
+            }
+
+            self.state.volatile_store().reset_sent().await;
+
+            self.store.reset_state(Ownership::Device).await?;
+        }
 
         Ok(ControlFlow::Continue(()))
     }
@@ -373,7 +400,12 @@ mod tests {
             .with(predicate::always())
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| futures::future::ok(true).boxed());
+            .returning(|_| {
+                futures::future::ok(crate::transport::AttemptStatus::Connected {
+                    session_present: true,
+                })
+                .boxed()
+            });
 
         connection
             .sender

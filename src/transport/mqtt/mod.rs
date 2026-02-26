@@ -71,6 +71,7 @@ use crate::{
     session::{IntrospectionInterface, StoredSession},
     state::SharedState,
     store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
+    transport::AttemptStatus,
     validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
 };
 use crate::{retention::RetentionError, store::OptStoredProp};
@@ -785,7 +786,7 @@ impl<S> Reconnect for Mqtt<S>
 where
     S: StoreCapabilities + PropertyStore,
 {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<AttemptStatus, crate::Error> {
         let result = self
             .connection
             .reconnect(
@@ -797,26 +798,25 @@ where
             .await
             .map_err(Error::Mqtt);
 
-        // if we are connected but the session is not present we have to cleanup the retention data
-        if result.as_ref().is_ok_and(|con| *con) && !self.connection.is_session_present() {
-            // when the session is not present we reset the sent flags for stored messages
-            info!("the session is not present after reconnection we will resend the packets");
+        let session_present = self.connection.is_session_present();
 
-            // we also discard previously stored packets notices
-            let received = self.retention.discard();
+        if !session_present {
+            // if the session is not present we discard previously stored packets notices
+            let received = self.retention.drain_filter_acked();
 
+            // mark received packets
             for id in received {
                 Self::mark_packet_received(&self.state.volatile_store, &self.store, Ok(id)).await?;
             }
-
-            if let Some(retention) = self.store.get_retention() {
-                retention.reset_all_publishes().await?;
-            }
-
-            self.state.volatile_store.reset_sent().await;
         }
 
-        result
+        result.map(|c| {
+            if c {
+                AttemptStatus::Connected { session_present }
+            } else {
+                AttemptStatus::Disconnected
+            }
+        })
     }
 }
 

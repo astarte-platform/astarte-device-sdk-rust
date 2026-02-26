@@ -63,6 +63,7 @@ use crate::interfaces::MappingRef;
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::SharedState;
 use crate::store::OptStoredProp;
+use crate::transport::AttemptStatus;
 use crate::{
     Error, Timestamp,
     builder::{ConnectionConfig, DeviceTransport},
@@ -580,7 +581,7 @@ impl<S> Reconnect for Grpc<S>
 where
     S: PropertyStore,
 {
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<bool, crate::Error> {
+    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<AttemptStatus, crate::Error> {
         // try reattaching
         let data = NodeData::try_from(interfaces)?;
 
@@ -588,13 +589,15 @@ where
             Ok(stream) => {
                 self.stream = Some(SyncWrapper::new(stream));
 
-                Ok(true)
+                Ok(AttemptStatus::Connected {
+                    session_present: false,
+                })
             }
             Err(err) => {
                 error!(error = %Report::new(err), "error while trying to reconnect");
                 self.stream = None;
 
-                Ok(false)
+                Ok(AttemptStatus::Disconnected)
             }
         }
     }
@@ -993,11 +996,21 @@ mod test {
         // poll the next message (error)
         assert_eq!(connection.next_event().await.unwrap(), None);
         // reconnect (second attach)
-        assert!(connection.reconnect(&Interfaces::new()).await.unwrap());
+        assert_eq!(
+            connection.reconnect(&Interfaces::new()).await.unwrap(),
+            AttemptStatus::Connected {
+                session_present: false
+            }
+        );
         // poll the next message (second error)
         assert_eq!(connection.next_event().await.unwrap(), None);
         // after the second error we reconnect with no messages
-        assert!(connection.reconnect(&Interfaces::new()).await.unwrap());
+        assert_eq!(
+            connection.reconnect(&Interfaces::new()).await.unwrap(),
+            AttemptStatus::Connected {
+                session_present: false
+            }
+        );
 
         // manually calling detach
         client.disconnect().await.unwrap();

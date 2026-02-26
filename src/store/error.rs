@@ -57,6 +57,9 @@ pub enum StoreError {
     /// Could not delete all the interface properties.
     #[error("could not delete all the interface properties")]
     DeleteInterface(#[source] DynError),
+    /// Could not reset properties state
+    #[error("could not reset properties state")]
+    ResetState(#[source] DynError),
 }
 
 impl StoreError {
@@ -102,5 +105,9 @@ impl StoreError {
 
     pub(crate) fn delete_interface(err: impl Into<DynError>) -> Self {
         Self::DeleteInterface(err.into())
+    }
+
+    pub(crate) fn reset_state(err: impl Into<DynError>) -> Self {
+        Self::ResetState(err.into())
     }
 }

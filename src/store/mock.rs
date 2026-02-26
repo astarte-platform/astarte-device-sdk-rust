@@ -112,6 +112,8 @@ mock! {
             limit: usize,
             offset: usize,
         ) -> Result<Vec<super::OptStoredProp>, StoreError>;
+
+        async fn reset_state(&self, ownership: astarte_interfaces::schema::Ownership) -> Result<(), StoreError>;
     }
 
     impl MockedStoreCapabilities for Store {

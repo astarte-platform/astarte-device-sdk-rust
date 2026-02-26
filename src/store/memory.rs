@@ -283,6 +283,17 @@ impl PropertyStore for MemoryStore {
 
         Ok(props)
     }
+
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+        self.store
+            .write()
+            .await
+            .values_mut()
+            .filter(|v| v.ownership == ownership)
+            .for_each(|v| v.state = PropertyState::Changed);
+
+        Ok(())
+    }
 }
 
 /// Key for the in memory store, this let us customize the hash and equality, and use (&str, &str)

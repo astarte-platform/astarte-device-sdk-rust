@@ -20,7 +20,7 @@
 
 use tracing::trace;
 
-use astarte_interfaces::Properties;
+use astarte_interfaces::{Properties, schema::Ownership};
 
 use crate::{store::PropertyState, types::AstarteData};
 
@@ -174,6 +174,13 @@ where
             .device_props_with_unset(state, limit, offset)
             .await
             .map_err(StoreError::device_props)
+    }
+
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+        self.store
+            .reset_state(ownership)
+            .await
+            .map_err(StoreError::reset_state)
     }
 }
 

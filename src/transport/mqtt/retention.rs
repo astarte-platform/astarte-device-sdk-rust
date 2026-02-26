@@ -56,7 +56,7 @@ impl MqttRetention {
     }
 
     /// Discards retention packets and returns the id of received packets
-    pub(crate) fn discard(&mut self) -> Vec<RetentionId> {
+    pub(crate) fn drain_filter_acked(&mut self) -> Vec<RetentionId> {
         debug!("discarding retention packets");
 
         self.packets
