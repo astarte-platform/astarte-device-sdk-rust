@@ -287,7 +287,10 @@ where
         offset: usize,
     ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
     /// Resets the state of properties
-    fn reset_state(&self, ownership: Ownership) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    fn reset_state(
+        &self,
+        ownership: Ownership,
+    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
 }
 
 /// A property that may be unset.
@@ -429,6 +432,16 @@ mod tests {
             ty
         );
 
+        let updated = store
+            .update_state(
+                &property_mapping,
+                PropertyState::Completed,
+                Some(ty.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(updated);
+
         let mut property_mapping_next = property_mapping;
         property_mapping_next.version_major = 2;
 
@@ -464,6 +477,20 @@ mod tests {
                 .unwrap()
                 .as_slice()
         );
+        // delete property if mateches value, should delete the property
+        let updated = store
+            .delete_expected_prop(&property_mapping, None)
+            .await
+            .unwrap();
+        assert!(updated);
+        store.delete_prop(&property_mapping).await.unwrap();
+        // should now be empty
+        let props = store
+            .device_props_with_unset(PropertyState::Changed, 1, 0)
+            .await
+            .unwrap();
+        println!("{:?}", props);
+        assert!(props.is_empty());
 
         // delete
         store.store_prop(prop).await.unwrap();
@@ -507,10 +534,45 @@ mod tests {
         let expected = [device_prop.clone(), server_prop.clone()];
 
         let mut props = store.load_all_props().await.unwrap();
-
         props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
-
         assert_eq!(props, expected);
+
+        // check that device properties are in the changed state
+        let device_props_changed = store
+            .device_props_with_unset(PropertyState::Changed, 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            device_props_changed[0].value,
+            Some(device_prop.value.clone())
+        );
+        assert_eq!(device_props_changed[0].interface, device_prop.interface);
+        assert_eq!(device_props_changed[0].path, device_prop.path);
+        // update the state of the device property to completed
+        assert!(
+            store
+                .update_state(
+                    &PropertyMapping::from(&device_prop),
+                    PropertyState::Completed,
+                    Some(device_prop.value.clone())
+                )
+                .await
+                .unwrap()
+        );
+        // check that no properties are in the changed state
+        let device_props_changed = store
+            .device_props_with_unset(PropertyState::Changed, 1, 0)
+            .await
+            .unwrap();
+        assert!(device_props_changed.is_empty());
+        // reset the state of the properties to bring changes back
+        store.reset_state(Ownership::Device).await.unwrap();
+        // ensure state is now changed
+        let device_props_changed = store
+            .device_props_with_unset(PropertyState::Changed, 1, 0)
+            .await
+            .unwrap();
+        assert_eq!(device_props_changed.len(), 1);
 
         let dev_props = store.device_props().await.unwrap();
         assert_eq!(dev_props, std::slice::from_ref(&device_prop));
@@ -520,9 +582,9 @@ mod tests {
 
         // props from interface
         let props = store.interface_props(&device_prop_interface).await.unwrap();
-        assert_eq!(props, vec![device_prop.clone()]);
+        assert_eq!(props, std::slice::from_ref(&device_prop));
         let props = store.interface_props(&server_prop_interface).await.unwrap();
-        assert_eq!(props, vec![server_prop.clone()]);
+        assert_eq!(props, std::slice::from_ref(&server_prop));
 
         // delete interface properties
         store
