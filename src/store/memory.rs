@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ use tokio::sync::RwLock;
 use tracing::error;
 
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
-use crate::store::MissingCapability;
+use crate::store::{MissingCapability, PropertyState};
 use crate::types::AstarteData;
 
 /// Error from the memory store.
@@ -85,6 +85,7 @@ impl PropertyStore for MemoryStore {
             value: Some(value.clone()),
             interface_major,
             ownership,
+            state: PropertyState::Changed,
         };
 
         let mut store = self.store.write().await;
@@ -92,6 +93,25 @@ impl PropertyStore for MemoryStore {
         store.insert(key, value);
 
         Ok(())
+    }
+
+    async fn update_state(
+        &self,
+        property: &PropertyMapping<'_>,
+        state: PropertyState,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        let key = Key::new(property.interface_name(), property.path());
+
+        if let Some(val) = self.store.write().await.get_mut(&key)
+            && val.value == expected
+        {
+            val.state = state;
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn load_prop(
@@ -146,6 +166,26 @@ impl PropertyStore for MemoryStore {
         store.remove(&key);
 
         Ok(())
+    }
+
+    async fn delete_expected_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        expected: Option<AstarteData>,
+    ) -> Result<bool, Self::Err> {
+        let key = Key::new(property.interface_name(), property.path());
+
+        let mut store = self.store.write().await;
+
+        if let Some(val) = store.get_mut(&key)
+            && val.value == expected
+        {
+            store.remove(&key);
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn clear(&self) -> Result<(), Self::Err> {
@@ -219,6 +259,7 @@ impl PropertyStore for MemoryStore {
 
     async fn device_props_with_unset(
         &self,
+        state: PropertyState,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<OptStoredProp>, Self::Err> {
@@ -226,15 +267,32 @@ impl PropertyStore for MemoryStore {
 
         let props = store
             .iter()
-            .filter_map(|(k, v)| match v.ownership {
-                Ownership::Device => Some(OptStoredProp::from((k, v))),
-                Ownership::Server => None,
+            .filter_map(|(k, v)| {
+                if v.state != state {
+                    return None;
+                }
+
+                match v.ownership {
+                    Ownership::Device => Some(OptStoredProp::from((k, v))),
+                    Ownership::Server => None,
+                }
             })
             .skip(offset)
             .take(limit)
             .collect();
 
         Ok(props)
+    }
+
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+        self.store
+            .write()
+            .await
+            .values_mut()
+            .filter(|v| v.ownership == ownership)
+            .for_each(|v| v.state = PropertyState::Changed);
+
+        Ok(())
     }
 }
 
@@ -268,6 +326,7 @@ struct Value {
     value: Option<AstarteData>,
     interface_major: i32,
     ownership: Ownership,
+    state: PropertyState,
 }
 
 impl Value {

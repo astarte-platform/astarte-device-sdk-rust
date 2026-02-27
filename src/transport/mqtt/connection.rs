@@ -1058,7 +1058,7 @@ mod tests {
             .returning({
                 let props = props.clone();
 
-                move |_, _| Ok(props.clone())
+                move |_, _, _| Ok(props.clone())
             });
 
         client
@@ -1103,7 +1103,7 @@ mod tests {
             .returning({
                 let props = props.clone();
 
-                move |_, _| Ok(props.clone())
+                move |_, _, _| Ok(props.clone())
             });
 
         client.expect_clone().once().in_sequence(seq).returning({

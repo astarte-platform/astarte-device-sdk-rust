@@ -4,5 +4,6 @@ INSERT OR REPLACE INTO propcache (
     value,
     type,
     interface_major,
-    ownership
-) VALUES (?, ?, ?, ?, ?, ?);
+    ownership,
+    state
+) VALUES (?, ?, ?, ?, ?, ?, ?);

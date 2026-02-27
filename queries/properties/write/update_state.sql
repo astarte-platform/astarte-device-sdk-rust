@@ -1,7 +1,5 @@
 UPDATE propcache
-SET
-    value = NULL,
-    state = ?
+SET state = ?
 WHERE
     interface = ?
     AND path = ?;

@@ -187,6 +187,13 @@ pub(crate) trait Receive {
     ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
 }
 
+/// Status of the connection after a reconnect attempt
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttemptStatus {
+    Connected { session_present: bool },
+    Disconnected,
+}
+
 /// Reconnect the device to Astarte.
 pub(crate) trait Reconnect {
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
@@ -197,7 +204,7 @@ pub(crate) trait Reconnect {
     fn reconnect(
         &mut self,
         interfaces: &Interfaces,
-    ) -> impl Future<Output = Result<bool, crate::Error>> + Send;
+    ) -> impl Future<Output = Result<AttemptStatus, crate::Error>> + Send;
 }
 
 pub(crate) trait Register {

@@ -20,6 +20,7 @@ use std::num::NonZero;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use astarte_interfaces::schema::Ownership;
 use tracing::{debug, error, info, trace};
 
 use crate::Error;
@@ -30,8 +31,8 @@ use crate::retention::{
 };
 use crate::state::{ConnStatus, ConnectionState};
 use crate::store::wrapper::StoreWrapper;
-use crate::store::{PropertyStore, StoreCapabilities};
-use crate::transport::{Connection, Publish, Receive, Reconnect};
+use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoreCapabilities};
+use crate::transport::{AttemptStatus, Connection, Publish, Receive, Reconnect};
 
 use super::DeviceConnection;
 
@@ -96,7 +97,6 @@ where
             let _interfaces = state.interfaces().read().await;
 
             let mut remaining_data = true;
-            let mut offset = 0;
 
             while remaining_data {
                 remaining_data = false;
@@ -121,14 +121,8 @@ where
                     }
                 }
 
-                match Self::send_device_properties(&mut store, &mut sender, limit.get(), offset)
-                    .await
-                {
-                    Ok(sent) => {
-                        offset += sent;
-
-                        remaining_data |= sent >= limit.get();
-                    }
+                match Self::send_device_properties(&mut store, &mut sender, limit.get()).await {
+                    Ok(sent) => remaining_data |= sent >= limit.get(),
                     Err(err) => {
                         error!(error = %Report::new(&err), "error sending device properties");
 
@@ -136,26 +130,29 @@ where
                     }
                 }
             }
+
+            // after everything got resent we are connected
+            state.set_connection(ConnStatus::Connected).await;
         }));
     }
 
     /// Sends the device owned properties even the null values.
     /// This ignores the purge properties that should be sent by the connection implementation.
     /// Since the purge properties we sent earlier new properties could have gotten unset.
-    // NOTE the current implementation of grpc does can't send a purge properties
-    // so currently in this generic resend we need to resend unsets too
     async fn send_device_properties(
         store: &mut StoreWrapper<C::Store>,
         sender: &mut C::Sender,
         limit: usize,
-        offset: usize,
     ) -> Result<usize, Error>
     where
         C::Sender: Publish,
     {
-        let device_properties = store.device_props_with_unset(limit, offset).await?;
+        let device_properties = store
+            .device_props_with_unset(PropertyState::Changed, limit, 0)
+            .await?;
         let count = device_properties.len();
-        debug!("fetched {count} properties (limit: {limit}, offset: {offset})");
+
+        debug!("fetched {count} properties (limit: {limit})");
 
         for prop in device_properties {
             debug!(
@@ -164,7 +161,25 @@ where
             );
 
             // Don't wait for the ack since it's not fundamental for the connection
-            sender.resend_stored_property(prop).await?;
+            sender.resend_stored_property(prop.clone()).await?;
+
+            let property_mapping = PropertyMapping::from(&prop);
+
+            if prop.value.is_some() {
+                let updated = store
+                    .update_state(
+                        &property_mapping,
+                        PropertyState::Completed,
+                        prop.value.clone(),
+                    )
+                    .await?;
+
+                debug!(?updated, "updated state");
+            } else {
+                let updated = store.delete_expected_prop(&property_mapping, None).await?;
+
+                debug!(?updated, "deleted expected prop");
+            }
         }
 
         Ok(count)
@@ -301,16 +316,39 @@ where
             return Ok(ControlFlow::Break(()));
         }
 
-        while !self.connection.reconnect(&interfaces).await? {
-            let timeout = self.backoff.next();
+        let session;
 
-            if self.wait_timeout(timeout).await.is_break() {
-                return Ok(ControlFlow::Break(()));
+        loop {
+            let attempt_status = self.connection.reconnect(&interfaces).await?;
+
+            match attempt_status {
+                AttemptStatus::Connected { session_present } => {
+                    session = session_present;
+                    break;
+                }
+                AttemptStatus::Disconnected => {
+                    let timeout = self.backoff.next();
+
+                    if self.wait_timeout(timeout).await.is_break() {
+                        return Ok(ControlFlow::Break(()));
+                    }
+                }
             }
         }
 
-        // Now we are reconnected
-        self.state.set_connection(ConnStatus::Connected).await;
+        // if we are connected but the session is not present we have to cleanup the retention data
+        if !session {
+            // when the session is not present we reset the sent flags for stored messages
+            info!("the session is not present after reconnection we will resend the packets");
+
+            if let Some(retention) = self.store.get_retention() {
+                retention.reset_all_publishes().await?;
+            }
+
+            self.state.volatile_store().reset_sent().await;
+
+            self.store.reset_state(Ownership::Device).await?;
+        }
 
         Ok(ControlFlow::Continue(()))
     }
@@ -362,7 +400,12 @@ mod tests {
             .with(predicate::always())
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| futures::future::ok(true).boxed());
+            .returning(|_| {
+                futures::future::ok(crate::transport::AttemptStatus::Connected {
+                    session_present: true,
+                })
+                .boxed()
+            });
 
         connection
             .sender

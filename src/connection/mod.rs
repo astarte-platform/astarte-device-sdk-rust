@@ -463,7 +463,12 @@ mod tests {
             .expect_reconnect()
             .once()
             .in_sequence(&mut seq)
-            .returning(|_| futures::future::ok(true).boxed());
+            .returning(|_| {
+                futures::future::ok(crate::transport::AttemptStatus::Connected {
+                    session_present: true,
+                })
+                .boxed()
+            });
 
         connection
             .sender

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ use tracing::{debug, error, trace};
 
 use crate::interfaces::MappingRef;
 use crate::state::ConnStatus;
-use crate::store::{PropertyMapping, PropertyStore, StoredProp};
+use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
 use crate::{AstarteData, Error};
@@ -73,9 +73,21 @@ where
 
         match self.state.connection().await {
             ConnStatus::Connected => {
+                let expected = Some(validated.data.clone());
+
                 self.sender.send_property(validated).await?;
 
+                let updated = self
+                    .store
+                    .update_state(
+                        &PropertyMapping::from(&mapping),
+                        PropertyState::Completed,
+                        expected,
+                    )
+                    .await?;
+
                 trace!(
+                    ?updated,
                     "property sent {interface_name}{path}:{}",
                     mapping.interface().version_major()
                 );
@@ -155,9 +167,12 @@ where
             ConnStatus::Connected => {
                 self.sender.unset(validated.clone()).await?;
 
-                debug!("deleting property {interface_name}{path} from store");
+                let updated = self
+                    .store
+                    .delete_expected_prop(&PropertyMapping::from(&mapping), None)
+                    .await?;
 
-                self.store.delete_prop(&property_mapping).await?;
+                debug!(?updated, "delete unset property");
             }
             ConnStatus::Disconnected => {
                 trace!("not deleting property from store, since disconnected");

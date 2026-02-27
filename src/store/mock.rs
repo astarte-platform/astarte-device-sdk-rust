@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +22,7 @@ use mockall::mock;
 use crate::{
     AstarteData,
     session::{IntrospectionInterface, SessionError, StoredSession},
+    store::PropertyState,
 };
 
 use super::{
@@ -59,6 +60,13 @@ mock! {
             prop: StoredProp<&'a str, &'b AstarteData>,
         ) -> Result<(), StoreError>;
 
+        async fn update_state<'a>(
+            &self,
+            property: &PropertyMapping<'a>,
+            state: PropertyState,
+            data: Option<AstarteData>,
+        ) -> Result<bool, StoreError>;
+
         async fn load_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
@@ -73,6 +81,12 @@ mock! {
             &self,
             property: &PropertyMapping<'a>,
         ) -> Result<(), StoreError>;
+
+        async fn delete_expected_prop<'a>(
+            &self,
+            property: &PropertyMapping<'a>,
+            expected: Option<AstarteData>,
+        ) -> Result<bool, StoreError>;
 
         async fn clear(&self) -> Result<(), StoreError>;
 
@@ -94,9 +108,12 @@ mock! {
 
         async fn device_props_with_unset(
             &self,
+            state: PropertyState,
             limit: usize,
             offset: usize,
         ) -> Result<Vec<super::OptStoredProp>, StoreError>;
+
+        async fn reset_state(&self, ownership: astarte_interfaces::schema::Ownership) -> Result<(), StoreError>;
     }
 
     impl MockedStoreCapabilities for Store {

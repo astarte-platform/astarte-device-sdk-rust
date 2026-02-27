@@ -85,8 +85,8 @@ mock! {
         ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
     }
 
-    impl<S: StoreCapabilities> Reconnect  for Con<S> {
-        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<bool, Error>> + Send {
+    impl<S: StoreCapabilities> Reconnect for Con<S> {
+        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus, Error>> + Send {
         }
     }
 }
