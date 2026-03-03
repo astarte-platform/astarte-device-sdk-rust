@@ -416,19 +416,6 @@ pub struct Grpc<S> {
 }
 
 impl<S> Grpc<S> {
-    pub(crate) fn new(
-        uuid: Uuid,
-        client: MsgHubClient,
-        stream: Streaming<MessageHubEvent>,
-    ) -> Self {
-        Self {
-            uuid,
-            client,
-            stream: Some(SyncWrapper::new(stream)),
-            _store_type: PhantomData,
-        }
-    }
-
     pub(crate) fn new_disconnected(uuid: Uuid, client: MsgHubClient) -> Self {
         Self {
             uuid,
@@ -664,27 +651,14 @@ where
     ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
         let channel = self.endpoint.connect_lazy();
         let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
-        let mut client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
+        let client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
         let store = StoreWrapper::new(GrpcStore::new(client.clone(), config.store));
 
         let state = Arc::clone(&config.state);
 
-        let stream_res = {
-            let interfaces = config.state.interfaces.read().await;
-            let node_data = NodeData::try_from(&*interfaces)?;
-
-            Grpc::<S>::attach(&mut client, node_data).await
-        };
-
         let sender = GrpcClient::new(client.clone(), store.clone(), state);
 
-        let connection = match stream_res {
-            Ok(stream) => Grpc::new(self.uuid, client, stream),
-            Err(err) => {
-                error!(err=%Report::new(err), "error while connecting to message hub");
-                Grpc::new_disconnected(self.uuid, client)
-            }
-        };
+        let connection = Grpc::new_disconnected(self.uuid, client);
 
         Ok(DeviceTransport {
             sender,
@@ -742,6 +716,21 @@ mod test {
     use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY};
 
     use super::*;
+
+    impl<S> Grpc<S> {
+        pub(crate) fn new(
+            uuid: Uuid,
+            client: MsgHubClient,
+            stream: Streaming<MessageHubEvent>,
+        ) -> Self {
+            Self {
+                uuid,
+                client,
+                stream: Some(SyncWrapper::new(stream)),
+                _store_type: PhantomData,
+            }
+        }
+    }
 
     pub(crate) const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
