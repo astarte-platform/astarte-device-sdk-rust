@@ -267,8 +267,28 @@ where
     C: Connection + Reconnect + Receive + 'static,
     C::Sender: Publish + 'static,
 {
+    #[instrument(skip(self))]
     async fn handle_events(mut self) -> Result<(), crate::Error> {
-        self.init_stored_retention().await?;
+        trace!("starting connection");
+
+        // Check the status to since a client may already have called disconnect
+        match self.state.get_connection().await {
+            ConnStatus::Connected => {}
+            ConnStatus::Disconnected => {
+                debug!("connecting device");
+
+                if self.reconnect_and_resend().await?.is_break() {
+                    info!("connection closed successfully");
+
+                    return Ok(());
+                }
+            }
+            ConnStatus::Closed => {
+                info!("connection closed");
+
+                return Ok(());
+            }
+        }
 
         loop {
             match self.poll().await {

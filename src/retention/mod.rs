@@ -120,7 +120,7 @@ pub enum RetentionError {
     #[error("couldn't fetch all the publishes' interfaces")]
     FetchInterfaces(#[source] DynError),
     /// Couldn't set the maximum capacity of items.
-    #[error("couldn't set the mximum number of item to {capacity}")]
+    #[error("couldn't set the maximum number of item to {capacity}")]
     SetCapacity {
         /// The capacity we want to set.
         capacity: NonZeroUsize,
