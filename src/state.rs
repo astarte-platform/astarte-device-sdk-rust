@@ -16,6 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Display;
 use std::sync::Arc;
 
 use chrono::DateTime;
@@ -108,6 +109,10 @@ impl ConnectionState {
         Self(shared_state)
     }
 
+    pub(crate) async fn get_connection(&self) -> ConnStatus {
+        *self.0.status.read().await
+    }
+
     pub(crate) async fn set_connection(&self, status: ConnStatus) {
         *self.0.status.write().await = status;
     }
@@ -135,6 +140,16 @@ pub(crate) enum ConnStatus {
     Connected,
     /// Connection closed with a disconnect.
     Closed,
+}
+
+impl Display for ConnStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnStatus::Disconnected => write!(f, "Disconnected"),
+            ConnStatus::Connected => write!(f, "Connected"),
+            ConnStatus::Closed => write!(f, "Closed"),
+        }
+    }
 }
 
 #[cfg(test)]

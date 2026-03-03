@@ -33,7 +33,6 @@ use std::time::Duration;
 
 use astarte_interfaces::Interface;
 use tracing::debug;
-use tracing::info;
 
 use crate::Error;
 use crate::client::DeviceClient;
@@ -471,18 +470,6 @@ where
             store,
         } = self.connection_config.connect(config).await?;
 
-        // set max retention items in the store
-        if let Some(retention) = store.get_retention() {
-            retention
-                .set_max_retention_items(self.stored_retention)
-                .await?;
-
-            // NOTE also reset the stored items since this is the first connection and we have no in memory data
-            // (this won't be done again until the device is in memory)
-            info!("resetting all publish sent flags");
-            retention.reset_all_publishes().await?;
-        }
-
         let (client_state, connection_state) = state.split();
 
         let client = DeviceClient::new(
@@ -502,6 +489,8 @@ where
             sender,
             backoff,
         );
+
+        connection.init_store(self.stored_retention).await?;
 
         Ok((client, connection))
     }

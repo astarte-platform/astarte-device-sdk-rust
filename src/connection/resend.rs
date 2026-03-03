@@ -21,7 +21,7 @@ use std::ops::ControlFlow;
 use std::time::Duration;
 
 use astarte_interfaces::schema::Ownership;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use crate::Error;
 use crate::error::Report;
@@ -41,21 +41,27 @@ where
     C: Connection,
 {
     /// This function is called once at the start to send all the stored packet.
-    pub(super) async fn init_stored_retention(&mut self) -> Result<(), Error>
-    where
-        C::Sender: Publish + 'static,
-    {
-        let Some(retention) = self.store.get_retention() else {
-            return Ok(());
-        };
+    #[instrument(skip(self))]
+    pub(crate) async fn init_store(&self, stored_retention: NonZero<usize>) -> Result<(), Error> {
+        trace!("initialize stored retention and properties");
 
-        {
-            let interfaces = self.state.interfaces().read().await;
+        // set max retention items in the store
+        if let Some(retention) = self.store.get_retention() {
+            {
+                let interfaces = self.state.interfaces().read().await;
 
-            retention.cleanup_introspection(&interfaces).await?;
+                debug!("cleaning up the retention introspection");
+                retention.cleanup_introspection(&interfaces).await?;
+            }
+
+            retention.set_max_retention_items(stored_retention).await?;
+
+            debug!("resetting all datastream sent flags");
+            retention.reset_all_publishes().await?;
         }
 
-        self.resend_retention(false).await;
+        debug!("resetting all properties state");
+        self.store.reset_state(Ownership::Device).await?;
 
         Ok(())
     }
@@ -66,22 +72,27 @@ where
         C: Reconnect + Receive,
         C::Sender: Publish + 'static,
     {
+        trace!("reconnecting and resending values");
+
         self.cancel_prev_resend().await;
 
         if self.reconnect().await?.is_break() {
             return Ok(ControlFlow::Break(()));
         }
 
-        self.resend_retention(true).await;
+        self.resend(true).await;
 
         Ok(ControlFlow::Continue(()))
     }
 
     /// Send all the publishes from another task to not block the event loop.
-    async fn resend_retention(&mut self, volatile: bool)
+    #[instrument(skip(self))]
+    async fn resend(&mut self, volatile: bool)
     where
         C::Sender: Publish + 'static,
     {
+        trace!("starting resend task");
+
         let state = self.state.clone();
         let mut sender = self.sender.clone();
         let mut store = self.store.clone();
@@ -186,7 +197,10 @@ where
     }
 
     /// Check if there is a previous task for the resend of stored publishes and cancels it.
+    #[instrument(skip(self))]
     async fn cancel_prev_resend(&mut self) {
+        trace!("checking for previous resend");
+
         if let Some(resend) = self.resend.take() {
             debug!("cancel previous resend");
 
@@ -285,10 +299,13 @@ where
         Ok(count)
     }
 
+    #[instrument(skip(self))]
     async fn reconnect(&mut self) -> Result<ControlFlow<()>, Error>
     where
         C: Reconnect,
     {
+        trace!("start reconnection");
+
         let interfaces = self.state.interfaces().read().await;
 
         info!("reconnecting");
@@ -380,6 +397,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::AstarteData;
+    use crate::builder::DEFAULT_STORE_CAPACITY;
     use crate::connection::tests::{mock_connection, mock_connection_with_store};
     use crate::retention::{PublishInfo, RetentionId, StoredRetention, StoredRetentionExt};
     use crate::state::ConnStatus;
@@ -497,7 +515,8 @@ mod tests {
                 sender
             });
 
-        connection.init_stored_retention().await.unwrap();
+        connection.init_store(DEFAULT_STORE_CAPACITY).await.unwrap();
+        connection.resend(false).await;
 
         tokio::time::timeout(Duration::from_secs(2), connection.resend.take().unwrap())
             .await
