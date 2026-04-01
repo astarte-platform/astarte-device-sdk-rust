@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,151 +20,75 @@
 
 use std::fmt::Debug;
 
-use proc_macro2::Ident;
+use darling::{FromDeriveInput, FromField, FromMeta, FromVariant};
 use quote::{quote, quote_spanned};
-use syn::{
-    Expr, GenericParam, Generics, Variant,
-    parse::{Parse, ParseStream},
-    parse_quote,
-    spanned::Spanned,
-};
+use syn::spanned::Spanned;
+use syn::{GenericParam, Generics, parse_quote};
 
-use crate::{
-    case::RenameRule, parse_attribute_list, parse_bool_lit, parse_name_value_attrs, parse_str_lit,
-    parse_struct_fields,
-};
+use crate::case::RenameRule;
 
-#[derive(Debug, Default)]
-pub(crate) struct FromEventAttrs {
-    interface: Option<String>,
-    path: Option<String>,
-    rename_rule: Option<RenameRule>,
-    // Use an option, so it can be merged if declared multiple times.
-    aggregation: Option<Aggregation>,
-    interface_type: Option<InterfaceType>,
-}
-
-impl FromEventAttrs {
-    fn merge(self, other: Self) -> Self {
-        let interface = other.interface.or(self.interface);
-        let path = other.path.or(self.path);
-        let rename_rule = other.rename_rule.or(self.rename_rule);
-        let aggregation = other.aggregation.or(self.aggregation);
-        let interface_type = other.interface_type.or(self.interface_type);
-
-        Self {
-            interface,
-            path,
-            rename_rule,
-            aggregation,
-            interface_type,
-        }
-    }
-}
-
-impl Parse for FromEventAttrs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut attrs = parse_name_value_attrs(input)?;
-
-        let interface = attrs
-            .remove("interface")
-            .map(|expr| parse_str_lit(&expr))
-            .transpose()?;
-
-        let path = attrs
-            .remove("path")
-            .map(|expr| parse_str_lit(&expr))
-            .transpose()?;
-
-        let rename_all = attrs
-            .remove("rename_all")
-            .map(|expr| {
-                parse_str_lit(&expr).and_then(|rename| {
-                    RenameRule::from_str(&rename)
-                        .map_err(|_| syn::Error::new(expr.span(), "invalid rename rule"))
-                })
-            })
-            .transpose()?;
-
-        let aggregation = attrs
-            .remove("aggregation")
-            .map(Aggregation::try_from)
-            .transpose()?;
-
-        let interface_type = attrs
-            .remove("interface_type")
-            .map(InterfaceType::try_from)
-            .transpose()?;
-
-        if let Some((_, expr)) = attrs.iter().next() {
-            return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
-        }
-
-        Ok(Self {
-            rename_rule: rename_all,
-            interface,
-            path,
-            aggregation,
-            interface_type,
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-enum Aggregation {
-    #[default]
-    Individual,
-    Object,
-}
-
-impl TryFrom<Expr> for Aggregation {
-    type Error = syn::Error;
-
-    fn try_from(value: Expr) -> Result<Self, Self::Error> {
-        parse_str_lit(&value).and_then(|val| match val.as_str() {
-            "individual" => Ok(Aggregation::Individual),
-            "object" => Ok(Aggregation::Object),
-            _ => Err(syn::Error::new(
-                value.span(),
-                "invalid aggregation, should be: individual or object",
-            )),
-        })
-    }
-}
-
-#[derive(Debug, Default)]
-enum InterfaceType {
-    #[default]
-    Datastream,
-    Properties,
-}
-
-impl TryFrom<Expr> for InterfaceType {
-    type Error = syn::Error;
-
-    fn try_from(value: Expr) -> Result<Self, Self::Error> {
-        parse_str_lit(&value).and_then(|val| match val.as_str() {
-            "properties" => Ok(InterfaceType::Properties),
-            "object" => Ok(InterfaceType::Datastream),
-            _ => Err(syn::Error::new(
-                value.span(),
-                "invalid interface type, should be: property or datastream",
-            )),
-        })
-    }
-}
-
-/// Parses the derive for the FromEvent trait
+/// Attributes for the individual event.
+///
+/// ```no_compile
+/// #[derive(FromEvent)]
+/// #[from_event(
+///     interface = "com.example.Sensor",
+///     path = "/sensor",
+///     interface_type = "properties",
+///     aggregation = "individual"
+/// )]
+/// enum Individual {
+///     #[mapping(endpoint = "/sensor")]
+///     Sensor(i32),
+///     #[mapping(endpoint = "/temp", allow_unset = true)]
+///     Temperature(Option<f64>),
+/// }
+/// ```
+///
+/// For objects:
+///
+/// ```no_compile
+/// #[derive(FromEvent)]
+/// #[from_event(
+///     interface = "com.example.Sensor",
+///     path = "/%{sensor_id}",
+///     interface_type = "datastream",
+///     aggregation = "object"
+/// )]
+/// struct Object {
+///     #[mapping(endpoint = "/sensor")]
+///     sensor: i32,
+///     #[mapping(endpoint = "/temp")]
+///     temperature: f64,
+/// }
+/// ```
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(from_event), supports(struct_named, enum_newtype))]
 pub(crate) struct FromEventDerive {
+    /// Name of the interface
     interface: String,
-    name: Ident,
-    rename_rule: Option<RenameRule>,
-    generics: Generics,
-    inner: FromEventAggregation,
+    /// Path of the object datastream
+    path: Option<String>,
+    /// Aggregation
+    #[darling(default)]
+    aggregation: Aggregation,
+    /// Interface type
+    #[darling(default)]
+    interface_type: InterfaceType,
+    /// Rename the fields in the resulting HashMap, see the [`RenameRule`] variants.
+    rename_all: Option<RenameRule>,
+    /// Name of the struct
+    ident: syn::Ident,
+    /// Generics bounds
+    generics: syn::Generics,
+    /// fields
+    data: darling::ast::Data<FromEventVariant, FromEventField>,
 }
 
 impl FromEventDerive {
-    fn add_trait_bound(mut generics: Generics) -> Generics {
+    fn add_trait_bound(&self) -> Generics {
+        let mut generics = self.generics.clone();
+
         for param in &mut generics.params {
             if let GenericParam::Type(ref mut type_param) = *param {
                 type_param.bounds.push(parse_quote!(
@@ -175,20 +99,68 @@ impl FromEventDerive {
         generics
     }
 
-    pub(crate) fn quote(&self) -> proc_macro2::TokenStream {
-        match &self.inner {
-            FromEventAggregation::Individual { variants } => self.quote_indv(variants),
-            FromEventAggregation::Object { fields, path } => self.quote_obj(path, fields),
-            FromEventAggregation::Property { variants } => self.quote_property(variants),
+    pub(crate) fn quote(&self) -> darling::Result<proc_macro2::TokenStream> {
+        match (self.interface_type, self.aggregation) {
+            (InterfaceType::Datastream, Aggregation::Individual) => {
+                let Some(data) = self.data.as_ref().take_enum() else {
+                    return Err(darling::Error::unsupported_shape_with_expected(
+                        "struct",
+                        &"individual should be an enum",
+                    )
+                    .with_span(&self.ident));
+                };
+
+                self.quote_indv(&data)
+            }
+            (InterfaceType::Datastream, Aggregation::Object) => {
+                let Some(data) = self.data.as_ref().take_struct() else {
+                    return Err(darling::Error::unsupported_shape_with_expected(
+                        "enum",
+                        &"object should be a structs",
+                    )
+                    .with_span(&self.ident));
+                };
+
+                self.quote_obj(&data.fields)
+            }
+            (InterfaceType::Properties, Aggregation::Individual) => {
+                let Some(data) = self.data.as_ref().take_enum() else {
+                    return Err(darling::Error::unsupported_shape_with_expected(
+                        "struct",
+                        &"individual should be an enum",
+                    )
+                    .with_span(&self.ident));
+                };
+
+                self.quote_property(&data)
+            }
+            (InterfaceType::Properties, Aggregation::Object) => {
+                Err(darling::Error::custom("object properties are unsupported"))
+            }
         }
     }
 
-    pub(crate) fn quote_obj(&self, path: &str, fields: &[Ident]) -> proc_macro2::TokenStream {
-        let rename_rule = self.rename_rule.unwrap_or_default();
-        let (impl_generics, ty_generics, where_clause) = &self.generics.split_for_impl();
-        let fields_val = fields.iter().map(|i| {
-            let name = i.to_string();
-            let name = rename_rule.apply_to_field(&name);
+    pub(crate) fn quote_obj(
+        &self,
+        fields: &[&FromEventField],
+    ) -> darling::Result<proc_macro2::TokenStream> {
+        let generics = self.add_trait_bound();
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+        let mut errors = darling::Error::accumulator();
+
+        let fields = fields
+            .iter()
+            .filter_map(|field| {
+                errors.handle_in(|| {
+                    field.field_name(self.rename_all).ok_or_else(|| {
+                        darling::Error::custom("missing field names").with_span(&self.ident)
+                    })
+                })
+            })
+            .collect::<Vec<(&syn::Ident, String)>>();
+
+        let fields_val = fields.iter().map(|(i, name)| {
             quote_spanned! {i.span() =>
                 let #i = object
                     .remove(#name)
@@ -200,12 +172,20 @@ impl FromEventDerive {
                     .try_into()?;
             }
         });
-        let fields = fields.iter();
+        let fields = fields.iter().map(|(i, _)| i);
         let interface = &self.interface;
-        let name = &self.name;
+        let st_name = &self.ident;
 
-        quote! {
-            impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
+        let path = errors.handle_in(|| {
+            self.path
+                .as_ref()
+                .ok_or_else(|| darling::Error::missing_field("path").with_span(&self.ident))
+        });
+
+        errors.finish()?;
+
+        Ok(quote! {
+            impl #impl_generics astarte_device_sdk::FromEvent for #st_name #ty_generics #where_clause {
                 type Err = astarte_device_sdk::event::FromEventError;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
@@ -258,37 +238,52 @@ impl FromEventDerive {
                     Ok(Self{#(#fields),*})
                 }
             }
-        }
+        })
     }
 
-    fn quote_indv(&self, variants: &[IndividualMapping]) -> proc_macro2::TokenStream {
-        let (impl_generics, ty_generics, where_clause) = &self.generics.split_for_impl();
+    fn quote_indv(
+        &self,
+        variants: &[&FromEventVariant],
+    ) -> darling::Result<proc_macro2::TokenStream> {
+        let generics = self.add_trait_bound();
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        let name = &self.name;
+        let name = &self.ident;
         let interface = self.interface.as_str();
 
         // Use the same order between endpoints and variants, so we can find the correct endpoint
         // position and then match the index with the corresponding variant.
         let endpoints = variants.iter().map(|v| {
-            let endpoint = v.attrs.endpoint.as_str();
+            let endpoint = v.endpoint.as_str();
 
             quote! {
                 Endpoint::<&str>::try_from(#endpoint)?
             }
         });
 
-        for variant in variants {
-            if variant.attrs.allow_unset {
-                return syn::Error::new(
-                    variant.name.span(),
-                    r#"the attribute allow_unset is only usable with `interface_type = "property"` on the container"#,
+        let mut errors = darling::Error::accumulator();
+
+        if self.path.is_some() {
+            errors.push(
+                darling::Error::custom(
+                    "the path is only available for `#[from_event(aggregation = \"object\")]`",
                 )
-                .to_compile_error();
+                .with_span(&self.ident),
+            );
+        }
+
+        for variant in variants {
+            if variant.allow_unset.is_some() {
+                errors.push(darling::Error::custom(
+                    r#"the attribute allow_unset is only usable with `#[from_event(interface_type = "property")]` on the container"#,
+                ).with_span(&variant.ident));
             }
         }
 
+        errors.finish()?;
+
         let variants = variants.iter().enumerate().map(|(i, v)| {
-            let variant = &v.name;
+            let variant = &v.ident;
 
             quote! {
                 #i => {
@@ -318,7 +313,7 @@ impl FromEventDerive {
             }
         });
 
-        quote! {
+        Ok(quote! {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
                 type Err = astarte_device_sdk::event::FromEventError;
 
@@ -353,19 +348,33 @@ impl FromEventDerive {
                     }
                 }
             }
-        }
+        })
     }
 
-    fn quote_property(&self, variants: &[IndividualMapping]) -> proc_macro2::TokenStream {
-        let (impl_generics, ty_generics, where_clause) = &self.generics.split_for_impl();
+    fn quote_property(
+        &self,
+        variants: &[&FromEventVariant],
+    ) -> darling::Result<proc_macro2::TokenStream> {
+        let generics = self.add_trait_bound();
+        let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-        let name = &self.name;
+        let name = &self.ident;
         let interface = self.interface.as_str();
 
+        let mut errors = darling::Error::accumulator();
+
+        if self.path.is_some() {
+            errors.push(
+                darling::Error::custom(
+                    "the path is only available for `#[from_event(aggregation = \"object\")]`",
+                )
+                .with_span(&self.ident),
+            );
+        }
         // Use the same order between endpoints and variants, so we can find the correct endpoint
         // position and then match the index with the corresponding variant.
         let endpoints = variants.iter().map(|v| {
-            let endpoint = v.attrs.endpoint.as_str();
+            let endpoint = v.endpoint.as_str();
 
             quote! {
                 Endpoint::<&str>::try_from(#endpoint)?
@@ -373,15 +382,15 @@ impl FromEventDerive {
         });
 
         let variants = variants.iter().enumerate().map(|(i, v)| {
-            let variant = &v.name;
+            let variant = &v.ident;
 
-            let prop_set_case = if v.attrs.allow_unset {
+            let prop_set_case = if v.allow_unset.unwrap_or_default() {
                 quote! { Some(value) }
             } else {
                 quote! { value }
             };
 
-            let prop_unset = if v.attrs.allow_unset {
+            let prop_unset = if v.allow_unset.unwrap_or_default() {
                 quote! { Ok(#name::#variant(None)) }
             } else {
                 quote! {
@@ -416,7 +425,9 @@ impl FromEventDerive {
             }
         });
 
-        quote! {
+        errors.finish()?;
+
+        Ok(quote! {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
                 type Err = astarte_device_sdk::event::FromEventError;
 
@@ -451,136 +462,41 @@ impl FromEventDerive {
                     }
                 }
             }
-        }
-    }
-}
-
-impl Parse for FromEventDerive {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ast = syn::DeriveInput::parse(input)?;
-
-        // Find all the outer astarte_aggregate attributes and merge them
-        let attrs = ast
-            .attrs
-            .iter()
-            .filter_map(|a| parse_attribute_list::<FromEventAttrs>(a, "from_event"))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .reduce(|first, other| first.merge(other))
-            .ok_or_else(|| {
-                syn::Error::new(
-                    ast.span(),
-                    r#"missing attributes #[from_event(interface = "..", ...)]"#,
-                )
-            })?;
-
-        let interface = attrs.interface.ok_or_else(|| {
-            syn::Error::new(
-                ast.span(),
-                r#"missing interface attribute #[from_event(interface = "..")]"#,
-            )
-        })?;
-
-        let aggregation = attrs.aggregation.unwrap_or_default();
-        let interface_type = attrs.interface_type.unwrap_or_default();
-        let inner = match (aggregation, interface_type) {
-            (Aggregation::Individual, InterfaceType::Datastream) => {
-                let variants = FromEventAggregation::parse_enum_variants(&ast)?;
-
-                FromEventAggregation::Individual { variants }
-            }
-            (Aggregation::Object, InterfaceType::Datastream) => {
-                let path = attrs.path.ok_or_else(|| {
-                    syn::Error::new(
-                        ast.span(),
-                        r#"missing path attribute #[from_event(path = "..")]"#,
-                    )
-                })?;
-
-                let fields = parse_struct_fields(&ast)?;
-
-                FromEventAggregation::Object { fields, path }
-            }
-            (Aggregation::Individual, InterfaceType::Properties) => {
-                let variants = FromEventAggregation::parse_enum_variants(&ast)?;
-
-                FromEventAggregation::Property { variants }
-            }
-            (Aggregation::Object, InterfaceType::Properties) => {
-                return Err(syn::Error::new(
-                    ast.span(),
-                    "object properties are not supported",
-                ));
-            }
-        };
-
-        let generics = Self::add_trait_bound(ast.generics);
-
-        Ok(Self {
-            interface,
-            rename_rule: attrs.rename_rule,
-            name: ast.ident,
-            generics,
-            inner,
         })
     }
 }
 
-enum FromEventAggregation {
-    Individual { variants: Vec<IndividualMapping> },
-    Object { fields: Vec<Ident>, path: String },
-    Property { variants: Vec<IndividualMapping> },
+/// Attributes for the individual event.
+///
+/// ```no_compile
+/// struct Object {
+///     #[mapping(rename = "type")]
+///     sensor_type: i32,
+///     temperature: f64,
+/// }
+/// ```
+#[derive(Debug, FromField)]
+#[darling(attributes(mapping))]
+pub(crate) struct FromEventField {
+    /// Rename the filed or variant.
+    rename: Option<String>,
+    /// Field name
+    ident: Option<syn::Ident>,
 }
 
-impl FromEventAggregation {
-    /// Parses the variants of the enum
-    fn parse_enum_variants(ast: &syn::DeriveInput) -> Result<Vec<IndividualMapping>, syn::Error> {
-        let syn::Data::Enum(data) = &ast.data else {
-            return Err(syn::Error::new(ast.span(), "an enum is required"));
-        };
+impl FromEventField {
+    fn field_name(&self, rename_rule: Option<RenameRule>) -> Option<(&syn::Ident, String)> {
+        self.ident.as_ref().map(|i| {
+            let mut name = i.to_string();
 
-        data.variants
-            .iter()
-            .map(IndividualMapping::try_from)
-            .collect()
-    }
-}
-
-/// Enum variant for an individual interface to derive FromEvent.
-#[derive(Debug)]
-struct IndividualMapping {
-    name: Ident,
-    attrs: MappingAttr,
-}
-
-impl TryFrom<&Variant> for IndividualMapping {
-    type Error = syn::Error;
-
-    fn try_from(value: &Variant) -> Result<Self, Self::Error> {
-        // NOTE: we could also allow single named fields.
-        match &value.fields {
-            syn::Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {}
-            _ => {
-                return Err(syn::Error::new(
-                    value.span(),
-                    "the variant must have a single unnamed field",
-                ));
+            if let Some(rename) = &self.rename {
+                name = rename.clone();
+            } else if let Some(rename_rule) = rename_rule {
+                name = rename_rule.apply_to_field(&name);
             }
-        }
 
-        let name = value.ident.clone();
-
-        let attrs = value
-            .attrs
-            .iter()
-            .filter_map(|attr| parse_attribute_list::<MappingAttr>(attr, "mapping"))
-            .next_back()
-            .ok_or(syn::Error::new(
-                value.span(),
-                r#"missing `#[mapping(endpoint = "...")] attribute for variant "#,
-            ))??;
-
-        Ok(Self { name, attrs })
+            (i, name)
+        })
     }
 }
 
@@ -595,45 +511,32 @@ impl TryFrom<&Variant> for IndividualMapping {
 ///     Temperature(Option<f64>),
 /// }
 /// ```
-#[derive(Debug)]
-struct MappingAttr {
+#[derive(Debug, FromVariant)]
+#[darling(attributes(mapping))]
+struct FromEventVariant {
     /// Endpoint for the enum variant
     endpoint: String,
     /// Allow [`Option`]al values for properties.
     ///
     /// Defaults to false as in the interfaces definition. Only available with `interface_type = "properties"`
-    allow_unset: bool,
+    #[darling(default)]
+    allow_unset: Option<bool>,
+    /// variant name
+    ident: syn::Ident,
 }
 
-impl Parse for MappingAttr {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut attrs = parse_name_value_attrs(input)?;
-
-        let endpoint = attrs
-            .remove("endpoint")
-            .ok_or(syn::Error::new(
-                input.span(),
-                r#"missing endpoint attribute `#[mapping(endpoint = "/path")]`"#,
-            ))
-            .and_then(|expr| parse_str_lit(&expr))?;
-
-        let allow_unset = attrs
-            .remove("allow_unset")
-            .as_ref()
-            .map(parse_bool_lit)
-            .transpose()?
-            .unwrap_or_default();
-
-        if let Some((_, expr)) = attrs.iter().next() {
-            return Err(syn::Error::new(expr.span(), "unrecognized attribute"));
-        }
-
-        Ok(Self {
-            endpoint,
-            allow_unset,
-        })
-    }
+#[derive(Debug, Clone, Copy, Default, FromMeta)]
+#[darling(rename_all = "lowercase")]
+enum Aggregation {
+    #[default]
+    Individual,
+    Object,
 }
 
-#[cfg(test)]
-mod tests {}
+#[derive(Debug, Clone, Copy, Default, FromMeta)]
+#[darling(rename_all = "lowercase")]
+enum InterfaceType {
+    #[default]
+    Datastream,
+    Properties,
+}
