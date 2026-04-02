@@ -18,7 +18,7 @@
 
 style = "conventional"
 subject_capitalized = false
-merge_commit = false
+merge_commit = true
 allowed_types = [
   # User facing
   "feat",
