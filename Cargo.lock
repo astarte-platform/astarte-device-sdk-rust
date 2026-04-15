@@ -1924,9 +1924,9 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phoenix-chan"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "519a971d4737e85c4df52eea95fd3882dccd69cc0a356b31bad2f74961d72a0e"
+checksum = "6829b68a0490a3cd0ffa1adbc8ba597441f6d18a3d13b7c3f25c708f9cffea41"
 dependencies = [
  "async-tungstenite",
  "base64",
