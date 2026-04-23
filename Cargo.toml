@@ -116,17 +116,33 @@ cfg-if = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 flate2.workspace = true
 futures = { workspace = true }
+http.workspace = true
+http-body-util.workspace = true
 itertools = { workspace = true }
+mime.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
-rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
-reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
+rcgen = { workspace = true, default-features = false, features = [
+  "pem",
+  "crypto",
+  "aws_lc_rs"
+] }
+reqwest = { workspace = true, default-features = false, features = [
+  "charset",
+  "json",
+  "http2",
+  "system-proxy",
+  "rustls-no-provider"
+] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws-lc-rs"] }
+rustls-webpki = { workspace = true, default-features = false, features = [
+  "std",
+  "aws-lc-rs"
+] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sync_wrapper.workspace = true
@@ -156,7 +172,12 @@ pretty_assertions = { workspace = true }
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rustls-platform-verifier.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal", "test-util"] }
+tokio = { workspace = true, features = [
+  "rt",
+  "rt-multi-thread",
+  "signal",
+  "test-util"
+] }
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -164,8 +185,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 [lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
-  'cfg(__coverage)',
-  'cfg(astarte_device_sdk_docsrs)',
+  "cfg(__coverage)",
+  "cfg(astarte_device_sdk_docsrs)",
 ]
 
 [package.metadata.docs.rs]
@@ -193,7 +214,10 @@ darling = "0.23.0"
 eyre = "0.6.12"
 flate2 = "1.0.0"
 futures = "0.3.0"
+http = "1.4.0"
+http-body-util = "0.1.2"
 itertools = "0.14.0"
+mime = "0.3.16"
 mockall = "0.14.0"
 mockito = "1.4.0"
 phoenix-chan = "0.4.2"
