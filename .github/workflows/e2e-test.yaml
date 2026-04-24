@@ -49,7 +49,7 @@ jobs:
           sudo apt update
           sudo apt-get -y install libsqlite3-dev
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.0
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - name: Wait for Astarte to be healthy
         timeout-minutes: 10
         # use the full command to use the sccache
