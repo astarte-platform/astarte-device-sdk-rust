@@ -43,6 +43,7 @@ pub mod event;
 mod interfaces;
 pub mod introspection;
 pub(crate) mod logging;
+pub mod pairing;
 pub mod prelude;
 pub mod properties;
 pub mod retention;
@@ -63,6 +64,8 @@ pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::types::AstarteData;
 
 // Re-export rumqttc since we return its types in some methods
+#[cfg(feature = "fdo")]
+pub use astarte_device_fdo;
 pub use astarte_interfaces;
 pub use chrono;
 pub use rumqttc;
