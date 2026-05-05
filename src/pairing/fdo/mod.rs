@@ -19,6 +19,7 @@
 //! FIDO Device Onboarding protocol.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use astarte_device_fdo::astarte_fdo_protocol::Error;
@@ -29,70 +30,51 @@ use astarte_device_fdo::srv_info::{AstarteMod, AstarteModBuilder};
 use astarte_device_fdo::storage::FileStorage;
 use astarte_device_fdo::to1::To1;
 use astarte_device_fdo::to2::{Hello, To2};
-use astarte_device_fdo::{Crypto, Ctx};
+use astarte_device_fdo::{Crypto, Ctx as FdoCtx};
 use tracing::{error, info, instrument};
 use url::Url;
 
-use crate::builder::Config;
+use crate::builder::{BuildConfig, Config, ConnectionConfig, DeviceTransport};
+use crate::pairing::api::client::{ApiClient, ClientArgs};
+use crate::store::StoreCapabilities;
+use crate::store::wrapper::StoreWrapper;
+use crate::transport::mqtt::components::ClientId;
 use crate::transport::mqtt::config::transport::TransportProvider;
-use crate::transport::mqtt::pairing::ApiClient;
-use crate::transport::mqtt::{Credential, MqttConfig};
+use crate::transport::mqtt::connection::MqttState;
+use crate::transport::mqtt::connection::context::Ctx as PairingCtx;
+use crate::transport::mqtt::error::MqttError;
+use crate::transport::mqtt::retention::MqttRetention;
+use crate::transport::mqtt::{Mqtt, MqttClient};
 
-use self::builder::{AddStorageDir, FdoConfigBuilder};
+use self::builder::{AddManufacturingUrl, FdoConfigBuilder};
+
+use super::{Pairing, PairingConfig};
 
 pub mod builder;
 
-/// Configuration to register a device using FDO.
+/// Initialize the device to pair with FDO.
 #[derive(Debug)]
-pub struct FdoConfig<'a, C> {
+pub struct FdoDi<'a, C> {
     model_no: &'a str,
     serial_no: &'a str,
     manufacturing_url: Url,
     keepalive: Duration,
     insecure_ssl: bool,
-    tls: &'a rustls::ClientConfig,
-    storage: &'a Path,
     crypto: C,
 }
 
-// TODO: most of this should be done inside the builder
-impl<'a, C> FdoConfig<'a, C> {
-    /// Returns the builder for the FDO config.
-    pub fn build(model_no: &'a str, serial_no: &'a str) -> FdoConfigBuilder<'a, C, AddStorageDir> {
-        FdoConfigBuilder::new(model_no, serial_no)
-    }
-
-    /// Register the device and configures the MQTT connection
+impl<'a, C> FdoDi<'a, C> {
+    /// Initializes a device to be paired to be then bind to a cloud.
     #[instrument(skip_all)]
-    pub async fn mqtt(&mut self) -> Result<MqttConfig, Error>
+    pub async fn device_initialize(
+        mut self,
+        storage: &Path,
+        tls: rustls::ClientConfig,
+    ) -> Result<FdoConfig<C>, Error>
     where
         C: Crypto,
     {
-        let astarte_mod = self.register().await?;
-
-        let pairing_url = format!("{}/pairing", astarte_mod.base_url)
-            .parse()
-            .map_err(|error| {
-                error!(%error, base_url = %astarte_mod.base_url, "couldn't parse pairing url");
-
-                Error::new(ErrorKind::Invalid, "pairing url")
-            })?;
-
-        Ok(MqttConfig {
-            realm: astarte_mod.realm.to_string(),
-            device_id: astarte_mod.device_id.to_string(),
-            credential: Credential::secret(astarte_mod.secret),
-            pairing_url,
-            ignore_ssl_errors: self.insecure_ssl,
-            keepalive: self.keepalive,
-        })
-    }
-
-    async fn register(&mut self) -> Result<AstarteMod<'static>, Error>
-    where
-        C: Crypto,
-    {
-        let mut storage = FileStorage::open(self.storage.join("fdo"))
+        let mut storage = FileStorage::open(storage.join("fdo"))
             .await
             .map_err(|error| {
                 error!(%error, "couldn't open file storage");
@@ -100,34 +82,117 @@ impl<'a, C> FdoConfig<'a, C> {
                 Error::new(ErrorKind::Io, "while opening file storage")
             })?;
 
-        let mut ctx = Ctx::new(&mut self.crypto, &mut storage, self.tls.clone());
+        let mut ctx = FdoCtx::new(&mut self.crypto, &mut storage, tls.clone());
 
-        let client = InitialClient::create(self.manufacturing_url.clone(), self.tls.clone())?;
+        let client = InitialClient::create(self.manufacturing_url.clone(), tls.clone())?;
 
         let di = Di::create(&mut ctx, client, self.model_no, self.serial_no).await?;
 
-        let cred = di.create_credentials(&mut ctx).await?;
+        let _cred = di.create_credentials(&mut ctx).await?;
+
+        info!("Device Initialize");
+
+        Ok(FdoConfig {
+            serial_no: self.serial_no.to_string(),
+            keepalive: self.keepalive,
+            insecure_ssl: self.insecure_ssl,
+            crypto: self.crypto,
+        })
+    }
+}
+
+/// Configuration to register a device using FDO.
+#[derive(Debug)]
+pub struct FdoConfig<C> {
+    serial_no: String,
+    keepalive: Duration,
+    insecure_ssl: bool,
+    crypto: C,
+}
+
+impl<C> FdoConfig<C> {
+    /// Returns the builder for the FDO config.
+    pub fn build<'a>(
+        model_no: &'a str,
+        serial_no: &'a str,
+    ) -> FdoConfigBuilder<'a, C, AddManufacturingUrl> {
+        FdoConfigBuilder::new(model_no, serial_no)
+    }
+
+    /// Register the device to the cloud.
+    async fn register<S>(
+        &mut self,
+        pairing_ctx: &mut PairingCtx<'_, S>,
+    ) -> Result<PairingConfig, Error>
+    where
+        C: Crypto,
+    {
+        let storage = pairing_ctx
+            .state
+            .config
+            .writable_dir
+            .as_ref()
+            .ok_or(Error::new(ErrorKind::Invalid, "missing writable directory"))?;
+
+        let mut storage = FileStorage::open(storage.join("fdo"))
+            .await
+            .map_err(|error| {
+                error!(%error, "couldn't open file storage");
+
+                Error::new(ErrorKind::Io, "while opening file storage")
+            })?;
+
+        let tls = pairing_ctx.provider.api_tls_config().map_err(|error| {
+            error!(%error, "couldn't configure tls");
+
+            Error::new(ErrorKind::Io, "while configuring TLS")
+        })?;
+
+        let mut fdo_ctx = FdoCtx::new(&mut self.crypto, &mut storage, tls.clone());
+
+        let cred = Di::read_existing(&mut fdo_ctx).await.and_then(|opt| {
+            opt.ok_or(Error::new(ErrorKind::Invalid, "missing Device credentials"))
+        })?;
 
         if !cred.dc_active {
             info!("device change TO already run to completion");
 
-            if let Some(dv) = To2::<'_, AstarteModBuilder, Hello>::read_existing(&mut ctx).await? {
+            if let Some(amod) =
+                To2::<'_, AstarteModBuilder, Hello>::read_existing(&mut fdo_ctx).await?
+            {
                 info!(
                     "Astarte mod already stored with device_id: {}",
-                    dv.device_id
+                    amod.device_id
                 );
 
-                return Ok(dv);
+                let pairing_url =
+                    format!("{}/pairing", amod.base_url)
+                        .parse()
+                        .map_err(|error| {
+                            error!(%error, "couldn't parse astarte pairing url");
+
+                            Error::new(ErrorKind::Invalid, "astarte pairing url")
+                        })?;
+
+                return Ok(PairingConfig {
+                    client_id: ClientId {
+                        realm: amod.realm,
+                        device_id: amod.device_id,
+                    },
+                    secret: amod.secret,
+                    pairing_url,
+                    keepalive: self.keepalive,
+                });
             }
         }
 
         let to1 = To1::new(&cred);
 
-        let rv = to1.rv_owner(&mut ctx).await?;
+        let rv = to1.rv_owner(&mut fdo_ctx).await?;
 
-        let to2 = To2::create(cred, rv, self.serial_no, AstarteMod::builder())?;
+        let to2 = To2::create(cred, rv, &self.serial_no, AstarteMod::builder())?;
 
-        let (to2, amod) = to2.to2_change(&mut ctx).await?;
+        let (to2, amod) = to2.to2_change(&mut fdo_ctx).await?;
 
         info!("Astarte mod received with device_id: {}", amod.device_id);
 
@@ -139,38 +204,112 @@ impl<'a, C> FdoConfig<'a, C> {
                 Error::new(ErrorKind::Invalid, "astarte pairing url")
             })?;
 
-        let provider = TransportProvider::configure(
-            pairing_url,
-            amod.secret.to_string(),
-            Some(self.storage.to_path_buf()),
-            self.insecure_ssl,
-        )
-        .await
-        .map_err(|error| {
-            error!(%error, "couldn't configure transport provider");
-            Error::new(ErrorKind::Io, "while configuring transport")
-        })?;
+        let args = ClientArgs {
+            realm: &amod.realm,
+            device_id: &amod.device_id,
+            pairing_url: &pairing_url,
+            token: &amod.secret,
+        };
 
-        let api =
-            ApiClient::from_transport(&Config::default(), &provider, &amod.realm, &amod.device_id)
-                .map_err(|error| {
-                    error!(%error, "couldn't create pairing api client");
-                    Error::new(ErrorKind::Invalid, "pairing api client")
-                })?;
+        let api = ApiClient::from_transport(&Config::default(), pairing_ctx.provider, args)
+            .map_err(|error| {
+                error!(%error, "couldn't create pairing api client");
+                Error::new(ErrorKind::Invalid, "pairing api client")
+            })?;
+
+        let client_id = ClientId::<&str> {
+            realm: &amod.realm,
+            device_id: &amod.realm,
+        };
 
         // Make sure the credentials are valid and we can connect to astarte,
         //
         // As per: https://fidoalliance.org/specs/FDO/FIDO-Device-Onboard-PS-v1.1-20220419/FIDO-Device-Onboard-PS-v1.1-20220419.html#to2done2-type-71
-        let _creds = provider.retrieve_credentials(&api).await.map_err(|error| {
-            error!(%error, "couldn't configure transport provider");
+        let _creds = pairing_ctx
+            .provider
+            .create_credentials(&api, client_id)
+            .await
+            .map_err(|error| {
+                error!(%error, "couldn't configure transport provider");
 
-            Error::new(ErrorKind::Io, "while configuring transport")
-        })?;
+                Error::new(ErrorKind::Io, "while configuring transport")
+            })?;
 
         info!("certificate created");
 
-        to2.done(&mut ctx).await?;
+        to2.done(&mut fdo_ctx).await?;
 
-        Ok(amod)
+        Ok(PairingConfig {
+            client_id: ClientId {
+                realm: amod.realm,
+                device_id: amod.device_id,
+            },
+            secret: amod.secret,
+            pairing_url,
+            keepalive: self.keepalive,
+        })
+    }
+}
+
+impl<C> Pairing for FdoConfig<C>
+where
+    C: Crypto + Send + Sync,
+{
+    type Error = Error;
+
+    async fn config<S>(&mut self, ctx: &mut PairingCtx<'_, S>) -> Result<PairingConfig, Self::Error>
+    where
+        S: Send + Sync,
+    {
+        self.register(ctx).await
+    }
+}
+
+impl<S, C> ConnectionConfig<S> for FdoConfig<C>
+where
+    C: Crypto + Send + Sync,
+    S: StoreCapabilities,
+{
+    type Conn = Mqtt<Self::Store, FdoConfig<C>>;
+    type Store = S;
+    type Err = MqttError;
+
+    async fn connect(
+        self,
+        config: crate::builder::BuildConfig<S>,
+    ) -> Result<DeviceTransport<Self::Conn>, Self::Err>
+    where
+        S: crate::prelude::PropertyStore,
+    {
+        let BuildConfig { store, state } = config;
+
+        let store_wrapper = StoreWrapper::new(store);
+
+        let (retention_tx, retention_rx) = async_channel::bounded(state.config.channel_size.get());
+        let retention = MqttRetention::new(retention_rx);
+
+        let client = MqttClient::new(retention_tx, store_wrapper.clone(), Arc::clone(&state));
+
+        let provider =
+            TransportProvider::configure(state.config.writable_dir.clone(), self.insecure_ssl)
+                .await
+                .map_err(MqttError::Pairing)?;
+
+        let mqtt_state = MqttState::new(self);
+
+        let connection = Mqtt {
+            connection: mqtt_state,
+            client_sender: Arc::clone(&client.sender),
+            provider,
+            retention,
+            store: store_wrapper.clone(),
+            state,
+        };
+
+        Ok(DeviceTransport {
+            sender: client,
+            connection,
+            store: store_wrapper,
+        })
     }
 }

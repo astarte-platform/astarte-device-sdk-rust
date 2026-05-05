@@ -26,9 +26,7 @@ use astarte_interfaces::{
 };
 use mockall::mock;
 
-use super::{
-    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
-};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError};
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
 use crate::interfaces::MappingRef;
@@ -65,6 +63,9 @@ mock! {
             &mut self,
         ) -> Result<Option<ReceivedEvent<GenericPayload>>, TransportError>;
 
+        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus<GenericPayload>, TransportError>> + Send {
+        }
+
         fn deserialize_property<'a>(
             &self,
             mapping: &MappingRef<'a, Properties> ,
@@ -83,11 +84,6 @@ mock! {
             path: &MappingPath<'a> ,
             payload: GenericPayload,
         ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
-    }
-
-    impl<S: StoreCapabilities> Reconnect for Con<S> {
-        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus, Error>> + Send {
-        }
     }
 }
 

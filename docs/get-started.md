@@ -139,6 +139,7 @@ connection messages. Ideally, two separate tasks should be used for both polling
 
 ```no_run
 use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::pairing::api::PairingApi;
 use astarte_device_sdk::prelude::*;
 use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Mqtt, MqttArgs, MqttConfig, Credential};
@@ -160,7 +161,7 @@ struct Config {
 }
 
 /// Load connection configuration and connect a device to Astarte.
-async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>, DeviceConnection<Mqtt<SqliteStore>>)> {
+async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore, PairingApi>>, DeviceConnection<Mqtt<SqliteStore, PairingApi>>)> {
     // Load the device configuration
     let file = tokio::fs::read_to_string("config.json").await?;
     let cfg: Config = serde_json::from_str(&file)?;
@@ -382,17 +383,18 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 #     transport::mqtt::{Mqtt, MqttConfig},
 #     DeviceClient, DeviceConnection,
 # };
+# use astarte_device_sdk::pairing::api::PairingApi;
 # use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore, PairingApi>>,DeviceConnection<Mqtt<SqliteStore, PairingApi>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
+async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore, PairingApi>>) -> eyre::Result<()> {
     loop {
         match client.recv().await {
             Ok(event) => {
@@ -498,20 +500,22 @@ interface.
 
 ```no_run
 // ... imports, structs definition ...
-# use astarte_device_sdk::{
-#     client::RecvError, prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
-#     DeviceConnection,
-# };
+# use astarte_device_sdk::client::RecvError;
+# use astarte_device_sdk::pairing::api::PairingApi;
+# use astarte_device_sdk::prelude::*;
+# use astarte_device_sdk::store::SqliteStore;
+# use astarte_device_sdk::transport::mqtt::Mqtt;
+# use astarte_device_sdk::{DeviceClient, DeviceConnection};
 # use color_eyre::eyre;
 # use tokio::task::JoinSet;
 # use tracing::info;
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore, PairingApi>>,DeviceConnection<Mqtt<SqliteStore, PairingApi>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn send_individual(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
+async fn send_individual(mut client: DeviceClient<Mqtt<SqliteStore, PairingApi>>) -> eyre::Result<()> {
     // send data every 1 sec
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut data = 1.0;
@@ -566,13 +570,14 @@ interface.
 #     client::RecvError, prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
 #     DeviceConnection,
 # };
+# use astarte_device_sdk::pairing::api::PairingApi;
 # use color_eyre::eyre;
 # use tokio::task::JoinSet;
 # use tracing::info;
 # #[cfg(not(feature = "derive"))]
 # use astarte_device_sdk_derive::IntoAstarteObject;
 # /// Load connection configuration and connect a device to Astarte.
-# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore, PairingApi>>,DeviceConnection<Mqtt<SqliteStore, PairingApi>>)> {
 #     todo!()
 # }
 
@@ -583,7 +588,7 @@ struct DataObject {
 }
 
 #[tracing::instrument(skip_all)]
-async fn send_aggregate(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
+async fn send_aggregate(mut client: DeviceClient<Mqtt<SqliteStore, PairingApi>>) -> eyre::Result<()> {
     // send data every 1 sec
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
@@ -643,18 +648,19 @@ interface.
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder, client::{DeviceClient, RecvError}, prelude::*, store::SqliteStore,
 #     transport::mqtt::{Mqtt, MqttConfig}, DeviceConnection,
+#     pairing::api::PairingApi,
 # };
 # use color_eyre::eyre;
 # use serde::Deserialize;
 # use tokio::task::JoinSet;
 # use tracing::{error, info};
 # use tracing_subscriber;
-# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore>>,DeviceConnection<Mqtt<SqliteStore>>)> {
+# async fn init() -> eyre::Result<(DeviceClient<Mqtt<SqliteStore, PairingApi>>,DeviceConnection<Mqtt<SqliteStore, PairingApi>>)> {
 #     todo!()
 # }
 
 #[tracing::instrument(skip_all)]
-async fn send_property(mut client: DeviceClient<Mqtt<SqliteStore>>) -> eyre::Result<()> {
+async fn send_property(mut client: DeviceClient<Mqtt<SqliteStore, PairingApi>>) -> eyre::Result<()> {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
 
     let mut data = 1.0;
