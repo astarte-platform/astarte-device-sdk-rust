@@ -31,6 +31,7 @@
 )]
 #![cfg_attr(astarte_device_sdk_docsrs, feature(doc_cfg))]
 #![cfg_attr(__coverage, feature(coverage_attribute))]
+#![expect(clippy::result_large_err)]
 
 pub mod _docs;
 

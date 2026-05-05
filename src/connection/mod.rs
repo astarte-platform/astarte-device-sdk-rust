@@ -31,13 +31,13 @@ use crate::Timestamp;
 use crate::error::Report;
 use crate::retry::RandomExponentialIter;
 use crate::state::{ConnStatus, ConnectionState};
-use crate::transport::TransportError;
+use crate::transport::{ReceivedEvent, TransportError};
 use crate::{
     Error,
     client::RecvError,
     event::DeviceEvent,
     store::wrapper::StoreWrapper,
-    transport::{Connection, Publish, Receive, Reconnect},
+    transport::{Connection, Publish, Receive},
 };
 
 mod incoming;
@@ -163,7 +163,7 @@ where
     #[instrument(skip(self))]
     pub(super) async fn poll(&mut self) -> Result<ConnStatus, TransportError>
     where
-        C: Receive + Reconnect,
+        C: Receive,
         C::Sender: Publish + 'static,
     {
         trace!("polling connection");
@@ -178,6 +178,18 @@ where
 
         trace!("event received");
 
+        self.handle_and_send_to_client(event).await?;
+
+        Ok(ConnStatus::Connected)
+    }
+
+    async fn handle_and_send_to_client(
+        &self,
+        event: ReceivedEvent<C::Payload>,
+    ) -> Result<(), TransportError>
+    where
+        C: Receive,
+    {
         let event = self
             .handle_event(&event.interface, &event.path, event.payload)
             .await
@@ -193,7 +205,7 @@ where
             TransportError::Transport(Error::Disconnected)
         })?;
 
-        Ok(ConnStatus::Connected)
+        Ok(())
     }
 
     async fn send_to_clients(
@@ -264,7 +276,7 @@ where
 
 impl<C> EventLoop for DeviceConnection<C>
 where
-    C: Connection + Reconnect + Receive + 'static,
+    C: Connection + Receive + 'static,
     C::Sender: Publish + 'static,
 {
     #[instrument(skip(self))]
@@ -306,13 +318,15 @@ where
                 }
                 // send the error to the client
                 Err(TransportError::Recv(recv_err)) => {
-                    self.events.send(Err(recv_err)).await.map_err(|send_err| {
-                        if let Err(err) = send_err.into_inner() {
-                            error!(error = %Report::new(err), "failed to send receive error");
-                        }
+                    self.send_to_clients(Err(recv_err))
+                        .await
+                        .map_err(|send_err| {
+                            if let Err(err) = send_err.into_inner() {
+                                error!(error = %Report::new(err), "failed to send receive error");
+                            }
 
-                        Error::Disconnected
-                    })?;
+                            Error::Disconnected
+                        })?;
                 }
             }
         }
@@ -453,7 +467,7 @@ mod tests {
             .expect_reconnect()
             .times(0..)
             .in_sequence(&mut seq)
-            .returning(|_| Box::pin(futures::future::pending()));
+            .returning(|_| futures::future::pending().boxed());
 
         let disconnect = connection.disconnect;
         let handle = tokio::spawn(async move { connection.inner.reconnect_and_resend().await });
