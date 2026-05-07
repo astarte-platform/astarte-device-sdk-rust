@@ -21,23 +21,52 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
-  - package-ecosystem: "uv"
+      interval: daily
+    cooldown:
+      default-days: 5
+    groups:
+      minor-or-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: cargo
     directory: "/"
+    versioning-strategy: lockfile-only
     schedule:
-      interval: "weekly"
+      interval: daily
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      minor-or-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
   - package-ecosystem: rust-toolchain
     directory: "/"
     schedule:
-      interval: "weekly"
-  - package-ecosystem: cargo
+      interval: daily
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
-      interval: weekly
-    ignore:
-      - dependency-name: "*"
-        # patch and minor updates don't matter for libraries
-        # remove this ignore rule if your package has binaries
+      interval: daily
+    cooldown:
+      default-days: 5
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      minor-or-patch:
+        applies-to: version-updates
         update-types:
-          - "version-update:semver-patch"
-          - "version-update:semver-minor"
+          - minor
+          - patch
