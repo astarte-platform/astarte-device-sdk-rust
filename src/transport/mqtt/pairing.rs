@@ -20,11 +20,14 @@
 
 use std::{io, path::PathBuf};
 
+use http_body_util::{BodyExt, Limited};
+use mime::APPLICATION_JSON;
 use reqwest::{
-    StatusCode, Url,
-    header::{HeaderMap, HeaderValue},
+    Response, StatusCode, Url,
+    header::{CONTENT_TYPE, HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
+use tracing::{error, instrument, trace};
 use url::ParseError;
 
 use crate::{
@@ -61,8 +64,6 @@ pub enum PairingError {
     Api {
         /// The status code of the response.
         status: StatusCode,
-        /// The body of the response.
-        body: String,
     },
     /// Failed to generate the CSR.
     #[error("crypto error")]
@@ -203,6 +204,7 @@ impl<'a> ApiClient<'a> {
         Ok(url)
     }
 
+    #[instrument(skip_all, ret)]
     fn device_url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
     where
         'a: 'i,
@@ -215,6 +217,7 @@ impl<'a> ApiClient<'a> {
         self.url(iter)
     }
 
+    #[instrument(skip_all, ret)]
     fn realm_url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
     where
         'a: 'i,
@@ -225,6 +228,47 @@ impl<'a> ApiClient<'a> {
         self.url(iter)
     }
 
+    #[instrument(skip_all, fields(status = %resp.status()))]
+    async fn handle_error(resp: Response) {
+        const LIMIT: usize = 150;
+
+        let is_json = resp.headers().get(CONTENT_TYPE).is_some_and(|value| {
+            let Ok(value) = value.to_str() else {
+                trace!("invalid content-type header");
+
+                return false;
+            };
+
+            APPLICATION_JSON == value
+        });
+
+        if !is_json {
+            error!("HTTP error response received, but does't have a JSON content-type");
+
+            return;
+        }
+
+        let resp = http::Response::<reqwest::Body>::from(resp).into_body();
+        let body = match Limited::new(resp, LIMIT).collect().await {
+            Ok(body) => body,
+            Err(error) => {
+                error!(%error, "couldn't read HTTP error response body");
+
+                return;
+            }
+        };
+
+        match serde_json::from_slice::<serde_json::Value>(&body.to_bytes()) {
+            Ok(json) => {
+                error!(%json, "HTTP error response");
+            }
+            Err(error) => {
+                error!(%error, "HTTP error JSON response received, but was not a valid");
+            }
+        }
+    }
+
+    #[instrument(skip_all)]
     pub async fn create_certificate(&self, csr: &str) -> Result<String, PairingError> {
         let url = self.device_url(["protocols", "astarte_mqtt_v1", "credentials"])?;
 
@@ -239,18 +283,20 @@ impl<'a> ApiClient<'a> {
                 Ok(res.data.client_crt)
             }
             status_code => {
-                let raw_response = response.text().await?;
+                Self::handle_error(response).await;
 
                 Err(PairingError::Api {
                     status: status_code,
-                    body: raw_response,
                 })
             }
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn verify_certificate(&self, client_crt: &str) -> Result<bool, PairingError> {
         let url = self.device_url(["protocols", "astarte_mqtt_v1", "credentials", "verify"])?;
+
+        trace!(%url);
 
         let payload = ApiData::new(MqttV1Certificate { client_crt });
 
@@ -263,18 +309,20 @@ impl<'a> ApiClient<'a> {
                 Ok(res.data.valid)
             }
             status_code => {
-                let raw_response = response.text().await?;
+                Self::handle_error(response).await;
 
                 Err(PairingError::Api {
                     status: status_code,
-                    body: raw_response,
                 })
             }
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
         let url = self.device_url([])?;
+
+        trace!(%url);
 
         let response = self.client.get(url).send().await?;
 
@@ -285,18 +333,20 @@ impl<'a> ApiClient<'a> {
                 Ok(res.data.protocols.astarte_mqtt_v1.broker_url)
             }
             status_code => {
-                let raw_response = response.text().await?;
+                Self::handle_error(response).await;
 
                 Err(PairingError::Api {
                     status: status_code,
-                    body: raw_response,
                 })
             }
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn register_device(&self) -> Result<String, PairingError> {
         let url = self.realm_url(["agent", "devices"])?;
+
+        trace!(%url);
 
         let payload = ApiData::new(MqttV1HwId {
             hw_id: self.device_id,
@@ -313,13 +363,12 @@ impl<'a> ApiClient<'a> {
                 Ok(res.data.credentials_secret)
             }
             status_code => {
-                let raw_response = response.text().await?;
-
                 notify_security_event(SecurityEvent::CriticalOperationAuthFailed);
+
+                Self::handle_error(response).await;
 
                 Err(PairingError::Api {
                     status: status_code,
-                    body: raw_response,
                 })
             }
         }
@@ -532,7 +581,7 @@ pub(crate) mod tests {
             .await
             .expect_err("error expected");
 
-        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 202));
+        assert!(matches!(res, PairingError::Api { status } if status == 202));
 
         mock.assert_async().await;
     }
@@ -583,7 +632,7 @@ pub(crate) mod tests {
 
         let res = client.get_broker_url().await.expect_err("should error");
 
-        assert!(matches!(res, PairingError::Api { status, body: _ } if status == 401));
+        assert!(matches!(res, PairingError::Api { status } if status == 401));
 
         mock.assert_async().await;
     }
