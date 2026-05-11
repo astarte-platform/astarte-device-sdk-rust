@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
 ## [0.12.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-mock-v0.11.3...astarte-device-sdk-mock-v0.12.0) - 2026-03-02
 
 ### Changed
