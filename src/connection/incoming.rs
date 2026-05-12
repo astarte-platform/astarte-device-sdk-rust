@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,15 +16,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::{DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema};
-use tracing::{debug, error, warn};
+use tracing::{debug, info, instrument};
 
-use crate::client::RecvError;
+use crate::Value;
+use crate::error::{AstarteError, ErrorKind, InterfaceError};
 use crate::interfaces::MappingRef;
 use crate::store::{PropertyMapping, PropertyStore, StoredProp};
-use crate::transport::{Connection, Receive, TransportError};
-use crate::{Error, Value};
+use crate::transport::{Connection, Receive};
 
 use super::DeviceConnection;
 
@@ -32,36 +33,29 @@ impl<C> DeviceConnection<C>
 where
     C: Connection,
 {
-    // Solves https://github.com/rust-lang/rust/issues/110486
-    #[cfg_attr(not(__coverage), tracing::instrument(skip(self, payload)))]
+    #[instrument(skip(self, payload))]
     pub(crate) async fn handle_event(
         &self,
         interface: &str,
         path: &str,
         payload: C::Payload,
-    ) -> Result<Value, TransportError>
+    ) -> Result<Value, AstarteError>
     where
         C: Receive + Sync,
     {
-        let path = MappingPath::try_from(path)
-            .map_err(|err| TransportError::Recv(RecvError::InvalidEndpoint(err)))?;
+        let path = MappingPath::try_from(path).wrap_err_with(|_| {
+            Error::new(ErrorKind::Interface(InterfaceError::Path)).set_message(path.to_string())
+        })?;
 
         let interfaces = self.state.interfaces().read().await;
-        let Some(interface) = interfaces.get(interface) else {
-            warn!("publish on missing interface");
-
-            return Err(TransportError::Recv(RecvError::InterfaceNotFound {
-                name: interface.to_string(),
-            }));
-        };
+        let interface = interfaces.get(interface).ok_or_else(|| {
+            Error::new(ErrorKind::Interface(InterfaceError::InterfaceNotFound))
+                .set_message(interface.to_string())
+        })?;
 
         if interface.ownership().is_device() {
-            error!("received event on device owned interface");
-
-            return Err(TransportError::Recv(RecvError::Ownership {
-                interface: interface.to_string(),
-                path: path.to_string(),
-            }));
+            return Err(Error::new(ErrorKind::Interface(InterfaceError::Ownership))
+                .set_message(format!("{interface}{path}")));
         }
 
         let data = match interface.inner() {
@@ -78,26 +72,25 @@ where
             }
         };
 
-        debug!("event received");
+        info!("event received");
 
         Ok(data)
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
+    #[instrument(skip_all)]
     async fn handle_property(
         &self,
         interface: &Properties,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<Value, TransportError>
+    ) -> Result<Value, AstarteError>
     where
         C: Receive + Sync,
     {
         let mapping = MappingRef::new(interface, path).ok_or_else(|| {
-            TransportError::Recv(RecvError::MappingNotFound {
-                interface: interface.interface_name().to_string(),
-                mapping: path.to_string(),
-            })
+            Error::new(ErrorKind::Interface(InterfaceError::MappingNotFound))
+                .set_message(format!("for {}{path}", interface.name()))
         })?;
 
         match self.connection.deserialize_property(&mapping, payload)? {
@@ -107,7 +100,7 @@ where
                 self.store
                     .store_prop(prop)
                     .await
-                    .map_err(|err| TransportError::Transport(Error::Store(err)))?;
+                    .map_kind(ErrorKind::Store)?;
 
                 debug!(
                     "property stored {}{path}:{}",
@@ -119,17 +112,18 @@ where
             }
             None => {
                 if !mapping.mapping().allow_unset() {
-                    return Err(TransportError::Recv(RecvError::Unset {
-                        interface_name: interface.interface_name().to_string(),
-                        path: path.to_string(),
-                    }));
+                    return Err(Error::with(
+                        ErrorKind::Interface(InterfaceError::Unset),
+                        "on received property",
+                    )
+                    .set_message(format!("for {interface}{path}")));
                 }
 
                 // Unset can only be received for a property
                 self.store
                     .delete_prop(&PropertyMapping::from(&mapping))
                     .await
-                    .map_err(|err| TransportError::Transport(Error::Store(err)))?;
+                    .map_kind(ErrorKind::Store)?;
 
                 debug!(
                     "property unset {}{path}:{}",
@@ -143,20 +137,22 @@ where
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Individual`]
+    #[instrument(skip_all)]
     async fn handle_individual(
         &self,
         interface: &DatastreamIndividual,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<Value, TransportError>
+    ) -> Result<Value, AstarteError>
     where
         C: Receive + Sync,
     {
         let mapping = MappingRef::new(interface, path).ok_or_else(|| {
-            TransportError::Recv(RecvError::MappingNotFound {
-                interface: interface.interface_name().to_string(),
-                mapping: path.to_string(),
-            })
+            Error::with(
+                ErrorKind::Interface(InterfaceError::MappingNotFound),
+                "on received individual",
+            )
+            .set_message(format!("for {interface}{path}"))
         })?;
 
         let (data, timestamp) = self.connection.deserialize_individual(&mapping, payload)?;
@@ -172,20 +168,19 @@ where
     }
 
     /// Handles the payload of an interface with [`InterfaceAggregation::Object`]
+    #[instrument(skip_all)]
     async fn handle_object(
         &self,
         interface: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: C::Payload,
-    ) -> Result<Value, TransportError>
+    ) -> Result<Value, AstarteError>
     where
         C: Receive + Sync,
     {
         if !interface.is_object_path(path) {
-            return Err(TransportError::Recv(RecvError::MappingNotFound {
-                interface: interface.interface_name().to_string(),
-                mapping: path.to_string(),
-            }));
+            return Err(Error::new(ErrorKind::Interface(InterfaceError::ObjectPath))
+                .set_message(format!("for interface {interface} and path {path}",)));
         }
 
         let (data, timestamp) = self
@@ -278,10 +273,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            event,
-            TransportError::Recv(RecvError::InterfaceNotFound { name }) if name == E2E_SERVER_DATASTREAM_NAME
-        ))
+        assert_eq!(
+            *event.kind(),
+            ErrorKind::Interface(InterfaceError::InterfaceNotFound)
+        );
     }
 
     #[tokio::test]
@@ -297,14 +292,11 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(
-            matches!(
-                &event,
-                TransportError::Recv(RecvError::MappingNotFound { interface, mapping })
-                    if interface == E2E_SERVER_DATASTREAM_NAME && mapping == endpoint
-            ),
+        assert_eq!(
+            *event.kind(),
+            ErrorKind::Interface(InterfaceError::MappingNotFound),
             "{event:?}"
-        )
+        );
     }
 
     #[tokio::test]
@@ -510,8 +502,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(
-            matches!(err, TransportError::Recv(RecvError::Unset { .. })),
+        assert_eq!(
+            *err.kind(),
+            ErrorKind::Interface(InterfaceError::Unset),
             "got {err:?}"
         );
 
@@ -544,9 +537,6 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            TransportError::Recv(RecvError::Ownership { .. })
-        ));
+        assert_eq!(*err.kind(), ErrorKind::Interface(InterfaceError::Ownership));
     }
 }

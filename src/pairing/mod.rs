@@ -21,13 +21,14 @@
 use std::path::Path;
 use std::time::Duration;
 
+use astarte_device_error::Error;
 use rumqttc::{MqttOptions, NetworkOptions, Transport};
 use url::Url;
 
 use crate::transport::mqtt::components::ClientId;
 use crate::transport::mqtt::connection::context::ConnCtx;
 
-use self::api::PairingError;
+use self::api::PairingApiError;
 
 pub mod api;
 #[cfg(feature = "fdo")]
@@ -36,7 +37,7 @@ pub mod fdo;
 /// Trait to register a device to Astarte.
 pub trait Pairing: Send + Sync {
     /// Error returned while pairing
-    type Error: std::error::Error;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Configures or registers the device.
     fn config<S>(
@@ -69,21 +70,27 @@ impl PairingConfig {
         transport: Transport,
         broker_url: &Url,
         timeout: Duration,
-    ) -> Result<(MqttOptions, NetworkOptions), PairingError> {
-        let host = broker_url
-            .host_str()
-            .ok_or_else(|| PairingError::Config("missing host in url".to_string()))?;
-        let port = broker_url
-            .port()
-            .ok_or_else(|| PairingError::Config("missing port in url".to_string()))?;
+    ) -> Result<(MqttOptions, NetworkOptions), Error<PairingApiError>> {
+        let host = broker_url.host_str().ok_or_else(|| {
+            Error::with(PairingApiError::InvalidArgument, "missing host in url")
+                .set_message(format!("url {broker_url}"))
+        })?;
+        let port = broker_url.port().ok_or_else(|| {
+            Error::with(PairingApiError::InvalidArgument, "missing port in url")
+                .set_message(format!("url {broker_url}"))
+        })?;
 
         let mut mqtt_opts = MqttOptions::new(self.client_id.to_string(), host, port);
 
         let keep_alive = self.keepalive.as_secs();
         let conn_timeout = timeout.as_secs();
         if keep_alive >= conn_timeout {
-            return Err(PairingError::Config(format!(
-                "Keep alive ({keep_alive}s) should be less than the connection timeout ({conn_timeout}s)"
+            return Err(Error::with(
+                PairingApiError::InvalidArgument,
+                "keep alive should be lessa than the connection timeout",
+            )
+            .set_message(format!(
+                "got keep alive ({keep_alive}s) and connection timeout {conn_timeout}s)"
             )));
         }
 

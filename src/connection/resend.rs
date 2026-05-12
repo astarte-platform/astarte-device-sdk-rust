@@ -20,19 +20,18 @@ use std::num::NonZero;
 use std::ops::ControlFlow;
 use std::time::Duration;
 
+use astarte_device_error::ResultExt;
 use astarte_interfaces::schema::Ownership;
 use tracing::{debug, error, info, instrument, trace};
 
-use crate::Error;
-use crate::error::Report;
+use crate::error::{AstarteError, ErrorKind, Report};
 use crate::retention::memory::ItemValue;
 use crate::retention::{
     RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
 };
 use crate::state::{ConnStatus, ConnectionState};
-use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoreCapabilities};
-use crate::transport::{AttemptStatus, Connection, Publish, Receive, TransportError};
+use crate::transport::{AttemptStatus, Connection, Publish, Receive};
 
 use super::DeviceConnection;
 
@@ -42,7 +41,10 @@ where
 {
     /// This function is called once at the start to send all the stored packet.
     #[instrument(skip(self))]
-    pub(crate) async fn init_store(&self, stored_retention: NonZero<usize>) -> Result<(), Error> {
+    pub(crate) async fn init_store(
+        &self,
+        stored_retention: NonZero<usize>,
+    ) -> Result<(), AstarteError> {
         trace!("initialize stored retention and properties");
 
         // set max retention items in the store
@@ -51,23 +53,35 @@ where
                 let interfaces = self.state.interfaces().read().await;
 
                 debug!("cleaning up the retention introspection");
-                retention.cleanup_introspection(&interfaces).await?;
+                retention
+                    .cleanup_introspection(&interfaces)
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
             }
 
-            retention.set_max_retention_items(stored_retention).await?;
+            retention
+                .set_max_retention_items(stored_retention)
+                .await
+                .map_kind(ErrorKind::Retention)?;
 
             debug!("resetting all datastream sent flags");
-            retention.reset_all_publishes().await?;
+            retention
+                .reset_all_publishes()
+                .await
+                .map_kind(ErrorKind::Retention)?;
         }
 
         debug!("resetting all properties state");
-        self.store.reset_state(Ownership::Device).await?;
+        self.store
+            .reset_state(Ownership::Device)
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         Ok(())
     }
 
     /// Reconnect the connection and resends all retention publishes
-    pub(crate) async fn reconnect_and_resend(&mut self) -> Result<ControlFlow<()>, Error>
+    pub(crate) async fn reconnect_and_resend(&mut self) -> Result<ControlFlow<()>, AstarteError>
     where
         C: Receive,
         C::Sender: Publish + 'static,
@@ -151,16 +165,17 @@ where
     /// This ignores the purge properties that should be sent by the connection implementation.
     /// Since the purge properties we sent earlier new properties could have gotten unset.
     async fn send_device_properties(
-        store: &mut StoreWrapper<C::Store>,
+        store: &mut C::Store,
         sender: &mut C::Sender,
         limit: usize,
-    ) -> Result<usize, Error>
+    ) -> Result<usize, AstarteError>
     where
         C::Sender: Publish,
     {
         let device_properties = store
             .device_props_with_unset(PropertyState::Changed, limit, 0)
-            .await?;
+            .await
+            .map_kind(ErrorKind::Store)?;
         let count = device_properties.len();
 
         debug!("fetched {count} properties (limit: {limit})");
@@ -183,11 +198,15 @@ where
                         PropertyState::Completed,
                         prop.value.clone(),
                     )
-                    .await?;
+                    .await
+                    .map_kind(ErrorKind::Store)?;
 
                 debug!(?updated, "updated state");
             } else {
-                let updated = store.delete_expected_prop(&property_mapping, None).await?;
+                let updated = store
+                    .delete_expected_prop(&property_mapping, None)
+                    .await
+                    .map_kind(ErrorKind::Store)?;
 
                 debug!(?updated, "deleted expected prop");
             }
@@ -224,7 +243,7 @@ where
         sender: &mut C::Sender,
         state: &ConnectionState,
         limit: NonZero<usize>,
-    ) -> Result<usize, Error>
+    ) -> Result<usize, AstarteError>
     where
         C::Sender: Publish,
     {
@@ -265,10 +284,10 @@ where
     }
 
     async fn resend_stored_publishes(
-        store: &mut StoreWrapper<C::Store>,
+        store: &mut C::Store,
         sender: &mut C::Sender,
         limit: NonZero<usize>,
-    ) -> Result<usize, Error>
+    ) -> Result<usize, AstarteError>
     where
         C::Sender: Publish,
     {
@@ -280,18 +299,27 @@ where
 
         debug!("start sending store publishes");
 
-        let count = retention.unsent_publishes(limit.get(), &mut buf).await?;
+        let count = retention
+            .unsent_publishes(limit.get(), &mut buf)
+            .await
+            .map_kind(ErrorKind::Retention)?;
 
         trace!("loaded {count} stored publishes");
 
         for (id, info) in buf.drain(..) {
             // mark as sent before so that no resend is tried while in flight
-            retention.update_sent_flag(&id, true).await?;
+            retention
+                .update_sent_flag(&id, true)
+                .await
+                .map_kind(ErrorKind::Retention)?;
+
             let result = sender.resend_stored(RetentionId::Stored(id), info).await;
 
             if let Err(e) = result {
                 error!(error=%Report::new(&e), "error while sending stored marking unsent");
+
                 stored_mark_unsent(store, &id).await;
+
                 return Err(e);
             }
         }
@@ -300,7 +328,7 @@ where
     }
 
     #[instrument(skip(self))]
-    async fn reconnect(&mut self) -> Result<ControlFlow<()>, Error>
+    async fn reconnect(&mut self) -> Result<ControlFlow<()>, AstarteError>
     where
         C: Receive,
     {
@@ -336,23 +364,7 @@ where
         let session;
 
         loop {
-            let attempt_status = match self.connection.reconnect(&interfaces).await {
-                Ok(attempt) => attempt,
-                Err(TransportError::Recv(err)) => {
-                    self.send_to_clients(Err(err)).await.map_err(|send_err| {
-                        if let Err(err) = send_err.into_inner() {
-                            error!(error = %Report::new(err), "failed to send receive error");
-                        }
-
-                        Error::Disconnected
-                    })?;
-
-                    continue;
-                }
-                Err(TransportError::Transport(err)) => {
-                    return Err(err);
-                }
-            };
+            let attempt_status = self.connection.reconnect(&interfaces).await?;
 
             match attempt_status {
                 AttemptStatus::Connected { session_present } => {
@@ -360,23 +372,7 @@ where
                     break;
                 }
                 AttemptStatus::ReceivedEvent(event) => {
-                    match self.handle_and_send_to_client(event).await {
-                        Ok(()) => (),
-                        Err(TransportError::Transport(err)) => {
-                            return Err(err);
-                        }
-                        Err(TransportError::Recv(err)) => {
-                            self.send_to_clients(Err(err))
-                                .await
-                                .map_err(|send_err| {
-                                    if let Err(err) = send_err.into_inner() {
-                                        error!(error = %Report::new(err), "failed to send receive error");
-                                    }
-
-                                    Error::Disconnected
-                                })?;
-                        }
-                    }
+                    self.handle_and_send_to_client(event).await?;
                 }
                 AttemptStatus::Disconnected => {
                     let timeout = self.backoff.next();
@@ -394,12 +390,18 @@ where
             info!("the session is not present after reconnection we will resend the packets");
 
             if let Some(retention) = self.store.get_retention() {
-                retention.reset_all_publishes().await?;
+                retention
+                    .reset_all_publishes()
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
             }
 
             self.state.volatile_store().reset_sent().await;
 
-            self.store.reset_state(Ownership::Device).await?;
+            self.store
+                .reset_state(Ownership::Device)
+                .await
+                .map_kind(ErrorKind::Store)?;
         }
 
         Ok(ControlFlow::Continue(()))

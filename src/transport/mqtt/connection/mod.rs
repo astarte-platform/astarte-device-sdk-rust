@@ -36,11 +36,11 @@
 use std::fmt::Debug;
 use std::ops::ControlFlow;
 
-use rumqttc::{ClientError, ConnectionError, Event, Packet, Publish};
+use astarte_device_error::{Error, ResultExt, WrapError};
+use rumqttc::{Event, Packet, Publish};
 use tracing::{debug, error, trace};
 
 use crate::logging::security::{SecurityEvent, notify_security_event, notify_tls_error};
-use crate::properties::PropertiesError;
 use crate::store::StoreCapabilities;
 
 use self::context::ConnCtx;
@@ -50,9 +50,8 @@ use self::state::State;
 use self::wait_connack::Connack;
 use self::wait_sends::TaskHandle;
 
-use super::PayloadError;
+use super::error::MqttError;
 use crate::pairing::Pairing;
-use crate::pairing::api::PairingError;
 
 mod connected;
 pub(crate) mod context;
@@ -62,60 +61,11 @@ mod state;
 mod wait_connack;
 mod wait_sends;
 
-/// Errors while initializing the MQTT connection.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum ConnError {
-    /// Couldn't send the message.
-    #[error("couldn't send messages for {ctx}")]
-    Client {
-        #[source]
-        backtrace: ClientError,
-        ctx: &'static str,
-    },
-    /// Couldn't receive the message.
-    #[error("couldn't received messages {ctx}")]
-    Connection {
-        ctx: &'static str,
-        #[source]
-        source: ConnectionError,
-    },
-    /// Couldn't serialize the device property payload.
-    #[error("couldn't serialize the device property payload")]
-    Payload(#[from] PayloadError),
-    /// Couldn't send purge device properties
-    #[error("couldn't send purge properties")]
-    PurgeProperties(#[source] PropertiesError),
-    #[error("couldn't get pairing config")]
-    Pairing,
-    #[error("couldn't pair with astarte")]
-    Astarte(#[from] PairingError),
-    #[error("couldn't get pairing config")]
-    Config,
-    #[error("couldn't join the task")]
-    JoinError,
-    #[error("connack received while reconnecting")]
-    ConAck,
-    #[error("disconnect received from broker")]
-    Disconnect,
-    #[error("couldn't change connection state")]
-    State,
-}
-
-impl ConnError {
-    const fn client(ctx: &'static str) -> impl Fn(ClientError) -> ConnError {
-        move |backtrace: ClientError| ConnError::Client { backtrace, ctx }
-    }
-
-    fn is_tls(&self) -> Option<&rustls::Error> {
-        match self {
-            ConnError::Connection {
-                source: ConnectionError::Tls(rumqttc::TlsError::TLS(err)),
-                ..
-            } => Some(err),
-            _ => None,
-        }
-    }
+fn is_tls_error(error: &Error<MqttError>) -> Option<&rustls::Error> {
+    std::error::Error::source(error).and_then(|s| match s.downcast_ref() {
+        Some(rumqttc::ConnectionError::Tls(rumqttc::TlsError::TLS(tls))) => Some(tls),
+        _ => None,
+    })
 }
 
 #[derive(Debug)]
@@ -138,7 +88,7 @@ impl<P> MqttState<P> {
             State::Connected(connected) => match connected.next_publish().await {
                 Ok(publish) => Some(publish),
                 Err(error) => {
-                    if let Some(err) = error.is_tls() {
+                    if let Some(err) = is_tls_error(&error) {
                         notify_tls_error(err);
                     }
 
@@ -161,11 +111,13 @@ impl<P> MqttState<P> {
     pub(crate) async fn reconnect<S>(
         &mut self,
         ctx: &mut ConnCtx<'_, S>,
-    ) -> Result<ControlFlow<bool, Publish>, ConnError>
+    ) -> Result<ControlFlow<bool, Publish>, Error<MqttError>>
     where
         P: Pairing,
         S: StoreCapabilities,
     {
+        debug_assert!(!matches!(self.state, State::Transition));
+
         match &mut self.state {
             State::Connected(_) => Ok(ControlFlow::Break(true)),
             State::Disconnected(disconnected) => {
@@ -191,7 +143,10 @@ impl<P> MqttState<P> {
             State::Transition => {
                 self.state.set_disconnected();
 
-                Err(ConnError::State)
+                Err(Error::with(
+                    MqttError::Connection,
+                    "broken connection state",
+                ))
             }
         }
     }
@@ -200,21 +155,24 @@ impl<P> MqttState<P> {
         disconnected: &mut Disconnected,
         pairing: &mut P,
         ctx: &mut ConnCtx<'_, S>,
-    ) -> Result<(bool, Option<TaskHandle>), ConnError>
+    ) -> Result<(bool, Option<TaskHandle>), Error<MqttError>>
     where
         P: Pairing,
         S: StoreCapabilities,
     {
-        let cfg = pairing.config(ctx).await.map_err(|error| {
+        let cfg = pairing.config(ctx).await.wrap_err_with(|error| {
             error!(%error, "couldn't get pairing config");
 
-            ConnError::Pairing
+            Error::new(MqttError::DevicePairing)
         })?;
 
         // FIXME: Not sure if this is the best place to do it
         ctx.state.set_device_status(true);
 
-        let connection = disconnected.connect(ctx, &cfg).await?;
+        let connection = disconnected
+            .connect(ctx, &cfg)
+            .await
+            .map_kind(MqttError::PairingApi)?;
 
         // NOTE: the next packet will always be a CONNACK, see Disconnected for more information
         let mut connack = Connack { connection };
@@ -232,8 +190,8 @@ impl<P> MqttState<P> {
 
     fn handle_task(
         &mut self,
-        control_flow: Result<ControlFlow<bool, Publish>, ConnError>,
-    ) -> Result<ControlFlow<bool, Publish>, ConnError> {
+        control_flow: Result<ControlFlow<bool, Publish>, Error<MqttError>>,
+    ) -> Result<ControlFlow<bool, Publish>, Error<MqttError>> {
         match control_flow {
             Ok(p @ ControlFlow::Continue(_)) => Ok(p),
             Ok(p @ ControlFlow::Break(_)) => {
@@ -250,7 +208,7 @@ impl<P> MqttState<P> {
     }
 }
 
-fn handle_event(event: Event) -> Result<Option<Publish>, ConnError> {
+fn handle_event(event: Event) -> Result<Option<Publish>, Error<MqttError>> {
     trace!("handling event");
 
     let incoming = match event {
@@ -272,7 +230,10 @@ fn handle_event(event: Event) -> Result<Option<Publish>, ConnError> {
 
             notify_security_event(SecurityEvent::UnexpectedMessageReceived);
 
-            Err(ConnError::ConAck)
+            Err(Error::with(
+                MqttError::Connection,
+                "unexpected CONNACK packet received",
+            ))
         }
         Packet::Publish(publish) => {
             debug!("incoming publish on {}", publish.topic);
@@ -282,7 +243,10 @@ fn handle_event(event: Event) -> Result<Option<Publish>, ConnError> {
         Packet::Disconnect => {
             debug!("server sent a disconnect packet");
 
-            Err(ConnError::Disconnect)
+            Err(Error::with(
+                MqttError::Disconnect,
+                "DISCONNECT packet received",
+            ))
         }
         _ => {
             trace!("incoming packet");
@@ -343,6 +307,6 @@ pub(crate) mod tests {
     #[case(Event::Incoming(Packet::Disconnect))]
     #[case(Event::Incoming(Packet::ConnAck(ConnAck{session_present:false, code: rumqttc::ConnectReturnCode::Success})))]
     fn should_handle_event_errsos(#[case] event: Event) {
-        handle_event(event).unwrap_err();
+        let _ = handle_event(event).unwrap_err();
     }
 }

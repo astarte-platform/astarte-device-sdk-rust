@@ -18,198 +18,141 @@
 
 //! Error types for the Astarte SDK.
 
-use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
 
-use astarte_interfaces::error::Error as InterfaceError;
-use astarte_interfaces::mapping::path::MappingPathError;
-use astarte_interfaces::schema::{Aggregation, InterfaceType, Ownership};
+use astarte_device_error::Error;
+use astarte_interfaces::schema::{Aggregation, InterfaceType};
 
-use crate::builder::BuilderError;
-use crate::introspection::AddInterfaceError;
-use crate::properties::PropertiesError;
 use crate::retention::RetentionError;
 use crate::session::SessionError;
 use crate::store::error::StoreError;
 use crate::transport::mqtt::error::MqttError;
-use crate::types::TypeError;
-use crate::validate::UserValidationError;
 
-/// Dynamic error type
-pub(crate) type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
+/// Error returned by the SDK
+pub type AstarteError = astarte_device_error::Error<ErrorKind>;
 
 /// Astarte error.
 ///
 /// Possible errors returned by functions of the Astarte device SDK.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    /// The connection poll reached the max number of retries.
-    #[error("connection reached max retries")]
-    ConnectionTimeout,
-    /// Error while parsing interface.
-    #[error("couldn't parse interface")]
-    Interface(#[from] InterfaceError),
-    /// Error while operating on the device introspection.
-    #[error("couldn't complete introspection operation")]
-    AddInterface(#[from] AddInterfaceError),
-    /// Couldn't find an interface with the given name.
-    #[error("couldn't find interface '{name}'")]
-    InterfaceNotFound {
-        /// Name of the missing interface.
-        name: String,
-    },
-    /// Couldn't find missing mapping in the interface.
-    #[error("couldn't find mapping {mapping} in interface {interface}")]
-    MappingNotFound {
-        /// Name of the interface.
-        interface: String,
-        /// Path of the missing mapping.
-        mapping: String,
-    },
-    /// Couldn't parse the mapping path.
-    #[error("invalid mapping path")]
-    InvalidEndpoint(#[from] MappingPathError),
-    /// Errors when converting between Astarte types.
-    #[error("couldn't convert to Astarte Type")]
-    Types(#[from] TypeError),
-    /// Error while parsing the /control/consumer/properties payload.
-    #[error("couldn't handle properties")]
-    Properties(#[from] PropertiesError),
-    /// Error returned by a store operation.
-    #[error("couldn't complete store operation")]
-    Store(#[from] StoreError),
-    /// Send or receive validation failed
-    #[error("validation of the send payload failed")]
-    Validation(#[from] UserValidationError),
-    /// Invalid aggregation between the interface and the data.
-    #[error(transparent)]
-    Aggregation(#[from] AggregationError),
-    /// Invalid interface type between the interface and the data.
-    #[error(transparent)]
-    InterfaceType(#[from] InterfaceTypeError),
-    /// Couldn't build the device connection and client
-    #[error("couldn't build the device connection and client")]
-    Builder(#[from] BuilderError),
-    /// Error returned by the MQTT connection.
-    #[error(transparent)]
-    Mqtt(#[from] MqttError),
-    /// Error when the Device is disconnected from Astarte or client.
-    ///
-    /// This is an unrecoverable error for the SDK.
-    #[error("disconnected from Astarte")]
-    Disconnected,
-    /// Retention operation failed.
-    #[error("retention operation failed")]
-    Retention(#[from] RetentionError),
-    /// Persistent session operation failed
-    #[error("persistent session operation failed")]
-    Session(#[from] SessionError),
-    /// Error returned by the gRPC transport
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// Generic I/O error
+    Io(std::io::ErrorKind),
+    /// Invalid or malformed interface
+    Interface(InterfaceError),
+    /// Couldn't complete store operation
+    Store(StoreError),
+    /// Couldn't complete session operation
+    Session(SessionError),
+    /// Couldn't complete retention operation
+    Retention(RetentionError),
+    /// Mqtt transport error.
+    Mqtt(MqttError),
+    /// Grcp transport error
     #[cfg(feature = "message-hub")]
-    #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
-    #[error(transparent)]
-    Grpc(#[from] crate::transport::grpc::GrpcError),
-    /// Infallible error
-    #[doc(hidden)]
-    #[error(transparent)]
-    Infallible(#[from] Infallible),
+    Grpc(crate::transport::grpc::error::GrpcError),
+    /// Device is disconnected
+    Disconnected,
 }
 
-/// Aggregation error.
+impl Display for ErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrorKind::Io(error_kind) => write!(f, "I/O error {error_kind}"),
+            ErrorKind::Interface(error) => write!(f, "interface error {error}"),
+            ErrorKind::Store(error) => {
+                write!(f, "store operation failed {error}")
+            }
+            ErrorKind::Session(error) => {
+                write!(f, "session operation failed {error}")
+            }
+            ErrorKind::Retention(retention_error) => {
+                write!(f, "retention operation failed {retention_error}")
+            }
+            ErrorKind::Disconnected => write!(f, "device is disconnected"),
+            ErrorKind::Mqtt(error) => write!(f, "MQTT transport error {error}"),
+            #[cfg(feature = "message-hub")]
+            ErrorKind::Grpc(grpc_error) => write!(f, "Message Hub gRPC returned {grpc_error}"),
+        }
+    }
+}
+
+/// Error for the Astarte Interfaces
 ///
-/// This provides additional context in case of an aggregation error
-#[derive(Debug, thiserror::Error)]
-#[error("invalid aggregation for {interface}{path}, expected {exp} but got {got}")]
+/// Returned when an error is caused by an Interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct AggregationError {
-    /// Interface name
-    interface: String,
-    /// Path
-    path: String,
-    /// Expected aggregation of the interface.
-    exp: Aggregation,
-    /// The actual aggregation.
-    got: Aggregation,
+pub enum InterfaceError {
+    /// Invalid interface
+    Invalid,
+    /// Couldn't parse the mapping path.
+    Path,
+    /// Couldn't find an interface with the given name.
+    InterfaceNotFound,
+    /// Couldn't find missing mapping in the interface.
+    MappingNotFound,
+    /// Invalid aggregation between the interface and the data.
+    Aggregation,
+    /// Invalid aggregation between the interface and the data.
+    InterfaceType,
+    /// Received data on a device owned interface.
+    Ownership,
+    /// Invalid mapping type sent on endpoint.
+    MappingType,
+    /// Invalid `explicit_timestamp` usage.
+    Timestamp,
+    /// Invalid `allow_unset` usage for property.
+    Unset,
+    /// Invalid object path for interface
+    ObjectPath,
+    /// Invalid object with required mapping
+    MappingRequired,
 }
 
-impl AggregationError {
-    // Public to be used in the derive macro.
+impl InterfaceError {
     #[doc(hidden)]
-    pub fn new(
-        interface: impl Into<String>,
-        path: impl Into<String>,
-        exp: Aggregation,
-        got: Aggregation,
-    ) -> Self {
-        Self {
-            interface: interface.into(),
-            path: path.into(),
-            exp,
-            got,
-        }
-    }
-}
-
-/// Invalid interface type when sending or receiving.
-#[derive(Debug, thiserror::Error)]
-#[error("invalid interface type for {name}{}, expected {exp} but got {got}", path.as_deref().unwrap_or_default())]
-pub struct InterfaceTypeError {
-    /// Name of the interface.
-    name: String,
-    /// Optional path
-    path: Option<String>,
-    /// Expected interface type.
-    exp: InterfaceType,
-    /// Actual interface type.
-    got: InterfaceType,
-}
-
-impl InterfaceTypeError {
-    pub(crate) fn new(name: impl Into<String>, exp: InterfaceType, got: InterfaceType) -> Self {
-        Self {
-            name: name.into(),
-            path: None,
-            exp,
-            got,
-        }
-    }
-
-    // Public to be used in the derive macro.
-    #[doc(hidden)]
-    pub fn with_path(
-        name: impl Into<String>,
-        path: impl Into<String>,
+    pub fn interface_type(
+        ctx: &'static str,
+        interface: impl Display,
+        path: impl Display,
         exp: InterfaceType,
         got: InterfaceType,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            path: Some(path.into()),
-            exp,
-            got,
-        }
+    ) -> Error<InterfaceError> {
+        Error::with(InterfaceError::InterfaceType, ctx).set_message(format!(
+            "for {interface}{path}, expected {exp} but got {got}"
+        ))
+    }
+
+    #[doc(hidden)]
+    pub fn aggregation(
+        ctx: &'static str,
+        interface: impl Display,
+        path: impl Display,
+        exp: Aggregation,
+        got: Aggregation,
+    ) -> Error<InterfaceError> {
+        Error::with(InterfaceError::Aggregation, ctx).set_message(format!(
+            "for {interface}{path}, expected {exp} but got {got}"
+        ))
     }
 }
 
-/// Sending data on an interface not owned by the device
-#[derive(Debug, thiserror::Error)]
-#[error("invalid ownership for interface {name}, expected {exp} but got {got}")]
-pub struct OwnershipError {
-    /// Name of the interface.
-    name: String,
-    /// Expected interface ownership.
-    exp: Ownership,
-    /// Actual interface ownership.
-    got: Ownership,
-}
-
-impl OwnershipError {
-    pub(crate) fn new(name: impl Into<String>, exp: Ownership, got: Ownership) -> Self {
-        Self {
-            name: name.into(),
-            exp,
-            got,
+impl Display for InterfaceError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterfaceError::Invalid => write!(f, "invalid interface"),
+            InterfaceError::Path => write!(f, "couldn't parse mapping path"),
+            InterfaceError::InterfaceNotFound => write!(f, "interface not found"),
+            InterfaceError::MappingNotFound => write!(f, "mapping endpoint not found"),
+            InterfaceError::Aggregation => write!(f, "invalid interface aggregation"),
+            InterfaceError::InterfaceType => write!(f, "invalid interface type"),
+            InterfaceError::Ownership => write!(f, "invalid interface ownership"),
+            InterfaceError::MappingType => write!(f, "invalid mapping type"),
+            InterfaceError::Timestamp => write!(f, "invalid explicit_timestamp"),
+            InterfaceError::Unset => write!(f, "invalid `allow_unset`"),
+            InterfaceError::ObjectPath => write!(f, "invalid object path for interface"),
+            InterfaceError::MappingRequired => write!(f, "invalid required object mapping"),
         }
     }
 }

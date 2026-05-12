@@ -21,6 +21,7 @@ use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
+use astarte_device_error::{Error, WrapError};
 use rusqlite::types::FromSql;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, ToSql};
 use tracing::{debug, error, instrument, trace, warn};
@@ -55,7 +56,7 @@ fn trace_sqlite(event: rusqlite::trace::TraceEvent) {
 pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
     const CONNECTION_TYPE: &'static str;
 
-    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, SqliteError>;
+    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, Error<SqliteError>>;
 
     fn take_connection(self) -> Connection;
 
@@ -69,18 +70,21 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
     }
 
     /// Queries a pragma value
-    fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, SqliteError>
+    fn get_pragma<T>(&self, pragma_name: &str) -> Result<T, Error<SqliteError>>
     where
         T: FromSql + Display,
     {
         self.pragma_query_value(None, pragma_name, |row| row.get::<_, T>(0))
             .inspect(|value| trace!(pragma_name, %value, "pragma returned"))
-            .map_err(SqliteError::Option)
+            .wrap_err_with(|_| {
+                Error::with(SqliteError::Option, "running pragma")
+                    .set_message(pragma_name.to_string())
+            })
     }
 
     /// Sets a pragma value
     #[instrument(skip_all, fields(connection = Self::CONNECTION_TYPE, %pragma_name, %pragma_value))]
-    fn set_pragma<V>(&self, pragma_name: &str, pragma_value: &V) -> Result<(), SqliteError>
+    fn set_pragma<V>(&self, pragma_name: &str, pragma_value: &V) -> Result<(), Error<SqliteError>>
     where
         V: ToSql + ToOwned + PartialEq<V::Owned> + Display + ToOwned + ?Sized,
         V::Owned: FromSql + Display,
@@ -101,7 +105,10 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
             Ok(())
         })
         .optional()
-        .map_err(SqliteError::Option)?;
+        .wrap_err_with(|_| {
+            Error::with(SqliteError::Option, "setting pragma value")
+                .set_message(pragma_name.to_string())
+        })?;
 
         Ok(())
     }
@@ -118,7 +125,8 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
     /// Applies also max pages database limit to the passed connection
     ///
     /// <https://www.sqlite.org/pragma.html#pragma_max_page_count>
-    fn apply_pragmas(&self, options: &SqliteOptions) -> Result<(), SqliteError> {
+    #[instrument(skip_all)]
+    fn apply_pragmas(&self, options: &SqliteOptions) -> Result<(), Error<SqliteError>> {
         let pragmas = SqlitePragmas::try_from_options(self, options)?;
 
         self.set_pragma("journal_mode", "wal")?;
@@ -140,7 +148,7 @@ pub(crate) trait SqliteConnection: Sized + Deref<Target = Connection> {
         value: Option<Self>,
         db_file: &Path,
         options: &SqliteOptions,
-    ) -> Result<Self, SqliteError> {
+    ) -> Result<Self, Error<SqliteError>> {
         value
             .map_or_else(
                 || {
@@ -178,13 +186,14 @@ impl DerefMut for WriteConnection {
 impl SqliteConnection for WriteConnection {
     const CONNECTION_TYPE: &'static str = "writer";
 
-    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, SqliteError> {
+    #[instrument(skip(options))]
+    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, Error<SqliteError>> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
-        let connection =
-            Connection::open_with_flags(db_file, flags).map_err(SqliteError::Connection)?;
+        let connection = Connection::open_with_flags(db_file, flags)
+            .wrap_err_ctx(SqliteError::Connection, "while opening the db")?;
 
         #[cfg(feature = "sqlite-trace")]
         connection.trace_v2(rusqlite::trace::TraceEventCodes::all(), Some(trace_sqlite));
@@ -210,11 +219,11 @@ pub(crate) struct ReadConnection(Connection);
 impl SqliteConnection for ReadConnection {
     const CONNECTION_TYPE: &'static str = "reader";
 
-    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, SqliteError> {
+    fn connect(db_file: &Path, options: &SqliteOptions) -> Result<Self, Error<SqliteError>> {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
         let connection =
-            Connection::open_with_flags(db_file, flags).map_err(SqliteError::Connection)?;
+            Connection::open_with_flags(db_file, flags).wrap_err(SqliteError::Connection)?;
 
         #[cfg(feature = "sqlite-trace")]
         connection.trace_v2(rusqlite::trace::TraceEventCodes::all(), Some(trace_sqlite));

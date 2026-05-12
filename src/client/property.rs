@@ -18,16 +18,18 @@
 
 //! Handles the sending of properties
 
+use astarte_device_error::{Error, ResultExt};
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{InterfaceMapping, MappingPath, Properties, Schema};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, instrument, trace};
 
+use crate::AstarteData;
+use crate::error::{AstarteError, ErrorKind};
 use crate::interfaces::MappingRef;
 use crate::state::ConnStatus;
 use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoredProp};
 use crate::transport::Connection;
 use crate::validate::{ValidatedProperty, ValidatedUnset};
-use crate::{AstarteData, Error};
 
 use super::{DeviceClient, Publish};
 
@@ -35,19 +37,23 @@ impl<C> DeviceClient<C>
 where
     C: Connection,
 {
+    #[instrument(skip(self, data))]
     pub(crate) async fn send_property(
         &mut self,
         interface_name: &str,
         path: &MappingPath<'_>,
         data: AstarteData,
-    ) -> Result<(), Error>
+    ) -> Result<(), AstarteError>
     where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces().read().await;
-        let mapping = interfaces.get_property(interface_name, path)?;
+        let mapping = interfaces
+            .get_property(interface_name, path)
+            .map_kind(ErrorKind::Interface)?;
 
-        let validated = ValidatedProperty::validate(mapping, data)?;
+        let validated =
+            ValidatedProperty::validate(mapping, data).map_kind(ErrorKind::Interface)?;
 
         trace!("sending individual type {}", validated.data.display_type());
 
@@ -64,7 +70,10 @@ where
             ownership: Ownership::Device,
         };
 
-        self.store.store_prop(prop).await?;
+        self.store
+            .store_prop(prop)
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         debug!(
             "property sent {interface_name}{path}:{}",
@@ -84,7 +93,8 @@ where
                         PropertyState::Completed,
                         expected,
                     )
-                    .await?;
+                    .await
+                    .map_kind(ErrorKind::Store)?;
 
                 trace!(
                     ?updated,
@@ -96,7 +106,10 @@ where
                 trace!("property not sent since offline")
             }
             ConnStatus::Closed => {
-                return Err(Error::Disconnected);
+                return Err(Error::with(
+                    ErrorKind::Disconnected,
+                    "while sending property",
+                ));
             }
         }
 
@@ -109,7 +122,7 @@ where
         &self,
         mapping: &MappingRef<'_, Properties>,
         new: &ValidatedProperty,
-    ) -> Result<bool, Error> {
+    ) -> Result<bool, AstarteError> {
         // Check if this property is already in db
         let stored = self.try_load_prop(mapping).await?;
 
@@ -120,11 +133,15 @@ where
     pub(crate) async fn try_load_prop(
         &self,
         mapping: &MappingRef<'_, Properties>,
-    ) -> Result<Option<AstarteData>, Error> {
+    ) -> Result<Option<AstarteData>, AstarteError> {
         let property_mapping = PropertyMapping::from(mapping);
         let mapping = mapping.mapping();
 
-        let value = self.store.load_prop(&property_mapping).await?;
+        let value = self
+            .store
+            .load_prop(&property_mapping)
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         let value = match value {
             Some(value) if !value.eq_mapping_type(mapping.mapping_type()) => {
@@ -133,7 +150,10 @@ where
                     "stored property type mismatch, expected {}",
                     mapping.mapping_type(),
                 );
-                self.store.delete_prop(&property_mapping).await?;
+                self.store
+                    .delete_prop(&property_mapping)
+                    .await
+                    .map_kind(ErrorKind::Store)?;
 
                 None
             }
@@ -145,23 +165,29 @@ where
         Ok(value)
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn send_unset(
         &mut self,
         interface_name: &str,
         path: &MappingPath<'_>,
-    ) -> Result<(), Error>
+    ) -> Result<(), AstarteError>
     where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces().read().await;
-        let mapping = interfaces.get_property(interface_name, path)?;
+        let mapping = interfaces
+            .get_property(interface_name, path)
+            .map_kind(ErrorKind::Interface)?;
 
-        let validated = ValidatedUnset::validate(mapping)?;
+        let validated = ValidatedUnset::validate(mapping).map_kind(ErrorKind::Interface)?;
 
         debug!("unsetting property {interface_name}{path}");
 
         let property_mapping = PropertyMapping::from(&mapping);
-        self.store.unset_prop(&property_mapping).await?;
+        self.store
+            .unset_prop(&property_mapping)
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         match self.state.connection().await {
             ConnStatus::Connected => {
@@ -170,7 +196,8 @@ where
                 let updated = self
                     .store
                     .delete_expected_prop(&PropertyMapping::from(&mapping), None)
-                    .await?;
+                    .await
+                    .map_kind(ErrorKind::Store)?;
 
                 debug!(?updated, "delete unset property");
             }
@@ -178,7 +205,10 @@ where
                 trace!("not deleting property from store, since disconnected");
             }
             ConnStatus::Closed => {
-                return Err(Error::Disconnected);
+                return Err(Error::with(
+                    ErrorKind::Disconnected,
+                    "while unsetting property",
+                ));
             }
         }
 

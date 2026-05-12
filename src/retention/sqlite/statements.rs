@@ -18,12 +18,14 @@
 
 use std::{borrow::Cow, collections::HashSet, time::Duration};
 
+use astarte_device_error::{Error, WrapError};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use tracing::{debug, instrument, trace, warn};
 
 use crate::retention::{Id, PublishInfo, StoredInterface};
 use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
-use crate::store::sqlite::{SqliteError, statements::include_query};
+use crate::store::sqlite::error::SqliteError;
+use crate::store::sqlite::statements::include_query;
 
 use super::{RetentionMapping, RetentionPublish, RetentionReliability, TimestampSecs};
 
@@ -33,7 +35,7 @@ impl WriteConnection {
         &mut self,
         mapping: &RetentionMapping<'_>,
         publish: &RetentionPublish<'_>,
-    ) -> Result<(), SqliteError> {
+    ) -> Result<(), Error<SqliteError>> {
         let exists = read_mapping(self, &mapping.interface, &mapping.path)?.is_some_and(|stored| {
             if stored != *mapping {
                 warn!("mappings differ, replacing");
@@ -48,7 +50,7 @@ impl WriteConnection {
 
         self.free_retention_items(1)?;
 
-        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+        let transaction = self.transaction().wrap_err(SqliteError::Transaction)?;
 
         if !exists {
             Self::store_mapping(&transaction, mapping)?;
@@ -58,18 +60,19 @@ impl WriteConnection {
         Self::store_publish(&transaction, publish)?;
         trace!("publish stored");
 
-        transaction.commit()?;
+        transaction.commit().wrap_err(SqliteError::Transaction)?;
 
         Ok(())
     }
 
+    #[instrument(skip_all)]
     pub(super) fn store_mapping(
         transaction: &Transaction<'_>,
         mapping: &RetentionMapping<'_>,
-    ) -> Result<(), SqliteError> {
+    ) -> Result<(), Error<SqliteError>> {
         let mut statement = transaction
             .prepare_cached(include_query!("queries/retention/write/store_mapping.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let expiry_sec = mapping.expiry_to_sql();
 
@@ -81,18 +84,19 @@ impl WriteConnection {
                 mapping.reliability,
                 expiry_sec,
             ))
-            .map_err(SqliteError::Query)?;
+            .wrap_err(SqliteError::Query)?;
 
         Ok(())
     }
 
+    #[instrument(skip_all)]
     pub(super) fn store_publish(
         transaction: &Transaction<'_>,
         publish: &RetentionPublish<'_>,
-    ) -> Result<(), SqliteError> {
+    ) -> Result<(), Error<SqliteError>> {
         let mut statement = transaction
             .prepare_cached(include_query!("queries/retention/write/store_publish.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let be_bytes = publish.id.timestamp.to_bytes();
         let timestamp = be_bytes.as_slice();
@@ -111,31 +115,31 @@ impl WriteConnection {
                 publish.sent,
                 &publish.payload,
             ))
-            .map_err(SqliteError::Query)?;
+            .wrap_err(SqliteError::Query)?;
 
         Ok(())
     }
 
     /// Retrieve the number of stored properties
-    pub(crate) fn count_stored(&self) -> Result<usize, SqliteError> {
+    pub(crate) fn count_stored(&self) -> Result<usize, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/read/count_stored.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         statement
             .query_row((), |row| row.get::<_, i64>(0))
-            .map_err(SqliteError::Query)
+            .wrap_err(SqliteError::Query)
             // count is positive
             .map(|value| value as usize)
     }
 
     /// Remove the N oldest elements from the store
-    pub(crate) fn remove_oldest(&self, to_remove: usize) -> Result<usize, SqliteError> {
+    pub(crate) fn remove_oldest(&self, to_remove: usize) -> Result<usize, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!(
                 "queries/retention/write/delete_n_oldest.sql"
             ))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let to_remove = i64::try_from(to_remove).unwrap_or_else(|_| {
             warn!("removing only the last i64::MAX elements");
@@ -143,18 +147,24 @@ impl WriteConnection {
             i64::MAX
         });
 
-        statement.execute([to_remove]).map_err(SqliteError::Query)
+        statement.execute([to_remove]).wrap_err(SqliteError::Query)
     }
 
-    pub(super) fn update_publish_sent_flag(&self, id: &Id, sent: bool) -> Result<(), SqliteError> {
+    pub(super) fn update_publish_sent_flag(
+        &self,
+        id: &Id,
+        sent: bool,
+    ) -> Result<(), Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/write/update_sent.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let timestamp = id.timestamp.to_bytes();
         let timestamp = timestamp.as_slice();
 
-        let changed = statement.execute((sent, timestamp, id.counter))?;
+        let changed = statement
+            .execute((sent, timestamp, id.counter))
+            .wrap_err(SqliteError::Query)?;
 
         // If we remove an interface before the ACK is received the publish will also be deleted
         debug_assert!((0..=1).contains(&changed));
@@ -162,15 +172,17 @@ impl WriteConnection {
         Ok(())
     }
 
-    pub(super) fn delete_publish_by_id(&self, id: &Id) -> Result<(), SqliteError> {
+    pub(super) fn delete_publish_by_id(&self, id: &Id) -> Result<(), Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/write/delete_publish.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let timestamp = id.timestamp.to_bytes();
         let timestamp = timestamp.as_slice();
 
-        let changed = statement.execute((timestamp, id.counter))?;
+        let changed = statement
+            .execute((timestamp, id.counter))
+            .wrap_err(SqliteError::Query)?;
 
         if changed == 0 {
             debug!(?id, "no retention row deleted");
@@ -182,12 +194,12 @@ impl WriteConnection {
         Ok(())
     }
 
-    pub(super) fn delete_interface(&mut self, interface: &str) -> Result<(), SqliteError> {
-        let transaction = self.transaction().map_err(SqliteError::Transaction)?;
+    pub(super) fn delete_interface(&mut self, interface: &str) -> Result<(), Error<SqliteError>> {
+        let transaction = self.transaction().wrap_err(SqliteError::Transaction)?;
 
         Self::delete_interface_transaction(&transaction, interface)?;
 
-        transaction.commit().map_err(SqliteError::Transaction)?;
+        transaction.commit().wrap_err(SqliteError::Transaction)?;
 
         Ok(())
     }
@@ -195,59 +207,65 @@ impl WriteConnection {
     fn delete_interface_transaction(
         transaction: &Transaction,
         interface: &str,
-    ) -> Result<(), SqliteError> {
+    ) -> Result<(), Error<SqliteError>> {
         // Delete publishes
         let mut statement = transaction
             .prepare_cached(include_query!(
                 "queries/retention/write/delete_publish_by_interface.sql"
             ))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
-        statement.execute([interface]).map_err(SqliteError::Query)?;
+        statement
+            .execute([interface])
+            .wrap_err(SqliteError::Query)?;
 
         // Delete mappings
         let mut statement = transaction
             .prepare_cached(include_query!(
                 "queries/retention/write/delete_mapping_by_interface.sql"
             ))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
-        statement.execute([interface]).map_err(SqliteError::Query)?;
+        statement
+            .execute([interface])
+            .wrap_err(SqliteError::Query)?;
 
         Ok(())
     }
 
-    pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<usize, SqliteError> {
+    pub(super) fn delete_expired(&self, now: &TimestampSecs) -> Result<usize, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/write/delete_expired.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let timestamp = now.to_bytes();
         let timestamp = timestamp.as_slice();
 
-        let deleted = statement.execute([timestamp]).map_err(SqliteError::Query)?;
+        let deleted = statement
+            .execute([timestamp])
+            .wrap_err(SqliteError::Query)?;
 
         debug!(deleted, "deleted expired records");
 
         Ok(deleted)
     }
 
-    pub(super) fn reset_all_sent(&self) -> Result<(), SqliteError> {
+    pub(super) fn reset_all_sent(&self) -> Result<(), Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/write/reset_all_sent.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
-        statement.execute([])?;
+        statement.execute([]).wrap_err(SqliteError::Query)?;
 
         Ok(())
     }
 }
 
 impl ReadConnection {
-    pub(super) fn all_interfaces(&self) -> Result<HashSet<StoredInterface>, SqliteError> {
+    pub(super) fn all_interfaces(&self) -> Result<HashSet<StoredInterface>, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/retention/read/all_interfaces.sql"))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let interfaces = statement
             .query_map([], |row| {
@@ -256,9 +274,9 @@ impl ReadConnection {
                     version_major: row.get(1)?,
                 })
             })
-            .map_err(SqliteError::Query)?
+            .wrap_err(SqliteError::Query)?
             .collect::<Result<HashSet<StoredInterface>, rusqlite::Error>>()
-            .map_err(SqliteError::Query)?;
+            .wrap_err(SqliteError::Query)?;
 
         Ok(interfaces)
     }
@@ -268,12 +286,12 @@ impl ReadConnection {
         buf: &mut Vec<(Id, PublishInfo<'static>)>,
         now: &TimestampSecs,
         limit: usize,
-    ) -> Result<usize, SqliteError> {
+    ) -> Result<usize, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!(
                 "queries/retention/read/unsent_publishes.sql"
             ))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let now = now.to_bytes();
         let now = now.as_slice();
@@ -301,15 +319,14 @@ impl ReadConnection {
                     },
                 ))
             })
-            .map_err(SqliteError::Query)?
+            .wrap_err(SqliteError::Query)?
             .try_fold((0usize, buf), |(count, buf), res| {
-                let res = res?;
+                let res = res.wrap_err(SqliteError::Query)?;
 
                 buf.push(res);
 
                 Ok((count.saturating_add(1), buf))
-            })
-            .map_err(SqliteError::Query)?;
+            })?;
 
         Ok(count)
     }
@@ -319,10 +336,10 @@ fn read_mapping(
     connection: &Connection,
     interface: &str,
     path: &str,
-) -> Result<Option<RetentionMapping<'static>>, SqliteError> {
+) -> Result<Option<RetentionMapping<'static>>, Error<SqliteError>> {
     let mut statement = connection
         .prepare_cached(include_query!("queries/retention/read/mapping.sql"))
-        .map_err(SqliteError::Prepare)?;
+        .wrap_err(SqliteError::Prepare)?;
 
     statement
         .query_row([interface, path], |row| {
@@ -341,7 +358,7 @@ fn read_mapping(
             })
         })
         .optional()
-        .map_err(SqliteError::Query)
+        .wrap_err(SqliteError::Query)
 }
 
 fn expiry_from_sql(expiry: Option<i64>) -> Option<Duration> {
@@ -369,13 +386,16 @@ pub(crate) mod tests {
     use super::*;
 
     impl ReadConnection {
-        fn publish(&self, id: &Id) -> Result<Option<RetentionPublish<'static>>, SqliteError> {
+        fn publish(
+            &self,
+            id: &Id,
+        ) -> Result<Option<RetentionPublish<'static>>, Error<SqliteError>> {
             let timestamp = id.timestamp.to_bytes();
             let timestamp = timestamp.as_slice();
 
             let mut statement = self
                 .prepare_cached(include_query!("queries/retention/read/publish.sql"))
-                .map_err(SqliteError::Prepare)?;
+                .wrap_err(SqliteError::Prepare)?;
 
             statement
                 .query_row((timestamp, id.counter), |row| {
@@ -394,7 +414,7 @@ pub(crate) mod tests {
                     })
                 })
                 .optional()
-                .map_err(SqliteError::Query)
+                .wrap_err(SqliteError::Query)
         }
     }
 
@@ -402,10 +422,13 @@ pub(crate) mod tests {
         let mapping = mapping.clone().into_owned();
         store
             .pool
-            .acquire_writer(move |writer| -> Result<_, SqliteError> {
-                let t = writer.transaction()?;
+            .acquire_writer(move |writer| -> Result<_, Error<SqliteError>> {
+                let t = writer.transaction().wrap_err(SqliteError::Transaction)?;
+
                 WriteConnection::store_mapping(&t, &mapping)?;
-                t.commit()?;
+
+                t.commit().wrap_err(SqliteError::Transaction)?;
+
                 Ok(())
             })
             .await
@@ -416,10 +439,12 @@ pub(crate) mod tests {
         let publish = publish.clone().into_owned();
         store
             .pool
-            .acquire_writer(move |writer| -> Result<_, SqliteError> {
-                let t = writer.transaction().unwrap();
+            .acquire_writer(move |writer| -> Result<_, Error<SqliteError>> {
+                let t = writer.transaction().wrap_err(SqliteError::Transaction)?;
+
                 WriteConnection::store_publish(&t, &publish).unwrap();
-                t.commit().unwrap();
+
+                t.commit().wrap_err(SqliteError::Transaction)?;
 
                 Ok(())
             })
@@ -770,7 +795,7 @@ pub(crate) mod tests {
 
         store_publish(&store, &exp).await;
 
-        store.delete_publish(&id).await.unwrap();
+        store.mark_received(&id).await.unwrap();
 
         let publish = fetch_publish(&store, &exp.id).await;
 
@@ -958,7 +983,7 @@ pub(crate) mod tests {
 
         assert_eq!(res, publish);
 
-        store.delete_publish(&publish.id).await.unwrap();
+        store.mark_received(&publish.id).await.unwrap();
 
         let res = fetch_publish(&store, &publish.id).await;
 
@@ -1253,7 +1278,7 @@ pub(crate) mod tests {
 
         store
             .pool
-            .acquire_writer(|writer| -> Result<_, SqliteError> {
+            .acquire_writer(|writer| -> Result<_, Error<SqliteError>> {
                 let removed = writer.remove_oldest(0).unwrap();
                 assert_eq!(removed, 0);
 

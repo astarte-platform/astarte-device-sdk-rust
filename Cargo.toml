@@ -19,6 +19,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "astarte-device-error",
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
   "astarte-device-tls",
@@ -104,6 +105,7 @@ path = "examples/retention/main.rs"
 required-features = ["derive"]
 
 [dependencies]
+astarte-device-error.workspace = true
 astarte-device-fdo = { workspace = true, optional = true }
 astarte-device-sdk-derive = { workspace = true, optional = true }
 astarte-interfaces.workspace = true
@@ -197,6 +199,7 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
+astarte-device-error = { path = "./astarte-device-error", version = "=0.13.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
 astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }

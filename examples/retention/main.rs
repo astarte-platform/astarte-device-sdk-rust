@@ -104,7 +104,7 @@ struct Args {
     loop_times: Option<NonZeroU32>,
 }
 
-async fn send_loop<I>(mut client: impl Client, iter: I) -> Result<(), astarte_device_sdk::Error>
+async fn send_loop<I>(mut client: impl Client, iter: I) -> eyre::Result<()>
 where
     I: IntoIterator<Item = u32>,
 {
@@ -216,7 +216,11 @@ async fn main() -> eyre::Result<()> {
 
     let mut tasks = tokio::task::JoinSet::new();
 
-    tasks.spawn(async move { connection.handle_events().await });
+    tasks.spawn(async move {
+        connection.handle_events().await?;
+
+        Ok(())
+    });
 
     if let Some(c) = loop_times {
         let client = client.clone();

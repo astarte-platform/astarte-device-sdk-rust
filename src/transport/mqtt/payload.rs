@@ -20,44 +20,42 @@
 //!
 //! You can find more information about the protocol v1 in the [Astarte MQTT v1 Protocol](https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html).
 
+use std::fmt::Display;
+
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
-    mapping::path::MappingPathError,
 };
 use bson::Bson;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, trace};
 
-use crate::{
-    Timestamp,
-    aggregate::AstarteObject,
-    interfaces::MappingRef,
-    types::{AstarteData, TypeError, de::BsonConverter},
-};
+use crate::Timestamp;
+use crate::aggregate::AstarteObject;
+use crate::interfaces::MappingRef;
+use crate::types::de::BsonConverter;
+use crate::types::{AstarteData, TypeError};
 
 /// Errors that can occur while handling the payload.
 #[non_exhaustive]
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadError {
     /// Couldn't serialize the payload to bson.
-    // NOTE: box the bson error since it's big in size
-    #[error("couldn't serialize the payload")]
-    Serialize(#[from] Box<bson::error::Error>),
+    Serialize,
     /// Couldn't deserialize the payload to bson.
-    #[error("couldn't deserialize the payload")]
-    Deserialize(#[from] bson::error::Error),
+    Deserialize,
     /// Couldn't convert the value to [`AstarteData`]
-    #[error("couldn't convert the value to AstarteData")]
-    AstarteData(#[from] TypeError),
-    /// Expected object, individual data deserialized
-    #[error("expected object, individual data deserialized instead")]
-    Object,
-    /// Couldn't parse a mapping
-    #[error("couldn't parse the mapping")]
-    Mapping(#[from] MappingPathError),
-    /// Couldn't accept unset for mapping without `allow_unset`
-    #[error("couldn't accept unset if the mapping isn't a property with `allow_unset`")]
-    Unset,
+    Conversion(TypeError),
+}
+
+impl Display for PayloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serialize => write!(f, "couldn't serialize the payload"),
+            Self::Deserialize => write!(f, "couldn't deserialize the payload"),
+            Self::Conversion(error) => write!(f, "couldn't convert to Astarte type {error}"),
+        }
+    }
 }
 
 /// Used to serialize to the correct type
@@ -99,21 +97,21 @@ impl<T> Payload<T> {
     }
 
     /// Serialize the payload to a BSON vector of bytes.
-    pub(crate) fn to_vec(&self) -> Result<Vec<u8>, PayloadError>
+    pub(crate) fn to_vec(&self) -> Result<Vec<u8>, Error<PayloadError>>
     where
         T: serde::Serialize,
     {
-        let res = bson::serialize_to_vec(self).map_err(Box::new)?;
+        let res = bson::serialize_to_vec(self).wrap_err(PayloadError::Serialize)?;
 
         Ok(res)
     }
 
     /// Deserialize the payload from a BSON slice of bytes.
-    pub(crate) fn from_slice<'a>(buf: &'a [u8]) -> Result<Payload<T>, PayloadError>
+    pub(crate) fn from_slice<'a>(buf: &'a [u8]) -> Result<Payload<T>, Error<PayloadError>>
     where
         T: serde::de::Deserialize<'a>,
     {
-        let res = bson::deserialize_from_slice(buf)?;
+        let res = bson::deserialize_from_slice(buf).wrap_err(PayloadError::Deserialize)?;
 
         Ok(res)
     }
@@ -123,7 +121,7 @@ impl<T> Payload<T> {
 pub(super) fn serialize_individual(
     individual: &AstarteData,
     timestamp: Option<Timestamp>,
-) -> Result<Vec<u8>, PayloadError> {
+) -> Result<Vec<u8>, Error<PayloadError>> {
     Payload::with_timestamp(individual, timestamp).to_vec()
 }
 
@@ -131,7 +129,7 @@ pub(super) fn serialize_individual(
 pub(super) fn serialize_object(
     aggregate: &AstarteObject,
     timestamp: Option<Timestamp>,
-) -> Result<Vec<u8>, PayloadError> {
+) -> Result<Vec<u8>, Error<PayloadError>> {
     Payload::with_timestamp(aggregate, timestamp).to_vec()
 }
 
@@ -139,12 +137,8 @@ pub(super) fn serialize_object(
 pub(super) fn deserialize_property(
     mapping: &MappingRef<'_, Properties>,
     buf: &[u8],
-) -> Result<Option<AstarteData>, PayloadError> {
+) -> Result<Option<AstarteData>, Error<PayloadError>> {
     if buf.is_empty() {
-        if !mapping.mapping().allow_unset() {
-            return Err(PayloadError::Unset);
-        }
-
         return Ok(None);
     }
 
@@ -152,7 +146,7 @@ pub(super) fn deserialize_property(
 
     let hint = BsonConverter::new(mapping.mapping().mapping_type(), payload.value);
 
-    let ast_val = AstarteData::try_from(hint)?;
+    let ast_val = AstarteData::try_from(hint).map_kind(PayloadError::Conversion)?;
 
     Ok(Some(ast_val))
 }
@@ -161,12 +155,12 @@ pub(super) fn deserialize_property(
 pub(super) fn deserialize_individual(
     mapping: &MappingRef<'_, DatastreamIndividual>,
     buf: &[u8],
-) -> Result<(AstarteData, Option<Timestamp>), PayloadError> {
+) -> Result<(AstarteData, Option<Timestamp>), Error<PayloadError>> {
     let payload = Payload::<Bson>::from_slice(buf)?;
 
     let hint = BsonConverter::new(mapping.mapping().mapping_type(), payload.value);
 
-    let ast_val = AstarteData::try_from(hint)?;
+    let ast_val = AstarteData::try_from(hint).map_kind(PayloadError::Conversion)?;
 
     Ok((ast_val, payload.timestamp.map(|v| v.0)))
 }
@@ -175,11 +169,7 @@ pub(super) fn deserialize_object(
     object: &DatastreamObject,
     path: &MappingPath<'_>,
     buf: &[u8],
-) -> Result<(AstarteObject, Option<Timestamp>), PayloadError> {
-    if buf.is_empty() {
-        return Err(PayloadError::Unset);
-    }
-
+) -> Result<(AstarteObject, Option<Timestamp>), Error<PayloadError>> {
     let payload = Payload::<Bson>::from_slice(buf)?;
 
     let doc = match payload.value {
@@ -190,7 +180,10 @@ pub(super) fn deserialize_object(
                 "expected bson document for object datastream"
             );
 
-            return Err(PayloadError::Object);
+            return Err(Error::with(
+                PayloadError::Deserialize,
+                "object interface not a BSON document",
+            ));
         }
     };
 
@@ -215,12 +208,11 @@ pub(super) fn deserialize_object(
 
             let hint = BsonConverter::new(mapping.mapping_type(), value);
 
-            let ast_val = match AstarteData::try_from(hint) {
-                Ok(t) => t,
-                Err(err) => return Some(Err(PayloadError::from(err))),
-            };
+            let res = AstarteData::try_from(hint)
+                .map_kind(PayloadError::Conversion)
+                .map(|value| (key, value));
 
-            Some(Ok((key, ast_val)))
+            Some(res)
         })
         .collect::<Result<AstarteObject, _>>()?;
 
@@ -444,6 +436,7 @@ mod test {
         assert_eq!(at, expected);
     }
 
+    /// This is validated outside of the payload.
     #[test]
     fn deserialize_unset_individual() {
         let buf = [];
@@ -468,9 +461,9 @@ mod test {
         let path = MappingPath::try_from("/1/double_endpoint").unwrap();
         let mapping = MappingRef::new(&interface, &path).unwrap();
 
-        let at = deserialize_property(&mapping, &buf);
+        let opt = deserialize_property(&mapping, &buf).unwrap();
 
-        assert!(matches!(at, Err(PayloadError::Unset)));
+        assert!(opt.is_none());
     }
 
     #[test]
@@ -480,8 +473,7 @@ mod test {
         let object = DatastreamObject::from_str(E2E_DEVICE_AGGREGATE).unwrap();
         let path = MappingPath::try_from("/1").unwrap();
 
-        let at = deserialize_object(&object, &path, &buf);
-
-        assert!(matches!(at, Err(PayloadError::Unset)));
+        let err = deserialize_object(&object, &path, &buf).unwrap_err();
+        assert_eq!(*err.kind(), PayloadError::Deserialize);
     }
 }

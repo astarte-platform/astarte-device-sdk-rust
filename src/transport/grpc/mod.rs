@@ -28,18 +28,19 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{Aggregation, InterfaceType};
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties, Schema,
 };
-use astarte_message_hub_proto::prost::{DecodeError, Message};
+use astarte_message_hub_proto::prost::Message;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
 use astarte_message_hub_proto::tonic::metadata::MetadataValue;
 use astarte_message_hub_proto::tonic::service::Interceptor;
 use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
-    AstarteMessage, InterfacesJson, InterfacesName, MessageHubError, MessageHubEvent, Node,
+    AstarteMessage, InterfacesJson, InterfacesName, MessageHubEvent, Node,
     astarte_message::Payload as ProtoPayload,
 };
 use bytes::Bytes;
@@ -47,77 +48,30 @@ use sync_wrapper::SyncWrapper;
 use tracing::{error, trace, warn};
 use uuid::Uuid;
 
-use self::convert::{
-    MessageHubProtoError, try_from_individual, try_from_object, try_from_property,
-};
+use self::convert::{try_from_individual, try_from_object, try_from_property};
+use self::error::GrpcError;
 use self::store::GrpcStore;
-use super::{
-    Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError,
-    ValidatedProperty,
-};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, ValidatedProperty};
+use crate::Timestamp;
 use crate::aggregate::AstarteObject;
-use crate::builder::BuildConfig;
-use crate::client::RecvError;
-use crate::error::{AggregationError, InterfaceTypeError, Report};
+use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
+use crate::error::{AstarteError, ErrorKind, InterfaceError, Report};
 use crate::interfaces::MappingRef;
-use crate::retention::{PublishInfo, RetentionId};
+use crate::interfaces::{self, Interfaces};
+use crate::retention::{PublishInfo, RetentionId, StoredRetention};
 use crate::state::SharedState;
-use crate::store::OptStoredProp;
+use crate::store::{OptStoredProp, PropertyStore, StoreCapabilities};
 use crate::transport::AttemptStatus;
-use crate::{
-    Error, Timestamp,
-    builder::{ConnectionConfig, DeviceTransport},
-    interfaces::{self, Interfaces},
-    retention::StoredRetention,
-    store::{PropertyStore, StoreCapabilities, wrapper::StoreWrapper},
-    types::AstarteData,
-    validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset},
-};
+use crate::types::AstarteData;
+use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
 
 pub mod convert;
+pub mod error;
 pub mod store;
 
 #[cfg(feature = "message-hub")]
 #[cfg_attr(astarte_device_sdk_docsrs, doc(cfg(feature = "message-hub")))]
 pub use astarte_message_hub_proto::tonic;
-
-/// Errors raised while using the [`Grpc`] transport
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum GrpcError {
-    /// The gRPC connection returned an error.
-    #[error("Transport error while working with grpc: {0}")]
-    Transport(#[from] tonic::transport::Error),
-    /// Status code error.
-    #[error("Status error {status}")]
-    Status {
-        /// Status code that for the error.
-        code: tonic::Code,
-        /// Display representation of the [`Status`]
-        status: String,
-    },
-    /// Couldn't serialize interface to json.
-    #[error("Error while serializing the interfaces")]
-    InterfacesSerialization(#[from] serde_json::Error),
-    /// Couldn't decode gRPC message
-    #[error("couldn't decode grpc message")]
-    Decode(#[from] DecodeError),
-    /// Failed to convert a proto message.
-    #[error("couldn't convert proto message")]
-    MessageHubProtoConversion(#[from] MessageHubProtoError),
-    /// Error returned by the message hub server
-    #[error("error returned by the message hub server")]
-    Server(#[from] MessageHubError),
-}
-
-impl From<Status> for GrpcError {
-    fn from(value: Status) -> Self {
-        Self::Status {
-            code: value.code(),
-            status: value.to_string(),
-        }
-    }
-}
 
 cfg_if::cfg_if! {
     if #[cfg(test)] {
@@ -157,17 +111,13 @@ impl Interceptor for NodeIdInterceptor {
 #[derive(Debug, Clone)]
 pub struct GrpcClient<S> {
     client: MsgHubClient,
-    store: StoreWrapper<S>,
+    store: S,
     state: Arc<SharedState>,
 }
 
 impl<S> GrpcClient<S> {
     /// Create a new client.
-    pub(crate) fn new(
-        client: MsgHubClient,
-        store: StoreWrapper<S>,
-        state: Arc<SharedState>,
-    ) -> Self {
+    pub(crate) fn new(client: MsgHubClient, store: S, state: Arc<SharedState>) -> Self {
         Self {
             client,
             store,
@@ -175,7 +125,7 @@ impl<S> GrpcClient<S> {
         }
     }
 
-    async fn mark_received(&self, id: &RetentionId) -> Result<(), Error>
+    async fn mark_received(&self, id: &RetentionId) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
@@ -185,7 +135,10 @@ impl<S> GrpcClient<S> {
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
-                    retention.mark_received(id).await?;
+                    retention
+                        .mark_received(id)
+                        .await
+                        .map_kind(ErrorKind::Retention)?;
                 }
             }
         }
@@ -193,12 +146,16 @@ impl<S> GrpcClient<S> {
         Ok(())
     }
 
-    async fn detach(&mut self) -> Result<(), GrpcError> {
+    async fn detach(&mut self) -> Result<(), AstarteError> {
         self.client
             .detach(tonic::Request::new(()))
             .await
-            .map(|_| ())
-            .map_err(GrpcError::from)
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while detaching node")
+                    .set_message(status)
+            })?;
+
+        Ok(())
     }
 }
 
@@ -206,35 +163,47 @@ impl<S> Publish for GrpcClient<S>
 where
     S: StoreCapabilities + Send + Sync,
 {
-    async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), crate::Error> {
+    async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while sending individual",
+                )
+                .set_message(status)
+            })?;
 
         Ok(())
     }
 
-    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), crate::Error> {
+    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while sending property")
+                    .set_message(status)
+            })?;
 
         Ok(())
     }
 
-    async fn send_object(&mut self, data: ValidatedObject) -> Result<(), crate::Error> {
+    async fn send_object(&mut self, data: ValidatedObject) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while sending object")
+                    .set_message(status)
+            })?;
 
         Ok(())
     }
@@ -243,13 +212,19 @@ where
         &mut self,
         id: RetentionId,
         data: ValidatedIndividual,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while sending individual stored",
+                )
+                .set_message(status)
+            })?;
 
         self.mark_received(&id).await?;
 
@@ -260,13 +235,19 @@ where
         &mut self,
         id: RetentionId,
         data: ValidatedObject,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
         self.client
             .send(tonic::Request::new(data))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while sending object stored",
+                )
+                .set_message(status)
+            })?;
 
         self.mark_received(&id).await?;
 
@@ -277,43 +258,59 @@ where
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> Result<(), crate::Error> {
-        let msg = AstarteMessage::decode(data.value.borrow()).map_err(GrpcError::Decode)?;
+    ) -> Result<(), AstarteError> {
+        let msg = AstarteMessage::decode(data.value.borrow()).wrap_err_ctx(
+            ErrorKind::Grpc(GrpcError::Decode),
+            "while decoding stored payload",
+        )?;
 
         self.client
             .send(tonic::Request::new(msg))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while resending stored")
+                    .set_message(status)
+            })?;
 
         self.mark_received(&id).await?;
 
         Ok(())
     }
 
-    async fn resend_stored_property(&mut self, data: OptStoredProp) -> Result<(), crate::Error> {
+    async fn resend_stored_property(&mut self, data: OptStoredProp) -> Result<(), AstarteError> {
         self.client
             .send(tonic::Request::new(data.into()))
             .await
-            .map_err(GrpcError::from)?;
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while resending stored")
+                    .set_message(status)
+            })?;
 
         Ok(())
     }
 
-    async fn unset(&mut self, data: ValidatedUnset) -> Result<(), crate::Error> {
+    async fn unset(&mut self, data: ValidatedUnset) -> Result<(), AstarteError> {
         self.client
             .send(tonic::Request::new(data.into()))
             .await
-            .map(|_| ())
-            .map_err(|e| GrpcError::from(e).into())
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while unsetting property",
+                )
+                .set_message(status)
+            })?;
+
+        Ok(())
     }
 
-    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error> {
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, AstarteError> {
         let data = AstarteMessage::from(data.clone());
 
         Ok(data.encode_to_vec())
     }
 
-    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, AstarteError> {
         let data = AstarteMessage::from(data.clone());
 
         Ok(data.encode_to_vec())
@@ -328,37 +325,48 @@ where
         &mut self,
         _interfaces: &Interfaces,
         added: &interfaces::Validated,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let interfaces_json = InterfacesJson::try_from_iter([added.deref()])
-            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
+            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
-            .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while adding interface")
+                    .set_message(status)
+            })?;
+
+        Ok(())
     }
 
     async fn extend_interfaces(
         &mut self,
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
-            .map_err(|err| Error::Grpc(GrpcError::InterfacesSerialization(err)))?;
+            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
             .await
-            .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while extending interfaces",
+                )
+                .set_message(status)
+            })?;
+
+        Ok(())
     }
 
     async fn remove_interface(
         &mut self,
         _interfaces: &Interfaces,
         removed: &Interface,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let interfaces_name = InterfacesName {
             names: vec![removed.interface_name().to_string()],
         };
@@ -366,15 +374,22 @@ where
         self.client
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
-            .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while removing interface",
+                )
+                .set_message(status)
+            })?;
+
+        Ok(())
     }
 
     async fn remove_interfaces(
         &mut self,
         _interfaces: &Interfaces,
         removed_interfaces: &HashMap<&str, &Interface>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), AstarteError> {
         let interfaces_name = removed_interfaces
             .keys()
             .map(|iface_name| iface_name.to_string())
@@ -387,8 +402,15 @@ where
         self.client
             .remove_interfaces(tonic::Request::new(interfaces_name))
             .await
-            .map(|_| ())
-            .map_err(|s| crate::Error::Grpc(GrpcError::from(s)))
+            .map_err(|status| {
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while removing interfaces",
+                )
+                .set_message(status)
+            })?;
+
+        Ok(())
     }
 }
 
@@ -396,8 +418,8 @@ impl<S> Disconnect for GrpcClient<S>
 where
     S: Send,
 {
-    async fn disconnect(&mut self) -> Result<(), crate::Error> {
-        self.detach().await.map_err(Error::Grpc)?;
+    async fn disconnect(&mut self) -> Result<(), AstarteError> {
+        self.detach().await?;
 
         Ok(())
     }
@@ -440,12 +462,14 @@ impl<S> Grpc<S> {
     async fn attach(
         client: &mut MsgHubClient,
         data: NodeData,
-    ) -> Result<Streaming<MessageHubEvent>, GrpcError> {
+    ) -> Result<Streaming<MessageHubEvent>, Error<GrpcError>> {
         client
             .attach(tonic::Request::new(data.node))
             .await
             .map(|r| r.into_inner())
-            .map_err(GrpcError::from)
+            .map_err(|status| {
+                Error::with(GrpcError::Status, "while removing interfaces").set_message(status)
+            })
     }
 }
 
@@ -463,23 +487,31 @@ where
 {
     type Payload = GrpcPayload;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError> {
-        match self.next_message().await {
-            Ok(Some(message)) => {
-                let event =
-                    ReceivedEvent::try_from(message).map_err(RecvError::grpc_connection_error)?;
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, AstarteError> {
+        loop {
+            match self.next_message().await {
+                Ok(Some(message)) => {
+                    let event = match ReceivedEvent::try_from(message) {
+                        Ok(event) => event,
+                        Err(error) => {
+                            error!(%error, "couldn't convert MessageHUb event");
 
-                Ok(Some(event))
-            }
-            Err(s) => {
-                error!(status = %s, "error returned by the server");
+                            continue;
+                        }
+                    };
 
-                Ok(None)
-            }
-            Ok(None) => {
-                warn!("Stream closed");
+                    return Ok(Some(event));
+                }
+                Err(status) => {
+                    error!(%status, "error returned by the server");
 
-                Ok(None)
+                    return Ok(None);
+                }
+                Ok(None) => {
+                    warn!("Stream closed");
+
+                    return Ok(None);
+                }
             }
         }
     }
@@ -487,10 +519,9 @@ where
     async fn reconnect(
         &mut self,
         interfaces: &Interfaces,
-    ) -> Result<AttemptStatus<Self::Payload>, TransportError> {
+    ) -> Result<AttemptStatus<Self::Payload>, AstarteError> {
         // try reattaching
-        let data = NodeData::try_from(interfaces)
-            .map_err(|error| TransportError::Transport(Error::Grpc(error)))?;
+        let data = NodeData::try_from(interfaces).map_kind(ErrorKind::Grpc)?;
 
         match Grpc::<S>::attach(&mut self.client, data.clone()).await {
             Ok(stream) => {
@@ -513,21 +544,20 @@ where
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteData>, TransportError> {
+    ) -> Result<Option<AstarteData>, AstarteError> {
         let ProtoPayload::PropertyIndividual(prop) = payload.data else {
-            return Err(TransportError::Recv(RecvError::InterfaceType(
-                InterfaceTypeError::with_path(
-                    mapping.interface().name(),
-                    mapping.path().to_string(),
-                    InterfaceType::Properties,
-                    InterfaceType::Datastream,
-                ),
-            )));
+            return Err(InterfaceError::interface_type(
+                "while deserializing property",
+                mapping.interface(),
+                mapping.path(),
+                InterfaceType::Properties,
+                InterfaceType::Datastream,
+            ))
+            .map_kind(ErrorKind::Interface);
         };
 
-        let data = try_from_property(prop).map_err(|e| {
-            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(e))
-        })?;
+        let data = try_from_property(prop)
+            .map_kind(|kind| ErrorKind::Grpc(GrpcError::Conversion(kind)))?;
 
         trace!(
             "deserialized {}",
@@ -541,21 +571,33 @@ where
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteData, Option<Timestamp>), TransportError> {
-        let ProtoPayload::DatastreamIndividual(individual) = payload.data else {
-            return Err(TransportError::Recv(RecvError::Aggregation(
-                AggregationError::new(
-                    mapping.interface().interface_name().to_string(),
-                    mapping.path().to_string(),
-                    Aggregation::Object,
+    ) -> Result<(AstarteData, Option<Timestamp>), AstarteError> {
+        let individual = match payload.data {
+            ProtoPayload::DatastreamIndividual(individual) => individual,
+            ProtoPayload::DatastreamObject(_) => {
+                return Err(InterfaceError::aggregation(
+                    "while deserializing individual",
+                    mapping.interface().name(),
+                    mapping.path(),
                     Aggregation::Individual,
-                ),
-            )));
+                    Aggregation::Object,
+                ))
+                .map_kind(ErrorKind::Interface);
+            }
+            ProtoPayload::PropertyIndividual(_) => {
+                return Err(InterfaceError::interface_type(
+                    "while deserializing individual",
+                    mapping.interface().name(),
+                    mapping.path(),
+                    InterfaceType::Datastream,
+                    InterfaceType::Properties,
+                ))
+                .map_kind(ErrorKind::Interface);
+            }
         };
 
-        let (data, timestamp) = try_from_individual(individual).map_err(|err| {
-            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(err))
-        })?;
+        let (data, timestamp) = try_from_individual(individual)
+            .map_kind(|kind| ErrorKind::Grpc(GrpcError::Conversion(kind)))?;
 
         trace!("deserialized {}", data.display_type());
 
@@ -567,21 +609,33 @@ where
         object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
-        let ProtoPayload::DatastreamObject(data) = payload.data else {
-            return Err(TransportError::Recv(RecvError::Aggregation(
-                AggregationError::new(
+    ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError> {
+        let data = match payload.data {
+            ProtoPayload::DatastreamObject(object) => object,
+            ProtoPayload::DatastreamIndividual(_) => {
+                return Err(InterfaceError::aggregation(
+                    "while deserializing object",
                     object.name(),
-                    path.to_string(),
+                    path,
                     Aggregation::Object,
                     Aggregation::Individual,
-                ),
-            )));
+                ))
+                .map_kind(ErrorKind::Interface);
+            }
+            ProtoPayload::PropertyIndividual(_) => {
+                return Err(InterfaceError::interface_type(
+                    "while deserializing object",
+                    object.name(),
+                    path,
+                    InterfaceType::Datastream,
+                    InterfaceType::Properties,
+                ))
+                .map_kind(ErrorKind::Interface);
+            }
         };
 
-        let (data, timestamp) = try_from_object(data).map_err(|err| {
-            RecvError::grpc_connection_error(GrpcError::MessageHubProtoConversion(err))
-        })?;
+        let (data, timestamp) =
+            try_from_object(data).map_kind(|kind| ErrorKind::Grpc(GrpcError::Conversion(kind)))?;
 
         trace!("object received");
 
@@ -629,8 +683,9 @@ impl GrpcConfig {
     }
 
     /// Create a new config from node id and Message Hub endpoint.
-    pub fn from_url(uuid: Uuid, url: impl Into<Bytes>) -> Result<Self, GrpcError> {
-        let endpoint = Endpoint::from_shared(url)?;
+    pub fn from_url(uuid: Uuid, url: impl Into<Bytes>) -> Result<Self, Error<GrpcError>> {
+        let endpoint = Endpoint::from_shared(url)
+            .wrap_err_ctx(GrpcError::InvalidArgument, "for MessageHub URL")?;
 
         Ok(Self::new(uuid, endpoint))
     }
@@ -647,16 +702,15 @@ where
 {
     type Conn = Grpc<S>;
     type Store = GrpcStore<S>;
-    type Err = GrpcError;
 
     async fn connect(
         self,
         config: BuildConfig<S>,
-    ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
+    ) -> Result<DeviceTransport<Self::Conn>, AstarteError> {
         let channel = self.endpoint.connect_lazy();
         let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
         let client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
-        let store = StoreWrapper::new(GrpcStore::new(client.clone(), config.store));
+        let store = GrpcStore::new(client.clone(), config.store);
 
         let state = Arc::clone(&config.state);
 
@@ -679,18 +733,18 @@ struct NodeData {
 }
 
 impl NodeData {
-    fn try_from_iter<'a, I>(interfaces: I) -> Result<Self, GrpcError>
+    fn try_from_iter<'a, I>(interfaces: I) -> Result<Self, Error<GrpcError>>
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let node = Node::from_interfaces(interfaces)?;
+        let node = Node::from_interfaces(interfaces).wrap_err(GrpcError::Introspection)?;
 
         Ok(Self { node })
     }
 }
 
 impl<'a> TryFrom<&'a Interfaces> for NodeData {
-    type Error = GrpcError;
+    type Error = Error<GrpcError>;
 
     fn try_from(value: &'a Interfaces) -> Result<Self, Self::Error> {
         Self::try_from_iter(value.iter())
@@ -843,8 +897,6 @@ mod test {
     where
         S: PropertyStore,
     {
-        let store = StoreWrapper::new(store);
-
         let node_data = NodeData::try_from(&interfaces)?;
         let state = SharedState::new(
             Config::default(),

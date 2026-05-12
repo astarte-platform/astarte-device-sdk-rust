@@ -83,7 +83,9 @@ where
             interface,
             path,
             data,
-        } = tokio::time::timeout(Duration::from_secs(2), client.recv()).await??;
+        } = tokio::time::timeout(Duration::from_secs(2), client.recv())
+            .await?
+            .ok_or_eyre("disconnected")?;
 
         ensure!(interface == data_interface);
         ensure!(path == data_path);
@@ -107,7 +109,9 @@ where
             interface,
             path,
             data,
-        } = tokio::time::timeout(Duration::from_secs(2), client.recv()).await??;
+        } = tokio::time::timeout(Duration::from_secs(2), client.recv())
+            .await?
+            .ok_or_eyre("disconnected")?;
 
         ensure!(interface == data_interface);
         ensure!(path == data_path);

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,9 @@ where
         interface,
         path,
         data,
-    } = tokio::time::timeout(Duration::from_secs(2), client.recv()).await??;
+    } = tokio::time::timeout(Duration::from_secs(2), client.recv())
+        .await?
+        .ok_or_eyre("disconnected")?;
 
     ensure!(interface == interface_name);
     ensure!(path == data_path);

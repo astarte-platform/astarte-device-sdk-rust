@@ -24,6 +24,7 @@
 use std::num::NonZero;
 use std::path::Path;
 
+use astarte_device_error::{Error, WrapError};
 use serde::{Deserialize, Serialize};
 use tracing::{error, instrument, trace, warn};
 
@@ -127,7 +128,7 @@ impl SqliteOptions {
     pub async fn with_writable_dir(
         self,
         writable_path: impl AsRef<Path>,
-    ) -> Result<SqliteStore, SqliteError> {
+    ) -> Result<SqliteStore, Error<SqliteError>> {
         SqliteStore::with_writable_dir(writable_path, self).await
     }
 
@@ -135,7 +136,7 @@ impl SqliteOptions {
     pub async fn with_db_file(
         self,
         database_file: impl AsRef<Path>,
-    ) -> Result<SqliteStore, SqliteError> {
+    ) -> Result<SqliteStore, Error<SqliteError>> {
         SqliteStore::with_db_file(database_file.as_ref().to_path_buf(), self).await
     }
 }
@@ -159,7 +160,7 @@ impl SqlitePragmas {
     pub(crate) fn try_from_options<C>(
         connection: &C,
         options: &SqliteOptions,
-    ) -> Result<Self, SqliteError>
+    ) -> Result<Self, Error<SqliteError>>
     where
         C: SqliteConnection,
     {
@@ -168,8 +169,8 @@ impl SqlitePragmas {
             .ok()
             .and_then(|page_size: i64| u64::try_from(page_size).ok())
             .and_then(NonZero::<u64>::new)
-            .ok_or(SqliteError::InvalidMaxSize {
-                ctx: "couldn't read the db page size (0)",
+            .ok_or_else(|| {
+                Error::with(SqliteError::InvalidMaxSize, "while reading page size").set_message(0)
             })?;
 
         trace!(%page_size, "pragma page_size");
@@ -183,13 +184,10 @@ impl SqlitePragmas {
 
         let wal_autocheckpoint = journal_size_limit.into_wall_autocheckpoint(page_size);
 
-        let journal_size_limit =
-            journal_size_limit
-                .to_bytes()
-                .try_into()
-                .map_err(|_| SqliteError::InvalidMaxSize {
-                    ctx: "couldn't calculate journal si limit",
-                })?;
+        let journal_size_limit = journal_size_limit.to_bytes().try_into().wrap_err_ctx(
+            SqliteError::InvalidMaxSize,
+            "calculating journal size limit",
+        )?;
 
         let pragma = Self {
             max_page_count,
@@ -206,7 +204,7 @@ impl SqlitePragmas {
     ///
     /// If the page count is less than the current page_count this call will fail.
     #[instrument(skip_all)]
-    fn validate<C>(self, connection: &C) -> Result<Self, SqliteError>
+    fn validate<C>(self, connection: &C) -> Result<Self, Error<SqliteError>>
     where
         C: SqliteConnection,
     {
@@ -214,9 +212,10 @@ impl SqlitePragmas {
         let current_pages: u32 = connection.get_pragma("page_count")?;
 
         if self.max_page_count.get() < current_pages {
-            return Err(SqliteError::InvalidMaxSize {
-                ctx: "cannot shrink the database",
-            });
+            return Err(Error::with(
+                SqliteError::InvalidMaxSize,
+                "cannot shrink the database",
+            ));
         }
 
         Ok(self)

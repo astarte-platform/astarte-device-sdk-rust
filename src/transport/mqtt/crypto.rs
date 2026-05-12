@@ -18,19 +18,29 @@
 
 //! Crypto module to generate the CSR to authenticate the device to the Astarte.
 
+use std::fmt::Display;
+
+use astarte_device_error::{Error, WrapError};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// Errors that can occur while generating the Certificate and CSR.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoError {
+    /// Failed to generate the PrivateKey.
+    PrivateKey,
     /// Failed to generate the CSR.
-    #[error("Failed to create Certificate and CSR")]
-    Certificate(#[from] rcgen::Error),
-    /// Invalid UTF-8 character in the PEM file.
-    #[error("Invalid UTF-8 encoded PEM")]
-    Utf8(#[from] std::string::FromUtf8Error),
+    Certificate,
+}
+
+impl Display for CryptoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CryptoError::PrivateKey => write!(f, "couldn't create private keys"),
+            CryptoError::Certificate => write!(f, "couldn't create certificate signing request"),
+        }
+    }
 }
 
 /// Generate a Certificate and CSR bundle in PEM format.
@@ -42,19 +52,25 @@ pub(crate) struct Bundle {
 }
 
 impl Bundle {
-    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, CryptoError> {
+    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, Error<CryptoError>> {
         // The realm/device_id for the certificate
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, format!("{realm}/{device_id}"));
 
         // Generate a random private key
-        let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
+        let key_pair =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).wrap_err(CryptoError::PrivateKey)?;
 
-        let mut csr_param = CertificateParams::new([])?;
+        let mut csr_param = CertificateParams::new([]).wrap_err(CryptoError::Certificate)?;
         csr_param.distinguished_name = dn;
 
         // Singed CSR
-        let csr = csr_param.serialize_request(&key_pair)?.pem()?;
+        let csr = csr_param
+            .serialize_request(&key_pair)
+            .wrap_err_ctx(CryptoError::Certificate, "serializing CSR")?
+            .pem()
+            .wrap_err_ctx(CryptoError::Certificate, "encoding to PEM")?;
+
         // Subject key_pair
         let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der());
 

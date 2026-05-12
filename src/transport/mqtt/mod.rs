@@ -39,42 +39,38 @@ use std::ops::ControlFlow;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{Ownership, Reliability};
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
 };
 use bytes::Bytes;
+use futures::FutureExt;
 use futures::{TryFutureExt, future::Either};
 use itertools::Itertools;
-use rumqttc::{AckOfPub, ClientError, QoS, Token, TokenError};
+use rumqttc::{AckOfPub, QoS, Token, TokenError};
 use tracing::{debug, error, info, instrument, trace};
 
-use super::{
-    Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError,
-    ValidatedProperty,
-};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, ValidatedProperty};
 
 use self::config::transport::TransportProvider;
+use self::connection::MqttState;
 use self::connection::context::ConnCtx;
-use self::connection::{ConnError, MqttState};
 use self::payload::PayloadError;
 use crate::aggregate::AstarteObject;
-use crate::client::RecvError;
-use crate::error::Report;
+use crate::error::{AstarteError, ErrorKind, Report};
 use crate::interfaces::{self, DeviceIntrospection, Interfaces, MappingRef};
 use crate::pairing::Pairing;
-use crate::pairing::api::PairingError;
+use crate::pairing::api::PairingApiError;
 use crate::properties;
 use crate::retention::RetentionError;
 use crate::retention::{PublishInfo, RetentionId, StoredRetention, memory::VolatileStore};
 use crate::session::{IntrospectionInterface, StoredSession};
 use crate::state::SharedState;
-use crate::store::{
-    OptStoredProp, PropertyState, PropertyStore, StoreCapabilities, wrapper::StoreWrapper,
-};
+use crate::store::{OptStoredProp, PropertyState, PropertyStore, StoreCapabilities};
 use crate::transport::AttemptStatus;
 use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
-use crate::{AstarteData, Error, Timestamp};
+use crate::{AstarteData, Timestamp};
 
 use self::{
     client::AsyncClient,
@@ -105,17 +101,13 @@ pub(crate) struct ClientSender {
 pub struct MqttClient<S> {
     pub(crate) sender: Arc<OnceLock<ClientSender>>,
     retention: RetSender,
-    store: StoreWrapper<S>,
+    store: S,
     state: Arc<SharedState>,
 }
 
 impl<S> MqttClient<S> {
     /// Creates a new client that is missing the transport
-    pub(crate) fn new(
-        retention: RetSender,
-        store: StoreWrapper<S>,
-        state: Arc<SharedState>,
-    ) -> Self {
+    pub(crate) fn new(retention: RetSender, store: S, state: Arc<SharedState>) -> Self {
         Self {
             sender: Arc::new(OnceLock::new()),
             retention,
@@ -124,8 +116,8 @@ impl<S> MqttClient<S> {
         }
     }
 
-    fn get_client(&self) -> Result<&ClientSender, MqttError> {
-        self.sender.get().ok_or(MqttError::NoClient)
+    fn get_client(&self) -> Result<&ClientSender, Error<MqttError>> {
+        self.sender.get().ok_or(Error::new(MqttError::NoClient))
     }
 
     /// Send a binary payload over this mqtt connection.
@@ -135,7 +127,7 @@ impl<S> MqttClient<S> {
         path: &str,
         reliability: rumqttc::QoS,
         payload: Vec<u8>,
-    ) -> Result<Token<AckOfPub>, MqttError> {
+    ) -> Result<Token<AckOfPub>, Error<MqttError>> {
         let sender = self.get_client()?;
 
         self.apply_timeout(
@@ -147,12 +139,12 @@ impl<S> MqttClient<S> {
                     false,
                     payload,
                 )
-                .map_err(|err| MqttError::publish("send", err)),
+                .map(|res| res.wrap_err_ctx(MqttError::Publish, "while sending")),
         )
         .await
     }
 
-    async fn subscribe(&self, interface_name: &str) -> Result<(), MqttError> {
+    async fn subscribe(&self, interface_name: &str) -> Result<(), Error<MqttError>> {
         let sender = self.get_client()?;
 
         self.apply_timeout(
@@ -162,26 +154,28 @@ impl<S> MqttClient<S> {
                     sender.id.make_interface_wildcard(interface_name),
                     rumqttc::QoS::ExactlyOnce,
                 )
-                .map_err(MqttError::Subscribe),
+                .map(|res| res.wrap_err(MqttError::Subscribe)),
         )
-        .await
-        .map(drop)
+        .await?;
+
+        Ok(())
     }
 
-    async fn unsubscribe(&self, interface_name: &str) -> Result<(), MqttError> {
+    async fn unsubscribe(&self, interface_name: &str) -> Result<(), Error<MqttError>> {
         let sender = self.get_client()?;
 
         self.apply_timeout(
             sender
                 .client
                 .unsubscribe(sender.id.make_interface_wildcard(interface_name))
-                .map_err(MqttError::Unsubscribe),
+                .map(|res| res.wrap_err(MqttError::Unsubscribe)),
         )
-        .await
-        .map(drop)
+        .await?;
+
+        Ok(())
     }
 
-    async fn mark_received(&self, id: &RetentionId) -> Result<(), Error>
+    async fn mark_received(&self, id: &RetentionId) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
@@ -191,7 +185,10 @@ impl<S> MqttClient<S> {
             }
             RetentionId::Stored(id) => {
                 if let Some(retention) = self.store.get_retention() {
-                    retention.mark_received(id).await?;
+                    retention
+                        .mark_received(id)
+                        .await
+                        .map_kind(ErrorKind::Retention)?;
                 }
             }
         }
@@ -204,7 +201,7 @@ impl<S> MqttClient<S> {
         id: RetentionId,
         reliability: Reliability,
         notice: Token<AckOfPub>,
-    ) -> Result<(), crate::Error>
+    ) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
@@ -217,7 +214,7 @@ impl<S> MqttClient<S> {
                 self.retention
                     .send((id, notice))
                     .await
-                    .map_err(|_| Error::Disconnected)?;
+                    .wrap_err_ctx(ErrorKind::Disconnected, "while sending to retention")?;
             }
         }
 
@@ -226,32 +223,38 @@ impl<S> MqttClient<S> {
 
     async fn extend_interfaces_await_pub(
         &self,
-        res: Result<Token<AckOfPub>, MqttError>,
-    ) -> Result<(), MqttError> {
-        let Ok(token) = res else {
-            error!("error while subscribing to interfaces");
-            return res.map(drop);
+        res: Result<Token<AckOfPub>, Error<MqttError>>,
+    ) -> Result<(), Error<MqttError>> {
+        let token = match res {
+            Ok(token) => token,
+            Err(err) => {
+                error!("error while subscribing to interfaces");
+
+                return Err(err);
+            }
         };
 
-        let ack_result = self
-            .apply_timeout(token.map_err(MqttError::PubAckToken))
-            .await;
-        let Ok(_) = ack_result else {
+        let fut = token.map_err(|err| Error::new(MqttError::PubAckToken).set_source(err));
+
+        let ack_result = self.apply_timeout(fut).await;
+
+        if let Err(err) = ack_result {
             error!("error in ack reception while subscribing to interfaces");
-            return ack_result.map(drop);
-        };
+
+            return Err(err);
+        }
 
         Ok(())
     }
 
     #[inline]
-    async fn apply_timeout<F, T>(&self, fut: F) -> Result<T, MqttError>
+    async fn apply_timeout<F, T>(&self, fut: F) -> Result<T, Error<MqttError>>
     where
-        F: Future<Output = Result<T, MqttError>>,
+        F: Future<Output = Result<T, Error<MqttError>>>,
     {
         tokio::time::timeout(self.state.config.send_timeout, fut)
             .await
-            .map_err(MqttError::Timeout)?
+            .wrap_err(MqttError::Timeout)?
     }
 }
 
@@ -259,9 +262,12 @@ impl<S> Publish for MqttClient<S>
 where
     S: StoreCapabilities + Send + Sync,
 {
-    async fn send_individual(&mut self, validated: ValidatedIndividual) -> Result<(), Error> {
+    async fn send_individual(
+        &mut self,
+        validated: ValidatedIndividual,
+    ) -> Result<(), AstarteError> {
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
-            .map_err(MqttError::Payload)?;
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         self.send(
             &validated.interface,
@@ -270,23 +276,25 @@ where
             buf,
         )
         .await
-        .map(drop)
-        .map_err(Error::Mqtt)
+        .map_kind(ErrorKind::Mqtt)?;
+
+        Ok(())
     }
 
-    async fn send_property(&mut self, validated: ValidatedProperty) -> Result<(), Error> {
-        let buf =
-            payload::serialize_individual(&validated.data, None).map_err(MqttError::Payload)?;
+    async fn send_property(&mut self, validated: ValidatedProperty) -> Result<(), AstarteError> {
+        let buf = payload::serialize_individual(&validated.data, None)
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         self.send(&validated.interface, &validated.path, QoS::ExactlyOnce, buf)
             .await
-            .map(drop)
-            .map_err(Error::Mqtt)
+            .map_kind(ErrorKind::Mqtt)?;
+
+        Ok(())
     }
 
-    async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), Error> {
+    async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), AstarteError> {
         let buf = payload::serialize_object(&validated.data, validated.timestamp)
-            .map_err(MqttError::Payload)?;
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         self.send(
             &validated.interface,
@@ -295,22 +303,23 @@ where
             buf,
         )
         .await
-        .map(drop)
-        .map_err(Error::Mqtt)
+        .map_kind(ErrorKind::Mqtt)?;
+
+        Ok(())
     }
 
     async fn send_individual_stored(
         &mut self,
         id: RetentionId,
         validated: ValidatedIndividual,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         debug_assert!(
             !validated.retention.is_discard(),
             "send stored called for retention discard"
         );
 
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
-            .map_err(MqttError::Payload)?;
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         let notice = self
             .send(
@@ -319,7 +328,8 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await?;
+            .await
+            .map_kind(ErrorKind::Mqtt)?;
 
         self.mark_sent(id, validated.reliability, notice).await?;
 
@@ -330,14 +340,14 @@ where
         &mut self,
         id: RetentionId,
         validated: ValidatedObject,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         debug_assert!(
             !validated.retention.is_discard(),
             "send stored called for retention discard"
         );
 
         let buf = payload::serialize_object(&validated.data, validated.timestamp)
-            .map_err(MqttError::Payload)?;
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         let notice = self
             .send(
@@ -346,7 +356,8 @@ where
                 to_qos(validated.reliability),
                 buf,
             )
-            .await?;
+            .await
+            .map_kind(ErrorKind::Mqtt)?;
 
         self.mark_sent(id, validated.reliability, notice).await?;
 
@@ -357,7 +368,7 @@ where
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         debug_assert!(
             self.store.get_retention().is_some(),
             "resend stored called without store that supports retention"
@@ -370,7 +381,8 @@ where
                 to_qos(data.reliability),
                 data.value.into(),
             )
-            .await?;
+            .await
+            .map_kind(ErrorKind::Mqtt)?;
 
         self.mark_sent(id, data.reliability, notice).await?;
 
@@ -381,13 +393,13 @@ where
     async fn resend_stored_property(
         &mut self,
         property_data: OptStoredProp,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let buf = property_data
             .value
             .as_ref()
             .map(|d| payload::serialize_individual(d, None))
             .unwrap_or(Ok(Vec::new()))
-            .map_err(MqttError::Payload)?;
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
         self.send(
             &property_data.interface,
@@ -396,11 +408,12 @@ where
             buf,
         )
         .await
-        .map(drop)
-        .map_err(Error::Mqtt)
+        .map_kind(ErrorKind::Mqtt)?;
+
+        Ok(())
     }
 
-    async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), Error> {
+    async fn unset(&mut self, validated: ValidatedUnset) -> Result<(), AstarteError> {
         // We send an empty vector as payload to unset the property, https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#payload-format
         self.send(
             &validated.interface,
@@ -409,21 +422,22 @@ where
             Vec::new(),
         )
         .await
-        .map(drop)
-        .map_err(Error::Mqtt)
+        .map_kind(ErrorKind::Mqtt)?;
+
+        Ok(())
     }
 
     fn serialize_individual(
         &self,
         validated: &ValidatedIndividual,
-    ) -> Result<Vec<u8>, crate::Error> {
+    ) -> Result<Vec<u8>, AstarteError> {
         payload::serialize_individual(&validated.data, validated.timestamp)
-            .map_err(|err| Error::Mqtt(MqttError::Payload(err)))
+            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))
     }
 
-    fn serialize_object(&self, validated: &ValidatedObject) -> Result<Vec<u8>, crate::Error> {
+    fn serialize_object(&self, validated: &ValidatedObject) -> Result<Vec<u8>, AstarteError> {
         payload::serialize_object(&validated.data, validated.timestamp)
-            .map_err(|err| Error::Mqtt(MqttError::Payload(err)))
+            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))
     }
 }
 
@@ -435,28 +449,34 @@ where
         &mut self,
         interfaces: &Interfaces,
         added: &interfaces::Validated,
-    ) -> Result<(), Error> {
+    ) -> Result<(), AstarteError> {
         if added.ownership().is_server() {
-            self.subscribe(added.interface_name()).await?
+            self.subscribe(added.interface_name())
+                .await
+                .map_kind(ErrorKind::Mqtt)?
         }
 
         let introspection = DeviceIntrospection::new(interfaces.iter_with_added(added)).to_string();
 
-        let sender = self.get_client()?;
+        let sender = self.get_client().map_kind(ErrorKind::Mqtt)?;
 
         self.apply_timeout(
             sender
                 .client
                 .send_introspection(sender.id.as_ref(), introspection)
-                .map_err(|err| MqttError::publish("send introspection", err)),
+                .map(|res| res.wrap_err_ctx(MqttError::Publish, "send introspection")),
         )
-        .await?
         .await
-        .map_err(MqttError::PubAckToken)?;
+        .map_kind(ErrorKind::Mqtt)?
+        .await
+        .wrap_err(ErrorKind::Mqtt(MqttError::PubAckToken))?;
 
         if let Some(session) = self.store.get_session() {
             let interface: IntrospectionInterface<&str> = added.interface().into();
-            session.add_interfaces(&[interface]).await?;
+            session
+                .add_interfaces(&[interface])
+                .await
+                .map_kind(ErrorKind::Session)?;
         }
 
         Ok(())
@@ -466,28 +486,34 @@ where
         &mut self,
         interfaces: &Interfaces,
         removed: &Interface,
-    ) -> Result<(), Error> {
+    ) -> Result<(), AstarteError> {
         let iter = interfaces.iter_without_removed(removed);
         let introspection = DeviceIntrospection::new(iter).to_string();
 
-        let sender = self.get_client()?;
+        let sender = self.get_client().map_kind(ErrorKind::Mqtt)?;
         self.apply_timeout(
             sender
                 .client
                 .send_introspection(sender.id.as_ref(), introspection)
-                .map_err(|err| MqttError::publish("send introspection", err)),
+                .map(|res| res.wrap_err_ctx(MqttError::Publish, "while sending introspection")),
         )
-        .await?
         .await
-        .map_err(MqttError::PubAckToken)?;
+        .map_kind(ErrorKind::Mqtt)?
+        .await
+        .wrap_err(ErrorKind::Mqtt(MqttError::PubAckToken))?;
 
         if let Some(session) = self.store.get_session() {
             let interface: IntrospectionInterface<&str> = removed.into();
-            session.remove_interfaces(&[interface]).await?;
+            session
+                .remove_interfaces(&[interface])
+                .await
+                .map_kind(ErrorKind::Session)?;
         }
 
         if removed.ownership().is_server() {
-            self.unsubscribe(removed.interface_name()).await?;
+            self.unsubscribe(removed.interface_name())
+                .await
+                .map_kind(ErrorKind::Mqtt)?;
         }
 
         Ok(())
@@ -500,7 +526,7 @@ where
         &mut self,
         interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), AstarteError> {
         let server_interfaces = added
             .values()
             .filter_map(|i| {
@@ -512,39 +538,42 @@ where
             })
             .collect_vec();
 
-        let sender = self.get_client()?;
+        let sender = self.get_client().map_kind(ErrorKind::Mqtt)?;
         self.apply_timeout(
             sender
                 .client
-                .subscribe_interfaces(sender.id.as_ref(), &server_interfaces)
-                .map_err(MqttError::Subscribe),
+                .subscribe_interfaces(sender.id.as_ref(), &server_interfaces),
         )
-        .await?;
+        .await
+        .map_kind(ErrorKind::Mqtt)?;
 
         let introspection =
             DeviceIntrospection::new(interfaces.iter_with_added_many(added)).to_string();
 
-        let sender = self.get_client()?;
+        let sender = self.get_client().map_kind(ErrorKind::Mqtt)?;
         let res = self
             .apply_timeout(
                 sender
                     .client
                     .send_introspection(sender.id.as_ref(), introspection)
-                    .map_err(|err| MqttError::publish("send introspection", err)),
+                    .map(|res| res.wrap_err_ctx(MqttError::Publish, "while sending introspection")),
             )
             .await;
 
         let res = self
             .extend_interfaces_await_pub(res)
             .await
-            .map_err(Into::into);
+            .map_kind(ErrorKind::Mqtt);
 
         if res.is_ok() {
             if let Some(session) = self.store.get_session() {
                 let added: Vec<IntrospectionInterface<&str>> =
                     added.iter_interfaces().map(|i| i.into()).collect();
 
-                session.add_interfaces(&added).await?;
+                session
+                    .add_interfaces(&added)
+                    .await
+                    .map_kind(ErrorKind::Session)?;
             }
         } else {
             for srv_interface in server_interfaces {
@@ -565,31 +594,37 @@ where
         &mut self,
         interfaces: &Interfaces,
         removed: &HashMap<&str, &Interface>,
-    ) -> Result<(), Error> {
+    ) -> Result<(), AstarteError> {
         let interfaces = interfaces.iter_without_removed_many(removed);
         let introspection = DeviceIntrospection::new(interfaces).to_string();
 
-        let sender = self.get_client()?;
+        let sender = self.get_client().map_kind(ErrorKind::Mqtt)?;
         self.apply_timeout(
             sender
                 .client
                 .send_introspection(sender.id.as_ref(), introspection)
-                .map_err(|err| MqttError::publish("send introspection", err)),
+                .map(|res| res.wrap_err_ctx(MqttError::Publish, "while sendind introspection")),
         )
-        .await?
         .await
-        .map_err(MqttError::PubAckToken)?;
+        .map_kind(ErrorKind::Mqtt)?
+        .await
+        .wrap_err(ErrorKind::Mqtt(MqttError::PubAckToken))?;
 
         if let Some(session) = self.store.get_session() {
             let removed: Vec<IntrospectionInterface<&str>> =
                 removed.values().map(|&i| i.into()).collect();
 
-            session.remove_interfaces(&removed).await?;
+            session
+                .remove_interfaces(&removed)
+                .await
+                .map_kind(ErrorKind::Session)?;
         }
 
         for iface in removed.values() {
             if iface.ownership().is_server() {
-                self.unsubscribe(iface.interface_name()).await?;
+                self.unsubscribe(iface.interface_name())
+                    .await
+                    .map_kind(ErrorKind::Mqtt)?;
             }
         }
 
@@ -601,7 +636,7 @@ impl<S> Disconnect for MqttClient<S>
 where
     S: Send,
 {
-    async fn disconnect(&mut self) -> Result<(), crate::Error> {
+    async fn disconnect(&mut self) -> Result<(), AstarteError> {
         let Some(client) = self.sender.get() else {
             info!("disconnecting while never connected, the mqtt client was not created");
             return Ok(());
@@ -612,7 +647,7 @@ where
             .disconnect()
             .await
             .map(drop)
-            .map_err(MqttError::Disconnect)?;
+            .wrap_err(ErrorKind::Mqtt(MqttError::Disconnect))?;
 
         info!("disconnect packet sent");
 
@@ -629,7 +664,7 @@ pub struct Mqtt<S, P> {
     pub(crate) client_sender: Arc<OnceLock<ClientSender>>,
     pub(crate) provider: TransportProvider,
     pub(crate) retention: MqttRetention,
-    pub(crate) store: StoreWrapper<S>,
+    pub(crate) store: S,
     pub(crate) state: Arc<SharedState>,
 }
 
@@ -639,7 +674,7 @@ impl<S, P> Mqtt<S, P> {
         volatile: &VolatileStore,
         stored: &impl StoreCapabilities,
         res_id: Result<RetentionId, TokenError>,
-    ) -> Result<(), RetentionError>
+    ) -> Result<(), Error<RetentionError>>
     where
         S: StoreCapabilities,
     {
@@ -670,7 +705,7 @@ impl<S, P> Mqtt<S, P> {
         Ok(())
     }
 
-    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, TransportError>
+    async fn poll(&mut self) -> Result<Option<rumqttc::Publish>, AstarteError>
     where
         S: StoreCapabilities,
     {
@@ -685,7 +720,7 @@ impl<S, P> Mqtt<S, P> {
                 Either::Left((res, _)) => {
                     Self::mark_packet_received(&self.state.volatile_store, &self.store, res)
                         .await
-                        .map_err(|err| TransportError::Transport(Error::Retention(err)))?;
+                        .map_kind(ErrorKind::Retention)?;
                 }
                 // the retention future can be dropped safely
                 Either::Right((publish, _)) => {
@@ -697,20 +732,24 @@ impl<S, P> Mqtt<S, P> {
 
     /// This function deletes all the stored server owned properties after receiving a publish on
     /// `/control/consumer/properties`
-    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), Error>
+    async fn purge_server_properties(&self, bdata: &[u8]) -> Result<(), AstarteError>
     where
         S: PropertyStore,
     {
-        let paths = properties::extract_set_properties(bdata)?;
+        let paths = properties::extract_set_properties(bdata)
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::PurgeProp(k)))?;
 
-        let stored_props = self.store.server_props().await?;
+        let stored_props = self.store.server_props().await.map_kind(ErrorKind::Store)?;
 
         for stored_prop in &stored_props {
             if paths.contains(&format!("{}{}", stored_prop.interface, stored_prop.path)) {
                 continue;
             }
 
-            self.store.delete_prop(&stored_prop.into()).await?;
+            self.store
+                .delete_prop(&stored_prop.into())
+                .await
+                .map_kind(ErrorKind::Store)?;
         }
 
         Ok(())
@@ -719,28 +758,35 @@ impl<S, P> Mqtt<S, P> {
     async fn handle_publish(
         &self,
         publish: rumqttc::Publish,
-    ) -> Result<Option<ReceivedEvent<Bytes>>, TransportError>
+    ) -> Result<Option<ReceivedEvent<Bytes>>, AstarteError>
     where
         S: PropertyStore,
         P: Pairing,
     {
-        let sender = self
-            .client_sender
-            .get()
-            .ok_or(TransportError::Transport(Error::Mqtt(
-                MqttError::Connection(ConnError::State),
-            )))?;
+        let sender = self.client_sender.get().ok_or_else(|| {
+            Error::with(
+                ErrorKind::Mqtt(MqttError::NoClient),
+                "while handling publish",
+            )
+        })?;
 
-        let publish_topic = ParsedTopic::try_parse(sender.id.as_ref(), &publish.topic)
-            .map_err(|err| RecvError::mqtt_connection_error(MqttError::Topic(err)))?;
+        // If we receive a topic we cannot parse nor handle, to be more robust we ignore it since is
+        // not actionable and doesn't change the state of the connection since it's not specified
+        // in the Astarte protocol.
+        let publish_topic = match ParsedTopic::try_parse(sender.id.as_ref(), &publish.topic) {
+            Ok(topic) => topic,
+            Err(error) => {
+                error!(topic = publish.topic, %error, "couldn't parse topic");
+
+                return Ok(None);
+            }
+        };
 
         match publish_topic {
             ParsedTopic::PurgeProperties => {
                 debug!("Purging properties");
 
-                self.purge_server_properties(&publish.payload)
-                    .await
-                    .map_err(TransportError::Transport)?;
+                self.purge_server_properties(&publish.payload).await?;
 
                 Ok(None)
             }
@@ -760,7 +806,7 @@ where
 {
     type Payload = Bytes;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, TransportError>
+    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, AstarteError>
     where
         S: PropertyStore,
     {
@@ -779,7 +825,7 @@ where
     async fn reconnect(
         &mut self,
         interfaces: &Interfaces,
-    ) -> Result<AttemptStatus<Self::Payload>, TransportError> {
+    ) -> Result<AttemptStatus<Self::Payload>, AstarteError> {
         let mut ctx = ConnCtx {
             sender: &self.client_sender,
             state: &self.state,
@@ -811,7 +857,7 @@ where
                                 Ok(id),
                             )
                             .await
-                            .map_err(|error| TransportError::Transport(Error::Retention(error)))?;
+                            .map_kind(ErrorKind::Retention)?;
                         }
                     }
 
@@ -830,20 +876,18 @@ where
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteData>, TransportError> {
-        payload::deserialize_property(mapping, &payload).map_err(|err| {
-            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
-        })
+    ) -> Result<Option<AstarteData>, AstarteError> {
+        payload::deserialize_property(mapping, &payload)
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }
 
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteData, Option<Timestamp>), TransportError> {
-        payload::deserialize_individual(mapping, &payload).map_err(|err| {
-            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
-        })
+    ) -> Result<(AstarteData, Option<Timestamp>), AstarteError> {
+        payload::deserialize_individual(mapping, &payload)
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }
 
     fn deserialize_object(
@@ -851,10 +895,9 @@ where
         object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError> {
-        payload::deserialize_object(object, path, &payload).map_err(|err| {
-            TransportError::Recv(RecvError::mqtt_connection_error(MqttError::Payload(err)))
-        })
+    ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError> {
+        payload::deserialize_object(object, path, &payload)
+            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }
 }
 
@@ -948,14 +991,14 @@ trait AsyncClientExt {
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> impl Future<Output = Result<Token<AckOfPub>, ClientError>> + Send;
+    ) -> impl Future<Output = Result<Token<AckOfPub>, Error<MqttError>>> + Send;
 
     /// Subscribe to many interfaces
     fn subscribe_interfaces<S>(
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> impl Future<Output = Result<(), ClientError>> + Send
+    ) -> impl Future<Output = Result<(), Error<MqttError>>> + Send
     where
         S: AsRef<str> + Send + Sync;
 }
@@ -965,13 +1008,14 @@ impl AsyncClientExt for AsyncClient {
         &self,
         client_id: ClientId<&str>,
         introspection: String,
-    ) -> Result<Token<AckOfPub>, ClientError> {
+    ) -> Result<Token<AckOfPub>, Error<MqttError>> {
         debug!("sending introspection: {introspection}");
 
         let path = client_id.to_string();
 
         self.publish(path, QoS::ExactlyOnce, false, introspection)
             .await
+            .wrap_err_ctx(MqttError::Publish, "sending introspection")
     }
 
     /// Subscribe to many interfaces
@@ -979,7 +1023,7 @@ impl AsyncClientExt for AsyncClient {
         &self,
         client_id: ClientId<&str>,
         interfaces_names: &[S],
-    ) -> Result<(), ClientError>
+    ) -> Result<(), Error<MqttError>>
     where
         S: AsRef<str> + Send + Sync,
     {
@@ -989,7 +1033,8 @@ impl AsyncClientExt for AsyncClient {
             debug!(interface = if_name, "subscribing on interface");
 
             self.subscribe(client_id.make_interface_wildcard(if_name), QoS::ExactlyOnce)
-                .await?;
+                .await
+                .wrap_err(MqttError::Subscribe)?;
         }
 
         Ok(())
@@ -1061,8 +1106,6 @@ pub(crate) mod test {
         let client_id: ClientId = CLIENT_ID.into();
 
         let (ret_tx, ret_rx) = async_channel::unbounded();
-
-        let store = StoreWrapper::new(store);
 
         let transport_provider = TransportProvider::configure(None, true)
             .await
@@ -1290,7 +1333,7 @@ pub(crate) mod test {
 
         let (mut mqtt_client, _mqtt_connection) = mock_mqtt_connection(client, eventl, &[]).await;
 
-        mqtt_client
+        let _err = mqtt_client
             .extend_interfaces(&interfaces, &to_add)
             .await
             .expect_err("Didn't return the error");
@@ -1424,17 +1467,15 @@ pub(crate) mod test {
             .once()
             .in_sequence(&mut seq)
             .withf(move |actual| actual == expected)
-            .returning(|_| Err(SessionError::add_interfaces("mock error add interfaces")));
+            .returning(|_| Err(Error::new(SessionError::AddInterfaces)));
 
         let (mut client, _mqtt_connection) =
             mock_mqtt_connection_with_store(client, eventl, &[], store).await;
 
         let result = client.add_interface(&interfaces, &to_add).await;
 
-        assert!(matches!(
-            result,
-            Err(Error::Session(SessionError::AddInterfaces(..)))
-        ));
+        let err = result.unwrap_err();
+        assert_eq!(*err.kind(), ErrorKind::Session(SessionError::AddInterfaces));
     }
 
     #[tokio::test]
@@ -1550,7 +1591,7 @@ pub(crate) mod test {
             .once()
             .in_sequence(&mut seq)
             .withf(move |actual| actual == expected)
-            .returning(|_| Err(SessionError::remove_interfaces("remove interface error")));
+            .returning(|_| Err(Error::new(SessionError::RemoveInterfaces)));
 
         // NOTE when a store error is thrown in the remove interface operation
         // no unsusbscribe is performed
@@ -1558,12 +1599,15 @@ pub(crate) mod test {
         let (mut client, _mqtt_connection) =
             mock_mqtt_connection_with_store(client, eventl, &[], store).await;
 
-        let result = client.remove_interface(&interfaces, &to_remove).await;
+        let err = client
+            .remove_interface(&interfaces, &to_remove)
+            .await
+            .unwrap_err();
 
-        assert!(matches!(
-            result,
-            Err(crate::Error::Session(SessionError::RemoveInterfaces(..)))
-        ))
+        assert_eq!(
+            *err.kind(),
+            ErrorKind::Session(SessionError::RemoveInterfaces)
+        );
     }
 
     #[tokio::test]

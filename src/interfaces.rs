@@ -21,18 +21,17 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 
+use astarte_device_error::{Error, WrapError};
+use astarte_interfaces::Interface;
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::schema::{Aggregation, InterfaceType};
 use astarte_interfaces::{
     AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
 };
-use astarte_interfaces::{Interface, error::Error as InterfaceError};
 use itertools::Itertools;
 use tracing::{debug, trace, warn};
 
-use crate::error::AggregationError;
-use crate::validate::UserValidationError;
-use crate::{Error, error::InterfaceTypeError};
+use crate::error::InterfaceError;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -61,7 +60,7 @@ impl Interfaces {
     pub(crate) fn validate(
         &self,
         interface: Interface,
-    ) -> Result<Option<Validated>, InterfaceError> {
+    ) -> Result<Option<Validated>, Error<InterfaceError>> {
         let mut major_change = false;
 
         match self.get(interface.interface_name()) {
@@ -78,7 +77,9 @@ impl Interfaces {
                     return Ok(None);
                 }
 
-                interface.validate_with(prev)?;
+                interface
+                    .validate_with(prev)
+                    .wrap_err_ctx(InterfaceError::Invalid, "with previous version")?;
 
                 major_change = interface.version_major() > prev.version_major();
             }
@@ -129,38 +130,36 @@ impl Interfaces {
         &'a self,
         interface_name: &str,
         path: &MappingPath<'_>,
-    ) -> Result<&'a DatastreamObject, Error> {
-        let interface = self
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+    ) -> Result<&'a DatastreamObject, Error<InterfaceError>> {
+        let interface = self.get(interface_name).ok_or_else(|| {
+            Error::new(InterfaceError::InterfaceNotFound).set_message(interface_name.to_string())
+        })?;
 
         let interface = match interface.inner() {
             InterfaceTypeAggregation::DatastreamIndividual(_) => {
-                return Err(Error::Aggregation(AggregationError::new(
-                    interface_name,
-                    path.as_str(),
+                return Err(Error::new(InterfaceError::Aggregation).set_message(format!(
+                    "for {interface_name}, expected {} bot got {}",
                     Aggregation::Object,
                     Aggregation::Individual,
                 )));
             }
             InterfaceTypeAggregation::DatastreamObject(datastream_object) => datastream_object,
             InterfaceTypeAggregation::Properties(_) => {
-                return Err(Error::InterfaceType(InterfaceTypeError::with_path(
-                    interface_name,
-                    path.as_str(),
-                    InterfaceType::Datastream,
-                    InterfaceType::Properties,
-                )));
+                return Err(
+                    Error::new(InterfaceError::InterfaceType).set_message(format!(
+                        "for {interface_name}, expected {} bot got {}",
+                        InterfaceType::Datastream,
+                        InterfaceType::Properties,
+                    )),
+                );
             }
         };
 
         if !interface.is_object_path(path) {
-            return Err(Error::Validation(UserValidationError::ObjectPath {
-                interface: interface.interface_name().to_string(),
-                path: path.to_string(),
-            }));
+            return Err(Error::new(InterfaceError::ObjectPath).set_message(format!(
+                "for interface {} and path {path}",
+                interface.name()
+            )));
         }
 
         Ok(interface)
@@ -171,41 +170,39 @@ impl Interfaces {
         &'a self,
         interface_name: &str,
         path: &'a MappingPath<'_>,
-    ) -> Result<MappingRef<'a, DatastreamIndividual>, Error> {
-        let interface = self
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+    ) -> Result<MappingRef<'a, DatastreamIndividual>, Error<InterfaceError>> {
+        let interface = self.get(interface_name).ok_or_else(|| {
+            Error::new(InterfaceError::InterfaceNotFound).set_message(interface_name.to_string())
+        })?;
 
         let interface = match interface.inner() {
             InterfaceTypeAggregation::DatastreamIndividual(datastream_individual) => {
                 datastream_individual
             }
             InterfaceTypeAggregation::DatastreamObject(_) => {
-                return Err(Error::Aggregation(AggregationError::new(
+                return Err(InterfaceError::aggregation(
+                    "while getting individual",
                     interface_name,
                     path.as_str(),
                     Aggregation::Individual,
                     Aggregation::Object,
-                )));
+                ));
             }
             InterfaceTypeAggregation::Properties(_) => {
-                return Err(Error::InterfaceType(InterfaceTypeError::with_path(
+                return Err(InterfaceError::interface_type(
+                    "while getting individual",
                     interface_name,
                     path.as_str(),
                     InterfaceType::Datastream,
                     InterfaceType::Properties,
-                )));
+                ));
             }
         };
 
-        let mapping = interface
-            .mapping(path)
-            .ok_or_else(|| Error::MappingNotFound {
-                interface: interface_name.to_string(),
-                mapping: path.to_string(),
-            })?;
+        let mapping = interface.mapping(path).ok_or_else(|| {
+            Error::new(InterfaceError::MappingNotFound)
+                .set_message(format!("for {interface}{path}"))
+        })?;
 
         Ok(MappingRef {
             interface,
@@ -219,24 +216,24 @@ impl Interfaces {
         &'a self,
         interface_name: &str,
         path: &'a MappingPath<'_>,
-    ) -> Result<MappingRef<'a, Properties>, Error> {
-        let interface = self
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+    ) -> Result<MappingRef<'a, Properties>, Error<InterfaceError>> {
+        let interface = self.get(interface_name).ok_or_else(|| {
+            Error::new(InterfaceError::InterfaceNotFound).set_message(interface_name.to_string())
+        })?;
 
         let prop = interface.as_properties().ok_or_else(|| {
-            InterfaceTypeError::new(
-                interface_name,
+            InterfaceError::interface_type(
+                "while getting property",
+                interface,
+                path,
                 InterfaceType::Properties,
                 interface.interface_type(),
             )
         })?;
 
-        let mapping = prop.mapping(path).ok_or_else(|| Error::MappingNotFound {
-            interface: interface_name.to_string(),
-            mapping: path.to_string(),
+        let mapping = prop.mapping(path).ok_or_else(|| {
+            Error::new(InterfaceError::MappingNotFound)
+                .set_message(format!("for {interface}{path}"))
         })?;
 
         Ok(MappingRef {
@@ -255,7 +252,7 @@ impl Interfaces {
     pub(crate) fn validate_many<I>(
         &self,
         interfaces: I,
-    ) -> Result<ValidatedCollection, InterfaceError>
+    ) -> Result<ValidatedCollection, Error<InterfaceError>>
     where
         I: IntoIterator<Item = Interface>,
     {
@@ -698,12 +695,12 @@ pub(crate) mod tests {
         let err = interfaces
             .get_property(E2E_DEVICE_AGGREGATE_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        assert_eq!(*err.kind(), InterfaceError::InterfaceNotFound);
         // Type
         let err = interfaces
             .get_property(E2E_DEVICE_DATASTREAM_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceType { .. }), "{err:?}");
+        assert_eq!(*err.kind(), InterfaceError::InterfaceType);
     }
 
     #[test]
@@ -728,12 +725,12 @@ pub(crate) mod tests {
         let err = interfaces
             .get_property(E2E_DEVICE_AGGREGATE_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        assert_eq!(*err.kind(), InterfaceError::InterfaceNotFound);
         // Type
         let err = interfaces
             .get_property(E2E_DEVICE_DATASTREAM_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceType { .. }));
+        assert_eq!(*err.kind(), InterfaceError::InterfaceType);
     }
 
     #[test]
@@ -758,20 +755,18 @@ pub(crate) mod tests {
         let err = interfaces
             .get_object(E2E_DEVICE_AGGREGATE_NAME, &wrong_path)
             .unwrap_err();
-        assert!(matches!(
-            err,
-            Error::Validation(UserValidationError::ObjectPath { .. })
-        ));
+
+        assert_eq!(*err.kind(), InterfaceError::ObjectPath);
 
         // Not found
         let err = interfaces
             .get_object(E2E_DEVICE_DATASTREAM_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceNotFound { .. }));
+        assert_eq!(*err.kind(), InterfaceError::InterfaceNotFound);
         // Type
         let err = interfaces
             .get_object(E2E_DEVICE_PROPERTY_NAME, &path)
             .unwrap_err();
-        assert!(matches!(err, Error::InterfaceType { .. }), "{err:?}");
+        assert_eq!(*err.kind(), InterfaceError::InterfaceType);
     }
 }

@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -85,7 +85,8 @@ where
                     path = data_path,
                     "timeout reached"
                 );
-            })??;
+            })?
+            .ok_or_eyre("disconnected")?;
 
         ensure!(interface == data_interface);
         ensure!(path == data_path);
