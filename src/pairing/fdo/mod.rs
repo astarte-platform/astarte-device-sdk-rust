@@ -22,8 +22,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use astarte_device_error::ResultExt;
 use astarte_device_fdo::astarte_fdo_protocol::Error;
-use astarte_device_fdo::astarte_fdo_protocol::error::ErrorKind;
+use astarte_device_fdo::astarte_fdo_protocol::error::ErrorKind as FdoError;
 use astarte_device_fdo::client::http::InitialClient;
 use astarte_device_fdo::di::Di;
 use astarte_device_fdo::srv_info::{AstarteMod, AstarteModBuilder};
@@ -35,9 +36,9 @@ use tracing::{error, info, instrument};
 use url::Url;
 
 use crate::builder::{BuildConfig, Config, ConnectionConfig, DeviceTransport};
+use crate::error::{AstarteError, ErrorKind};
 use crate::pairing::api::client::{ApiClient, ClientArgs};
 use crate::store::StoreCapabilities;
-use crate::store::wrapper::StoreWrapper;
 use crate::transport::mqtt::components::ClientId;
 use crate::transport::mqtt::config::transport::TransportProvider;
 use crate::transport::mqtt::connection::MqttState;
@@ -79,7 +80,7 @@ impl<'a, C> FdoDi<'a, C> {
             .map_err(|error| {
                 error!(%error, "couldn't open file storage");
 
-                Error::new(ErrorKind::Io, "while opening file storage")
+                Error::new(FdoError::Io, "while opening file storage")
             })?;
 
         let mut ctx = FdoCtx::new(&mut self.crypto, &mut storage, tls.clone());
@@ -132,26 +133,26 @@ impl<C> FdoConfig<C> {
             .config
             .writable_dir
             .as_ref()
-            .ok_or(Error::new(ErrorKind::Invalid, "missing writable directory"))?;
+            .ok_or(Error::new(FdoError::Invalid, "missing writable directory"))?;
 
         let mut storage = FileStorage::open(storage.join("fdo"))
             .await
             .map_err(|error| {
                 error!(%error, "couldn't open file storage");
 
-                Error::new(ErrorKind::Io, "while opening file storage")
+                Error::new(FdoError::Io, "while opening file storage")
             })?;
 
         let tls = pairing_ctx.provider.api_tls_config().map_err(|error| {
             error!(%error, "couldn't configure tls");
 
-            Error::new(ErrorKind::Io, "while configuring TLS")
+            Error::new(FdoError::Io, "while configuring TLS")
         })?;
 
         let mut fdo_ctx = FdoCtx::new(&mut self.crypto, &mut storage, tls.clone());
 
         let cred = Di::read_existing(&mut fdo_ctx).await.and_then(|opt| {
-            opt.ok_or(Error::new(ErrorKind::Invalid, "missing Device credentials"))
+            opt.ok_or(Error::new(FdoError::Invalid, "missing Device credentials"))
         })?;
 
         if !cred.dc_active {
@@ -171,7 +172,7 @@ impl<C> FdoConfig<C> {
                         .map_err(|error| {
                             error!(%error, "couldn't parse astarte pairing url");
 
-                            Error::new(ErrorKind::Invalid, "astarte pairing url")
+                            Error::new(FdoError::Invalid, "astarte pairing url")
                         })?;
 
                 return Ok(PairingConfig {
@@ -201,7 +202,7 @@ impl<C> FdoConfig<C> {
             .map_err(|error| {
                 error!(%error, "couldn't parse astarte pairing url");
 
-                Error::new(ErrorKind::Invalid, "astarte pairing url")
+                Error::new(FdoError::Invalid, "astarte pairing url")
             })?;
 
         let args = ClientArgs {
@@ -214,7 +215,7 @@ impl<C> FdoConfig<C> {
         let api = ApiClient::from_transport(&Config::default(), pairing_ctx.provider, args)
             .map_err(|error| {
                 error!(%error, "couldn't create pairing api client");
-                Error::new(ErrorKind::Invalid, "pairing api client")
+                Error::new(FdoError::Invalid, "pairing api client")
             })?;
 
         let client_id = ClientId::<&str> {
@@ -232,7 +233,7 @@ impl<C> FdoConfig<C> {
             .map_err(|error| {
                 error!(%error, "couldn't configure transport provider");
 
-                Error::new(ErrorKind::Io, "while configuring transport")
+                Error::new(FdoError::Io, "while configuring transport")
             })?;
 
         info!("certificate created");
@@ -277,28 +278,25 @@ where
 {
     type Conn = Mqtt<Self::Store, FdoConfig<C>>;
     type Store = S;
-    type Err = MqttError;
 
     async fn connect(
         self,
         config: crate::builder::BuildConfig<S>,
-    ) -> Result<DeviceTransport<Self::Conn>, Self::Err>
+    ) -> Result<DeviceTransport<Self::Conn>, AstarteError>
     where
         S: crate::prelude::PropertyStore,
     {
         let BuildConfig { store, state } = config;
 
-        let store_wrapper = StoreWrapper::new(store);
-
         let (retention_tx, retention_rx) = async_channel::bounded(state.config.channel_size.get());
         let retention = MqttRetention::new(retention_rx);
 
-        let client = MqttClient::new(retention_tx, store_wrapper.clone(), Arc::clone(&state));
+        let client = MqttClient::new(retention_tx, store.clone(), Arc::clone(&state));
 
         let provider =
             TransportProvider::configure(state.config.writable_dir.clone(), self.insecure_ssl)
                 .await
-                .map_err(MqttError::Pairing)?;
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::PairingApi(k)))?;
 
         let mqtt_state = MqttState::new(self);
 
@@ -307,14 +305,14 @@ where
             client_sender: Arc::clone(&client.sender),
             provider,
             retention,
-            store: store_wrapper.clone(),
+            store: store.clone(),
             state,
         };
 
         Ok(DeviceTransport {
             sender: client,
             connection,
-            store: store_wrapper,
+            store,
         })
     }
 }

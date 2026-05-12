@@ -361,7 +361,6 @@ We can now spawn a task to receive data from Astarte. Using the
 # use astarte_device_sdk_derive::FromEvent;
 # #[cfg(feature = "derive")]
 use astarte_device_sdk::FromEvent;
-use astarte_device_sdk::client::RecvError;
 use eyre::OptionExt;
 use tracing::{info, error, warn};
 
@@ -382,41 +381,30 @@ async fn receive_data<S>(client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
 where
     S: PropertyStore + StoreCapabilities,
 {
-    loop {
-        let event = match client.recv().await {
-            Ok(event) => event,
-            Err(RecvError::Disconnected) => {
-                info!("client disconnected");
-                return Ok(());
-            }
-            Err(err) => {
-                error!(error = %eyre::Report::new(err), "received error from client");
-                continue;
-            }
-        };
+    while let Some(event) = client.recv().await {
+      match event.interface.as_str() {
+        "org.astarte-platform.rust.get-started.IndividualServer" => {
+            // parse the path to extract the id part
+            // e.g. '/42/data' will strip the '/' and '/data' to return '42'
+            let id = event
+                .path
+                .strip_prefix("/")
+                .and_then(|s| s.strip_suffix("/data"))
+                .ok_or_eyre("couldn't get endpoint id parameter")?
+                .to_string();
 
-        match event.interface.as_str() {
-            "org.astarte-platform.rust.get-started.IndividualServer" => {
-                // parse the path to extract the id part
-                // e.g. '/42/data' will strip the '/' and '/data' to return '42'
-                let id = event
-                    .path
-                    .strip_prefix("/")
-                    .and_then(|s| s.strip_suffix("/data"))
-                    .ok_or_eyre("couldn't get endpoint id parameter")?
-                    .to_string();
+          let ServerIndividual::Boolean(event) = ServerIndividual::from_event(event)?;
 
-                let ServerIndividual::Boolean(event) = ServerIndividual::from_event(event)?;
-
-                info!(event, id, "received new datastream on IndividualServer/");
-            }
-            interface => {
-                warn!(interface, "unhandled interface event received");
-
-                continue;
-            }
+          info!(event, id, "received new datastream on IndividualServer/");
+        }
+        interface => {
+          warn!(interface, "unhandled interface event received");
         }
     }
+  }
+  info!("client disconnected");
+
+  Ok(())
 }
 
 #[tokio::main]
@@ -479,6 +467,7 @@ use astarte_device_sdk::IntoAstarteObject;
 /// Aggregated object
 #[derive(Debug, IntoAstarteObject)]
 struct AggregatedDevice {
+    #[astarte_object(fallible)]
     double_endpoint: f64,
     string_endpoint: String,
 }

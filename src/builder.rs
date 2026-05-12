@@ -20,7 +20,6 @@
 //! [`DeviceConnection`].
 
 use std::ffi::OsStr;
-use std::fmt::Debug;
 use std::fs;
 use std::future::Future;
 use std::io;
@@ -31,15 +30,18 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use astarte_device_error::Error;
+use astarte_device_error::ResultExt;
+use astarte_device_error::WrapError;
 use astarte_interfaces::Interface;
 use tracing::debug;
 
-use crate::Error;
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
+use crate::error::AstarteError;
+use crate::error::ErrorKind;
+use crate::error::InterfaceError;
 use crate::interfaces::Interfaces;
-use crate::introspection::AddInterfaceError;
-use crate::retention::RetentionError;
 use crate::retention::StoredRetention;
 use crate::retention::memory::VolatileStore;
 use crate::retry::ExponentialIter;
@@ -47,8 +49,6 @@ use crate::retry::RandomExponentialIter;
 use crate::state::SharedState;
 use crate::store::PropertyStore;
 use crate::store::StoreCapabilities;
-use crate::store::sqlite::SqliteError;
-use crate::store::wrapper::StoreWrapper;
 use crate::transport::Connection;
 
 /// Default capacity of the channels
@@ -86,47 +86,6 @@ pub const DEFAULT_BACKOFF_RESET_INTERVAL: Duration = Duration::from_secs(256 * 4
 
 /// Default random jitter percentage to add/subtract to the delay.
 pub const DEFAULT_BACKOFF_JITTER_PERCENTAGE: u8 = 50;
-
-/// Astarte builder error.
-///
-/// Possible errors used by the Astarte builder module.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum BuilderError {
-    /// Failed to read interface directory
-    #[error("couldn't read interface path {}", .path.display())]
-    Io {
-        /// Path to the interface file.
-        path: PathBuf,
-        /// Reason why the file couldn't be read.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't get the metadata of the writable directory
-    #[error("couldn't get metadata for {}", .path.display())]
-    DirectoryMetadata {
-        /// Path to the interface directory.
-        path: PathBuf,
-        /// Reason why the directory or file couldn't be read.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Provided path is not a directory
-    #[error("invalid directory at {}", .0.display())]
-    NotADirectory(PathBuf),
-    /// The provided directory is read only
-    #[error("directory is read only {}", .0.display())]
-    DirectoryReadonly(PathBuf),
-    /// Couldn't connect to the SQLite store
-    #[error("couldn't connect to the SQLite store")]
-    Sqlite(#[from] SqliteError),
-    /// Couldn't set the maximum number of items in the store
-    #[error("couldn't set the maximum number of items in the store")]
-    Retention(#[from] RetentionError),
-    /// Couldn't set the maximum number of items in the store
-    #[error("couldn't check if the device is already paired")]
-    PairingStatus(#[from] std::io::Error),
-}
 
 /// Configuration options and parameters for the connection.
 #[derive(Debug, Clone)]
@@ -228,25 +187,28 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface_file<P>(self, path: P) -> Result<Self, AddInterfaceError>
+    pub fn interface_file<P>(self, path: P) -> Result<Self, AstarteError>
     where
         P: AsRef<Path>,
     {
-        let interface = fs::read_to_string(path.as_ref()).map_err(|err| AddInterfaceError::Io {
-            path: path.as_ref().to_path_buf(),
-            backtrace: err,
+        let path = path.as_ref();
+
+        let interface = fs::read_to_string(path).wrap_err_with(|err| {
+            Error::with(ErrorKind::Io(err.kind()), "while reading interface file")
+                .set_ctx(format!("for {}", path.display()))
         })?;
 
         self.interface_str(&interface)
-            .map_err(|err| err.add_path_context(path.as_ref().to_owned()))
+            .map_kind(ErrorKind::Interface)
+            .map_err(|err| err.set_ctx(format!("for {}", path.display())))
     }
 
     /// Add a single interface from the provided string.
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface_str(self, interface: &str) -> Result<Self, AddInterfaceError> {
-        let interface = Interface::from_str(interface)?;
+    pub fn interface_str(self, interface: &str) -> Result<Self, Error<InterfaceError>> {
+        let interface = Interface::from_str(interface).wrap_err(InterfaceError::Invalid)?;
 
         self.interface(interface)
     }
@@ -255,10 +217,13 @@ impl<S, C> DeviceBuilder<S, C> {
     ///
     /// If an interface with the same name is present, the code will validate
     /// the passed interface to ensure it has a newer version than the one stored.
-    pub fn interface(mut self, interface: Interface) -> Result<Self, AddInterfaceError> {
+    pub fn interface(mut self, interface: Interface) -> Result<Self, Error<InterfaceError>> {
         debug!("adding interface {}", interface.interface_name());
 
-        let interface = self.interfaces.validate(interface)?;
+        let interface = self
+            .interfaces
+            .validate(interface)
+            .wrap_err(InterfaceError::Invalid)?;
 
         let Some(interface) = interface else {
             debug!("interface already present");
@@ -272,14 +237,16 @@ impl<S, C> DeviceBuilder<S, C> {
     }
 
     /// Add all the interfaces from the `.json` files contained in the specified folder.
-    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, AddInterfaceError>
+    pub fn interface_directory<P>(self, interfaces_directory: P) -> Result<Self, AstarteError>
     where
         P: AsRef<Path>,
     {
-        walk_dir_json(&interfaces_directory)
-            .map_err(|err| AddInterfaceError::Io {
-                path: interfaces_directory.as_ref().to_path_buf(),
-                backtrace: err,
+        let dir = interfaces_directory.as_ref();
+
+        walk_dir_json(dir)
+            .wrap_err_with(|err| {
+                Error::with(ErrorKind::Io(err.kind()), "while reading interface dir")
+                    .set_ctx(format!("for {}", dir.display()))
             })?
             .iter()
             .try_fold(self, |acc, path| acc.interface_file(path))
@@ -429,18 +396,15 @@ impl<C, S> DeviceBuilder<C, S>
 where
     S: StoreCapabilities,
     C: ConnectionConfig<S>,
-    Error: From<C::Err>,
 {
     /// Method that consumes the builder and returns a working [`DeviceClient`] and
     /// [`DeviceConnection`] with the specified settings.
-    pub async fn build(self) -> Result<BuildRes<C::Conn>, Error> {
+    pub async fn build(self) -> Result<BuildRes<C::Conn>, AstarteError> {
         if let Some(path) = &self.config.writable_dir {
-            tokio::fs::create_dir_all(path)
-                .await
-                .map_err(|backtrace| BuilderError::Io {
-                    path: path.clone(),
-                    backtrace,
-                })?;
+            tokio::fs::create_dir_all(path).await.wrap_err_with(|err| {
+                Error::with(ErrorKind::Io(err.kind()), "while creating store dir")
+                    .set_ctx(path.display().to_string())
+            })?;
         }
 
         let (events_tx, events_rx) = async_channel::bounded(self.config.channel_size.get());
@@ -473,10 +437,12 @@ where
             store,
         } = self.connection_config.connect(config).await?;
 
-        let paired = connection
-            .is_paired()
-            .await
-            .map_err(BuilderError::PairingStatus)?;
+        let paired = connection.is_paired().await.wrap_err_with(|err| {
+            Error::with(
+                ErrorKind::Io(err.kind()),
+                "while checking if device is paired",
+            )
+        })?;
 
         debug!(paired, "device pairing status");
 
@@ -521,7 +487,7 @@ where
 {
     pub(crate) connection: C,
     pub(crate) sender: C::Sender,
-    pub(crate) store: StoreWrapper<C::Store>,
+    pub(crate) store: C::Store,
 }
 
 /// Crate private connection implementation.
@@ -530,15 +496,13 @@ pub trait ConnectionConfig<S> {
     type Store: StoreCapabilities;
     /// Type of the constructed Connection
     type Conn: Connection;
-    /// Type of the error got while opening the connection
-    type Err;
 
     /// Connect method that consumes self to construct a working connection
     /// This method is called internally by the builder.
     fn connect(
         self,
         config: BuildConfig<S>,
-    ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, Self::Err>> + Send
+    ) -> impl Future<Output = Result<DeviceTransport<Self::Conn>, AstarteError>> + Send
     where
         S: PropertyStore;
 }
@@ -652,7 +616,7 @@ mod test {
                 Ok(DeviceTransport {
                     connection,
                     sender,
-                    store: StoreWrapper::new(config.store),
+                    store: config.store,
                 })
             });
 

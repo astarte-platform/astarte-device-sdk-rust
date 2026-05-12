@@ -18,6 +18,7 @@
 
 //! Provides static functions for registering a new device to an Astarte Cluster.
 
+use astarte_device_error::Error;
 use base64::Engine;
 use reqwest::Url;
 use uuid::Uuid;
@@ -26,7 +27,7 @@ use crate::builder::Config;
 
 use crate::pairing::api::client::{ApiClient, ClientArgs};
 
-use super::PairingError;
+use super::PairingApiError;
 
 /// Arguments for the register device call
 pub struct RegisterDevice<'a> {
@@ -66,7 +67,9 @@ impl<'a> From<&RegisterDevice<'a>> for ClientArgs<'a> {
 }
 
 /// Obtain a credentials secret from the astarte API
-pub async fn register_device<'a>(args: RegisterDevice<'a>) -> Result<String, PairingError> {
+pub async fn register_device<'a>(
+    args: RegisterDevice<'a>,
+) -> Result<String, Error<PairingApiError>> {
     let config = Config::default();
 
     ApiClient::create(ClientArgs::from(&args), &config, args.tls)?

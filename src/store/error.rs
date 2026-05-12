@@ -18,96 +18,55 @@
 
 //! Error for the store.
 
-use crate::error::DynError;
+use std::fmt::Display;
 
 /// Error that wraps the type returned by an implementation of the [`super::PropertyStore`] trait.
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreError {
     /// Could not store a property.
-    #[error("could not store property")]
-    Store(#[source] DynError),
+    Store,
     /// Could not update property state.
-    #[error("could not update property state")]
-    UpdateState(#[source] DynError),
+    UpdateState,
     /// Could not load a property.
-    #[error("could not load property")]
-    Load(#[source] DynError),
+    Load,
     /// Could not delete a property.
-    #[error("could not delete property")]
-    Delete(#[source] DynError),
+    Delete,
     /// Could not unset a property.
-    #[error("could not delete property")]
-    Unset(#[source] DynError),
+    Unset,
     /// Could not clear the database.
-    #[error("could not clear database")]
-    Clear(#[source] DynError),
+    Clear,
     /// Could not load all properties.
-    #[error("could not load all properties")]
-    LoadAll(#[source] DynError),
+    LoadAll,
     /// Could not load device properties.
-    #[error("could not load device properties")]
-    DeviceProps(#[source] DynError),
+    DeviceProps,
     /// Could not load server properties.
-    #[error("could not load server properties")]
-    ServerProps(#[source] DynError),
+    ServerProps,
     /// Could not load interface properties.
-    #[error("could not load server properties")]
-    InterfaceProps(#[source] DynError),
+    InterfaceProps,
     /// Could not delete all the interface properties.
-    #[error("could not delete all the interface properties")]
-    DeleteInterface(#[source] DynError),
+    DeleteInterface,
     /// Could not reset properties state
-    #[error("could not reset properties state")]
-    ResetState(#[source] DynError),
+    ResetState,
 }
 
-impl StoreError {
-    pub(crate) fn store(err: impl Into<DynError>) -> Self {
-        Self::Store(err.into())
-    }
-
-    pub(crate) fn update_state(err: impl Into<DynError>) -> Self {
-        Self::UpdateState(err.into())
-    }
-
-    pub(crate) fn load(err: impl Into<DynError>) -> Self {
-        Self::Load(err.into())
-    }
-
-    pub(crate) fn unset(err: impl Into<DynError>) -> Self {
-        Self::Unset(err.into())
-    }
-
-    pub(crate) fn delete(err: impl Into<DynError>) -> Self {
-        Self::Delete(err.into())
-    }
-
-    pub(crate) fn clear(err: impl Into<DynError>) -> Self {
-        Self::Clear(err.into())
-    }
-
-    pub(crate) fn load_all(err: impl Into<DynError>) -> Self {
-        Self::LoadAll(err.into())
-    }
-
-    pub(crate) fn server_props(err: impl Into<DynError>) -> Self {
-        Self::ServerProps(err.into())
-    }
-
-    pub(crate) fn device_props(err: impl Into<DynError>) -> Self {
-        Self::DeviceProps(err.into())
-    }
-
-    pub(crate) fn interface_props(err: impl Into<DynError>) -> Self {
-        Self::InterfaceProps(err.into())
-    }
-
-    pub(crate) fn delete_interface(err: impl Into<DynError>) -> Self {
-        Self::DeleteInterface(err.into())
-    }
-
-    pub(crate) fn reset_state(err: impl Into<DynError>) -> Self {
-        Self::ResetState(err.into())
+impl Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreError::Store => write!(f, "could not store property"),
+            StoreError::UpdateState => write!(f, "could not update property state"),
+            StoreError::Load => write!(f, "could not load property"),
+            StoreError::Delete => write!(f, "could not delete property"),
+            StoreError::Unset => write!(f, "could not delete property"),
+            StoreError::Clear => write!(f, "could not clear database"),
+            StoreError::LoadAll => write!(f, "could not load all properties"),
+            StoreError::DeviceProps => write!(f, "could not load device properties"),
+            StoreError::ServerProps => write!(f, "could not load server properties"),
+            StoreError::InterfaceProps => write!(f, "could not load server properties"),
+            StoreError::DeleteInterface => {
+                write!(f, "could not delete all the interface properties")
+            }
+            StoreError::ResetState => write!(f, "could not reset properties state"),
+        }
     }
 }

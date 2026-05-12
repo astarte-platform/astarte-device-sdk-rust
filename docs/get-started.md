@@ -377,7 +377,6 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 
 # use astarte_device_sdk::{
 #     builder::DeviceBuilder,
-#     client::RecvError,
 #     prelude::*,
 #     store::SqliteStore,
 #     transport::mqtt::{Mqtt, MqttConfig},
@@ -395,38 +394,34 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 
 #[tracing::instrument(skip_all)]
 async fn receive_data(mut client: DeviceClient<Mqtt<SqliteStore, PairingApi>>) -> eyre::Result<()> {
-    loop {
-        match client.recv().await {
-            Ok(event) => {
-                if let astarte_device_sdk::Value::Individual{data, timestamp: _} = event.data {
-                    // we want to analyze a mapping similar to "/id/data" so we split by '/' and use the
-                    // parts of interest
-                    let mut iter = event.path.splitn(3, '/').skip(1);
+    while let Some(event) = client.recv().await {
+        if let astarte_device_sdk::Value::Individual{data, timestamp: _} = event.data {
+            // we want to analyze a mapping similar to "/id/data" so we split by '/' and use the
+            // parts of interest
+            let mut iter = event.path.splitn(3, '/').skip(1);
 
-                    let id = iter
-                        .next()
-                        .to_owned()
-                        .map(|s| s.to_string())
-                        .ok_or(eyre::eyre!("Incorrect error received"))?;
+            let id = iter
+                .next()
+                .to_owned()
+                .map(|s| s.to_string())
+                .ok_or(eyre::eyre!("Incorrect error received"))?;
 
-                    match iter.next() {
-                        Some("data") => {
-                            let value: f64 = data.try_into()?;
-                            info!(
-                                "Received new data datastream for LED {}. LED data is now {}",
-                                id, value
-                            );
-                        }
-                        item => {
-                            error!("unrecognized {item:?}")
-                        }
-                    }
+            match iter.next() {
+                Some("data") => {
+                    let value: f64 = data.try_into()?;
+                    info!(
+                        "Received new data datastream for LED {}. LED data is now {}",
+                        id, value
+                    );
+                }
+                item => {
+                    error!("unrecognized {item:?}")
                 }
             }
-            Err(RecvError::Disconnected) => return Ok(()),
-            Err(err) => error!(%err),
         }
     }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -500,7 +495,6 @@ interface.
 
 ```no_run
 // ... imports, structs definition ...
-# use astarte_device_sdk::client::RecvError;
 # use astarte_device_sdk::pairing::api::PairingApi;
 # use astarte_device_sdk::prelude::*;
 # use astarte_device_sdk::store::SqliteStore;
@@ -567,7 +561,7 @@ interface.
 // ... imports, structs definition ...
 
 # use astarte_device_sdk::{
-#     client::RecvError, prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
+#     prelude::*, store::SqliteStore, transport::mqtt::Mqtt, DeviceClient,
 #     DeviceConnection,
 # };
 # use astarte_device_sdk::pairing::api::PairingApi;
@@ -583,6 +577,7 @@ interface.
 
 #[derive(Debug, IntoAstarteObject)]
 struct DataObject {
+    #[astarte_object(fallible)]
     double_endpoint: f64,
     string_endpoint: String,
 }
@@ -646,7 +641,7 @@ interface.
 ```no_run
 // ... imports, structs definition ...
 # use astarte_device_sdk::{
-#     builder::DeviceBuilder, client::{DeviceClient, RecvError}, prelude::*, store::SqliteStore,
+#     builder::DeviceBuilder, client::DeviceClient, prelude::*, store::SqliteStore,
 #     transport::mqtt::{Mqtt, MqttConfig}, DeviceConnection,
 #     pairing::api::PairingApi,
 # };

@@ -18,78 +18,23 @@
 
 //! Validate the submission and reception of a payload.
 
+use astarte_device_error::Error;
+use astarte_interfaces::interface::Retention;
+use astarte_interfaces::schema::{Ownership, Reliability};
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
-    interface::Retention,
-    schema::{Ownership, Reliability},
 };
 use tracing::trace;
 
-use crate::{
-    Timestamp,
-    aggregate::AstarteObject,
-    error::{AggregationError, InterfaceTypeError, OwnershipError},
-    interfaces::MappingRef,
-    types::AstarteData,
-};
+use crate::Timestamp;
+use crate::aggregate::AstarteObject;
+use crate::error::InterfaceError;
+use crate::interfaces::MappingRef;
+use crate::types::AstarteData;
 
 use self::object::Iter;
 
 mod object;
-
-/// Errors returned while validating a send payload
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum UserValidationError {
-    /// Sending timestamp to a mapping without `explicit_timestamp`
-    #[error(
-        "{ctx} timestamp on {interface}{path}, but interface has 'explicit_timestamp: {explicit_timestamp}'"
-    )]
-    Timestamp {
-        /// Missing or sending context
-        ctx: &'static str,
-        /// Name of the interface.
-        interface: String,
-        /// Optional path the data is sent on
-        path: String,
-        /// Interface explicit timestamp.
-        explicit_timestamp: bool,
-    },
-    /// Sending data on an interface not owned by the device
-    #[error("sending data on an interface with an invalid ownership")]
-    Ownership(#[from] OwnershipError),
-    /// Using invalid method to send data of a different interface type.
-    #[error("invalid method used to send data of a different interface type")]
-    InterfaceType(#[from] InterfaceTypeError),
-    /// Using invalid method to send data of a different aggregation.
-    #[error("invalid method used to send data of a different aggregation")]
-    Aggregation(#[from] AggregationError),
-    /// The path provided is invalid for the object interface.
-    #[error("invalid path {path} for Object Aggregate {interface}")]
-    ObjectPath { interface: String, path: String },
-    /// Trying to send data on a mapping with a different type
-    #[error(
-        "mismatching type while sending data on {interface}{path}, expected {expected} but got {got}"
-    )]
-    MappingType {
-        interface: String,
-        path: String,
-        expected: String,
-        got: String,
-    },
-    /// Couldn't accept unset for mapping without `allow_unset`
-    #[error("couldn't unset property {interface}{mapping} without `allow_unset`")]
-    Unset { interface: String, mapping: String },
-    /// Couldn't get the object mapping with the given key.
-    #[error("couldn't get object mapping for {interface}{path} with key {key}")]
-    ObjectInvalidMapping {
-        interface: String,
-        path: String,
-        key: String,
-    },
-    #[error("missing required object mapping {interface}{endpoint}")]
-    ObjectMappingRequired { interface: String, endpoint: String },
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ValidatedIndividual {
@@ -107,27 +52,25 @@ impl ValidatedIndividual {
         mapping: MappingRef<'_, DatastreamIndividual>,
         data: AstarteData,
         timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedIndividual, UserValidationError> {
+    ) -> Result<ValidatedIndividual, Error<InterfaceError>> {
         let interface = mapping.interface();
         let path = mapping.path();
         let mapping = mapping.mapping();
 
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
-            return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name().clone(),
-                Ownership::Device,
-                ownership,
+            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
+                "for sending on {}, not a device interface",
+                interface.name(),
             )));
         }
 
         if !data.eq_mapping_type(mapping.mapping_type()) {
-            return Err(UserValidationError::MappingType {
-                interface: interface.interface_name().to_string(),
-                path: path.as_str().to_string(),
-                expected: mapping.mapping_type().to_string(),
-                got: data.display_type().to_string(),
-            });
+            return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
+                "for interface {interface}{path}, expected {} but got {}",
+                mapping.mapping_type(),
+                data.display_type()
+            )));
         }
 
         validate_timestamp(
@@ -166,12 +109,20 @@ impl ValidatedObject {
         path: &MappingPath<'_>,
         mut data: AstarteObject,
         timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedObject, UserValidationError> {
+    ) -> Result<ValidatedObject, Error<InterfaceError>> {
+        let ownership = interface.ownership();
+        if ownership != Ownership::Device {
+            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
+                "for sending on {}, not a device interface",
+                interface.name(),
+            )));
+        }
+
         if !interface.is_object_path(path) {
-            return Err(UserValidationError::ObjectPath {
-                interface: interface.interface_name().to_string(),
-                path: path.to_string(),
-            });
+            return Err(Error::new(InterfaceError::ObjectPath).set_ctx(format!(
+                "for interface {} and path {path}",
+                interface.name()
+            )));
         }
 
         validate_timestamp(
@@ -204,7 +155,7 @@ impl ValidatedObject {
         interface: &DatastreamObject,
         path: &MappingPath<'_>,
         data: &AstarteObject,
-    ) -> Result<(), UserValidationError> {
+    ) -> Result<(), Error<InterfaceError>> {
         debug_assert!(data.inner.is_sorted_by(|(a, _), (b, _)| a <= b));
         debug_assert!(
             interface
@@ -216,32 +167,30 @@ impl ValidatedObject {
             let Some(mapping) = mapping else {
                 debug_assert!(item.is_some());
 
-                return Err(UserValidationError::ObjectInvalidMapping {
-                    interface: interface.interface_name().to_string(),
-                    path: path.to_string(),
-                    key: item.map(|(k, _v)| k.to_string()).unwrap_or_default(),
-                });
+                let key = item.map(|(k, _)| k.as_str()).unwrap_or_default();
+
+                return Err(Error::new(InterfaceError::MappingNotFound)
+                    .set_ctx(format!("for interface {interface}{path} with key {key}")));
             };
 
             match item {
                 Some((key, value)) => {
                     if !value.eq_mapping_type(mapping.mapping_type()) {
-                        return Err(UserValidationError::MappingType {
-                            interface: interface.interface_name().to_string(),
-                            path: format!("{path}/{key}"),
-                            expected: mapping.mapping_type().to_string(),
-                            got: value.display_type().to_string(),
-                        });
+                        return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
+                            "for interface {interface}{path}{key}, expected {} but got {}",
+                            mapping.mapping_type(),
+                            value.display_type()
+                        )));
                     }
 
                     trace!("valid object field {path} {}", value.display_type());
                 }
                 None => {
                     if mapping.required() {
-                        return Err(UserValidationError::ObjectMappingRequired {
-                            interface: interface.interface_name().to_string(),
-                            endpoint: mapping.endpoint().to_string(),
-                        });
+                        return Err(Error::new(InterfaceError::MappingRequired).set_ctx(format!(
+                            "for interface {interface} endpoint {}",
+                            mapping.endpoint()
+                        )));
                     }
                 }
             }
@@ -265,27 +214,25 @@ impl ValidatedProperty {
     pub(crate) fn validate(
         mapping: MappingRef<'_, Properties>,
         data: AstarteData,
-    ) -> Result<Self, UserValidationError> {
+    ) -> Result<Self, Error<InterfaceError>> {
         let interface = mapping.interface();
         let path = mapping.path();
         let mapping = mapping.mapping();
 
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
-            return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name().to_string(),
-                Ownership::Device,
-                ownership,
+            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
+                "for sending on {}, not a device interface",
+                interface.name(),
             )));
         }
 
         if !data.eq_mapping_type(mapping.mapping_type()) {
-            return Err(UserValidationError::MappingType {
-                interface: interface.interface_name().to_string(),
-                path: path.as_str().to_string(),
-                expected: mapping.mapping_type().to_string(),
-                got: data.display_type().to_string(),
-            });
+            return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
+                "for interface {interface}{path}, expected {} but got {}",
+                mapping.mapping_type(),
+                data.display_type()
+            )));
         }
 
         Ok(Self {
@@ -306,25 +253,22 @@ pub(crate) struct ValidatedUnset {
 impl ValidatedUnset {
     pub(crate) fn validate(
         mapping: MappingRef<'_, Properties>,
-    ) -> Result<Self, UserValidationError> {
+    ) -> Result<Self, Error<InterfaceError>> {
         let interface = mapping.interface();
         let path = mapping.path();
         let mapping = mapping.mapping();
 
         let ownership = interface.ownership();
         if ownership != Ownership::Device {
-            return Err(UserValidationError::Ownership(OwnershipError::new(
-                interface.interface_name().clone(),
-                Ownership::Device,
-                ownership,
+            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
+                "for sending on {}, not a device interface",
+                interface.name(),
             )));
         }
 
         if !mapping.allow_unset() {
-            return Err(UserValidationError::Unset {
-                interface: interface.interface_name().to_string(),
-                mapping: path.to_string(),
-            });
+            return Err(Error::new(InterfaceError::Unset)
+                .set_ctx(format!("for {}{path}, not allowed", interface.name(),)));
         }
 
         Ok(Self {
@@ -339,21 +283,19 @@ fn validate_timestamp(
     path: &str,
     timestamp: &Option<Timestamp>,
     explicit_timestamp: bool,
-) -> Result<(), UserValidationError> {
+) -> Result<(), Error<InterfaceError>> {
     match (timestamp, explicit_timestamp) {
         (Some(_), true) | (None, false) => Ok(()),
-        (None, true) => Err(UserValidationError::Timestamp {
-            ctx: "missing",
-            interface: name.to_string(),
-            path: path.to_string(),
-            explicit_timestamp,
-        }),
-        (Some(_), false) => Err(UserValidationError::Timestamp {
-            ctx: "sending",
-            interface: name.to_string(),
-            path: path.to_string(),
-            explicit_timestamp,
-        }),
+        (None, true) => Err(Error::with(
+            InterfaceError::Timestamp,
+            "missing timestamp when set to true",
+        )
+        .set_ctx(format!("for {name}{path}"))),
+        (Some(_), false) => Err(Error::with(
+            InterfaceError::Timestamp,
+            "sent timestamp when set to false",
+        )
+        .set_ctx(format!("for {name}{path}"))),
     }
 }
 
@@ -404,7 +346,7 @@ mod tests {
 
         // Test sending an aggregate (with and without timestamp)
         ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now())).unwrap();
-        ValidatedObject::validate(&object, &path, aggregate, None).unwrap_err();
+        let _ = ValidatedObject::validate(&object, &path, aggregate, None).unwrap_err();
     }
 
     #[test]
@@ -415,12 +357,11 @@ mod tests {
         // Test sending an aggregate with an non existing object field
         let invalid_key = "gibberish";
         aggregate.insert(invalid_key.to_string(), AstarteData::Boolean(false));
-        let res =
+
+        let err =
             ValidatedObject::validate(&object, &path, aggregate, Some(Utc::now())).unwrap_err();
-        assert!(matches!(
-            res,
-            UserValidationError::ObjectInvalidMapping { key, .. } if key == invalid_key
-        ))
+
+        assert_eq!(*err.kind(), InterfaceError::MappingNotFound);
     }
 
     #[test]
@@ -434,7 +375,8 @@ mod tests {
         ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), Some(Utc::now()))
             .unwrap();
         // Check timestamp
-        ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), None).unwrap_err();
+        let _ =
+            ValidatedIndividual::validate(mapping, AstarteData::Boolean(false), None).unwrap_err();
     }
 
     #[test]
@@ -448,7 +390,7 @@ mod tests {
             ValidatedIndividual::validate(mapping, AstarteData::Integer(42), Some(Utc::now()))
                 .unwrap_err();
 
-        assert!(matches!(err, UserValidationError::MappingType { .. }))
+        assert_eq!(*err.kind(), InterfaceError::MappingType)
     }
 
     #[test]
@@ -473,10 +415,7 @@ mod tests {
         let err = ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now()))
             .unwrap_err();
 
-        assert!(
-            matches!(err, UserValidationError::MappingType { .. }),
-            "{err}"
-        )
+        assert_eq!(*err.kind(), InterfaceError::MappingType, "{err}")
     }
 
     #[test]
@@ -494,8 +433,12 @@ mod tests {
         let timestamp = Some(Utc::now());
         validate_timestamp("name", "path", &timestamp, true).unwrap();
         validate_timestamp("name", "path", &None, false).unwrap();
-        validate_timestamp("name", "path", &None, true).unwrap_err();
-        validate_timestamp("name", "path", &timestamp, false).unwrap_err();
+
+        let err = validate_timestamp("name", "path", &None, true).unwrap_err();
+        assert_eq!(*err.kind(), InterfaceError::Timestamp);
+
+        let err = validate_timestamp("name", "path", &timestamp, false).unwrap_err();
+        assert_eq!(*err.kind(), InterfaceError::Timestamp);
     }
 
     #[test]
@@ -507,7 +450,7 @@ mod tests {
 
         let err = ValidatedUnset::validate(mapping).unwrap_err();
 
-        assert!(matches!(err, UserValidationError::Ownership(_)));
+        assert_eq!(*err.kind(), InterfaceError::Ownership);
     }
 
     #[test]
@@ -519,6 +462,6 @@ mod tests {
 
         let err = ValidatedUnset::validate(mapping).unwrap_err();
 
-        assert!(matches!(err, UserValidationError::Unset { .. }));
+        assert_eq!(*err.kind(), InterfaceError::Unset);
     }
 }

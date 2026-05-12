@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,12 +19,14 @@
 //! Handles the storage of the current introspection to maintain
 //! a persistent session with the Astarte MQTT server.
 
+use std::fmt::Display;
 use std::future::Future;
 
+use astarte_device_error::Error;
 use astarte_interfaces::Interface;
 use itertools::Itertools;
 
-use crate::{error::DynError, interfaces::Interfaces};
+use crate::interfaces::Interfaces;
 
 mod sqlite;
 
@@ -114,31 +116,24 @@ impl From<IntrospectionInterface<&str>> for IntrospectionInterface {
 }
 
 /// Error returned by the retention.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SessionError {
     /// Error in the store introspection method
-    #[error("couldn't store the introspection")]
-    AddInterfaces(#[source] DynError),
+    AddInterfaces,
     /// Error in the load introspection method
-    #[error("couldn't load the introspection")]
-    LoadIntrospection(#[source] DynError),
+    LoadIntrospection,
     /// Error in the remove introspection method
-    #[error("couldn't remove the interfaces")]
-    RemoveInterfaces(#[source] DynError),
+    RemoveInterfaces,
 }
 
-impl SessionError {
-    pub(crate) fn add_interfaces(err: impl Into<DynError>) -> Self {
-        Self::AddInterfaces(err.into())
-    }
-
-    pub(crate) fn load_introspection(err: impl Into<DynError>) -> Self {
-        Self::LoadIntrospection(err.into())
-    }
-
-    pub(crate) fn remove_interfaces(err: impl Into<DynError>) -> Self {
-        Self::RemoveInterfaces(err.into())
+impl Display for SessionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionError::AddInterfaces => write!(f, "coudln't store the introspection"),
+            SessionError::LoadIntrospection => write!(f, "couldn't load the introspection"),
+            SessionError::RemoveInterfaces => write!(f, "couldn't remove the interfaces"),
+        }
     }
 }
 
@@ -163,18 +158,18 @@ pub trait StoredSession: Clone + Send + Sync {
     fn add_interfaces(
         &self,
         interfaces: &[IntrospectionInterface<&str>],
-    ) -> impl Future<Output = Result<(), SessionError>> + Send;
+    ) -> impl Future<Output = Result<(), Error<SessionError>>> + Send;
 
     /// Loads all stored `IntrospectionInterface`s from the persistent store.
     fn load_introspection(
         &self,
-    ) -> impl Future<Output = Result<Vec<IntrospectionInterface>, SessionError>> + Send;
+    ) -> impl Future<Output = Result<Vec<IntrospectionInterface>, Error<SessionError>>> + Send;
 
     /// Removes a specific slice of `IntrospectionInterface`s from the persistent store.
     fn remove_interfaces(
         &self,
         interfaces: &[IntrospectionInterface<&str>],
-    ) -> impl Future<Output = Result<(), SessionError>> + Send;
+    ) -> impl Future<Output = Result<(), Error<SessionError>>> + Send;
 }
 
 #[cfg(test)]

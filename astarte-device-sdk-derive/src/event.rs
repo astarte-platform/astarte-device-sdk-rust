@@ -164,12 +164,12 @@ impl FromEventDerive {
             quote_spanned! {i.span() =>
                 let #i = object
                     .remove(#name)
-                    .ok_or(FromEventError::MissingField {
-                        interface,
-                        base_path,
-                        path: #name,
+                    .ok_or_else(||{
+                        Error::new(FromEventError::Interface(InterfaceError::MappingRequired))
+                            .set_ctx(format!("for interface {} endpoint {}{}", interface, base_path, #name))
                     })?
-                    .try_into()?;
+                    .try_into()
+                    .map_kind(FromEventError::Conversion)?;
             }
         });
         let fields = fields.iter().map(|(i, _)| i);
@@ -186,11 +186,12 @@ impl FromEventDerive {
 
         Ok(quote! {
             impl #impl_generics astarte_device_sdk::FromEvent for #st_name #ty_generics #where_clause {
-                type Err = astarte_device_sdk::event::FromEventError;
+                type Err = astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::event::FromEventError>;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::Value;
-                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
+                    use astarte_device_sdk::astarte_device_error::{Error, WrapError, ResultExt};
+                    use astarte_device_sdk::error::InterfaceError;
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::astarte_interfaces::MappingPath;
                     use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
@@ -198,38 +199,41 @@ impl FromEventDerive {
 
                     let interface = #interface;
                     let base_path = #path;
-                    let endpoint: Endpoint<&str> = Endpoint::try_from(base_path)?;
+                    let endpoint: Endpoint<&str> = Endpoint::try_from(base_path)
+                        .wrap_err_msg(FromEventError::Interface(InterfaceError::Invalid), "while parsing endpoint")?;
 
                     if event.interface != interface {
-                        return Err(FromEventError::Interface(event.interface.clone()));
+                        return Err(
+                            Error::with(FromEventError::Interface(InterfaceError::Invalid), "for event")
+                                .set_ctx(format!("expected {} but got {}", interface, event.interface))
+                        );
                     }
 
-                    let path = MappingPath::try_from(event.path.as_str())?;
+                    let path = MappingPath::try_from(event.path.as_str())
+                        .wrap_err_with(|_| {
+                            Error::with(FromEventError::Interface(InterfaceError::Path), "while parsing event path")
+                                .set_ctx(format!("for {interface}{}", event.path))
+                        })?;
 
                     if !endpoint.eq_mapping(&path) {
-                        return Err(FromEventError::Path {
-                            interface,
-                            base_path: event.path.clone(),
-                        });
+                        return Err(
+                            Error::new(FromEventError::Interface(InterfaceError::ObjectPath))
+                                .set_ctx(format!("for {interface}{endpoint}"))
+                        );
                     }
 
                     let mut object = match event.data {
                         Value::Object{data, ..} => data,
                         Value::Individual{..} => {
-                            return Err(FromEventError::Aggregation(AggregationError::new(
-                                interface,
-                                event.path,
-                                Aggregation::Object,
-                                Aggregation::Individual,
-                            )));
+                            return Err(
+                                Error::new(FromEventError::Interface(InterfaceError::Aggregation))
+                                    .set_ctx(format!("for {interface}"))
+                            );
                         },
                         Value::Property(_) => {
-                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
-                                interface,
-                                event.path,
-                                InterfaceType::Datastream,
-                                InterfaceType::Properties,
-                            )));
+                            return Err(Error::new(FromEventError::Interface(InterfaceError::InterfaceType))
+                                    .set_ctx(format!("for {interface}"))
+                            );
                         },
                     };
 
@@ -257,7 +261,11 @@ impl FromEventDerive {
             let endpoint = v.endpoint.as_str();
 
             quote! {
-                Endpoint::<&str>::try_from(#endpoint)?
+                Endpoint::<&str>::try_from(#endpoint)
+                    .wrap_err_with(|_| {
+                        Error::with(FromEventError::Interface(InterfaceError::Invalid), "endpoint")
+                            .set_ctx(format!("for {INTERFACE} with endpoint {}", #endpoint))
+                    })?
             }
         });
 
@@ -290,36 +298,39 @@ impl FromEventDerive {
                     let individual = match event.data {
                         Value::Individual{data, ..} => data,
                         Value::Object{..} => {
-                            return Err(FromEventError::Aggregation(AggregationError::new(
-                                event.interface,
+                            return Err(InterfaceError::aggregation(
+                                "from event",
+                                INTERFACE,
                                 event.path,
                                 Aggregation::Individual,
                                 Aggregation::Object,
-                            )));
+                            )).map_kind(FromEventError::Interface);
                         },
                         Value::Property(_) => {
-                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
-                                event.interface,
+                            return Err(InterfaceError::interface_type(
+                                "from event",
+                                INTERFACE,
                                 event.path,
                                 InterfaceType::Datastream,
                                 InterfaceType::Properties,
-                            )));
+                            )).map_kind(FromEventError::Interface);
                         },
                     };
 
 
-                    individual.try_into().map(#name::#variant).map_err(FromEventError::from)
+                    individual.try_into().map(#name::#variant).map_kind(FromEventError::Conversion)
                 }
             }
         });
 
         Ok(quote! {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
-                type Err = astarte_device_sdk::event::FromEventError;
+                type Err = astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::event::FromEventError>;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
                     use astarte_device_sdk::{AstarteData, Value};
-                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
+                    use astarte_device_sdk::astarte_device_error::{WrapError, Error, ResultExt};
+                    use astarte_device_sdk::error::InterfaceError;
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
                     use astarte_device_sdk::astarte_interfaces::schema::{Aggregation, InterfaceType};
@@ -328,18 +339,25 @@ impl FromEventDerive {
                     const INTERFACE: &str = #interface;
 
                     if event.interface != INTERFACE {
-                        return Err(FromEventError::Interface(event.interface));
+                        return Err(
+                            Error::with(FromEventError::Interface(InterfaceError::Invalid), "wrong interface")
+                                .set_ctx(format!("for {INTERFACE}"))
+                        );
                     }
 
                     let endpoints = [ #(#endpoints),* ];
 
-                    let path = MappingPath::try_from(event.path.as_str())?;
+                    let path = MappingPath::try_from(event.path.as_str())
+                        .wrap_err_with(|_| {
+                            Error::with(FromEventError::Interface(InterfaceError::Path), "from event")
+                                .set_ctx(format!("for {INTERFACE}"))
+                        })?;
 
                     let position = endpoints.iter()
                         .position(|e| e.eq_mapping(&path))
-                        .ok_or_else(|| FromEventError::Path {
-                            interface: INTERFACE,
-                            base_path: event.path.clone(),
+                        .ok_or_else(|| {
+                            Error::with(FromEventError::Interface(InterfaceError::MappingNotFound), "from event")
+                                .set_ctx(format!("for {INTERFACE}{path}"))
                         })?;
 
                     match position {
@@ -377,7 +395,11 @@ impl FromEventDerive {
             let endpoint = v.endpoint.as_str();
 
             quote! {
-                Endpoint::<&str>::try_from(#endpoint)?
+                Endpoint::<&str>::try_from(#endpoint)
+                    .wrap_err_with(|_| {
+                        Error::with(FromEventError::Interface(InterfaceError::Invalid), "from event endpoint")
+                            .set_ctx(format!("for {INTERFACE}"))
+                    })?
             }
         });
 
@@ -394,10 +416,10 @@ impl FromEventDerive {
                 quote! { Ok(#name::#variant(None)) }
             } else {
                 quote! {
-                    return Err(FromEventError::Unset {
-                        interface: INTERFACE,
-                        endpoint: event.path,
-                    });
+                    return Err(
+                        Error::with(FromEventError::Interface(InterfaceError::Unset), "from event")
+                        .set_ctx(format!("for {INTERFACE}{}", event.path))
+                    );
                 }
             };
 
@@ -405,17 +427,18 @@ impl FromEventDerive {
                 #i => {
                     match event.data {
                         Value::Individual{..} | Value::Object{..} => {
-                            return Err(FromEventError::InterfaceType(InterfaceTypeError::with_path(
-                                event.interface,
+                            return Err(InterfaceError::interface_type(
+                                "from event data",
+                                INTERFACE,
                                 event.path,
                                 InterfaceType::Properties,
                                 InterfaceType::Datastream,
-                            )));
+                            )).map_kind(FromEventError::Interface);
                         },
                         Value::Property(Some(prop)) => {
                             prop.try_into()
                                 .map(|value| #name::#variant(#prop_set_case))
-                                .map_err(FromEventError::from)
+                                .map_kind(FromEventError::Conversion)
                         },
                         Value::Property(None) => {
                             #prop_unset
@@ -429,11 +452,12 @@ impl FromEventDerive {
 
         Ok(quote! {
             impl #impl_generics astarte_device_sdk::FromEvent for #name #ty_generics #where_clause {
-                type Err = astarte_device_sdk::event::FromEventError;
+                type Err = astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::event::FromEventError>;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
+                    use astarte_device_sdk::astarte_device_error::{Error, WrapError, ResultExt};
                     use astarte_device_sdk::{AstarteData, Value};
-                    use astarte_device_sdk::error::{AggregationError, InterfaceTypeError};
+                    use astarte_device_sdk::error::{InterfaceError};
                     use astarte_device_sdk::event::FromEventError;
                     use astarte_device_sdk::astarte_interfaces::MappingPath;
                     use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
@@ -442,18 +466,23 @@ impl FromEventDerive {
                     const INTERFACE: &str = #interface;
 
                     if event.interface != INTERFACE {
-                        return Err(FromEventError::Interface(event.interface));
+                        return Err(Error::with(FromEventError::Interface(InterfaceError::Invalid), "for event")
+                            .set_ctx(format!("expected {INTERFACE} but got {}", event.interface)));
                     }
 
                     let endpoints = [ #(#endpoints),* ];
 
-                    let path = MappingPath::try_from(event.path.as_str())?;
+                    let path = MappingPath::try_from(event.path.as_str())
+                        .wrap_err_with(|_| {
+                            Error::with(FromEventError::Interface(InterfaceError::Path), "while parsign event path")
+                                .set_ctx(event.path.to_string())
+                        })?;
 
                     let position = endpoints.iter()
                         .position(|e| e.eq_mapping(&path))
-                        .ok_or_else(|| FromEventError::Path {
-                            interface: INTERFACE,
-                            base_path: event.path.clone(),
+                        .ok_or_else(|| {
+                            Error::with(FromEventError::Interface(InterfaceError::MappingNotFound), "from event")
+                                .set_ctx(format!("for {INTERFACE}{path}"))
                         })?;
 
                     match position {

@@ -18,67 +18,68 @@
 
 //! Errors returned by the MQTT connection
 
-use rumqttc::{ClientError, TokenError};
-use tokio::time::error::Elapsed;
+use std::fmt::Display;
 
-use super::connection::ConnError;
-use super::{PairingError, PayloadError};
-use crate::store::error::StoreError;
-use crate::transport::mqtt::topic::TopicError;
+use crate::properties::PurgePropError;
+
+use super::{PairingApiError, PayloadError};
 
 /// Errors raised during construction of the [`Mqtt`](super::Mqtt) struct
 #[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MqttError {
+    /// Connection error
+    Connection,
     /// Error while pairing with Astarte
-    #[error("couldn't pair with Astarte")]
-    Pairing(#[from] PairingError),
-    /// Error while loading the property for the session data.
-    #[error("Error while loading session data to perform the mqtt connection: {0}")]
-    PropLoad(#[from] StoreError),
-    /// Failed to subscribe to topic
-    #[error["Couldn't subscribe to topic"]]
-    Subscribe(#[source] ClientError),
-    /// Failed to unsubscribe to topic
-    #[error["Couldn't unsubscribe to topic"]]
-    Unsubscribe(#[source] ClientError),
-    /// Failed to publish on topic
-    #[error("Couldn't publish on topic {ctx}")]
-    Publish {
-        /// The topic we tried to publish on.
-        ctx: &'static str,
-        /// Reason why the publish failed.
-        #[source]
-        backtrace: ClientError,
-    },
+    PairingApi(PairingApiError),
+    /// Couldn't parse purge property payload
+    PurgeProp(PurgePropError),
     /// Errors that can occur handling the payload.
-    #[error("couldn't process payload")]
-    Payload(#[from] PayloadError),
+    Payload(PayloadError),
+    /// Couldn't pair device.
+    ///
+    /// This is a general error when the device is paired via the old API or FDO.
+    DevicePairing,
+    /// Failed to subscribe to topic
+    Subscribe,
+    /// Failed to unsubscribe to topic
+    Unsubscribe,
+    /// Failed to publish on topic
+    Publish,
     /// Couldn't parse the topic
-    #[error("couldn't parse the topic")]
-    Topic(#[from] TopicError),
+    Topic,
     /// Couldn't send the disconnect
-    #[error("couldn't send the disconnect")]
-    Disconnect(#[source] ClientError),
+    Disconnect,
     /// Token error while waiting for ack
-    #[error("token error while waiting for ack")]
-    PubAckToken(#[source] TokenError),
+    PubAckToken,
     /// The client is currently disconnected
-    #[error("no client, connection with the server was not established")]
     NoClient,
     /// Timeout reached
-    #[error("the configured timeout was reached {0}")]
-    Timeout(Elapsed),
-    /// Connection error
-    #[error("connection error")]
-    Connection(#[from] ConnError),
+    Timeout,
+    /// Couldn't join task
+    Task,
 }
 
-impl MqttError {
-    pub(crate) const fn publish(ctx: &'static str, error: ClientError) -> Self {
-        Self::Publish {
-            ctx,
-            backtrace: error,
+impl Display for MqttError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MqttError::Connection => write!(f, "connection error"),
+            MqttError::PairingApi(error) => write!(f, "couldn't pair with Astarte {error}"),
+            MqttError::Payload(error) => write!(f, "couldn't process payload {error}"),
+            MqttError::PurgeProp(error) => write!(f, "couldn't purge properties {error}"),
+            MqttError::DevicePairing => write!(f, "couldn't pair the device"),
+            MqttError::Subscribe => write!(f, "couldn't subscribe to topic"),
+            MqttError::Unsubscribe => write!(f, "couldn't unsubscribe to topic"),
+            MqttError::Publish => write!(f, "couldn't publish on topic"),
+            MqttError::Topic => write!(f, "couldn't parse the topic"),
+            MqttError::Disconnect => write!(f, "disconnect error"),
+            MqttError::PubAckToken => write!(f, "token error while waiting for ack"),
+            MqttError::NoClient => write!(
+                f,
+                "no client, connection with the server was not established"
+            ),
+            MqttError::Timeout => write!(f, "the configured timeout was reached"),
+            MqttError::Task => write!(f, "couldn't join task"),
         }
     }
 }
