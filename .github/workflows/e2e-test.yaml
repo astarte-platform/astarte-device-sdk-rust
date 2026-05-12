@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: Create Astarte Cluster
         id: astarte
-        uses: astarte-platform/astarte-cluster-action@v2.0.0-alpha.0
+        uses: astarte-platform/astarte-cluster-action@v2
         with:
           astarte_version: 1.3.0
       - uses: actions/checkout@v6
