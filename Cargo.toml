@@ -199,7 +199,7 @@ rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
 astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
-astarte-interfaces = "0.1.1"
+astarte-interfaces = "0.2.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
 async-channel = "2.0.0"
@@ -254,3 +254,6 @@ url = "2.4.0"
 uuid = "1.1.2"
 webpki-roots = "1.0.0"
 x509-parser = "0.18.0"
+
+[patch.crates-io]
+astarte-interfaces = { git = "https://github.com/joshuachp/astarte-interfaces-rust", rev = "03eab133fb13b88607884cbf6eab3f05233a9fe0" }
