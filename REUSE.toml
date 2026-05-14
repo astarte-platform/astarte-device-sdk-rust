@@ -1,6 +1,6 @@
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -54,4 +54,10 @@ SPDX-License-Identifier = "CC0-1.0"
 path = ["assets/logos/*"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 SECO Mind Srl"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["**/*.snap"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 SECO Mind Srl"
 SPDX-License-Identifier = "Apache-2.0"

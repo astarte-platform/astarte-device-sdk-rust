@@ -1,0 +1,7 @@
+---
+source: astarte-test-utils/src/lib.rs
+expression: "Hexdump(\"42\".as_bytes())"
+---
+Length: 2 (0x2) bytes
+0000: | 0011 0100 | (0x34) '4'
+0001: | 0011 0010 | (0x32) '2'

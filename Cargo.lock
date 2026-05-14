@@ -190,8 +190,8 @@ dependencies = [
  "astarte-interfaces",
  "astarte-message-hub-proto",
  "astarte-message-hub-proto-mock",
+ "astarte-test-utils",
  "async-channel",
- "async-trait",
  "aws-lc-rs",
  "base64",
  "bson",
@@ -205,6 +205,7 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
+ "insta",
  "itertools 0.14.0",
  "mime",
  "mockall",
@@ -275,9 +276,9 @@ dependencies = [
 
 [[package]]
 name = "astarte-interfaces"
-version = "0.1.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45bcdb5d3a2f2883e0958b78c2c6ba16c137de8ef2cc3887445af57f4f157fa5"
+checksum = "0f8b7a2a5a2e54f865ebe5ca93ee3efd41dea73f7eb0b5e0802f5ced63a8cf9d"
 dependencies = [
  "cfg-if",
  "regex",
@@ -313,6 +314,13 @@ dependencies = [
  "astarte-message-hub-proto",
  "mockall",
  "tonic",
+]
+
+[[package]]
+name = "astarte-test-utils"
+version = "0.13.0"
+dependencies = [
+ "insta",
 ]
 
 [[package]]
@@ -802,6 +810,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1078,6 +1097,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "encoding_rs"
@@ -1790,6 +1815,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "insta"
+version = "1.47.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4a6248eb93a4401ed2f37dfe8ea592d3cf05b7cf4f8efa867b6895af7e094e"
+dependencies = [
+ "console",
+ "once_cell",
+ "similar",
+ "tempfile",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2330,18 +2367,18 @@ dependencies = [
 
 [[package]]
 name = "pin-project"
-version = "1.1.12"
+version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbf0d9e68100b3a7989b4901972f265cd542e560a3a8a724e1e20322f4d06ce9"
+checksum = "2466b2336ed02bcdca6b294417127b90ec92038d1d5c4fbeac971a922e0e0924"
 dependencies = [
  "pin-project-internal",
 ]
 
 [[package]]
 name = "pin-project-internal"
-version = "1.1.12"
+version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a990e22f43e84855daf260dded30524ef4a9021cc7541c26540500a50b624389"
+checksum = "c96395f0a926bc13b1c17622aaddda1ecb55d49c8f1bf9777e4d877800a43f8b"
 dependencies = [
  "proc-macro2",
  "quote",
