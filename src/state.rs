@@ -18,6 +18,8 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::Ordering;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -39,6 +41,8 @@ pub struct SharedState {
     pub(crate) retention_ctx: retention::Context,
     pub(crate) status: RwLock<ConnStatus>,
     pub(crate) cert_expiry: RwLock<Option<DateTime<Utc>>>,
+    /// Status of the device, whether it's paired to Astarte
+    pub(crate) device_status: AtomicU8,
 }
 
 impl SharedState {
@@ -54,6 +58,7 @@ impl SharedState {
             retention_ctx: retention::Context::new(),
             status: RwLock::new(ConnStatus::default()),
             cert_expiry: RwLock::new(None),
+            device_status: AtomicU8::new(DeviceStatus::Unknown.into()),
         }
     }
 
@@ -67,6 +72,16 @@ impl SharedState {
     /// Gets the config for the retention
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub(crate) fn set_device_status(&self, paired: bool) {
+        let status = if paired {
+            DeviceStatus::Paired
+        } else {
+            DeviceStatus::Unpaired
+        };
+
+        self.device_status.store(status.into(), Ordering::Release);
     }
 }
 
@@ -97,6 +112,21 @@ impl ClientState {
 
     pub(crate) async fn cert_expiry(&self) -> Option<DateTime<Utc>> {
         *self.0.cert_expiry.read().await
+    }
+
+    pub(crate) fn is_device_paired(&self) -> bool {
+        let value = DeviceStatus::from(self.0.device_status.load(Ordering::Acquire));
+
+        debug_assert_ne!(
+            value,
+            DeviceStatus::Unknown,
+            "the unknown status should be set only in the builder"
+        );
+
+        match value {
+            DeviceStatus::Unknown | DeviceStatus::Unpaired => false,
+            DeviceStatus::Paired => true,
+        }
     }
 }
 
@@ -152,11 +182,46 @@ impl Display for ConnStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub(crate) enum DeviceStatus {
+    Unknown = 0,
+    Unpaired = 1,
+    Paired = 2,
+}
+
+impl Display for DeviceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceStatus::Unknown => write!(f, "Unknown"),
+            DeviceStatus::Unpaired => write!(f, "Unpaired"),
+            DeviceStatus::Paired => write!(f, "Paired"),
+        }
+    }
+}
+
+impl From<u8> for DeviceStatus {
+    fn from(value: u8) -> Self {
+        match value {
+            0 | 3.. => DeviceStatus::Unknown,
+            1 => DeviceStatus::Unpaired,
+            2 => DeviceStatus::Paired,
+        }
+    }
+}
+
+impl From<DeviceStatus> for u8 {
+    fn from(value: DeviceStatus) -> Self {
+        value as u8
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     impl ConnectionState {
         pub(crate) fn retention_ctx(&self) -> &retention::Context {
@@ -168,5 +233,26 @@ mod tests {
     fn default_connection_state() {
         // Must start disconnected
         assert_eq!(ConnStatus::default(), ConnStatus::Disconnected)
+    }
+
+    #[rstest]
+    #[case(0, DeviceStatus::Unknown)]
+    #[case(3, DeviceStatus::Unknown)]
+    #[case(1, DeviceStatus::Unpaired)]
+    #[case(2, DeviceStatus::Paired)]
+    fn device_status_from_u8(#[case] value: u8, #[case] exp: DeviceStatus) {
+        let res = DeviceStatus::from(value);
+
+        assert_eq!(res, exp);
+    }
+
+    #[rstest]
+    #[case(DeviceStatus::Unknown, 0)]
+    #[case(DeviceStatus::Unpaired, 1)]
+    #[case(DeviceStatus::Paired, 2)]
+    fn device_status_into_u8(#[case] value: DeviceStatus, #[case] exp: u8) {
+        let res = u8::from(value);
+
+        assert_eq!(res, exp);
     }
 }

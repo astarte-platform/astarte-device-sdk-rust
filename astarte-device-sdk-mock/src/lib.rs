@@ -22,7 +22,7 @@ use std::{future::Future, path::Path};
 
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::astarte_interfaces::Interface;
-use astarte_device_sdk::client::{ClientDisconnect, RecvError};
+use astarte_device_sdk::client::{ClientConnection, RecvError};
 use astarte_device_sdk::properties::PropAccess;
 use astarte_device_sdk::store::StoredProp;
 use astarte_device_sdk::transport::Connection;
@@ -164,8 +164,10 @@ mock! {
         async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
     }
 
-    impl<C: Connection> ClientDisconnect for DeviceClient<C> {
+    impl<C: Connection> ClientConnection for DeviceClient<C> {
         async fn disconnect(&mut self) -> Result<(), Error>;
+
+        fn is_paired(&self) -> bool;
     }
 }
 

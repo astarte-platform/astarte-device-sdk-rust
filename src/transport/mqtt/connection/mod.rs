@@ -121,7 +121,7 @@ impl ConnError {
 #[derive(Debug)]
 pub(crate) struct MqttState<P> {
     /// The device is disconnected from Astarte, it will need to recreate the connection.
-    pairing: P,
+    pub(crate) pairing: P,
     state: State,
 }
 
@@ -210,6 +210,9 @@ impl<P> MqttState<P> {
 
             ConnError::Pairing
         })?;
+
+        // FIXME: Not sure if this is the best place to do it
+        ctx.state.set_device_status(true);
 
         let connection = disconnected.connect(ctx, &cfg).await?;
 

@@ -123,6 +123,9 @@ pub enum BuilderError {
     /// Couldn't set the maximum number of items in the store
     #[error("couldn't set the maximum number of items in the store")]
     Retention(#[from] RetentionError),
+    /// Couldn't set the maximum number of items in the store
+    #[error("couldn't check if the device is already paired")]
+    PairingStatus(#[from] std::io::Error),
 }
 
 /// Configuration options and parameters for the connection.
@@ -470,6 +473,15 @@ where
             store,
         } = self.connection_config.connect(config).await?;
 
+        let paired = connection
+            .is_paired()
+            .await
+            .map_err(BuilderError::PairingStatus)?;
+
+        debug!(paired, "device pairing status");
+
+        state.set_device_status(paired);
+
         let (client_state, connection_state) = state.split();
 
         let client = DeviceClient::new(
@@ -562,6 +574,7 @@ where
 mod test {
     use std::time::Duration;
 
+    use futures::FutureExt;
     use mockall::Sequence;
     use tempfile::TempDir;
 
@@ -632,8 +645,12 @@ mod test {
                 let mut seq = Sequence::new();
                 sender.expect_clone().once().in_sequence(&mut seq).returning(MockSender::new);
 
+                let mut connection = MockCon::new();
+
+                connection.expect_is_paired().with().returning(|| futures::future::ok(true).boxed());
+
                 Ok(DeviceTransport {
-                    connection: MockCon::new(),
+                    connection,
                     sender,
                     store: StoreWrapper::new(config.store),
                 })

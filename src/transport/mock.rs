@@ -54,6 +54,9 @@ mock! {
     impl<S: StoreCapabilities> Connection for Con<S> {
         type Sender = MockSender;
         type Store = S;
+
+        fn is_paired(&self) -> impl Future<Output = Result<bool, std::io::Error>> + Send {
+        }
     }
 
     impl<S: StoreCapabilities> Receive for Con<S> {

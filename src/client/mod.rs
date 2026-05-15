@@ -342,10 +342,15 @@ pub trait Client: Clone {
     fn recv(&self) -> impl Future<Output = Result<DeviceEvent, RecvError>> + Send;
 }
 
-/// A trait representing the behavior of an Astarte device client to disconnect itself from Astarte.
-pub trait ClientDisconnect {
+/// Connection of the Client.
+///
+/// Manages introspects the connection and device status.
+pub trait ClientConnection {
     /// Cleanly disconnects the client consuming it.
     fn disconnect(&mut self) -> impl Future<Output = Result<(), Error>> + Send;
+
+    /// Check if the client is already paired.
+    fn is_paired(&self) -> bool;
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -654,7 +659,7 @@ where
     }
 }
 
-impl<C> ClientDisconnect for DeviceClient<C>
+impl<C> ClientConnection for DeviceClient<C>
 where
     C: Connection,
     C::Sender: Disconnect,
@@ -675,6 +680,10 @@ where
         }
 
         Ok(())
+    }
+
+    fn is_paired(&self) -> bool {
+        self.state.is_device_paired()
     }
 }
 
