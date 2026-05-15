@@ -16,6 +16,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#![expect(clippy::result_large_err)]
+
 use std::{future::Future, path::Path};
 
 use astarte_device_sdk::aggregate::AstarteObject;

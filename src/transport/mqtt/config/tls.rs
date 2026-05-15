@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 SECO Mind Srl
+// Copyright 2024, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,11 +30,9 @@ use rustls::{
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::{
-    error::Report,
-    logging::security::{SecurityEvent, notify_security_event},
-    transport::mqtt::PairingError,
-};
+use crate::error::Report;
+use crate::logging::security::{SecurityEvent, notify_security_event};
+use crate::pairing::api::PairingError;
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
 
@@ -179,13 +177,16 @@ impl ClientAuth {
             .map_err(PairingError::Tls)
     }
 
-    /// verify if the certificate will be expired after the specified duration
-    /// if the certificate can't be read this method returns None
-    pub(crate) fn parse_validity_not_after(&self) -> Option<DateTime<Utc>> {
+    /// Parses the X.509 Not After field of a cert.
+    ///
+    /// Verify if the certificate will be expired after the specified duration
+    /// if the certificate can't be read this method returns None.
+    pub(crate) fn validity_not_after(&self) -> Option<DateTime<Utc>> {
         let parsed = match x509_parser::parse_x509_certificate(&self.der) {
             Ok((_remaining, cert)) => cert,
             Err(e) => {
-                warn!(error=%Report::new(e), "parsing certificate error, assume it is not about to expire");
+                error!(error=%Report::new(e), "parsing certificate error, assume it is not about to expire");
+
                 return None;
             }
         };
@@ -319,7 +320,8 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
 pub(crate) mod tests {
     use tempfile::TempDir;
 
-    use crate::transport::mqtt::{crypto::Bundle, pairing::tests::self_sign_csr_to_pem};
+    use crate::pairing::api::client::tests::self_sign_csr_to_pem;
+    use crate::transport::mqtt::crypto::Bundle;
 
     use super::*;
 

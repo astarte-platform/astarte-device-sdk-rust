@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -63,13 +63,6 @@ pub enum UserValidationError {
     /// The path provided is invalid for the object interface.
     #[error("invalid path {path} for Object Aggregate {interface}")]
     ObjectPath { interface: String, path: String },
-    /// Missing mapping in the object data
-    #[error("the data sent for the object {interface}{path} is missing {missing} mappings")]
-    ObjectMissingMappings {
-        interface: String,
-        path: String,
-        missing: usize,
-    },
     /// Trying to send data on a mapping with a different type
     #[error(
         "mismatching type while sending data on {interface}{path}, expected {expected} but got {got}"
@@ -181,15 +174,6 @@ impl ValidatedObject {
             &timestamp,
             interface.explicit_timestamp(),
         )?;
-
-        if data.len() < interface.mappings_len() {
-            // TODO: return the missing mappings
-            return Err(UserValidationError::ObjectMissingMappings {
-                interface: interface.interface_name().to_string(),
-                path: path.to_string(),
-                missing: interface.mappings_len().saturating_sub(data.len()),
-            });
-        }
 
         // Check that all the fields are valid
         data.iter().try_for_each(|(key, value)| {
@@ -460,13 +444,7 @@ mod tests {
 
         aggregate.remove("endpoint1").unwrap();
 
-        let err = ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now()))
-            .unwrap_err();
-
-        assert!(matches!(
-            err,
-            UserValidationError::ObjectMissingMappings { .. }
-        ))
+        ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now())).unwrap();
     }
 
     #[test]

@@ -16,10 +16,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Builder for the [`FdoConfig`]
+//! Builder for the [`FdoDi`]
 
 use std::marker::PhantomData;
-use std::path::Path;
 use std::time::Duration;
 
 use astarte_device_fdo::Crypto;
@@ -29,19 +28,11 @@ use url::Url;
 
 use crate::transport::mqtt::DEFAULT_KEEP_ALIVE;
 
-use super::FdoConfig;
-
-/// You can call [`FdoConfigBuilder::set_storage`].
-#[derive(Debug)]
-pub struct AddStorageDir;
+use super::FdoDi;
 
 /// You can call [`FdoConfigBuilder::set_manufacturing_url`].
 #[derive(Debug)]
 pub struct AddManufacturingUrl;
-
-/// You can call [`FdoConfigBuilder::set_tls`].
-#[derive(Debug)]
-pub struct AddTls;
 
 /// You can call [`FdoConfigBuilder::set_crypto`].
 #[derive(Debug)]
@@ -57,8 +48,6 @@ pub struct FdoConfigBuilder<'a, C, T> {
     model_no: &'a str,
     serial_no: &'a str,
     crypto: Option<C>,
-    storage_dir: Option<&'a Path>,
-    tls: Option<&'a rustls::ClientConfig>,
     manufacturing_url: Option<&'a Url>,
     keepalive: Duration,
     insecure_ssl: bool,
@@ -66,16 +55,14 @@ pub struct FdoConfigBuilder<'a, C, T> {
     _mark: PhantomData<T>,
 }
 
-impl<'a, C> FdoConfigBuilder<'a, C, AddStorageDir> {
+impl<'a, C> FdoConfigBuilder<'a, C, AddManufacturingUrl> {
     pub(crate) fn new(model_no: &'a str, serial_no: &'a str) -> Self {
         FdoConfigBuilder {
             model_no,
             serial_no,
             crypto: None,
-            storage_dir: None,
-            tls: None,
             manufacturing_url: None,
-            keepalive: Duration::from_secs(DEFAULT_KEEP_ALIVE),
+            keepalive: DEFAULT_KEEP_ALIVE,
             insecure_ssl: false,
             _mark: PhantomData,
         }
@@ -88,8 +75,6 @@ impl<'a, C, T> FdoConfigBuilder<'a, C, T> {
             model_no: self.model_no,
             serial_no: self.serial_no,
             crypto: self.crypto,
-            storage_dir: self.storage_dir,
-            tls: self.tls,
             manufacturing_url: self.manufacturing_url,
             keepalive: self.keepalive,
             insecure_ssl: self.insecure_ssl,
@@ -112,28 +97,10 @@ impl<'a, C, T> FdoConfigBuilder<'a, C, T> {
     }
 }
 
-impl<'a, C> FdoConfigBuilder<'a, C, AddStorageDir> {
-    /// Configure the storage directory
-    pub fn set_storage(mut self, path: &'a Path) -> FdoConfigBuilder<'a, C, AddManufacturingUrl> {
-        self.storage_dir = Some(path);
-
-        self.bind()
-    }
-}
-
 impl<'a, C> FdoConfigBuilder<'a, C, AddManufacturingUrl> {
     /// Sets the manufacturing url
-    pub fn set_manufacturing_url(mut self, url: &'a Url) -> FdoConfigBuilder<'a, C, AddTls> {
+    pub fn set_manufacturing_url(mut self, url: &'a Url) -> FdoConfigBuilder<'a, C, AddCrypto> {
         self.manufacturing_url = Some(url);
-
-        self.bind()
-    }
-}
-
-impl<'a, C> FdoConfigBuilder<'a, C, AddTls> {
-    /// Sets the TLS configuration.
-    pub fn set_tls(mut self, tls: &'a rustls::ClientConfig) -> FdoConfigBuilder<'a, C, AddCrypto> {
-        self.tls = Some(tls);
 
         self.bind()
     }
@@ -153,7 +120,7 @@ impl<'a, C> FdoConfigBuilder<'a, C, AddCrypto> {
 
 impl<'a, C> FdoConfigBuilder<'a, C, Build> {
     /// Creates the FDO configuration
-    pub fn build(self) -> Result<FdoConfig<'a, C>, Error>
+    pub fn build(self) -> Result<FdoDi<'a, C>, Error>
     where
         C: Crypto,
     {
@@ -161,25 +128,17 @@ impl<'a, C> FdoConfigBuilder<'a, C, Build> {
             .manufacturing_url
             .ok_or(Error::new(ErrorKind::Invalid, "missing manufacturing url"))?
             .clone();
-        let tls = self
-            .tls
-            .ok_or(Error::new(ErrorKind::Invalid, "missing tls"))?;
-        let storage = self
-            .storage_dir
-            .ok_or(Error::new(ErrorKind::Invalid, "missing storage dir"))?;
 
         let crypto = self
             .crypto
             .ok_or(Error::new(ErrorKind::Invalid, "missing crypto"))?;
 
-        Ok(FdoConfig {
+        Ok(FdoDi {
             model_no: self.model_no,
             serial_no: self.serial_no,
             manufacturing_url,
             keepalive: self.keepalive,
             insecure_ssl: self.insecure_ssl,
-            tls,
-            storage,
             crypto,
         })
     }

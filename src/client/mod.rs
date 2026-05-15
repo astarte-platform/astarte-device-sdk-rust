@@ -24,30 +24,22 @@ use astarte_interfaces::{MappingPath, interface::Retention, mapping::path::Mappi
 use chrono::{DateTime, Utc};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{
-    Error,
-    event::DeviceEvent,
-    state::{ClientState, ConnStatus},
-    store::wrapper::StoreWrapper,
-    types::AstarteData,
-    validate::{ValidatedIndividual, ValidatedObject},
+use crate::Error;
+use crate::aggregate::AstarteObject;
+use crate::error::{AggregationError, DynError, InterfaceTypeError};
+use crate::event::DeviceEvent;
+use crate::logging::security::{SecurityEvent, notify_security_event};
+use crate::pairing::Pairing;
+use crate::retention::memory::{ItemValue, VolatileItemError};
+use crate::retention::{
+    Id, RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
 };
-use crate::{
-    aggregate::AstarteObject,
-    error::{AggregationError, InterfaceTypeError},
-    logging::security::{SecurityEvent, notify_security_event},
-    retention::{
-        Id, RetentionId, StoredRetention, StoredRetentionExt,
-        memory::{ItemValue, VolatileItemError},
-        stored_mark_unsent, volatile_mark_unsent,
-    },
-    store::StoreCapabilities,
-    transport::{
-        Connection, Publish,
-        mqtt::{Mqtt, error::MqttError},
-    },
-};
-use crate::{error::DynError, transport::Disconnect};
+use crate::state::{ClientState, ConnStatus};
+use crate::store::{StoreCapabilities, wrapper::StoreWrapper};
+use crate::transport::mqtt::{Mqtt, error::MqttError};
+use crate::transport::{Connection, Disconnect, Publish};
+use crate::types::AstarteData;
+use crate::validate::{ValidatedIndividual, ValidatedObject};
 
 mod individual;
 mod introspection;
@@ -532,9 +524,10 @@ where
     }
 }
 
-impl<S> DeviceClient<Mqtt<S>>
+impl<S, P> DeviceClient<Mqtt<S, P>>
 where
     S: StoreCapabilities,
+    P: Pairing,
 {
     /// Retrieve the expiry (not_after) timestamp of the current certificate
     pub async fn get_cert_expiry(&self) -> Option<DateTime<Utc>> {
