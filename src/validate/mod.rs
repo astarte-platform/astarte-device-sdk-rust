@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,6 +33,10 @@ use crate::{
     types::AstarteData,
 };
 
+use self::object::Iter;
+
+mod object;
+
 /// Errors returned while validating a send payload
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
@@ -63,13 +67,6 @@ pub enum UserValidationError {
     /// The path provided is invalid for the object interface.
     #[error("invalid path {path} for Object Aggregate {interface}")]
     ObjectPath { interface: String, path: String },
-    /// Missing mapping in the object data
-    #[error("the data sent for the object {interface}{path} is missing {missing} mappings")]
-    ObjectMissingMappings {
-        interface: String,
-        path: String,
-        missing: usize,
-    },
     /// Trying to send data on a mapping with a different type
     #[error(
         "mismatching type while sending data on {interface}{path}, expected {expected} but got {got}"
@@ -90,6 +87,8 @@ pub enum UserValidationError {
         path: String,
         key: String,
     },
+    #[error("missing required object mapping {interface}{endpoint}")]
+    ObjectMappingRequired { interface: String, endpoint: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,7 +164,7 @@ impl ValidatedObject {
     pub(crate) fn validate(
         interface: &DatastreamObject,
         path: &MappingPath<'_>,
-        data: AstarteObject,
+        mut data: AstarteObject,
         timestamp: Option<Timestamp>,
     ) -> Result<ValidatedObject, UserValidationError> {
         if !interface.is_object_path(path) {
@@ -182,38 +181,9 @@ impl ValidatedObject {
             interface.explicit_timestamp(),
         )?;
 
-        if data.len() < interface.mappings_len() {
-            // TODO: return the missing mappings
-            return Err(UserValidationError::ObjectMissingMappings {
-                interface: interface.interface_name().to_string(),
-                path: path.to_string(),
-                missing: interface.mappings_len().saturating_sub(data.len()),
-            });
-        }
+        data.inner.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
 
-        // Check that all the fields are valid
-        data.iter().try_for_each(|(key, value)| {
-            let Some(mapping) = interface.mapping(key) else {
-                return Err(UserValidationError::ObjectInvalidMapping {
-                    interface: interface.interface_name().to_string(),
-                    path: path.to_string(),
-                    key: key.to_string(),
-                });
-            };
-
-            if !value.eq_mapping_type(mapping.mapping_type()) {
-                return Err(UserValidationError::MappingType {
-                    interface: interface.interface_name().to_string(),
-                    path: format!("{path}/{key}"),
-                    expected: mapping.mapping_type().to_string(),
-                    got: value.display_type().to_string(),
-                });
-            }
-
-            trace!("valid object field {path} {}", value.display_type());
-
-            Ok(())
-        })?;
+        Self::check_mappings(interface, path, &data)?;
 
         Ok(ValidatedObject {
             interface: interface.interface_name().to_string(),
@@ -224,6 +194,58 @@ impl ValidatedObject {
             data,
             timestamp,
         })
+    }
+
+    fn check_mappings(
+        interface: &DatastreamObject,
+        path: &MappingPath<'_>,
+        data: &AstarteObject,
+    ) -> Result<(), UserValidationError> {
+        debug_assert!(data.inner.is_sorted_by(|(a, _), (b, _)| a <= b));
+        debug_assert!(
+            interface
+                .iter_mappings()
+                .is_sorted_by(|a, b| a.endpoint() < b.endpoint())
+        );
+
+        Iter::new(data.iter(), interface.iter_mappings()).try_for_each(|item| {
+            match item {
+                (Some((key, value)), Some(mapping)) => {
+                    if !value.eq_mapping_type(mapping.mapping_type()) {
+                        return Err(UserValidationError::MappingType {
+                            interface: interface.interface_name().to_string(),
+                            path: format!("{path}/{key}"),
+                            expected: mapping.mapping_type().to_string(),
+                            got: value.display_type().to_string(),
+                        });
+                    }
+
+                    trace!("valid object field {path} {}", value.display_type());
+                }
+                (None, Some(mapping)) => {
+                    if mapping.required() {
+                        return Err(UserValidationError::ObjectMappingRequired {
+                            interface: interface.interface_name().to_string(),
+                            endpoint: mapping.endpoint().to_string(),
+                        });
+                    }
+                }
+                (Some((key, _)), None) => {
+                    return Err(UserValidationError::ObjectInvalidMapping {
+                        interface: interface.interface_name().to_string(),
+                        path: path.to_string(),
+                        key: key.to_string(),
+                    });
+                }
+                (None, None) => {
+                    // unreachable
+                }
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
     }
 }
 
@@ -343,11 +365,11 @@ mod tests {
     use chrono::Utc;
 
     const DEVICE_DATASTREAM: &str = include_str!(
-        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
+        "../../e2e-test/interfaces/org.astarte-platform.rust.e2etest.DeviceDatastream.json"
     );
 
     const SERVER_DATASTREAM: &str = include_str!(
-        "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
+        "../../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.ServerDatastream.json"
     );
 
     fn initialize_aggregate() -> (DatastreamObject, AstarteObject) {
@@ -460,13 +482,7 @@ mod tests {
 
         aggregate.remove("endpoint1").unwrap();
 
-        let err = ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now()))
-            .unwrap_err();
-
-        assert!(matches!(
-            err,
-            UserValidationError::ObjectMissingMappings { .. }
-        ))
+        ValidatedObject::validate(&object, &path, aggregate.clone(), Some(Utc::now())).unwrap();
     }
 
     #[test]

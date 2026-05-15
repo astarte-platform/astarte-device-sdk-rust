@@ -32,7 +32,7 @@ use crate::retention::{
 use crate::state::{ConnStatus, ConnectionState};
 use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoreCapabilities};
-use crate::transport::{AttemptStatus, Connection, Publish, Receive, Reconnect};
+use crate::transport::{AttemptStatus, Connection, Publish, Receive, TransportError};
 
 use super::DeviceConnection;
 
@@ -69,7 +69,7 @@ where
     /// Reconnect the connection and resends all retention publishes
     pub(crate) async fn reconnect_and_resend(&mut self) -> Result<ControlFlow<()>, Error>
     where
-        C: Reconnect + Receive,
+        C: Receive,
         C::Sender: Publish + 'static,
     {
         trace!("reconnecting and resending values");
@@ -302,7 +302,7 @@ where
     #[instrument(skip(self))]
     async fn reconnect(&mut self) -> Result<ControlFlow<()>, Error>
     where
-        C: Reconnect,
+        C: Receive,
     {
         trace!("start reconnection");
 
@@ -336,12 +336,47 @@ where
         let session;
 
         loop {
-            let attempt_status = self.connection.reconnect(&interfaces).await?;
+            let attempt_status = match self.connection.reconnect(&interfaces).await {
+                Ok(attempt) => attempt,
+                Err(TransportError::Recv(err)) => {
+                    self.send_to_clients(Err(err)).await.map_err(|send_err| {
+                        if let Err(err) = send_err.into_inner() {
+                            error!(error = %Report::new(err), "failed to send receive error");
+                        }
+
+                        Error::Disconnected
+                    })?;
+
+                    continue;
+                }
+                Err(TransportError::Transport(err)) => {
+                    return Err(err);
+                }
+            };
 
             match attempt_status {
                 AttemptStatus::Connected { session_present } => {
                     session = session_present;
                     break;
+                }
+                AttemptStatus::ReceivedEvent(event) => {
+                    match self.handle_and_send_to_client(event).await {
+                        Ok(()) => (),
+                        Err(TransportError::Transport(err)) => {
+                            return Err(err);
+                        }
+                        Err(TransportError::Recv(err)) => {
+                            self.send_to_clients(Err(err))
+                                .await
+                                .map_err(|send_err| {
+                                    if let Err(err) = send_err.into_inner() {
+                                        error!(error = %Report::new(err), "failed to send receive error");
+                                    }
+
+                                    Error::Disconnected
+                                })?;
+                        }
+                    }
                 }
                 AttemptStatus::Disconnected => {
                     let timeout = self.backoff.next();

@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -153,20 +153,20 @@ pub(crate) mod security {
         }
     }
 
-    pub(crate) fn notify_tls_error(err: &rumqttc::TlsError) {
+    pub(crate) fn notify_tls_error(err: &rustls::Error) {
         notify_security_event(SecurityEvent::AuthenticationErrorReceived);
 
-        if let rumqttc::TlsError::TLS(tls_error) = err {
-            match tls_error {
-                rustls::Error::InvalidMessage(
-                    rustls::InvalidMessage::UnsupportedCurveType
-                    | rustls::InvalidMessage::UnsupportedKeyExchangeAlgorithm(..),
-                ) => notify_security_event(SecurityEvent::AlarmAlgorithmNotSupported),
-                rustls::Error::InvalidCertificate(..) => {
-                    notify_security_event(SecurityEvent::SslConnectionFailedCertificateValidation)
-                }
-                _ => (),
+        match err {
+            rustls::Error::InvalidMessage(
+                rustls::InvalidMessage::UnsupportedCurveType
+                | rustls::InvalidMessage::UnsupportedKeyExchangeAlgorithm(..),
+            ) => {
+                notify_security_event(SecurityEvent::AlarmAlgorithmNotSupported);
             }
+            rustls::Error::InvalidCertificate(..) => {
+                notify_security_event(SecurityEvent::SslConnectionFailedCertificateValidation);
+            }
+            _ => (),
         }
     }
 }
