@@ -52,7 +52,7 @@ use self::convert::{
 };
 use self::store::GrpcStore;
 use super::{
-    Connection, Disconnect, Publish, Receive, ReceivedEvent, Reconnect, Register, TransportError,
+    Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError,
     ValidatedProperty,
 };
 use crate::aggregate::AstarteObject;
@@ -484,6 +484,31 @@ where
         }
     }
 
+    async fn reconnect(
+        &mut self,
+        interfaces: &Interfaces,
+    ) -> Result<AttemptStatus<Self::Payload>, TransportError> {
+        // try reattaching
+        let data = NodeData::try_from(interfaces)
+            .map_err(|error| TransportError::Transport(Error::Grpc(error)))?;
+
+        match Grpc::<S>::attach(&mut self.client, data.clone()).await {
+            Ok(stream) => {
+                self.stream = Some(SyncWrapper::new(stream));
+
+                Ok(AttemptStatus::Connected {
+                    session_present: false,
+                })
+            }
+            Err(err) => {
+                error!(error = %Report::new(err), "error while trying to reconnect");
+                self.stream = None;
+
+                Ok(AttemptStatus::Disconnected)
+            }
+        }
+    }
+
     fn deserialize_property(
         &self,
         mapping: &MappingRef<'_, Properties>,
@@ -561,32 +586,6 @@ where
         trace!("object received");
 
         Ok((data, timestamp))
-    }
-}
-
-impl<S> Reconnect for Grpc<S>
-where
-    S: PropertyStore,
-{
-    async fn reconnect(&mut self, interfaces: &Interfaces) -> Result<AttemptStatus, crate::Error> {
-        // try reattaching
-        let data = NodeData::try_from(interfaces)?;
-
-        match Grpc::<S>::attach(&mut self.client, data.clone()).await {
-            Ok(stream) => {
-                self.stream = Some(SyncWrapper::new(stream));
-
-                Ok(AttemptStatus::Connected {
-                    session_present: false,
-                })
-            }
-            Err(err) => {
-                error!(error = %Report::new(err), "error while trying to reconnect");
-                self.stream = None;
-
-                Ok(AttemptStatus::Disconnected)
-            }
-        }
     }
 }
 
