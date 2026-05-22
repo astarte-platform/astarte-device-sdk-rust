@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use astarte_device_sdk::transport::mqtt::registration::{RegisterDevice, register_device};
+use astarte_device_sdk::pairing::api::registration::{RegisterDevice, register_device};
 use clap::Parser;
 use rustls_platform_verifier::BuilderVerifierExt;
 use serde::{Deserialize, Serialize};

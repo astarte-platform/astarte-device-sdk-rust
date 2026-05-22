@@ -20,6 +20,7 @@ use std::env;
 use std::io::{IsTerminal, stdout};
 
 use astarte_device_sdk::DeviceClient;
+use astarte_device_sdk::pairing::api::PairingApi;
 use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Credential, Mqtt, MqttArgs};
 use clap::Parser;
@@ -48,7 +49,7 @@ pub(crate) mod utils;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 
-pub(crate) type AstarteClient = DeviceClient<Mqtt<SqliteStore>>;
+pub(crate) type AstarteClient = DeviceClient<Mqtt<SqliteStore, PairingApi>>;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {

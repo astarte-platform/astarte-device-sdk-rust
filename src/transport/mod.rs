@@ -164,6 +164,16 @@ pub(crate) trait Receive {
         &mut self,
     ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, TransportError>> + Send;
 
+    /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
+    /// [`Receive::next_event`] returns [`None`].
+    ///
+    /// It tries to reconnect once, if it succeed it will return true, otherwise it will return
+    /// false.
+    fn reconnect(
+        &mut self,
+        interfaces: &Interfaces,
+    ) -> impl Future<Output = Result<AttemptStatus<Self::Payload>, TransportError>> + Send;
+
     /// Deserializes a received payload to an property.
     fn deserialize_property(
         &self,
@@ -188,23 +198,11 @@ pub(crate) trait Receive {
 }
 
 /// Status of the connection after a reconnect attempt
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AttemptStatus {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttemptStatus<P> {
     Connected { session_present: bool },
+    ReceivedEvent(ReceivedEvent<P>),
     Disconnected,
-}
-
-/// Reconnect the device to Astarte.
-pub(crate) trait Reconnect {
-    /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
-    /// [`Receive::next_event`] returns [`None`].
-    ///
-    /// It tries to reconnect once, if it succeed it will return true, otherwise it will return
-    /// false.
-    fn reconnect(
-        &mut self,
-        interfaces: &Interfaces,
-    ) -> impl Future<Output = Result<AttemptStatus, crate::Error>> + Send;
 }
 
 pub(crate) trait Register {

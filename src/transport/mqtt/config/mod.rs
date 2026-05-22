@@ -18,45 +18,26 @@
 
 //! Configuration for the MQTT connection
 
-use rumqttc::{MqttOptions, NetworkOptions, Transport};
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt::{Debug, Display},
-    io,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
-use tokio::fs;
-use tracing::debug;
+use std::fmt::{Debug, Display};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use url::Url;
 
-use crate::{
-    builder::{BuildConfig, Config, ConnectionConfig, DEFAULT_REQUEST_TIMEOUT, DeviceTransport},
-    logging::security::{SecurityEvent, notify_security_event},
-    store::{StoreCapabilities, wrapper::StoreWrapper},
-    transport::mqtt::{
-        ClientId, config::transport::TransportProvider, connection::MqttConnection,
-        error::MqttError, retention::MqttRetention,
-    },
-};
+use crate::builder::{BuildConfig, ConnectionConfig, DEFAULT_REQUEST_TIMEOUT, DeviceTransport};
+use crate::store::{StoreCapabilities, wrapper::StoreWrapper};
+use crate::transport::mqtt::ClientId;
+use crate::transport::mqtt::config::transport::TransportProvider;
+use crate::transport::mqtt::error::MqttError;
+use crate::transport::mqtt::retention::MqttRetention;
 
-use self::tls::is_env_ignore_ssl;
+use super::connection::MqttState;
+use super::{Mqtt, MqttClient};
+use crate::pairing::api::{CERTIFICATE_FILE, PRIVATE_KEY_FILE, PairingApi};
 
-use super::{
-    Mqtt, MqttClient, PairingError,
-    pairing::{ApiClient, ClientArgs},
-};
-
-mod tls;
+pub(crate) mod tls;
 pub(crate) mod transport;
-
-/// File where the credential secret is stored
-pub const CREDENTIAL_FILE: &str = "credential";
-/// File where the certificate is stored in PEM format
-pub const CERTIFICATE_FILE: &str = "certificate.pem";
-/// File where the private key is stored in PEM format
-pub const PRIVATE_KEY_FILE: &str = "priv-key.der";
 
 /// Credentials for the [`Mqtt`] connection.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -143,12 +124,6 @@ pub struct MqttConfig {
     pub(crate) keepalive: Duration,
 }
 
-pub(crate) struct MqttTransportOptions {
-    pub(crate) mqtt_opts: MqttOptions,
-    pub(crate) net_opts: NetworkOptions,
-    pub(crate) provider: TransportProvider,
-}
-
 impl MqttConfig {
     /// Create a new instance of MqttConfig
     ///
@@ -201,182 +176,13 @@ impl MqttConfig {
 
         self
     }
-
-    /// Retrieves the credentials for the connection
-    async fn credentials(&mut self, config: &Config) -> Result<String, MqttError> {
-        // We need to clone to not return something owning a mutable reference to self
-        match &self.credential {
-            Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
-            Credential::ParingToken { pairing_token } => {
-                debug!("pairing token provided, retrieving credentials secret");
-
-                let Some(dir) = &config.writable_dir else {
-                    return Err(MqttError::NoStorePairingToken);
-                };
-
-                let secret = self
-                    .read_secret_or_register(config, dir, pairing_token)
-                    .await?;
-
-                self.credential = Credential::secret(secret.clone());
-
-                Ok(secret)
-            }
-        }
-    }
-
-    /// Register the device and stores the credentials secret in the given directory
-    async fn read_secret_or_register(
-        &self,
-        config: &Config,
-        store_dir: &Path,
-        pairing_token: &str,
-    ) -> Result<String, PairingError> {
-        let credential_file = store_dir.join(CREDENTIAL_FILE);
-
-        match fs::read_to_string(&credential_file).await {
-            Ok(secret) => return Ok(secret),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                debug!("no credential file {}", credential_file.display())
-            }
-            Err(err) => {
-                return Err(PairingError::ReadCredential {
-                    path: credential_file,
-                    backtrace: err,
-                });
-            }
-        }
-
-        let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
-
-        if insecure_ssl {
-            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
-        }
-
-        let tls = if insecure_ssl {
-            tls::insecure_tls_config_builder()?.with_no_client_auth()
-        } else {
-            let roots = tls::read_root_cert_store().await?;
-            tls::tls_config_builder(Arc::new(roots))?.with_no_client_auth()
-        };
-
-        let client = ApiClient::create(
-            ClientArgs {
-                realm: &self.realm,
-                device_id: &self.device_id,
-                pairing_url: &self.pairing_url,
-                token: pairing_token,
-            },
-            config,
-            tls,
-        )?;
-
-        let secret = client.register_device().await?;
-
-        // We can register the device multiple times with the same pairing token if the device
-        // hasn't connected. If the call to write the file fails, we will just re-register the
-        // device.
-        fs::write(&credential_file, &secret).await.map_err(|err| {
-            PairingError::WriteCredential {
-                path: credential_file,
-                backtrace: err,
-            }
-        })?;
-
-        Ok(secret)
-    }
-
-    /// Builds the options to connect to the broker
-    fn build_mqtt_opts(
-        &self,
-        transport: Transport,
-        broker_url: &Url,
-        timeout: Duration,
-    ) -> Result<(MqttOptions, NetworkOptions), PairingError> {
-        let client_id = format!("{}/{}", self.realm, self.device_id);
-
-        let host = broker_url
-            .host_str()
-            .ok_or_else(|| PairingError::Config("missing host in url".to_string()))?;
-        let port = broker_url
-            .port()
-            .ok_or_else(|| PairingError::Config("missing port in url".to_string()))?;
-
-        let mut mqtt_opts = MqttOptions::new(client_id, host, port);
-
-        let keep_alive = self.keepalive.as_secs();
-        let conn_timeout = timeout.as_secs();
-        if keep_alive >= conn_timeout {
-            return Err(PairingError::Config(format!(
-                "Keep alive ({keep_alive}s) should be less than the connection timeout ({conn_timeout}s)"
-            )));
-        }
-
-        let mut net_opts = NetworkOptions::new();
-        net_opts.set_connection_timeout(conn_timeout);
-
-        mqtt_opts.set_keep_alive(self.keepalive);
-
-        mqtt_opts.set_transport(transport);
-
-        // Set the clean_session since this is the first connection.
-        mqtt_opts.set_clean_session(true);
-
-        Ok((mqtt_opts, net_opts))
-    }
-
-    pub(crate) async fn try_create_transport(
-        &mut self,
-        config: &Config,
-    ) -> Result<MqttTransportOptions, MqttError> {
-        let secret = self.credentials(config).await?;
-
-        let pairing_url = self.pairing_url.clone();
-
-        let insecure_ssl = self.ignore_ssl_errors || is_env_ignore_ssl();
-
-        if insecure_ssl {
-            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
-        }
-
-        let provider = TransportProvider::configure(
-            pairing_url,
-            secret,
-            config.writable_dir.clone(),
-            insecure_ssl,
-        )
-        .await
-        .map_err(MqttError::Pairing)?;
-
-        let client = ApiClient::from_transport(config, &provider, &self.realm, &self.device_id)
-            .map_err(MqttError::Pairing)?;
-
-        let borker_url = client.get_broker_url().await.map_err(MqttError::Pairing)?;
-
-        let transport = provider
-            .transport(&client)
-            .await
-            .map_err(MqttError::Pairing)?;
-
-        let (mqtt_opts, net_opts) = self
-            .build_mqtt_opts(transport, &borker_url, config.connection_timeout)
-            .map_err(MqttError::Pairing)?;
-
-        debug!("{:?}", mqtt_opts);
-
-        Ok(MqttTransportOptions {
-            mqtt_opts,
-            net_opts,
-            provider,
-        })
-    }
 }
 
 impl<S> ConnectionConfig<S> for MqttConfig
 where
     S: StoreCapabilities,
 {
-    type Conn = Mqtt<Self::Store>;
+    type Conn = Mqtt<Self::Store, PairingApi>;
     type Store = S;
     type Err = MqttError;
 
@@ -387,34 +193,27 @@ where
         let BuildConfig { store, state } = config;
 
         let store_wrapper = StoreWrapper::new(store);
-        let client_id = ClientId {
-            device_id: self.device_id.clone(),
-            realm: self.realm.clone(),
-        };
 
         let (retention_tx, retention_rx) = async_channel::bounded(state.config.channel_size.get());
         let retention = MqttRetention::new(retention_rx);
 
-        let client = MqttClient::without_transport(
-            client_id.clone(),
-            retention_tx,
-            store_wrapper.clone(),
-            Arc::clone(&state),
-        );
+        let client = MqttClient::new(retention_tx, store_wrapper.clone(), Arc::clone(&state));
 
-        let connection = MqttConnection::without_transport(
-            self.clone(),
-            // NOTE pass client to connection so that the [`AsyncClient`] used by the clients can be updated.
-            Arc::clone(&client.client),
-        );
+        let provider =
+            TransportProvider::configure(state.config.writable_dir.clone(), self.ignore_ssl_errors)
+                .await
+                .map_err(MqttError::Pairing)?;
 
-        let connection = Mqtt::new(
-            client_id,
-            connection,
+        let mqtt_state = MqttState::new(PairingApi::new(self));
+
+        let connection = Mqtt {
+            connection: mqtt_state,
+            client_sender: Arc::clone(&client.sender),
+            provider,
             retention,
-            store_wrapper.clone(),
+            store: store_wrapper.clone(),
             state,
-        );
+        };
 
         Ok(DeviceTransport {
             sender: client,

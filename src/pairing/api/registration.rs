@@ -22,9 +22,11 @@ use base64::Engine;
 use reqwest::Url;
 use uuid::Uuid;
 
-use crate::{builder::Config, transport::mqtt::PairingError};
+use crate::builder::Config;
 
-use super::pairing::{ApiClient, ClientArgs};
+use crate::pairing::api::client::{ApiClient, ClientArgs};
+
+use super::PairingError;
 
 /// Arguments for the register device call
 pub struct RegisterDevice<'a> {

@@ -18,103 +18,21 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
-use std::{io, path::PathBuf};
-
+use http::header::CONTENT_TYPE;
 use http_body_util::{BodyExt, Limited};
 use mime::APPLICATION_JSON;
-use reqwest::{
-    Response, StatusCode, Url,
-    header::{CONTENT_TYPE, HeaderMap, HeaderValue},
-};
+use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use tracing::{error, instrument, trace};
 use url::ParseError;
 
-use crate::{
-    builder::Config,
-    logging::security::{SecurityEvent, notify_security_event},
-};
+use crate::builder::Config;
+use crate::logging::security::{SecurityEvent, notify_security_event};
 
-use super::{config::transport::TransportProvider, crypto::CryptoError};
+use crate::transport::mqtt::config::transport::TransportProvider;
 
-/// Error returned during pairing.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum PairingError {
-    /// Invalid credential secret.
-    #[error("invalid credentials secret")]
-    InvalidCredentials(#[source] io::Error),
-    /// Missing certificate credential.
-    #[error("missing certificate credential")]
-    MissingCredentials,
-    /// Couldn't parse the pairing URL.
-    #[error("invalid pairing URL")]
-    InvalidUrl(#[from] ParseError),
-    /// The pairing request failed.
-    #[error("error while sending or receiving request")]
-    Request(reqwest::Error),
-    /// The pairing request failed with a timeout (missing connection).
-    #[error("got a timeout or connection error")]
-    RequestNoNetwork(reqwest::Error),
-    /// Invalid credential secret
-    #[error("couldn't set bearer header, invalid credential secret")]
-    Header(#[from] reqwest::header::InvalidHeaderValue),
-    /// The API returned an error.
-    #[error("API returned an error code {status}")]
-    Api {
-        /// The status code of the response.
-        status: StatusCode,
-    },
-    /// Failed to generate the CSR.
-    #[error("crypto error")]
-    Crypto(#[from] CryptoError),
-    /// Couldn't configure the TLS store
-    #[error("failed to configure TLS")]
-    Tls(#[from] rustls::Error),
-    /// Invalid configuration.
-    #[error("configuration error, {0}")]
-    Config(String),
-    /// Couldn't read the credentials secret from the file
-    #[error("couldn't read credential secret from {path}")]
-    ReadCredential {
-        /// The path where the credential is stored.
-        path: PathBuf,
-        /// The reason why we couldn't read the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't read the certificate from the file
-    #[error("couldn't read certificate from {path}")]
-    ReadCertificate {
-        /// The path where the certificate is stored.
-        path: PathBuf,
-        /// The reason why we couldn't read the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't write the credentials secret to the file
-    #[error("couldn't write credential secret to {path}")]
-    WriteCredential {
-        /// The path where the credential is stored.
-        path: std::path::PathBuf,
-        /// The reason why we couldn't write the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't read native certificates
-    #[error("couldn't read native certificates")]
-    ReadNativeCerts(#[source] tokio::task::JoinError),
-}
-
-impl From<reqwest::Error> for PairingError {
-    fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() || err.is_request() {
-            PairingError::RequestNoNetwork(err)
-        } else {
-            PairingError::Request(err)
-        }
-    }
-}
+use super::PairingError;
 
 /// Arguments for creating an API client
 pub(crate) struct ClientArgs<'a> {
@@ -169,17 +87,9 @@ impl<'a> ApiClient<'a> {
     pub(crate) fn from_transport(
         config: &Config,
         provider: &'a TransportProvider,
-        realm: &'a str,
-        device_id: &'a str,
+        args: ClientArgs<'a>,
     ) -> Result<Self, PairingError> {
         let tls = provider.api_tls_config()?;
-
-        let args = ClientArgs {
-            realm,
-            device_id,
-            pairing_url: provider.pairing_url(),
-            token: provider.credential_secret(),
-        };
 
         Self::create(args, config, tls)
     }
@@ -530,13 +440,18 @@ pub(crate) mod tests {
 
         let mock = mock_create_certificate(&mut server).create_async().await;
 
-        let parse = Url::parse(&server.url()).unwrap();
-
-        let provider = TransportProvider::configure(parse, "secret".to_string(), None, true)
+        let provider = TransportProvider::configure(None, true)
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&Config::default(), &provider, "realm", "device_id")
+        let url = server.url().parse().unwrap();
+        let args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
         let bundle = Bundle::generate_key("test", "device_id").unwrap();
@@ -569,11 +484,17 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(url, "secret".to_string(), None, true)
+        let provider = TransportProvider::configure(None, true)
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&Config::default(), &provider, "realm", "device_id")
+        let args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
         let res = client
@@ -581,7 +502,7 @@ pub(crate) mod tests {
             .await
             .expect_err("error expected");
 
-        assert!(matches!(res, PairingError::Api { status } if status == 202));
+        assert!(matches!(res, PairingError::Api { status, } if status == 202));
 
         mock.assert_async().await;
     }
@@ -594,11 +515,17 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(url, "secret".to_string(), None, true)
+        let provider = TransportProvider::configure(None, true)
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&Config::default(), &provider, "realm", "device_id")
+        let args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.unwrap();
@@ -623,16 +550,22 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(url, "secret".to_string(), None, true)
+        let provider = TransportProvider::configure(None, true)
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&Config::default(), &provider, "realm", "device_id")
+        let args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.expect_err("should error");
 
-        assert!(matches!(res, PairingError::Api { status } if status == 401));
+        assert!(matches!(res, PairingError::Api { status, } if status == 401));
 
         mock.assert_async().await;
     }
@@ -644,13 +577,25 @@ pub(crate) mod tests {
         let mock_create = mock_create_certificate(&mut server).create_async().await;
         let mock_verify = mock_verify_certificate(&mut server).create_async().await;
 
-        let parse = Url::parse(&server.url()).unwrap();
+        let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(parse, "secret".to_string(), None, true)
+        let _args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let provider = TransportProvider::configure(None, true)
             .await
             .expect("couldn't configure provider");
 
-        let client = ApiClient::from_transport(&Config::default(), &provider, "realm", "device_id")
+        let args = ClientArgs {
+            realm: "realm",
+            device_id: "device_id",
+            pairing_url: &url,
+            token: "secret",
+        };
+        let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
         let bundle = Bundle::generate_key("test", "device_id").unwrap();
