@@ -280,6 +280,7 @@ fn encode_prop(
 #[cfg(test)]
 pub(crate) mod tests {
     use astarte_interfaces::schema::Ownership;
+    use astarte_test_utils::{Hexdump, with_insta};
 
     use crate::client::tests::mock_client_with_store;
     use crate::state::ConnStatus;
@@ -452,19 +453,9 @@ pub(crate) mod tests {
 
         let encoded = encode_set_properties(&example).unwrap();
 
-        let expected_snapshot: [u8; 71] = [
-            0, 0, 0, 70, 120, 156, 69, 202, 33, 14, 192, 32, 12, 5, 208, 27, 193, 1, 102, 103, 38,
-            150, 236, 10, 13, 249, 12, 65, 41, 41, 21, 112, 123, 80, 224, 95, 16, 118, 232, 196,
-            53, 195, 189, 227, 41, 6, 141, 20, 224, 155, 48, 124, 37, 75, 151, 232, 191, 197, 173,
-            20, 237, 32, 177, 4, 253, 22, 154, 178, 12, 26, 201,
-        ];
-
-        assert_eq!(
-            encoded,
-            expected_snapshot,
-            "the two are different, decoded is {:?}",
-            extract_set_properties(&encoded)
-        );
+        with_insta!({
+            insta::assert_snapshot!(Hexdump(encoded.as_slice()));
+        });
 
         assert_eq!(extract_set_properties(&encoded).unwrap(), example);
     }

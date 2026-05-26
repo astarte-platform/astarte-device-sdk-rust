@@ -231,11 +231,12 @@ pub(super) fn deserialize_object(
 mod test {
     use astarte_interfaces::Interface;
     use astarte_interfaces::schema::MappingType;
+    use astarte_test_utils::Hexdump;
+    use astarte_test_utils::with_insta;
     use chrono::{DateTime, Utc};
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
 
-    use base64::Engine;
     use chrono::TimeZone;
 
     use crate::types::Double;
@@ -362,16 +363,9 @@ mod test {
             ValidatedObject::validate(&interface, &path, data.clone(), timestamp).unwrap();
         let buf = serialize_object(&validated.data, validated.timestamp).unwrap();
 
-        let expected = base64::prelude::BASE64_STANDARD
-            .decode("ZQIAAAN2AFICAAABZG91YmxlX2VuZHBvaW50AAAAAAAAABJAEGludGVnZXJfZW5kcG9pbnQA/P///whib29sZWFuX2VuZHBvaW50AAESbG9uZ2ludGVnZXJfZW5kcG9pbnQA7lKbmgoAAAACc3RyaW5nX2VuZHBvaW50AAYAAABoZWxsbwAFYmluYXJ5YmxvYl9lbmRwb2ludAAFAAAAAGhlbGxvCWRhdGV0aW1lX2VuZHBvaW50AEA7YPN6AQAABGRvdWJsZWFycmF5X2VuZHBvaW50ADEAAAABMAAzMzMzMzPzPwExADMzMzMzMwtAATIAZmZmZmZmFkABMwAzMzMzMzMfQAAEaW50ZWdlcmFycmF5X2VuZHBvaW50ACEAAAAQMAABAAAAEDEAAwAAABAyAAUAAAAQMwAHAAAAAARib29sZWFuYXJyYXlfZW5kcG9pbnQAFQAAAAgwAAEIMQAACDIAAQgzAAEABGxvbmdpbnRlZ2VyYXJyYXlfZW5kcG9pbnQAJgAAABIwAO5Sm5oKAAAAEjEA71KbmgoAAAASMgDwUpuaCgAAAAAEc3RyaW5nYXJyYXlfZW5kcG9pbnQAHwAAAAIwAAYAAABoZWxsbwACMQAGAAAAd29ybGQAAARiaW5hcnlibG9iYXJyYXlfZW5kcG9pbnQAHwAAAAUwAAUAAAAAaGVsbG8FMQAFAAAAAHdvcmxkAARkYXRldGltZWFycmF5X2VuZHBvaW50ACYAAAAJMABAO2DzegEAAAkxACg/YPN6AQAACTIAEENg83oBAAAAAAl0ACoAAAAAAAAAAA==")
-            .unwrap();
-
-        assert_eq!(
-            buf,
-            expected,
-            "Invalid bson {}",
-            base64::prelude::BASE64_STANDARD.encode(&buf)
-        );
+        with_insta!({
+            insta::assert_snapshot!(Hexdump(buf.as_ref()));
+        });
 
         let (res, res_timestamp) = deserialize_object(&interface, &path, &buf).unwrap();
 
@@ -405,16 +399,9 @@ mod test {
             ValidatedIndividual::validate(mapping, og_value.clone(), timestamp).unwrap();
         let buf = serialize_individual(&validated.data, validated.timestamp).unwrap();
 
-        let expected = base64::prelude::BASE64_STANDARD
-            .decode("GwAAABJ2ABAOAAAAAAAACXQAKgAAAAAAAAAA")
-            .unwrap();
-
-        assert_eq!(
-            buf,
-            expected,
-            "Invalid bson {}",
-            base64::prelude::BASE64_STANDARD.encode(&buf)
-        );
+        with_insta!({
+            insta::assert_snapshot!(Hexdump(buf.as_slice()));
+        });
 
         let (res, res_timestamp) = deserialize_individual(&mapping, &buf).unwrap();
 

@@ -21,6 +21,7 @@ resolver = "3"
 members = [
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
+  "astarte-test-utils",
   "e2e-test",
 ]
 
@@ -106,19 +107,19 @@ required-features = ["derive"]
 [dependencies]
 astarte-device-fdo = { workspace = true, optional = true }
 astarte-device-sdk-derive = { workspace = true, optional = true }
-astarte-interfaces = { workspace = true }
+astarte-interfaces.workspace = true
 astarte-message-hub-proto = { workspace = true, optional = true }
 async-channel.workspace = true
-base64 = { workspace = true }
+base64.workspace = true
 bson = { workspace = true, features = ["chrono-0_4", "serde"] }
-bytes = { workspace = true }
-cfg-if = { workspace = true }
+bytes.workspace = true
+cfg-if.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 flate2.workspace = true
-futures = { workspace = true }
+futures.workspace = true
 http.workspace = true
 http-body-util.workspace = true
-itertools = { workspace = true }
+itertools.workspace = true
 mime.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
@@ -160,16 +161,17 @@ aws-lc-rs = { workspace = true, optional = true }
 rusqlite.workspace = true
 
 [dev-dependencies]
-astarte-device-sdk-derive = { workspace = true }
-astarte-message-hub-proto = { workspace = true }
-astarte-message-hub-proto-mock = { workspace = true }
-async-trait = { workspace = true }
+astarte-device-sdk-derive.workspace = true
+astarte-message-hub-proto-mock.workspace = true
+astarte-message-hub-proto.workspace = true
+astarte-test-utils.workspace = true
 clap = { workspace = true, features = ["derive"] }
-color-eyre = { workspace = true }
-eyre = { workspace = true }
-mockall = { workspace = true }
-mockito = { workspace = true }
-pretty_assertions = { workspace = true }
+color-eyre.workspace = true
+eyre.workspace = true
+insta.workspace = true
+mockall.workspace = true
+mockito.workspace = true
+pretty_assertions.workspace = true
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rstest.workspace = true
 rustls-platform-verifier.workspace = true
@@ -196,14 +198,14 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
+astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
 astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
-astarte-interfaces = "0.1.1"
+astarte-interfaces = "1.0.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
 async-channel = "2.0.0"
-async-trait = "0.1.67"
 aws-lc-rs = "1.14.0"
 base64 = "0.22.1"
 bson = "3.0.0"
@@ -218,6 +220,7 @@ flate2 = "1.0.0"
 futures = "0.3.0"
 http = "1.4.0"
 http-body-util = "0.1.2"
+insta = "1.47.2"
 itertools = "0.14.0"
 mime = "0.3.16"
 mockall = "0.14.0"
@@ -233,6 +236,7 @@ reqwest = { version = "0.13.0", default-features = false }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # for last diesel release compatibility
 rusqlite = ">=0.35.0"
+rstest = "0.26.1"
 rustls = "0.23.39"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
@@ -241,7 +245,6 @@ rustls-webpki = { version = "0.103.5", default-features = false }
 serde = "1.0.220"
 serde_json = "1.0.85"
 syn = "2.0.96"
-rstest = "0.26.1"
 sync_wrapper = "1.0.2"
 tempfile = "3.6.0"
 thiserror = "2.0.12"
