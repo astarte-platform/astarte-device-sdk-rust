@@ -31,6 +31,7 @@ pkgsFiles=$(
     cat <(cargo package --allow-dirty -l -p "astarte-device-sdk") \
         <(listPackage "astarte-device-sdk-derive") \
         <(listPackage "astarte-device-sdk-mock") \
+        <(listPackage "astarte-device-tls") \
         <(listPackage "astarte-test-utils") \
         <(listPackage "e2e-test") |
         sort

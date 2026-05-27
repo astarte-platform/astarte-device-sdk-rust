@@ -258,6 +258,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "astarte-device-tls"
+version = "0.13.0"
+dependencies = [
+ "aws-lc-rs",
+ "cfg-if",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier 0.6.2",
+ "tracing",
+ "webpki-roots",
+]
+
+[[package]]
 name = "astarte-fdo-protocol"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
