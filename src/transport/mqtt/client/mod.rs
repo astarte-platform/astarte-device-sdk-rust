@@ -20,8 +20,8 @@ use std::fmt::Debug;
 use std::ops::ControlFlow;
 
 use astarte_device_error::{Error, ResultExt, WrapError};
-use astarte_interfaces::Interface;
 use astarte_interfaces::schema::Reliability;
+use astarte_interfaces::{DatastreamIndividualMapping, DatastreamObject, Interface};
 use rumqttc::{AckOfPub, QoS, Token};
 use tracing::{debug, info, instrument};
 
@@ -33,7 +33,7 @@ use crate::interfaces::{self, DeviceIntrospection, Interfaces};
 use crate::retention::{PublishInfo, RetentionId, StoredRetention};
 use crate::session::{IntrospectionInterface, StoredSession};
 use crate::state::ConnectionState;
-use crate::store::{OptStoredProp, PropertyState, StoreCapabilities};
+use crate::store::{PropertyState, StoreCapabilities};
 use crate::transport::{Encode, RemovedInterface};
 use crate::validate::individual::ValidatedIndividual;
 use crate::validate::object::ValidatedObject;
@@ -53,6 +53,10 @@ pub struct MqttClient {
     pub(crate) sender: AsyncClient,
     pub(crate) retention: RetSender,
     pub(crate) session_synced: bool,
+    /// State of the encrypted handshake
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted:
+        std::sync::Arc<tokio::sync::Mutex<crate::transport::mqtt::encrypted::state::EncState>>,
 }
 
 impl MqttClient {
@@ -214,6 +218,18 @@ impl Sender for MqttClient {
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if validated.encrypted {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
+
         self.send(
             &validated.interface,
             &validated.path,
@@ -238,6 +254,18 @@ impl Sender for MqttClient {
         let buf = payload::serialize_individual(&validated.data, None)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if validated.encrypted {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
+
         self.send(&validated.interface, &validated.path, QoS::ExactlyOnce, buf)
             .await
             .map_kind(ErrorKind::Mqtt)?;
@@ -259,6 +287,18 @@ impl Sender for MqttClient {
     async fn send_object(&mut self, validated: ValidatedObject) -> Result<(), AstarteError> {
         let buf = payload::serialize_object(&validated.data, validated.timestamp)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if validated.encrypted {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
 
         self.send(
             &validated.interface,
@@ -288,6 +328,18 @@ impl Sender for MqttClient {
 
         let buf = payload::serialize_individual(&validated.data, validated.timestamp)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if validated.encrypted {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
 
         let notice = self
             .send(
@@ -322,6 +374,18 @@ impl Sender for MqttClient {
         let buf = payload::serialize_object(&validated.data, validated.timestamp)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
 
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if validated.encrypted {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
+
         let notice = self
             .send(
                 &validated.interface,
@@ -338,9 +402,10 @@ impl Sender for MqttClient {
         Ok(())
     }
 
-    async fn resend_stored<S>(
+    async fn resend_stored_individual<S>(
         &mut self,
         state: &ConnectionState<S>,
+        mapping: &DatastreamIndividualMapping,
         id: RetentionId,
         data: PublishInfo<'_>,
     ) -> Result<(), AstarteError>
@@ -352,13 +417,22 @@ impl Sender for MqttClient {
             "resend stored called without store that supports retention"
         );
 
+        let buf = data.value.into();
+
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if mapping.encrypted() {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
+
         let notice = self
-            .send(
-                &data.interface,
-                &data.path,
-                to_qos(data.reliability),
-                data.value.into(),
-            )
+            .send(&data.interface, &data.path, to_qos(data.reliability), buf)
             .await
             .map_kind(ErrorKind::Mqtt)?;
 
@@ -367,41 +441,41 @@ impl Sender for MqttClient {
         Ok(())
     }
 
-    /// Resend previously stored property.
-    async fn resend_stored_property<S>(
+    async fn resend_stored_object<S>(
         &mut self,
         state: &ConnectionState<S>,
-        property_data: OptStoredProp,
+        object: &DatastreamObject,
+        id: RetentionId,
+        data: PublishInfo<'_>,
     ) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
-        let buf = property_data
-            .value
-            .as_ref()
-            .map(|d| payload::serialize_individual(d, None))
-            .unwrap_or(Ok(Vec::new()))
-            .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))?;
+        debug_assert!(
+            state.store().get_retention().is_some(),
+            "resend stored called without store that supports retention"
+        );
 
-        self.send(
-            &property_data.interface,
-            &property_data.path,
-            QoS::ExactlyOnce,
-            buf,
-        )
-        .await
-        .map_kind(ErrorKind::Mqtt)?;
+        let buf = data.value.into();
 
-        state
-            .store()
-            .update_state(
-                &property_data.interface,
-                &property_data.path,
-                PropertyState::Completed,
-                property_data.epoch(),
-            )
+        #[cfg(feature = "encrypted-endpoints")]
+        let mut buf = buf;
+
+        #[cfg(feature = "encrypted-endpoints")]
+        if object.encrypted() {
+            self.encrypted
+                .lock()
+                .await
+                .encrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+        }
+
+        let notice = self
+            .send(&data.interface, &data.path, to_qos(data.reliability), buf)
             .await
-            .map_kind(ErrorKind::Store)?;
+            .map_kind(ErrorKind::Mqtt)?;
+
+        self.mark_sent(state, id, data.reliability, notice).await?;
 
         Ok(())
     }
@@ -595,7 +669,7 @@ impl Introspection for MqttClient {
 }
 
 /// Encoder for mqtt messages
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct MqttEncoder {}
 
 impl Encode for MqttEncoder {
@@ -603,12 +677,16 @@ impl Encode for MqttEncoder {
         &self,
         validated: &ValidatedIndividual,
     ) -> Result<Vec<u8>, AstarteError> {
-        payload::serialize_individual(&validated.data, validated.timestamp)
-            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))
+        let payload = payload::serialize_individual(&validated.data, validated.timestamp)
+            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))?;
+
+        Ok(payload)
     }
 
     fn serialize_object(&self, validated: &ValidatedObject) -> Result<Vec<u8>, AstarteError> {
-        payload::serialize_object(&validated.data, validated.timestamp)
-            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))
+        let payload = payload::serialize_object(&validated.data, validated.timestamp)
+            .map_kind(|err| ErrorKind::Mqtt(MqttError::Payload(err)))?;
+
+        Ok(payload)
     }
 }

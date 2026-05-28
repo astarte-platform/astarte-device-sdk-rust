@@ -37,6 +37,8 @@ pub(crate) struct ValidatedIndividual {
     pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
     pub(crate) retention: Retention,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: bool,
     pub(crate) timestamp: Option<Timestamp>,
     pub(crate) data: AstarteData,
 }
@@ -80,6 +82,8 @@ impl ValidatedIndividual {
             version_major: interface.version_major(),
             reliability: mapping.reliability(),
             retention: mapping.retention(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: mapping.encrypted(),
             data,
             timestamp,
         })

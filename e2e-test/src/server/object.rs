@@ -39,7 +39,7 @@ impl InterfaceData for ServerAggregate {
 
 impl InterfaceDataObject for ServerAggregate {}
 
-async fn validate_object<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
+pub(crate) async fn validate_object<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
 where
     T: InterfaceDataObject,
 {
