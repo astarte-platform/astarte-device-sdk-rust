@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 pub mod device {
     pub use crate::FromEvent;
     pub use crate::client::Client;
-    pub use crate::client::ClientDisconnect;
+    pub use crate::client::ClientConnection;
     pub use crate::connection::EventLoop;
     pub use crate::introspection::{DeviceIntrospection, DynamicIntrospection};
 }

@@ -80,6 +80,11 @@ pub trait Connection: Send + Sync {
     /// This reduces the number of generics for connection, since a single client type is associated
     /// with a connection.
     type Store: StoreCapabilities;
+
+    /// Checks whether the device is paired.
+    ///
+    /// In case of the MQTT connection is when the device is paired on Astarte.
+    fn is_paired(&self) -> impl Future<Output = Result<bool, std::io::Error>> + Send;
 }
 
 /// Implement the publication for a connection.

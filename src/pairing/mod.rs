@@ -18,6 +18,7 @@
 
 //! Module to pair a new device to the transport
 
+use std::path::Path;
 use std::time::Duration;
 
 use rumqttc::{MqttOptions, NetworkOptions, Transport};
@@ -44,6 +45,12 @@ pub trait Pairing: Send + Sync {
     ) -> impl Future<Output = Result<PairingConfig, Self::Error>> + Send
     where
         S: Send + Sync;
+
+    /// Check if the device is already paired.
+    fn is_paired(
+        &self,
+        store_dir: Option<&Path>,
+    ) -> impl Future<Output = Result<bool, std::io::Error>> + Send;
 }
 
 /// Device configuration after pairing.

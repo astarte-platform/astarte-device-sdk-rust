@@ -47,7 +47,7 @@ use bytes::Bytes;
 use futures::{TryFutureExt, future::Either};
 use itertools::Itertools;
 use rumqttc::{AckOfPub, ClientError, QoS, Token, TokenError};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, instrument, trace};
 
 use super::{
     Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError,
@@ -865,6 +865,14 @@ where
 {
     type Sender = MqttClient<S>;
     type Store = S;
+
+    #[instrument(skip(self), ret)]
+    async fn is_paired(&self) -> Result<bool, std::io::Error> {
+        self.connection
+            .pairing
+            .is_paired(self.state.config.writable_dir.as_deref())
+            .await
+    }
 }
 
 /// Wrapper structs that holds data used when connecting/reconnecting

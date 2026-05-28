@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 
 use reqwest::StatusCode;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::{debug, error, info, instrument};
 
 use self::client::{ApiClient, ClientArgs};
 
@@ -149,13 +149,8 @@ impl PairingApi {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
             Credential::ParingToken { pairing_token } => {
                 debug!("pairing token provided, retrieving credentials secret");
-                let Some(dir) = &ctx.state.config.writable_dir else {
-                    return Err(PairingError::NoStorePairingToken);
-                };
 
-                let secret = self
-                    .read_secret_or_register(ctx, dir, pairing_token)
-                    .await?;
+                let secret = self.read_secret_or_register(ctx, pairing_token).await?;
 
                 Ok(secret)
             }
@@ -166,10 +161,15 @@ impl PairingApi {
     async fn read_secret_or_register<S>(
         &self,
         ctx: &mut ConnCtx<'_, S>,
-        store_dir: &Path,
         pairing_token: &str,
     ) -> Result<String, PairingError> {
-        let credential_file = store_dir.join(CREDENTIAL_FILE);
+        let credential_file = ctx
+            .state
+            .config
+            .writable_dir
+            .as_ref()
+            .map(|dir| dir.join(CERTIFICATE_FILE))
+            .ok_or(PairingError::NoStorePairingToken)?;
 
         match fs::read_to_string(&credential_file).await {
             Ok(secret) => {
@@ -231,5 +231,28 @@ impl Pairing for PairingApi {
             keepalive: self.mqtt_config.keepalive,
             secret,
         })
+    }
+
+    #[instrument(skip(self), ret)]
+    async fn is_paired(&self, store_dir: Option<&Path>) -> std::io::Result<bool> {
+        if matches!(self.mqtt_config.credential, Credential::Secret { .. }) {
+            return Ok(true);
+        }
+
+        let credential_file = store_dir.map(|p| p.join(CREDENTIAL_FILE)).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "store directory not configured for pairing with token",
+            )
+        })?;
+
+        tokio::fs::try_exists(&credential_file)
+            .await
+            .inspect_err(|_| {
+                error!(
+                    path = %credential_file.display(),
+                    "couldn't read credentials file"
+                )
+            })
     }
 }

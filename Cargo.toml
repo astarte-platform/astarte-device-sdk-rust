@@ -234,8 +234,8 @@ rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.13.0", default-features = false }
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
-# for last diesel release compatibility
-rusqlite = ">=0.35.0"
+# for last diesel release compatibility and MSRV
+rusqlite = ">=0.35.0, <0.40.0"
 rstest = "0.26.1"
 rustls = "0.23.39"
 rustls-native-certs = "0.8.1"

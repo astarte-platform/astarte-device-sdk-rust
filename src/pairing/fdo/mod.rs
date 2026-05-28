@@ -263,6 +263,11 @@ where
     {
         self.register(ctx).await
     }
+
+    async fn is_paired(&self, _: Option<&Path>) -> Result<bool, std::io::Error> {
+        // the FDO has already finished the DeviceInitialization and has an ownership voucher
+        Ok(true)
+    }
 }
 
 impl<S, C> ConnectionConfig<S> for FdoConfig<C>

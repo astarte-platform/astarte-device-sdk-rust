@@ -596,6 +596,11 @@ where
     type Sender = GrpcClient<GrpcStore<S>>;
 
     type Store = GrpcStore<S>;
+
+    async fn is_paired(&self) -> Result<bool, std::io::Error> {
+        // The device never pairs with the message-hub
+        Ok(false)
+    }
 }
 
 /// Internal struct holding the received grpc message
