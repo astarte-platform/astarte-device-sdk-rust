@@ -22,7 +22,14 @@ extend-exclude = [
   "assets/**/*.ico",
 ]
 
+[default.extend-words]
+COSE = "COSE"
+OVE = "OVE"
+clea = "clea"
+
 [default.extend-identifiers]
 flate2 = "flate2"
 typ = "typ"
 clea = "clea"
+CoseSign1 = "CoseSign1"
+CoseEncrypt0 = "CoseEncrypt0"
