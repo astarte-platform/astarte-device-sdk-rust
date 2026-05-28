@@ -76,6 +76,8 @@ pub struct MqttConnection {
     // TODO: this could be a P of pairing, to use the crypto of fdo for the credentials secret
     pub(crate) config: Mqtt,
     pub(crate) connection: Connection,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: std::sync::Arc<tokio::sync::Mutex<super::encrypted::state::EncState>>,
 }
 
 impl MqttConnection {
@@ -110,8 +112,45 @@ impl MqttConnection {
                 Ok(())
             }
             ParsedTopic::InterfacePath { interface, path } => {
-                ctx.handle_event(interface, path, MqttDecoder::new(publish.payload))
+                let decoder = MqttDecoder {
+                    data: publish.payload,
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encryption: self.encrypted.clone().lock_owned().await,
+                };
+
+                ctx.handle_event(interface, path, decoder).await
+            }
+            #[cfg(feature = "encrypted-endpoints")]
+            ParsedTopic::ExchangeResp => {
+                info!("Encrypted exchange response received");
+
+                let resp = crate::transport::mqtt::encrypted::messages::ExchangeResp::decode_msg(
+                    &publish.payload,
+                )
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                self.encrypted
+                    .lock()
                     .await
+                    .secret(resp.pub_key())
+                    .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                Ok(())
+            }
+            #[cfg(feature = "encrypted-endpoints")]
+            ParsedTopic::ExchangeFailed => {
+                info!("Encrypted exchange failed");
+
+                let error =
+                    crate::transport::mqtt::encrypted::messages::ExchangeFailed::decode_msg(
+                        &publish.payload,
+                    )
+                    .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+                // FIXME: check the error code and retry
+                error!(%error, "encrypted exchange failed");
+
+                Ok(())
             }
         }
     }
@@ -296,12 +335,9 @@ impl Transport for MqttConnection {
 }
 
 pub(crate) struct MqttDecoder {
-    data: Bytes,
-}
-impl MqttDecoder {
-    fn new(data: Bytes) -> Self {
-        Self { data }
-    }
+    pub(crate) data: Bytes,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encryption: tokio::sync::OwnedMutexGuard<super::encrypted::state::EncState>,
 }
 
 impl Decode for MqttDecoder {
@@ -309,6 +345,18 @@ impl Decode for MqttDecoder {
         self,
         mapping: &MappingRef<'_, Properties>,
     ) -> Result<Option<AstarteData>, AstarteError> {
+        #[cfg(feature = "encrypted-endpoints")]
+        if mapping.mapping().encrypted() {
+            let mut buf = self.data.to_vec();
+
+            self.encryption
+                .decrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+            return payload::deserialize_property(mapping, &buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)));
+        }
+
         payload::deserialize_property(mapping, &self.data)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }
@@ -317,6 +365,18 @@ impl Decode for MqttDecoder {
         self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
     ) -> Result<(AstarteData, Option<Timestamp>), AstarteError> {
+        #[cfg(feature = "encrypted-endpoints")]
+        if mapping.mapping().encrypted() {
+            let mut buf = self.data.to_vec();
+
+            self.encryption
+                .decrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+            return payload::deserialize_individual(mapping, &buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)));
+        }
+
         payload::deserialize_individual(mapping, &self.data)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }
@@ -326,6 +386,18 @@ impl Decode for MqttDecoder {
         object: &DatastreamObject,
         path: &MappingPath<'_>,
     ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError> {
+        #[cfg(feature = "encrypted-endpoints")]
+        if object.encrypted() {
+            let mut buf = self.data.to_vec();
+
+            self.encryption
+                .decrypt(&mut buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Encryption(k)))?;
+
+            return payload::deserialize_object(object, path, &buf)
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)));
+        }
+
         payload::deserialize_object(object, path, &self.data)
             .map_kind(|k| ErrorKind::Mqtt(MqttError::Payload(k)))
     }

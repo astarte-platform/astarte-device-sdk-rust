@@ -37,7 +37,10 @@ impl InterfaceData for DeviceAggregate {
 
 impl InterfaceDataObject for DeviceAggregate {}
 
-async fn validate_object<T>(channel: &mut Channel, client: &mut AstarteClient) -> eyre::Result<()>
+pub(crate) async fn validate_object<T>(
+    channel: &mut Channel,
+    client: &mut AstarteClient,
+) -> eyre::Result<()>
 where
     T: InterfaceDataObject,
 {

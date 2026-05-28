@@ -37,6 +37,9 @@ pub enum MqttError {
     PurgeProp(PurgePropError),
     /// Errors that can occur handling the payload.
     Payload(PayloadError),
+    /// Couldn't complete encryption operation.
+    #[cfg(feature = "encrypted-endpoints")]
+    Encryption(super::encrypted::EncError),
     /// Couldn't pair device.
     ///
     /// This is a general error when the device is paired via the old API or FDO.
@@ -68,6 +71,10 @@ impl Display for MqttError {
             MqttError::PairingApi(error) => write!(f, "couldn't pair with Astarte {error}"),
             MqttError::Payload(error) => write!(f, "couldn't process payload {error}"),
             MqttError::PurgeProp(error) => write!(f, "couldn't purge properties {error}"),
+            #[cfg(feature = "encrypted-endpoints")]
+            MqttError::Encryption(enc_error) => {
+                write!(f, "encryption operation failed {enc_error}")
+            }
             MqttError::DevicePairing => write!(f, "couldn't pair the device"),
             MqttError::Subscribe => write!(f, "couldn't subscribe to topic"),
             MqttError::Unsubscribe => write!(f, "couldn't unsubscribe to topic"),

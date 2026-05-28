@@ -407,6 +407,8 @@ pub(crate) mod test {
             retention: astarte_interfaces::interface::Retention::Discard,
             data: exp_value.clone(),
             timestamp: Some(Utc::now()),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let astarte_message = AstarteMessage::from(exp.clone());
         assert_eq!(astarte_message.interface_name, exp.interface);
@@ -427,6 +429,8 @@ pub(crate) mod test {
             path: "/path".to_string(),
             version_major: 1,
             data: exp_value.clone(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let astarte_message = AstarteMessage::from(exp.clone());
         assert_eq!(astarte_message.interface_name, exp.interface);
@@ -483,6 +487,8 @@ pub(crate) mod test {
             retention: astarte_interfaces::interface::Retention::Discard,
             data: expected_map.clone(),
             timestamp: Some(Utc::now()),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let astarte_message = AstarteMessage::from(exp.clone());
         assert_eq!(astarte_message.interface_name, exp.interface);
