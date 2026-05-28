@@ -29,7 +29,7 @@ rust-version = { workspace = true }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-astarte-device-sdk = { workspace = true, features = ["derive"] }
+astarte-device-sdk = { workspace = true, features = ["derive", "encrypted-endpoints"] }
 astarte-device-tls = { workspace = true, default-features = true }
 async-channel = { workspace = true }
 base64 = { workspace = true }

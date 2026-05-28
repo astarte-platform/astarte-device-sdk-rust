@@ -62,7 +62,14 @@ impl TopicError {
 #[derive(Debug)]
 pub(crate) enum ParsedTopic<'a> {
     PurgeProperties,
-    InterfacePath { interface: &'a str, path: &'a str },
+    InterfacePath {
+        interface: &'a str,
+        path: &'a str,
+    },
+    #[cfg(feature = "encrypted-endpoints")]
+    ExchangeResp,
+    #[cfg(feature = "encrypted-endpoints")]
+    ExchangeFailed,
 }
 
 impl<'a> ParsedTopic<'a> {
@@ -88,26 +95,35 @@ impl<'a> ParsedTopic<'a> {
 
         trace!("rest: {}", rest);
 
-        if rest == Self::PURGE_PROPERTIES_TOPIC {
-            return Ok(Self::PurgeProperties);
+        match rest {
+            Self::PURGE_PROPERTIES_TOPIC => Ok(Self::PurgeProperties),
+            #[cfg(feature = "encrypted-endpoints")]
+            crate::transport::mqtt::encrypted::messages::ExchangeResp::TOPIC => {
+                Ok(Self::ExchangeResp)
+            }
+            #[cfg(feature = "encrypted-endpoints")]
+            crate::transport::mqtt::encrypted::messages::ExchangeFailed::TOPIC => {
+                Ok(Self::ExchangeFailed)
+            }
+            _ => {
+                let idx = rest
+                    .find('/')
+                    .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
+
+                trace!("slash idx: {}", idx);
+
+                let (interface, path) = rest.split_at(idx);
+
+                trace!("interface: {}", interface);
+                trace!("path: {}", path);
+
+                if interface.is_empty() || path.is_empty() {
+                    return Err(TopicError::Malformed(topic.to_string()));
+                }
+
+                Ok(Self::InterfacePath { interface, path })
+            }
         }
-
-        let idx = rest
-            .find('/')
-            .ok_or_else(|| TopicError::Malformed(topic.to_string()))?;
-
-        trace!("slash idx: {}", idx);
-
-        let (interface, path) = rest.split_at(idx);
-
-        trace!("interface: {}", interface);
-        trace!("path: {}", path);
-
-        if interface.is_empty() || path.is_empty() {
-            return Err(TopicError::Malformed(topic.to_string()));
-        }
-
-        Ok(Self::InterfacePath { interface, path })
     }
 }
 

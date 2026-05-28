@@ -424,6 +424,8 @@ pub(crate) mod tests {
             retention: Retention::Discard,
             timestamp: Some(Utc::now()),
             data: AstarteData::try_from(42.5).unwrap(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         task.sender
@@ -451,6 +453,8 @@ pub(crate) mod tests {
             retention: Retention::Volatile { expiry: None },
             timestamp: None,
             data: AstarteData::try_from(42.5).unwrap(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let ret_id = RetentionId::Volatile(task.state.retention_ctx().next());
@@ -484,6 +488,8 @@ pub(crate) mod tests {
             retention: Retention::Stored { expiry: None },
             timestamp: None,
             data: AstarteData::try_from(42.5).unwrap(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let ret_id = RetentionId::Stored(task.state.retention_ctx().next());
@@ -520,6 +526,8 @@ pub(crate) mod tests {
                 AstarteData::try_from(1.0).unwrap(),
             )]),
             timestamp: Some(Utc::now()),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         task.sender
@@ -550,6 +558,8 @@ pub(crate) mod tests {
                 AstarteData::try_from(1.0).unwrap(),
             )]),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let ret_id = RetentionId::Volatile(task.state.retention_ctx().next());
@@ -586,6 +596,8 @@ pub(crate) mod tests {
                 AstarteData::try_from(1.0).unwrap(),
             )]),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let ret_id = RetentionId::Stored(task.state.retention_ctx().next());
@@ -616,6 +628,8 @@ pub(crate) mod tests {
             path: "/sensor_1/enable".to_string(),
             version_major: 0,
             data: AstarteData::Boolean(true),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let epoch = 5;
