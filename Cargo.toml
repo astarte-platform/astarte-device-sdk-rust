@@ -77,8 +77,6 @@ message-hub = ["dep:astarte-message-hub-proto"]
 sqlite-trace = ["rusqlite/trace"]
 # Uses the webpki-roots the Mozilla CA bundle for TLS
 webpki = ["dep:webpki-roots"]
-# Enable logging of security events onto a custom tracing target
-security-events = []
 # Enable the registration of the device using the FIDO Device Onboard protocol
 # NOTE: at the moment this is only supported on linux platforms
 tpm = ["astarte-device-fdo?/tpm"]
