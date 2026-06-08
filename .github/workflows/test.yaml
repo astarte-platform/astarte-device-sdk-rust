@@ -34,7 +34,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6.0.3
       - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
       - uses: mozilla-actions/sccache-action@v0.0.10
@@ -46,7 +46,7 @@ jobs:
       # Upload the test results if we are not a PR from a fork, see ".github/workflows/coverage.yaml"
       - name: Upload to codecov.io
         if: ${{ github.event_name == 'push' }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v6.0.1
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
@@ -70,7 +70,7 @@ jobs:
   coverage:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6.0.3
       - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.16.1
         with:
@@ -86,7 +86,7 @@ jobs:
       # Upload the coverage if we are not a PR from a fork, see ".github/workflows/coverage.yaml"
       - name: Upload to codecov.io
         if: ${{ github.event_name == 'push' }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v6.0.1
         with:
           token: ${{secrets.CODECOV_TOKEN}}
           fail_ci_if_error: true
