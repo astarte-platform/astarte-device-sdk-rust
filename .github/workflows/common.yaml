@@ -35,7 +35,7 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.sha }}
       HEAD_REF: ${{ github.event.pull_request.head.sha }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v8.1.0
@@ -45,12 +45,12 @@ jobs:
   spelling:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1.46.2
+      - uses: actions/checkout@v6.0.2
+      - uses: crate-ci/typos@v1.47.0
   conventional-commit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
       - uses: crate-ci/committed@v1.1.11
