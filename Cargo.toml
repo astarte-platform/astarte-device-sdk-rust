@@ -21,6 +21,7 @@ resolver = "3"
 members = [
   "astarte-device-sdk-derive",
   "astarte-device-sdk-mock",
+  "astarte-device-tls",
   "astarte-test-utils",
   "e2e-test",
 ]
@@ -196,13 +197,14 @@ all-features = true
 rustdoc-args = ["--cfg=astarte_device_sdk_docsrs"]
 
 [workspace.dependencies]
-astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.13.0" }
 astarte-device-sdk-derive = { version = "=0.13.0", path = "./astarte-device-sdk-derive" }
+astarte-device-tls = { path = "./astarte-device-tls", version = "=0.13.0" }
 astarte-interfaces = "1.0.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
+astarte-test-utils = { path = "./astarte-test-utils", version = "=0.13.0" }
 async-channel = "2.0.0"
 aws-lc-rs = "1.14.0"
 base64 = "0.22.1"
