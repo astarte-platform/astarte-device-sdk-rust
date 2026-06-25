@@ -237,7 +237,7 @@ rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # for last diesel release compatibility and MSRV
 rusqlite = ">=0.35.0, <0.40.0"
 rstest = "0.26.1"
-rustls = "0.23.39"
+rustls = "0.23.41"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"
 rustls-platform-verifier = "0.6.0"
