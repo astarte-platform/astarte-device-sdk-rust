@@ -46,6 +46,7 @@ struct Config {
 
 #[derive(Debug, IntoAstarteObject)]
 struct DataObject {
+    #[astarte_object(failable)]
     endpoint1: f64,
     endpoint2: String,
     endpoint3: Vec<bool>,
@@ -159,11 +160,11 @@ async fn main() -> eyre::Result<()> {
         let client = client.clone();
 
         async move {
-            loop {
-                let event = client.recv().await?;
-
+            while let Some(event) = client.recv().await {
                 info!(?event, "received");
             }
+
+            Ok(())
         }
     });
 

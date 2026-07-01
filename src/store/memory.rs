@@ -20,21 +20,16 @@
 
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{Properties, Schema};
 use tokio::sync::RwLock;
 use tracing::error;
 
+use super::error::StoreError;
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::store::{MissingCapability, PropertyState};
 use crate::types::AstarteData;
-
-/// Error from the memory store.
-///
-/// This error has no variants, but it is defined to allow for future changes.
-#[non_exhaustive]
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum MemoryError {}
 
 /// Data structure providing an implementation of an in memory Key Value Store.
 ///
@@ -68,8 +63,6 @@ impl StoreCapabilities for MemoryStore {
 }
 
 impl PropertyStore for MemoryStore {
-    type Err = MemoryError;
-
     async fn store_prop(
         &self,
         StoredProp {
@@ -79,7 +72,7 @@ impl PropertyStore for MemoryStore {
             interface_major,
             ownership,
         }: StoredProp<&str, &AstarteData>,
-    ) -> Result<(), Self::Err> {
+    ) -> Result<(), Error<StoreError>> {
         let key = Key::new(interface, path);
         let value = Value {
             value: Some(value.clone()),
@@ -100,7 +93,7 @@ impl PropertyStore for MemoryStore {
         property: &PropertyMapping<'_>,
         state: PropertyState,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
+    ) -> Result<bool, Error<StoreError>> {
         let key = Key::new(property.interface_name(), property.path());
 
         if let Some(val) = self.store.write().await.get_mut(&key)
@@ -117,7 +110,7 @@ impl PropertyStore for MemoryStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Error<StoreError>> {
         let key = Key::new(property.interface_name(), property.path());
 
         // We need to drop the lock before calling delete_prop
@@ -146,7 +139,7 @@ impl PropertyStore for MemoryStore {
         }
     }
 
-    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
         let key = Key::new(property.interface_name(), property.path());
 
         let mut writer = self.store.write().await;
@@ -158,7 +151,7 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
         let key = Key::new(property.interface_name(), property.path());
 
         let mut store = self.store.write().await;
@@ -172,7 +165,7 @@ impl PropertyStore for MemoryStore {
         &self,
         property: &PropertyMapping<'_>,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
+    ) -> Result<bool, Error<StoreError>> {
         let key = Key::new(property.interface_name(), property.path());
 
         let mut store = self.store.write().await;
@@ -188,7 +181,7 @@ impl PropertyStore for MemoryStore {
         }
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
+    async fn clear(&self) -> Result<(), Error<StoreError>> {
         let mut store = self.store.write().await;
 
         store.clear();
@@ -196,7 +189,7 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
         let props = store.iter().filter_map(|(k, v)| v.as_prop(k)).collect();
@@ -204,7 +197,7 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
         let props = store
@@ -218,7 +211,7 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
         let props = store
@@ -232,8 +225,11 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
-        Ok(self
+    async fn interface_props(
+        &self,
+        interface: &Properties,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        let collect = self
             .store
             .read()
             .await
@@ -245,10 +241,12 @@ impl PropertyStore for MemoryStore {
                     None
                 }
             })
-            .collect())
+            .collect();
+
+        Ok(collect)
     }
 
-    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Error<StoreError>> {
         self.store
             .write()
             .await
@@ -262,7 +260,7 @@ impl PropertyStore for MemoryStore {
         state: PropertyState,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<OptStoredProp>, Self::Err> {
+    ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
         let props = store
@@ -284,7 +282,7 @@ impl PropertyStore for MemoryStore {
         Ok(props)
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
         self.store
             .write()
             .await

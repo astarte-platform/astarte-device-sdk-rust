@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,11 +18,10 @@
 
 //! Event returned form the loop.
 
-use astarte_interfaces::mapping::endpoint::EndpointError;
-use astarte_interfaces::mapping::path::MappingPathError;
+use std::fmt::Display;
 
 use crate::aggregate::AstarteObject;
-use crate::error::{AggregationError, InterfaceTypeError};
+use crate::error::InterfaceError;
 use crate::types::TypeError;
 use crate::{AstarteData, Timestamp};
 
@@ -41,124 +40,32 @@ pub struct DeviceEvent {
 }
 
 /// Conversion error from an [`DeviceEvent].
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FromEventError {
     /// couldn't parse request from interface
-    #[error("couldn't parse request from interface {0}")]
-    Interface(String),
-    /// couldn't parse the event path
-    #[error("the interface {interface} has wrong path {base_path}")]
-    Path {
-        /// Interface that generated the error
-        interface: &'static str,
-        /// Base path of the interface
-        base_path: String,
-    },
-    /// Invalid interface aggregation for the event
-    #[error("invalid interface aggregation for the event")]
-    Aggregation(#[from] AggregationError),
-    /// Invalid interface type for the event
-    #[error("invalid interface type for the event")]
-    InterfaceType(#[from] InterfaceTypeError),
-    /// unset passed to endpoint without allow unset
-    #[error("unset passed to {interface}{endpoint} without allow unset")]
-    Unset {
-        /// Interface that generated the error
-        interface: &'static str,
-        /// endpoint
-        endpoint: String,
-    },
-    /// object missing field
-    #[error("object {interface} missing field {base_path}/{path}")]
-    MissingField {
-        /// Interface that generated the error
-        interface: &'static str,
-        /// Base path of the interface
-        base_path: &'static str,
-        /// Path of the endpoint in error
-        path: &'static str,
-    },
+    Interface(InterfaceError),
     /// couldn't convert from [`AstarteData`]
-    #[error("couldn't convert from AstarteData")]
-    Conversion(#[from] TypeError),
-    /// couldn't parse the [`crate::astarte_interfaces::mapping::endpoint::Endpoint`]
-    #[error("couldn't parse the endpoint")]
-    Endpoint(#[from] EndpointError),
-    /// couldn't parse the [`crate::astarte_interfaces::MappingPath`]
-    #[error("couldn't parse the mapping path")]
-    MappingPath(#[from] MappingPathError),
+    Conversion(TypeError),
+}
+
+impl Display for FromEventError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FromEventError::Interface(interface_error) => {
+                write!(f, "interface error {interface_error}")
+            }
+            FromEventError::Conversion(type_error) => write!(f, "conversion error {type_error}"),
+        }
+    }
 }
 
 /// Converts a struct form an [`DeviceEvent`].
 ///
-/// # Example
+/// You can use the derive macro to implement the trait for a struct (object DataStream) or an enum
+/// (individual DataStream and Properties).
 ///
-/// ```rust
-/// use astarte_device_sdk::astarte_interfaces::MappingPath;
-/// use astarte_device_sdk::astarte_interfaces::mapping::endpoint::Endpoint;
-/// use astarte_device_sdk::astarte_interfaces::schema::Aggregation;
-/// use astarte_device_sdk::error::AggregationError;
-/// use astarte_device_sdk::event::{FromEvent, FromEventError};
-/// use astarte_device_sdk::{Value, DeviceEvent};
-///
-/// use std::convert::TryFrom;
-///
-/// struct Sensor {
-///     name: String,
-///     value: i32,
-/// }
-///
-/// impl FromEvent for Sensor {
-///     type Err = FromEventError;
-///
-///     fn from_event(event: DeviceEvent) -> Result<Self, Self::Err> {
-///         let base_path: Endpoint<&str> = Endpoint::try_from("/sensor")?;
-///
-///         if event.interface != "com.example.Sensor" {
-///             return Err(FromEventError::Interface(event.interface.clone()));
-///         }
-///
-///         let path = MappingPath::try_from(event.path.as_str())?;
-///
-///         if base_path.eq_mapping(&path) {
-///             return Err(FromEventError::Path {
-///                 interface: "com.example.Sensor",
-///                 base_path: event.path.clone(),
-///             });
-///         }
-///
-///         let Value::Object{mut data, timestamp: _} = event.data else {
-///             return Err(FromEventError::Aggregation(AggregationError::new(
-///                 "com.example.Sensor",
-///                 "sensor",
-///                 Aggregation::Object,
-///                 Aggregation::Individual,
-///             )));
-///         };
-///
-///         let name = data
-///             .remove("name")
-///             .ok_or(FromEventError::MissingField {
-///                 interface: "com.example.Sensor",
-///                 base_path: "sensor",
-///                 path: "name",
-///             })?
-///             .try_into()?;
-///
-///         let value = data
-///             .remove("value")
-///             .ok_or(FromEventError::MissingField {
-///                 interface: "com.example.Sensor",
-///                 base_path: "sensor",
-///                 path: "value",
-///             })?
-///             .try_into()?;
-///
-///         Ok(Self { name, value })
-///     }
-/// }
-/// ```
+/// See [`astarte_device_sdk_derive`].
 pub trait FromEvent: Sized {
     /// Reason why the conversion failed.
     type Err;

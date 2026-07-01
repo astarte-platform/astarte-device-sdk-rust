@@ -42,7 +42,9 @@ mod event;
 /// #[astarte_object(rename_all = "camelCase")]
 /// struct Foo {
 ///     #[astarte_object(rename = "some")]
-///     bar: String
+///     bar: String,
+///     #[astarte_object(rename = "some", try_from)]
+///     failable: f32,
 /// }
 /// ```
 #[derive(Debug, FromDeriveInput)]
@@ -76,20 +78,26 @@ impl ObjectDerive {
         let capacity = fields.len();
         let fields = fields.iter()
             .filter_map(|field| {
-            errors.handle_in(||
-                field.field_name(self.rename_all).ok_or_else(||
-                darling::Error::custom( "missing struct fields")
-                    .with_span(&self.ident)
-            ))
-        }).map(|(field_i, field_n)| {
-            quote_spanned! {field_i.span() =>
-                // TODO *Temporarily* ignore this new lint will be fixed in a new pr
-                #[allow(unknown_lints)]
-                #[allow(clippy::unnecessary_fallible_conversions)]
-                let v: astarte_device_sdk::types::AstarteData = ::std::convert::TryInto::try_into(value.#field_i)?;
-                object.insert(#field_n.to_string(), v);
-            }
-        }).collect::<Vec<_>>();
+                errors.handle_in(||
+                    field.field_name(self.rename_all).ok_or_else(||
+                        darling::Error::custom( "missing struct fields")
+                            .with_span(&self.ident)
+                    ))
+                    .map(|(field_i, field_n)| {
+                        if field.failable {
+                            quote_spanned! {field_i.span() =>
+                                let v: astarte_device_sdk::types::AstarteData = ::std::convert::TryInto::try_into(value.#field_i)?;
+                                object.insert(#field_n.to_string(), v);
+                            }
+                        } else {
+                            quote_spanned! {field_i.span() =>
+                                let v: astarte_device_sdk::types::AstarteData = ::std::convert::Into::into(value.#field_i);
+                                object.insert(#field_n.to_string(), v);
+                            }
+                        }
+
+                    })
+            }).collect::<Vec<_>>();
 
         errors.finish()?;
 
@@ -98,7 +106,7 @@ impl ObjectDerive {
 
         Ok(quote! {
             impl #impl_generics ::std::convert::TryFrom<#st_name #ty_generics> for astarte_device_sdk::aggregate::AstarteObject #where_clause {
-                type Error = astarte_device_sdk::error::Error;
+                type Error = astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::types::TypeError>;
 
                 fn try_from(value: #st_name #ty_generics) -> ::std::result::Result<Self, Self::Error> {
                     let mut object = Self::with_capacity(#capacity);
@@ -130,6 +138,9 @@ struct ObjectField {
     /// Rename the fields to the given value
     #[darling(default)]
     rename: Option<String>,
+    /// Use a failable conversion.
+    #[darling(default)]
+    failable: bool,
     /// Name of the field
     ident: Option<syn::Ident>,
 }

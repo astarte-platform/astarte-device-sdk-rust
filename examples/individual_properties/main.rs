@@ -25,11 +25,10 @@ use futures::future::Either;
 use serde::{Deserialize, Serialize};
 
 use astarte_device_sdk::{
-    Value, builder::DeviceBuilder, client::RecvError, error::Error, prelude::*, store::SqliteStore,
-    transport::mqtt::MqttConfig,
+    Value, builder::DeviceBuilder, prelude::*, store::SqliteStore, transport::mqtt::MqttConfig,
 };
 use tokio::task::JoinSet;
-use tracing::{error, info, level_filters::LevelFilter};
+use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
@@ -99,17 +98,14 @@ where
     Ok(())
 }
 // Getter function for the property "name" of a sensor.
-async fn get_name_for_sensor(
-    device: &impl PropAccess,
-    sensor_n: i32,
-) -> Result<String, crate::Error> {
+async fn get_name_for_sensor(device: &impl PropAccess, sensor_n: i32) -> eyre::Result<String> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
     let path = format!("/{sensor_n}/name");
 
     let name = device
         .property(interface, &path)
         .await?
-        .map(|t| t.try_into())
+        .map(String::try_from)
         .transpose()?
         .unwrap_or_else(|| "None".to_string());
 
@@ -187,34 +183,28 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn({
         let client = client.clone();
         async move {
-            loop {
-                match client.recv().await {
-                    Ok(event) => {
-                        if let Value::Individual { data, timestamp: _ } = event.data {
-                            let mut iter = event.path.splitn(3, '/').skip(1);
-                            let sensor_id = iter
-                                .next()
-                                .and_then(|id| id.parse::<u16>().ok())
-                                .ok_or_eyre("Incorrect error received.")?;
+            while let Some(event) = client.recv().await {
+                if let Value::Individual { data, timestamp: _ } = event.data {
+                    let mut iter = event.path.splitn(3, '/').skip(1);
+                    let sensor_id = iter
+                        .next()
+                        .and_then(|id| id.parse::<u16>().ok())
+                        .ok_or_eyre("Incorrect error received.")?;
 
-                            match iter.next() {
-                                Some("enable") => {
-                                    println!(
-                                        "Sensor number {} has been {}",
-                                        sensor_id,
-                                        if data == true { "ENABLED" } else { "DISABLED" }
-                                    );
-                                }
-                                Some("samplingPeriod") => {
-                                    let value: i32 = data.try_into()?;
-                                    println!("Sampling period for sensor {sensor_id} is {value}");
-                                }
-                                _ => {}
-                            }
+                    match iter.next() {
+                        Some("enable") => {
+                            println!(
+                                "Sensor number {} has been {}",
+                                sensor_id,
+                                if data == true { "ENABLED" } else { "DISABLED" }
+                            );
                         }
+                        Some("samplingPeriod") => {
+                            let value: i32 = data.try_into()?;
+                            println!("Sampling period for sensor {sensor_id} is {value}");
+                        }
+                        _ => {}
                     }
-                    Err(RecvError::Disconnected) => break,
-                    Err(err) => error!(error = %err, "error returned by the client"),
                 }
             }
 

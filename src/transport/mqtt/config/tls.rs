@@ -20,6 +20,7 @@
 
 use std::{io, sync::Arc};
 
+use astarte_device_error::{Error, WrapError};
 use chrono::{DateTime, Utc};
 use rustls::{
     ClientConfig, ConfigBuilder, RootCertStore,
@@ -32,7 +33,7 @@ use x509_parser::prelude::X509Certificate;
 
 use crate::error::Report;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::pairing::api::PairingError;
+use crate::pairing::api::PairingApiError;
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
 
@@ -163,18 +164,20 @@ impl ClientAuth {
     pub(crate) fn tls_config(
         self,
         roots: Arc<RootCertStore>,
-    ) -> Result<rustls::ClientConfig, PairingError> {
+    ) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
         tls_config_builder(roots)?
             .with_client_auth_cert(vec![self.der], self.private_key.into())
-            .map_err(PairingError::Tls)
+            .wrap_err(PairingApiError::Tls)
     }
 
-    pub(crate) fn insecure_tls_config(self) -> Result<rustls::ClientConfig, PairingError> {
+    pub(crate) fn insecure_tls_config(
+        self,
+    ) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
         warn!("INSECURE: ignore TLS certificates");
 
         insecure_tls_config_builder()?
             .with_client_auth_cert(vec![self.der], self.private_key.into())
-            .map_err(PairingError::Tls)
+            .wrap_err(PairingApiError::Tls)
     }
 
     /// Parses the X.509 Not After field of a cert.
@@ -201,7 +204,7 @@ impl ClientAuth {
 
 #[cfg(feature = "webpki")]
 #[instrument]
-pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, Error<PairingApiError>> {
     debug!("reading root cert store from webpki");
 
     let root_cert_store = RootCertStore {
@@ -213,7 +216,7 @@ pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError
 
 #[cfg(not(feature = "webpki"))]
 #[instrument]
-pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError> {
+pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, Error<PairingApiError>> {
     debug!("reading root cert store from native certs");
 
     tokio::task::spawn_blocking(|| {
@@ -231,33 +234,33 @@ pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, PairingError
         root_cert_store
     })
     .await
-    .map_err(PairingError::ReadNativeCerts)
+    .wrap_err(PairingApiError::Join)
 }
 
 pub(crate) fn tls_config_builder(
     roots: Arc<RootCertStore>,
-) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
+) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error<PairingApiError>> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(PairingError::Tls)?
+        .wrap_err(PairingApiError::Tls)?
         .with_root_certificates(roots);
 
     Ok(builder)
 }
 
 pub(crate) fn insecure_tls_config_builder()
--> Result<ConfigBuilder<ClientConfig, WantsClientCert>, PairingError> {
+-> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error<PairingApiError>> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(rustls::ALL_VERSIONS)
-        .map_err(PairingError::Tls)?
+        .wrap_err(PairingApiError::Tls)?
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoVerifier {}));
 

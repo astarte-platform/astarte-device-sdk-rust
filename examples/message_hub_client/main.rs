@@ -24,7 +24,6 @@ use astarte_device_sdk::{
     DeviceClient, DeviceConnection,
     aggregate::AstarteObject,
     builder::DeviceBuilder,
-    client::RecvError,
     prelude::*,
     store::{SqliteStore, StoreCapabilities},
     transport::grpc::{Grpc, GrpcConfig, tonic::transport::Endpoint},
@@ -102,19 +101,7 @@ async fn receive_data<S>(client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
 where
     S: PropertyStore + StoreCapabilities,
 {
-    loop {
-        let event = match client.recv().await {
-            Ok(event) => event,
-            Err(RecvError::Disconnected) => {
-                info!("client disconnected");
-                return Ok(());
-            }
-            Err(err) => {
-                error!(error = %eyre::Report::new(err), "received error from client");
-                continue;
-            }
-        };
-
+    while let Some(event) = client.recv().await {
         match event.interface.as_str() {
             "org.astarte-platform.rust.get-started.IndividualServer" => {
                 // parse the path to extract the id part
@@ -132,16 +119,17 @@ where
             }
             interface => {
                 warn!(interface, "unhandled interface event received");
-
-                continue;
             }
         }
     }
+
+    Ok(())
 }
 
 /// Aggregated object
 #[derive(Debug, IntoAstarteObject)]
 struct AggregatedDevice {
+    #[astarte_object(failable)]
     double_endpoint: f64,
     string_endpoint: String,
 }

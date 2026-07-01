@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,7 @@
 
 //! Deserialize the [`AstarteData`].
 
+use astarte_device_error::Error;
 use bson::{Binary, Bson};
 
 use astarte_interfaces::schema::MappingType;
@@ -55,14 +56,14 @@ impl From<AstarteData> for Bson {
 }
 
 /// Utility to convert a Bson array into an [`AstarteData`] array.
-pub(crate) fn bson_array<T, F>(array: Vec<Bson>, f: F) -> Result<Vec<T>, TypeError>
+pub(crate) fn bson_array<T, F>(array: Vec<Bson>, f: F) -> Result<Vec<T>, Error<TypeError>>
 where
     F: FnMut(Bson) -> Option<T>,
 {
     array
         .into_iter()
         .map(f)
-        .map(|item| item.ok_or(TypeError::FromBsonArrayError))
+        .map(|item| item.ok_or(Error::new(TypeError::FromBsonArray)))
         .collect()
 }
 
@@ -115,52 +116,61 @@ impl BsonConverter {
     }
 
     /// Tries to convert the [`ArrayType`] to an astarte array.
-    fn try_into_array(self, item_type: ArrayType) -> Result<AstarteData, TypeError> {
+    fn try_into_array(self, item_type: ArrayType) -> Result<AstarteData, Error<TypeError>> {
         match self.bson {
             Bson::Array(val) => AstarteData::try_from_array(val, item_type),
-            _ => Err(TypeError::InvalidType),
+            _ => Err(Error::with(
+                TypeError::InvalidType,
+                "values is not an array",
+            )),
         }
     }
 }
 
 impl TryFrom<BsonConverter> for AstarteData {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: BsonConverter) -> Result<Self, Self::Error> {
         match value.mapping_type {
             MappingType::Double => value
                 .bson
                 .as_f64()
-                .ok_or(TypeError::InvalidType)
+                .ok_or(Error::with(TypeError::InvalidType, "for Double mapping"))
                 .and_then(AstarteData::try_from),
             MappingType::Integer => value
                 .bson
                 .as_i32()
-                .ok_or(TypeError::InvalidType)
+                .ok_or(Error::with(TypeError::InvalidType, "for Integer mapping"))
                 .map(AstarteData::from),
             MappingType::Boolean => value
                 .bson
                 .as_bool()
-                .ok_or(TypeError::InvalidType)
+                .ok_or(Error::with(TypeError::InvalidType, "for Boolean mapping"))
                 .map(AstarteData::from),
             MappingType::LongInteger => value
                 .bson
                 .as_i64()
                 // Astarte can send different size integer
                 .or_else(|| value.bson.as_i32().map(i64::from))
-                .ok_or(TypeError::InvalidType)
+                .ok_or(Error::with(
+                    TypeError::InvalidType,
+                    "for LongInteger mapping",
+                ))
                 .map(AstarteData::from),
             MappingType::String => match value.bson {
                 Bson::String(val) => Ok(AstarteData::from(val)),
-                _ => Err(TypeError::InvalidType),
+                _ => Err(Error::with(TypeError::InvalidType, "for String mapping")),
             },
             MappingType::BinaryBlob => match value.bson {
                 Bson::Binary(val) => Ok(AstarteData::from(val.bytes)),
-                _ => Err(TypeError::InvalidType),
+                _ => Err(Error::with(
+                    TypeError::InvalidType,
+                    "for BinaryBlob mapping",
+                )),
             },
             MappingType::DateTime => match value.bson {
                 Bson::DateTime(val) => Ok(AstarteData::from(val.to_chrono())),
-                _ => Err(TypeError::InvalidType),
+                _ => Err(Error::with(TypeError::InvalidType, "for DateTime mapping")),
             },
             MappingType::DoubleArray => value.try_into_array(ArrayType::Double),
             MappingType::IntegerArray => value.try_into_array(ArrayType::Integer),

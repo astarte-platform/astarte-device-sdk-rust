@@ -18,6 +18,7 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
+use astarte_device_error::{Error, WrapError};
 use http::header::CONTENT_TYPE;
 use http_body_util::{BodyExt, Limited};
 use mime::APPLICATION_JSON;
@@ -25,14 +26,13 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use tracing::{error, instrument, trace};
-use url::ParseError;
 
 use crate::builder::Config;
 use crate::logging::security::{SecurityEvent, notify_security_event};
 
 use crate::transport::mqtt::config::transport::TransportProvider;
 
-use super::PairingError;
+use super::PairingApiError;
 
 /// Arguments for creating an API client
 pub(crate) struct ClientArgs<'a> {
@@ -55,7 +55,7 @@ impl<'a> ApiClient<'a> {
         args: ClientArgs<'a>,
         config: &Config,
         tls: rustls::ClientConfig,
-    ) -> Result<Self, PairingError> {
+    ) -> Result<Self, Error<PairingApiError>> {
         let ClientArgs {
             realm,
             device_id,
@@ -65,7 +65,8 @@ impl<'a> ApiClient<'a> {
 
         let mut headers = HeaderMap::new();
         let auth = format!("Bearer {}", token);
-        let mut value = HeaderValue::from_str(&auth)?;
+        let mut value = HeaderValue::from_str(&auth)
+            .wrap_err_ctx(PairingApiError::InvalidArgument, "authorization header")?;
         value.set_sensitive(true);
         headers.insert(reqwest::header::AUTHORIZATION, value);
 
@@ -74,7 +75,11 @@ impl<'a> ApiClient<'a> {
             .default_headers(headers)
             .connect_timeout(config.connection_timeout)
             .read_timeout(config.recv_timeout)
-            .build()?;
+            .build()
+            .wrap_err_ctx(
+                PairingApiError::InvalidArgument,
+                "while building the request client",
+            )?;
 
         Ok(Self {
             realm,
@@ -88,13 +93,13 @@ impl<'a> ApiClient<'a> {
         config: &Config,
         provider: &'a TransportProvider,
         args: ClientArgs<'a>,
-    ) -> Result<Self, PairingError> {
+    ) -> Result<Self, Error<PairingApiError>> {
         let tls = provider.api_tls_config()?;
 
         Self::create(args, config, tls)
     }
 
-    fn url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
+    fn url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
     where
         'a: 'i,
         I: IntoIterator<Item = &'i str>,
@@ -104,9 +109,12 @@ impl<'a> ApiClient<'a> {
         {
             // We have to do this this way to avoid inconsistent behaviour depending
             // on the user putting the trailing slash or not
-            let mut path = url
-                .path_segments_mut()
-                .map_err(|()| ParseError::RelativeUrlWithCannotBeABaseBase)?;
+            let mut path = url.path_segments_mut().map_err(|()| {
+                Error::with(
+                    PairingApiError::InvalidArgument,
+                    "relative url without base",
+                )
+            })?;
 
             path.extend(segments);
         }
@@ -115,7 +123,7 @@ impl<'a> ApiClient<'a> {
     }
 
     #[instrument(skip_all, ret)]
-    fn device_url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
+    fn device_url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
     where
         'a: 'i,
         I: IntoIterator<Item = &'i str>,
@@ -128,7 +136,7 @@ impl<'a> ApiClient<'a> {
     }
 
     #[instrument(skip_all, ret)]
-    fn realm_url<'i, I>(&self, segments: I) -> Result<Url, PairingError>
+    fn realm_url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
     where
         'a: 'i,
         I: IntoIterator<Item = &'i str>,
@@ -179,81 +187,113 @@ impl<'a> ApiClient<'a> {
     }
 
     #[instrument(skip_all)]
-    pub async fn create_certificate(&self, csr: &str) -> Result<String, PairingError> {
+    pub async fn create_certificate(&self, csr: &str) -> Result<String, Error<PairingApiError>> {
         let url = self.device_url(["protocols", "astarte_mqtt_v1", "credentials"])?;
 
         let payload = ApiData::new(MqttV1Csr { csr });
 
-        let response = self.client.post(url).json(&payload).send().await?;
+        let response = self
+            .client
+            .post(url)
+            .json(&payload)
+            .send()
+            .await
+            .wrap_err_ctx(PairingApiError::Request, "while creating certificate")?;
 
         match response.status() {
             StatusCode::CREATED => {
-                let res: ApiData<MqttV1Certificate> = response.json().await?;
+                let res: ApiData<MqttV1Certificate> = response
+                    .json()
+                    .await
+                    .wrap_err_ctx(PairingApiError::Request, "invalid json")?;
 
                 Ok(res.data.client_crt)
             }
             status_code => {
                 Self::handle_error(response).await;
 
-                Err(PairingError::Api {
-                    status: status_code,
-                })
+                Err(
+                    Error::with(PairingApiError::Api, "while getting the broker_url")
+                        .set_message(format!("status {status_code}")),
+                )
             }
         }
     }
 
     #[instrument(skip_all)]
-    pub async fn verify_certificate(&self, client_crt: &str) -> Result<bool, PairingError> {
+    pub async fn verify_certificate(
+        &self,
+        client_crt: &str,
+    ) -> Result<bool, Error<PairingApiError>> {
         let url = self.device_url(["protocols", "astarte_mqtt_v1", "credentials", "verify"])?;
 
         trace!(%url);
 
         let payload = ApiData::new(MqttV1Certificate { client_crt });
 
-        let response = self.client.post(url).json(&payload).send().await?;
+        let response = self
+            .client
+            .post(url)
+            .json(&payload)
+            .send()
+            .await
+            .wrap_err_ctx(PairingApiError::Request, "while verifying certificate")?;
 
         match response.status() {
             StatusCode::OK => {
-                let res: ApiData<MqttV1ClientCrtValidity> = response.json().await?;
+                let res: ApiData<MqttV1ClientCrtValidity> = response
+                    .json()
+                    .await
+                    .wrap_err_ctx(PairingApiError::Request, "invalid json response")?;
 
                 Ok(res.data.valid)
             }
             status_code => {
                 Self::handle_error(response).await;
 
-                Err(PairingError::Api {
-                    status: status_code,
-                })
+                Err(
+                    Error::with(PairingApiError::Api, "while verifying certificate")
+                        .set_message(format!("status {status_code}")),
+                )
             }
         }
     }
 
     #[instrument(skip_all)]
-    pub async fn get_broker_url(&self) -> Result<Url, PairingError> {
+    pub async fn get_broker_url(&self) -> Result<Url, Error<PairingApiError>> {
         let url = self.device_url([])?;
 
         trace!(%url);
 
-        let response = self.client.get(url).send().await?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .wrap_err_ctx(PairingApiError::Request, "while getting broker_url")?;
 
         match response.status() {
             StatusCode::OK => {
-                let res: ApiData<StatusInfo> = response.json().await?;
+                let res: ApiData<StatusInfo> = response
+                    .json()
+                    .await
+                    .wrap_err_ctx(PairingApiError::Request, "invalid json response")?;
 
                 Ok(res.data.protocols.astarte_mqtt_v1.broker_url)
             }
             status_code => {
                 Self::handle_error(response).await;
 
-                Err(PairingError::Api {
-                    status: status_code,
-                })
+                Err(
+                    Error::with(PairingApiError::Api, "while getting the broker_url")
+                        .set_message(format!("status {status_code}")),
+                )
             }
         }
     }
 
     #[instrument(skip_all)]
-    pub async fn register_device(&self) -> Result<String, PairingError> {
+    pub async fn register_device(&self) -> Result<String, Error<PairingApiError>> {
         let url = self.realm_url(["agent", "devices"])?;
 
         trace!(%url);
@@ -262,11 +302,20 @@ impl<'a> ApiClient<'a> {
             hw_id: self.device_id,
         });
 
-        let response = self.client.post(url).json(&payload).send().await?;
+        let response = self
+            .client
+            .post(url)
+            .json(&payload)
+            .send()
+            .await
+            .wrap_err_ctx(PairingApiError::Request, "while registering device")?;
 
         match response.status() {
             StatusCode::CREATED => {
-                let res: ApiData<MqttV1Credential> = response.json().await?;
+                let res: ApiData<MqttV1Credential> = response
+                    .json()
+                    .await
+                    .wrap_err_ctx(PairingApiError::Request, "invalid json response")?;
 
                 notify_security_event(SecurityEvent::CriticalOperationAuthSuccessful);
 
@@ -277,9 +326,10 @@ impl<'a> ApiClient<'a> {
 
                 Self::handle_error(response).await;
 
-                Err(PairingError::Api {
-                    status: status_code,
-                })
+                Err(
+                    Error::with(PairingApiError::Api, "while getting the broker_url")
+                        .set_message(format!("status {status_code}")),
+                )
             }
         }
     }
@@ -497,12 +547,12 @@ pub(crate) mod tests {
         let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
-        let res = client
+        let error = client
             .create_certificate("csr")
             .await
             .expect_err("error expected");
 
-        assert!(matches!(res, PairingError::Api { status, } if status == 202));
+        assert_eq!(*error.kind(), PairingApiError::Api);
 
         mock.assert_async().await;
     }
@@ -563,9 +613,9 @@ pub(crate) mod tests {
         let client = ApiClient::from_transport(&Config::default(), &provider, args)
             .expect("couldn't create api client");
 
-        let res = client.get_broker_url().await.expect_err("should error");
+        let error = client.get_broker_url().await.expect_err("should error");
 
-        assert!(matches!(res, PairingError::Api { status, } if status == 401));
+        assert_eq!(*error.kind(), PairingApiError::Api);
 
         mock.assert_async().await;
     }

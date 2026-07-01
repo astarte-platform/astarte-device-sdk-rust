@@ -16,19 +16,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use rumqttc::QoS;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, trace};
 
 use crate::properties::encode_set_properties;
 use crate::session::StoredSession;
-use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::mqtt::client::AsyncClient;
 use crate::transport::mqtt::components::ClientId;
+use crate::transport::mqtt::error::MqttError;
 use crate::transport::mqtt::{AsyncClientExt, SessionData};
 
-use super::ConnError;
 use super::context::{ConnCtx, Connection};
 use super::wait_sends::TaskHandle;
 
@@ -83,7 +83,7 @@ impl<'a> Handshake<'a> {
     fn full_handshake<S>(
         client: AsyncClient,
         client_id: ClientId,
-        store: StoreWrapper<S>,
+        store: S,
         session_data: SessionData,
     ) -> TaskHandle
     where
@@ -96,8 +96,7 @@ impl<'a> Handshake<'a> {
 
             client
                 .send_introspection(client_id, session_data.interfaces)
-                .await
-                .map_err(ConnError::client("send introspection"))?;
+                .await?;
 
             if let Some(session) = store.get_session() {
                 trace!("Introspection sent successfully, storing");
@@ -123,7 +122,7 @@ impl<'a> Handshake<'a> {
         client: &AsyncClient,
         client_id: ClientId<&str>,
         server_interfaces: &[String],
-    ) -> Result<(), ConnError> {
+    ) -> Result<(), Error<MqttError>> {
         debug!("subscribing server properties");
 
         client
@@ -132,7 +131,7 @@ impl<'a> Handshake<'a> {
                 QoS::ExactlyOnce,
             )
             .await
-            .map_err(ConnError::client("subscribe consumer properties"))?;
+            .wrap_err_ctx(MqttError::Subscribe, "subscribe consumer properties")?;
 
         debug!(
             "subscribing on {} server interfaces",
@@ -142,7 +141,7 @@ impl<'a> Handshake<'a> {
         client
             .subscribe_interfaces(client_id, server_interfaces)
             .await
-            .map_err(ConnError::client("subscribe server interface"))?;
+            .wrap_err_ctx(MqttError::Subscribe, "subscribe server interface")?;
 
         Ok(())
     }
@@ -151,7 +150,7 @@ impl<'a> Handshake<'a> {
     async fn send_empty_cache(
         client: &AsyncClient,
         client_id: ClientId<&str>,
-    ) -> Result<(), ConnError> {
+    ) -> Result<(), Error<MqttError>> {
         debug!("sending emptyCache");
 
         client
@@ -162,7 +161,7 @@ impl<'a> Handshake<'a> {
                 "1",
             )
             .await
-            .map_err(ConnError::client("empty cache"))?;
+            .wrap_err_ctx(MqttError::Publish, "empty cache")?;
 
         Ok(())
     }
@@ -172,9 +171,8 @@ impl<'a> Handshake<'a> {
         client: &AsyncClient,
         client_id: ClientId<&str>,
         device_properties: &[String],
-    ) -> Result<(), ConnError> {
-        let payload =
-            encode_set_properties(device_properties).map_err(ConnError::PurgeProperties)?;
+    ) -> Result<(), Error<MqttError>> {
+        let payload = encode_set_properties(device_properties).map_kind(MqttError::PurgeProp)?;
 
         client
             .publish(
@@ -184,7 +182,7 @@ impl<'a> Handshake<'a> {
                 payload,
             )
             .await
-            .map_err(ConnError::client("purge device properties"))?;
+            .wrap_err_ctx(MqttError::Publish, "purge device properties")?;
 
         Ok(())
     }

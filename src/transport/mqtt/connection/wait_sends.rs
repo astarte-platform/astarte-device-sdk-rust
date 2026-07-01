@@ -18,6 +18,7 @@
 
 use std::ops::ControlFlow;
 
+use astarte_device_error::{Error, WrapError};
 use rumqttc::{ConnectionError, Event, Publish};
 use tokio::task::JoinError;
 use tokio_util::task::AbortOnDropHandle;
@@ -25,11 +26,11 @@ use tracing::{debug, error, info};
 
 use crate::error::Report;
 use crate::transport::mqtt::connection::handle_event;
+use crate::transport::mqtt::error::MqttError;
 
-use super::ConnError;
 use super::context::{ConnCtx, Connection};
 
-pub(crate) type TaskHandle = AbortOnDropHandle<Result<(), ConnError>>;
+pub(crate) type TaskHandle = AbortOnDropHandle<Result<(), Error<MqttError>>>;
 
 /// Waits for all the packets sent in the [`Init`] to be ACK-ed by Astarte.
 #[derive(Debug)]
@@ -48,7 +49,7 @@ impl WaitTask {
     pub(super) async fn wait_connection<S>(
         &mut self,
         ctx: &mut ConnCtx<'_, S>,
-    ) -> Result<ControlFlow<bool, Publish>, ConnError> {
+    ) -> Result<ControlFlow<bool, Publish>, Error<MqttError>> {
         loop {
             let publish = tokio::select! {
                 // Join handle is cancel safe
@@ -72,8 +73,8 @@ impl WaitTask {
     fn handle_join<S>(
         &mut self,
         ctx: &mut ConnCtx<'_, S>,
-        res: Result<Result<(), ConnError>, JoinError>,
-    ) -> Result<ControlFlow<bool, Publish>, ConnError> {
+        res: Result<Result<(), Error<MqttError>>, JoinError>,
+    ) -> Result<ControlFlow<bool, Publish>, Error<MqttError>> {
         // Don't move the handle to await the task
         match res {
             Ok(Ok(())) => {
@@ -97,21 +98,18 @@ impl WaitTask {
                 // expectation failing.
                 debug_assert!(!err.is_panic(), "task panicked while waiting for acks");
 
-                Err(ConnError::JoinError)
+                Err(Error::with(MqttError::Task, "waiting publishes").set_source(err))
             }
         }
     }
 
-    fn handle_poll(res: Result<Event, ConnectionError>) -> Result<Option<Publish>, ConnError> {
+    fn handle_poll(
+        res: Result<Event, ConnectionError>,
+    ) -> Result<Option<Publish>, Error<MqttError>> {
         debug!("next event polled");
 
-        match res {
-            Ok(event) => handle_event(event),
-            Err(err) => Err(ConnError::Connection {
-                ctx: "waiting for send task",
-                source: err,
-            }),
-        }
+        res.wrap_err_ctx(MqttError::Connection, "waiting for send task")
+            .and_then(handle_event)
     }
 }
 
@@ -126,7 +124,6 @@ pub(crate) mod tests {
     use crate::interfaces::Interfaces;
     use crate::state::SharedState;
     use crate::store::mock::MockStore;
-    use crate::store::wrapper::StoreWrapper;
     use crate::transport::mqtt::ClientSender;
     use crate::transport::mqtt::client::{AsyncClient, EventLoop};
     use crate::transport::mqtt::config::transport::TransportProvider;
@@ -154,7 +151,7 @@ pub(crate) mod tests {
         pub(crate) sender: Arc<OnceLock<ClientSender>>,
         pub(crate) state: SharedState,
         pub(crate) provider: TransportProvider,
-        pub(crate) store: StoreWrapper<MockStore>,
+        pub(crate) store: MockStore,
         pub(crate) interfaces: Interfaces,
         /// Whether the stored introspection matches the current one
         pub(crate) session_synced: bool,
@@ -166,7 +163,7 @@ pub(crate) mod tests {
                 sender: Arc::default(),
                 state: mock_state(&[]),
                 provider: TransportProvider::configure(None, false).await.unwrap(),
-                store: StoreWrapper::new(MockStore::default()),
+                store: MockStore::default(),
                 interfaces: Interfaces::default(),
                 session_synced: true,
             }

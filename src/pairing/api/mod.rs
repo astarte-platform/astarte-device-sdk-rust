@@ -18,10 +18,11 @@
 
 //! Configures how to register the device to Astarte
 
+use std::fmt::Display;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use reqwest::StatusCode;
+use astarte_device_error::{Error, WrapError};
 use tokio::fs;
 use tracing::{debug, error, info, instrument};
 
@@ -39,82 +40,34 @@ pub mod registration;
 
 /// Error returned during pairing.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum PairingError {
-    /// Couldn't authenticate with the pairing token, because we are missing a writable directory
-    #[error("missing writable directory to store credentials to use the pairing token")]
-    NoStorePairingToken,
-    /// Invalid credential secret.
-    #[error("invalid credentials secret")]
-    InvalidCredentials(#[source] io::Error),
-    /// Missing certificate credential.
-    #[error("missing certificate credential")]
-    MissingCredentials,
-    /// Couldn't parse the pairing URL.
-    #[error("invalid pairing URL")]
-    InvalidUrl(#[from] url::ParseError),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairingApiError {
+    /// Couldn't pair for invalid argument
+    InvalidArgument,
     /// The pairing request failed.
-    #[error("error while sending or receiving request")]
-    Request(reqwest::Error),
-    /// The pairing request failed with a timeout (missing connection).
-    #[error("got a timeout or connection error")]
-    RequestNoNetwork(reqwest::Error),
-    /// Invalid credential secret
-    #[error("couldn't set bearer header, invalid credential secret")]
-    Header(#[from] reqwest::header::InvalidHeaderValue),
+    Request,
     /// The API returned an error.
-    #[error("API returned an error code {status}")]
-    Api {
-        /// The status code of the response.
-        status: StatusCode,
-    },
-    /// Failed to generate the CSR.
-    #[error("crypto error")]
-    Crypto(#[from] CryptoError),
+    Api,
     /// Couldn't configure the TLS store
-    #[error("failed to configure TLS")]
-    Tls(#[from] rustls::Error),
-    /// Invalid configuration.
-    #[error("configuration error, {0}")]
-    Config(String),
-    /// Couldn't read the credentials secret from the file
-    #[error("couldn't read credential secret from {path}")]
-    ReadCredential {
-        /// The path where the credential is stored.
-        path: PathBuf,
-        /// The reason why we couldn't read the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't read the certificate from the file
-    #[error("couldn't read certificate from {path}")]
-    ReadCertificate {
-        /// The path where the certificate is stored.
-        path: PathBuf,
-        /// The reason why we couldn't read the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't write the credentials secret to the file
-    #[error("couldn't write credential secret to {path}")]
-    WriteCredential {
-        /// The path where the credential is stored.
-        path: std::path::PathBuf,
-        /// The reason why we couldn't write the file.
-        #[source]
-        backtrace: io::Error,
-    },
-    /// Couldn't read native certificates
-    #[error("couldn't read native certificates")]
-    ReadNativeCerts(#[source] tokio::task::JoinError),
+    Tls,
+    /// Couldn't join task
+    Join,
+    /// Couldn't read the or write the credentials
+    Io(std::io::ErrorKind),
+    /// Crypto operation failed
+    Crypto(CryptoError),
 }
 
-impl From<reqwest::Error> for PairingError {
-    fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() || err.is_request() {
-            PairingError::RequestNoNetwork(err)
-        } else {
-            PairingError::Request(err)
+impl Display for PairingApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PairingApiError::InvalidArgument => write!(f, "invalid argument"),
+            PairingApiError::Request => write!(f, "couldn't send the request"),
+            PairingApiError::Tls => write!(f, "couldn't configure TLS"),
+            PairingApiError::Api => write!(f, "the api responded with an error"),
+            PairingApiError::Join => write!(f, "couldn't join task"),
+            PairingApiError::Io(error) => write!(f, "io error {error}"),
+            PairingApiError::Crypto(error) => write!(f, "crypto error {error}"),
         }
     }
 }
@@ -143,7 +96,10 @@ impl PairingApi {
     }
 
     /// Retrieves the credentials for the connection
-    async fn credentials<S>(&mut self, ctx: &mut ConnCtx<'_, S>) -> Result<String, PairingError> {
+    async fn credentials<S>(
+        &mut self,
+        ctx: &mut ConnCtx<'_, S>,
+    ) -> Result<String, Error<PairingApiError>> {
         // We need to clone to not return something owning a mutable reference to self
         match &self.mqtt_config.credential {
             Credential::Secret { credentials_secret } => Ok(credentials_secret.clone()),
@@ -162,14 +118,17 @@ impl PairingApi {
         &self,
         ctx: &mut ConnCtx<'_, S>,
         pairing_token: &str,
-    ) -> Result<String, PairingError> {
+    ) -> Result<String, Error<PairingApiError>> {
         let credential_file = ctx
             .state
             .config
             .writable_dir
             .as_ref()
             .map(|dir| dir.join(CERTIFICATE_FILE))
-            .ok_or(PairingError::NoStorePairingToken)?;
+            .ok_or(Error::with(
+                PairingApiError::InvalidArgument,
+                "missing writable dir to store credentials",
+            ))?;
 
         match fs::read_to_string(&credential_file).await {
             Ok(secret) => {
@@ -181,10 +140,12 @@ impl PairingApi {
                 info!("no credential file {}", credential_file.display())
             }
             Err(err) => {
-                return Err(PairingError::ReadCredential {
-                    path: credential_file,
-                    backtrace: err,
-                });
+                return Err(Error::with(
+                    PairingApiError::Io(err.kind()),
+                    "while reading credential file",
+                )
+                .set_source(err)
+                .set_message(format!("from {}", credential_file.display())));
             }
         }
 
@@ -202,19 +163,22 @@ impl PairingApi {
         // We can register the device multiple times with the same pairing token if the device
         // hasn't connected. If the call to write the file fails, we will just re-register the
         // device.
-        fs::write(&credential_file, &secret).await.map_err(|err| {
-            PairingError::WriteCredential {
-                path: credential_file,
-                backtrace: err,
-            }
-        })?;
+        fs::write(&credential_file, &secret)
+            .await
+            .wrap_err_with(|err| {
+                Error::with(
+                    PairingApiError::Io(err.kind()),
+                    "while writing credential secret",
+                )
+                .set_message(format!("to {}", credential_file.display()))
+            })?;
 
         Ok(secret)
     }
 }
 
 impl Pairing for PairingApi {
-    type Error = PairingError;
+    type Error = Error<PairingApiError>;
 
     async fn config<S>(&mut self, ctx: &mut ConnCtx<'_, S>) -> Result<PairingConfig, Self::Error>
     where

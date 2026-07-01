@@ -20,7 +20,9 @@
 //! Astarte types from the Astarte device SDK.
 
 use std::collections::HashMap;
+use std::fmt::Display;
 
+use astarte_device_error::{Error, ResultExt};
 use astarte_interfaces::schema::Ownership;
 use astarte_message_hub_proto::astarte_data::AstarteData as ProtoData;
 use astarte_message_hub_proto::astarte_message::Payload as ProtoPayload;
@@ -43,43 +45,40 @@ use crate::{
     validate::ValidatedObject,
 };
 
-use super::{GrpcError, GrpcPayload, ValidatedProperty};
+use super::error::GrpcError;
+use super::{GrpcPayload, ValidatedProperty};
 
 /// Error returned by the Message Hub types conversions.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageHubProtoError {
     /// Expected field was not found
-    #[error("missing the expected field '{0}'")]
-    ExpectedField(&'static str),
+    ExpectedField,
     /// Date conversion error
-    #[error("error while converting a proto timestamp")]
     Timestamp,
     /// Expected set property got an unset
-    #[error("expected set property got an unset")]
     ExpectedSetProperty,
     /// Couldn't convert proto to astarte type
-    #[error("couldn't convert proto to Astarte type")]
-    Conversion(#[from] TypeError),
+    Conversion(TypeError),
 }
 
-/// Map a received message hub property to an optional astarte type
-pub(crate) fn map_property_to_astarte_type(
-    value: astarte_message_hub_proto::Property,
-) -> Result<Option<AstarteData>, MessageHubProtoError> {
-    let astarte_message_hub_proto::Property { data, .. } = value;
-
-    let Some(individual) = data else {
-        return Ok(None);
-    };
-
-    Ok(Some(individual.try_into()?))
+impl Display for MessageHubProtoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ExpectedField => write!(f, "missing the expected field"),
+            Self::Timestamp => write!(f, "error while converting a proto timestamp"),
+            Self::ExpectedSetProperty => write!(f, "expected set property got an unset"),
+            Self::Conversion(error) => {
+                write!(f, "couldn't convert proto to Astarte type {error}")
+            }
+        }
+    }
 }
 
 /// Map a list of properties, unset properties will be ignored
 pub(crate) fn map_set_stored_properties(
     message_hub_properties: astarte_message_hub_proto::StoredProperties,
-) -> Result<Vec<StoredProp>, MessageHubProtoError> {
+) -> Result<Vec<StoredProp>, Error<MessageHubProtoError>> {
     message_hub_properties
         .properties
         .into_iter()
@@ -89,20 +88,15 @@ pub(crate) fn map_set_stored_properties(
                 astarte_message_hub_proto::Ownership::Server => Ownership::Server,
             };
 
-            let value = match map_property_to_astarte_type(prop.clone()).transpose()? {
-                Ok(s) => s,
-                Err(e) => return Some(Err(e)),
-            };
+            let value = prop.data?;
 
-            let res = StoredProp {
+            Some(AstarteData::try_from(value).map(|value| StoredProp {
                 interface: prop.interface_name,
                 path: prop.path,
-                value,
                 interface_major: prop.version_major,
                 ownership,
-            };
-
-            Some(Ok(res))
+                value,
+            }))
         })
         .try_collect()
 }
@@ -110,7 +104,7 @@ pub(crate) fn map_set_stored_properties(
 /// Converts a [`prost_types::Timestamp`] into a [`chrono::DateTime<Utc>`]
 pub(crate) fn convert_timestamp(
     timestamp: prost_types::Timestamp,
-) -> Result<crate::Timestamp, MessageHubProtoError> {
+) -> Result<crate::Timestamp, Error<MessageHubProtoError>> {
     let val = timestamp.normalized();
 
     let nanos = val
@@ -124,7 +118,7 @@ pub(crate) fn convert_timestamp(
     chrono::Utc
         .timestamp_opt(val.seconds, nanos)
         .earliest()
-        .ok_or(MessageHubProtoError::Timestamp)
+        .ok_or(Error::new(MessageHubProtoError::Timestamp))
 }
 
 /// Converts a [`chrono::DateTime<Utc>`] into a [`prost_types::Timestamp`]
@@ -139,17 +133,17 @@ fn convert_chrono(timestamp: crate::Timestamp) -> prost_types::Timestamp {
 }
 
 impl TryFrom<ProtoDataWrapper> for AstarteData {
-    type Error = MessageHubProtoError;
+    type Error = Error<MessageHubProtoError>;
 
     fn try_from(value: ProtoDataWrapper) -> Result<Self, Self::Error> {
         let astarte_data = value
             .astarte_data
-            .ok_or(MessageHubProtoError::ExpectedField("astarte_data"))?;
+            .ok_or_else(|| Error::with(MessageHubProtoError::ExpectedField, "astarte_data"))?;
 
         match astarte_data {
             ProtoData::DateTime(v) => convert_timestamp(v).map(AstarteData::DateTime),
             ProtoData::Double(v) => {
-                AstarteData::try_from(v).map_err(MessageHubProtoError::Conversion)
+                AstarteData::try_from(v).map_kind(MessageHubProtoError::Conversion)
             }
             ProtoData::Integer(v) => Ok(AstarteData::Integer(v)),
             ProtoData::Boolean(v) => Ok(AstarteData::Boolean(v)),
@@ -157,7 +151,7 @@ impl TryFrom<ProtoDataWrapper> for AstarteData {
             ProtoData::String(v) => Ok(AstarteData::String(v)),
             ProtoData::BinaryBlob(v) => Ok(AstarteData::BinaryBlob(v)),
             ProtoData::DoubleArray(arr) => {
-                AstarteData::try_from(arr.values).map_err(MessageHubProtoError::Conversion)
+                AstarteData::try_from(arr.values).map_kind(MessageHubProtoError::Conversion)
             }
             ProtoData::IntegerArray(arr) => Ok(AstarteData::IntegerArray(arr.values)),
             ProtoData::BooleanArray(arr) => Ok(AstarteData::BooleanArray(arr.values)),
@@ -223,21 +217,23 @@ impl From<AstarteData> for ProtoDataWrapper {
 
 // The received payload from the connection
 impl TryFrom<MessageHubEvent> for ReceivedEvent<GrpcPayload> {
-    type Error = GrpcError;
+    type Error = Error<GrpcError>;
 
     fn try_from(value: MessageHubEvent) -> Result<Self, Self::Error> {
-        let event = value
-            .event
-            .ok_or(MessageHubProtoError::ExpectedField("event"))?;
+        let event = value.event.ok_or(Error::with(
+            GrpcError::Conversion(MessageHubProtoError::ExpectedField),
+            "event",
+        ))?;
 
         let message = match event {
             Event::Message(msg) => msg,
-            Event::Error(err) => return Err(GrpcError::Server(err)),
+            Event::Error(err) => return Err(Error::new(GrpcError::Server).set_message(err)),
         };
 
-        let payload = message
-            .payload
-            .ok_or(MessageHubProtoError::ExpectedField("payload"))?;
+        let payload = message.payload.ok_or(Error::with(
+            GrpcError::Conversion(MessageHubProtoError::ExpectedField),
+            "payload",
+        ))?;
 
         Ok(ReceivedEvent {
             interface: message.interface_name,
@@ -340,10 +336,10 @@ impl From<ValidatedUnset> for astarte_message_hub_proto::AstarteMessage {
 /// For deserialize individual
 pub(crate) fn try_from_individual(
     individual: AstarteDatastreamIndividual,
-) -> Result<(AstarteData, Option<Timestamp>), MessageHubProtoError> {
+) -> Result<(AstarteData, Option<Timestamp>), Error<MessageHubProtoError>> {
     let data = individual
         .data
-        .ok_or(MessageHubProtoError::ExpectedField("data"))?
+        .ok_or(Error::with(MessageHubProtoError::ExpectedField, "data"))?
         .try_into()?;
 
     let timestamp = individual.timestamp.map(convert_timestamp).transpose()?;
@@ -354,12 +350,12 @@ pub(crate) fn try_from_individual(
 /// For deserialize object
 pub(crate) fn try_from_object(
     value: AstarteDatastreamObject,
-) -> Result<(AstarteObject, Option<Timestamp>), MessageHubProtoError> {
+) -> Result<(AstarteObject, Option<Timestamp>), Error<MessageHubProtoError>> {
     let data = value
         .data
         .into_iter()
         .map(|(k, value)| AstarteData::try_from(value).map(|v| (k, v)))
-        .collect::<Result<AstarteObject, MessageHubProtoError>>()?;
+        .collect::<Result<AstarteObject, Error<MessageHubProtoError>>>()?;
 
     let timestamp = value.timestamp.map(convert_timestamp).transpose()?;
 
@@ -369,7 +365,7 @@ pub(crate) fn try_from_object(
 // For deserialize property
 pub(crate) fn try_from_property(
     property: AstartePropertyIndividual,
-) -> Result<Option<AstarteData>, MessageHubProtoError> {
+) -> Result<Option<AstarteData>, Error<MessageHubProtoError>> {
     property.data.map(AstarteData::try_from).transpose()
 }
 
@@ -498,7 +494,7 @@ pub(crate) mod test {
 
     fn get_astarte_data_from_payload(
         payload: ProtoPayload,
-    ) -> Result<AstarteData, MessageHubProtoError> {
+    ) -> Result<AstarteData, Error<MessageHubProtoError>> {
         let astarte_data = take_individual(payload)
             .expect("individual")
             .data
@@ -506,10 +502,9 @@ pub(crate) mod test {
             .astarte_data
             .expect("astarte_data");
 
-        ProtoDataWrapper {
+        AstarteData::try_from(ProtoDataWrapper {
             astarte_data: Some(astarte_data),
-        }
-        .try_into()
+        })
     }
 
     #[test]
@@ -1033,23 +1028,6 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn map_property_to_astarte_type_ok() {
-        let prop = Property {
-            interface_name: "com.test.interface".to_owned(),
-            path: "/path11".to_owned(),
-            version_major: 0,
-            ownership: astarte_message_hub_proto::Ownership::Device.into(),
-            data: Some(ProtoDataWrapper {
-                astarte_data: Some(ProtoData::String("test".to_owned())),
-            }),
-        };
-
-        let astarte_type = map_property_to_astarte_type(prop).unwrap().unwrap();
-
-        assert_eq!(AstarteData::String("test".to_string()), astarte_type);
-    }
-
-    #[test]
     fn map_property_to_astarte_type_none() {
         let prop = Property {
             interface_name: "com.test.interface".to_owned(),
@@ -1058,9 +1036,12 @@ pub(crate) mod test {
             ownership: astarte_message_hub_proto::Ownership::Device.into(),
             data: None,
         };
-        let astarte_type_err = map_property_to_astarte_type(prop);
+        let empty_props = map_set_stored_properties(astarte_message_hub_proto::StoredProperties {
+            properties: vec![prop],
+        })
+        .unwrap();
 
-        assert!(matches!(astarte_type_err, Ok(None)));
+        assert!(empty_props.is_empty());
     }
 
     #[test]

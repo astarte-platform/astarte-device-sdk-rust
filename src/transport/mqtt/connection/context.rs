@@ -25,7 +25,6 @@ use sync_wrapper::SyncWrapper;
 use crate::builder::Config;
 use crate::interfaces::Interfaces;
 use crate::state::SharedState;
-use crate::store::wrapper::StoreWrapper;
 use crate::transport::mqtt::ClientSender;
 use crate::transport::mqtt::client::{AsyncClient, EventLoop};
 use crate::transport::mqtt::config::transport::TransportProvider;
@@ -36,7 +35,7 @@ pub struct ConnCtx<'a, S> {
     pub(crate) sender: &'a Arc<OnceLock<ClientSender>>,
     pub(crate) state: &'a SharedState,
     pub(crate) provider: &'a TransportProvider,
-    pub(crate) store: &'a StoreWrapper<S>,
+    pub(crate) store: &'a S,
     pub(crate) interfaces: &'a Interfaces,
     /// Whether the stored introspection matches the current one
     pub(crate) session_synced: bool,

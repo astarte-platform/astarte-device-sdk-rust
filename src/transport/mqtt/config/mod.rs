@@ -18,6 +18,7 @@
 
 //! Configuration for the MQTT connection
 
+use astarte_device_error::ResultExt;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display};
 use std::path::{Path, PathBuf};
@@ -26,7 +27,8 @@ use std::time::Duration;
 use url::Url;
 
 use crate::builder::{BuildConfig, ConnectionConfig, DEFAULT_REQUEST_TIMEOUT, DeviceTransport};
-use crate::store::{StoreCapabilities, wrapper::StoreWrapper};
+use crate::error::{AstarteError, ErrorKind};
+use crate::store::StoreCapabilities;
 use crate::transport::mqtt::ClientId;
 use crate::transport::mqtt::config::transport::TransportProvider;
 use crate::transport::mqtt::error::MqttError;
@@ -184,25 +186,22 @@ where
 {
     type Conn = Mqtt<Self::Store, PairingApi>;
     type Store = S;
-    type Err = MqttError;
 
     async fn connect(
         self,
         config: BuildConfig<S>,
-    ) -> Result<DeviceTransport<Self::Conn>, Self::Err> {
+    ) -> Result<DeviceTransport<Self::Conn>, AstarteError> {
         let BuildConfig { store, state } = config;
-
-        let store_wrapper = StoreWrapper::new(store);
 
         let (retention_tx, retention_rx) = async_channel::bounded(state.config.channel_size.get());
         let retention = MqttRetention::new(retention_rx);
 
-        let client = MqttClient::new(retention_tx, store_wrapper.clone(), Arc::clone(&state));
+        let client = MqttClient::new(retention_tx, store.clone(), Arc::clone(&state));
 
         let provider =
             TransportProvider::configure(state.config.writable_dir.clone(), self.ignore_ssl_errors)
                 .await
-                .map_err(MqttError::Pairing)?;
+                .map_kind(|k| ErrorKind::Mqtt(MqttError::PairingApi(k)))?;
 
         let mqtt_state = MqttState::new(PairingApi::new(self));
 
@@ -211,14 +210,14 @@ where
             client_sender: Arc::clone(&client.sender),
             provider,
             retention,
-            store: store_wrapper.clone(),
+            store: store.clone(),
             state,
         };
 
         Ok(DeviceTransport {
             sender: client,
             connection,
-            store: store_wrapper,
+            store,
         })
     }
 }

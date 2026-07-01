@@ -16,19 +16,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::Error;
 use astarte_interfaces::Properties;
 use mockall::mock;
 
-use crate::{
-    AstarteData,
-    session::{IntrospectionInterface, SessionError, StoredSession},
-    store::PropertyState,
-};
+use crate::AstarteData;
+use crate::session::{IntrospectionInterface, SessionError, StoredSession};
+use crate::store::PropertyState;
 
-use super::{
-    MissingCapability, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp,
-    error::StoreError,
-};
+use super::error::StoreError;
+use super::{MissingCapability, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 
 /// trait that should be mocked to control which capabilities
 /// the store is allowed to return
@@ -53,67 +50,65 @@ mock! {
     }
 
     impl PropertyStore for Store {
-        type Err = StoreError;
-
         async fn store_prop<'a, 'b>(
             &self,
             prop: StoredProp<&'a str, &'b AstarteData>,
-        ) -> Result<(), StoreError>;
+        ) -> Result<(), Error<StoreError>>;
 
         async fn update_state<'a>(
             &self,
             property: &PropertyMapping<'a>,
             state: PropertyState,
             data: Option<AstarteData>,
-        ) -> Result<bool, StoreError>;
+        ) -> Result<bool, Error<StoreError>>;
 
         async fn load_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
-        ) -> Result<Option<AstarteData>, StoreError>;
+        ) -> Result<Option<AstarteData>, Error<StoreError>>;
 
         async fn unset_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
-        ) -> Result<(), StoreError>;
+        ) -> Result<(), Error<StoreError>>;
 
         async fn delete_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
-        ) -> Result<(), StoreError>;
+        ) -> Result<(), Error<StoreError>>;
 
         async fn delete_expected_prop<'a>(
             &self,
             property: &PropertyMapping<'a>,
             expected: Option<AstarteData>,
-        ) -> Result<bool, StoreError>;
+        ) -> Result<bool, Error<StoreError>>;
 
-        async fn clear(&self) -> Result<(), StoreError>;
+        async fn clear(&self) -> Result<(), Error<StoreError>>;
 
-        async fn load_all_props(&self) -> Result<Vec<StoredProp>, StoreError>;
+        async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>>;
 
-        async fn device_props(&self) -> Result<Vec<StoredProp>, StoreError>;
+        async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>>;
 
-        async fn server_props(&self) -> Result<Vec<StoredProp>, StoreError>;
+        async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>>;
 
         async fn interface_props(
             &self,
             interface: &Properties,
-        ) -> Result<Vec<StoredProp>, StoreError>;
+        ) -> Result<Vec<StoredProp>, Error<StoreError>>;
 
         async fn delete_interface(
             &self,
             interface: &Properties,
-        ) -> Result<(), StoreError>;
+        ) -> Result<(), Error<StoreError>>;
 
         async fn device_props_with_unset(
             &self,
             state: PropertyState,
             limit: usize,
             offset: usize,
-        ) -> Result<Vec<super::OptStoredProp>, StoreError>;
+        ) -> Result<Vec<super::OptStoredProp>, Error<StoreError>>;
 
-        async fn reset_state(&self, ownership: astarte_interfaces::schema::Ownership) -> Result<(), StoreError>;
+        async fn reset_state(&self, ownership: astarte_interfaces::schema::Ownership) -> Result<(), Error<StoreError>>;
     }
 
     impl MockedStoreCapabilities for Store {
@@ -125,7 +120,7 @@ mock! {
         async fn add_interfaces<'a>(
             &self,
             interfaces: &[IntrospectionInterface<&'a str>],
-        ) -> Result<(), SessionError>;
+        ) -> Result<(), Error<SessionError>>;
 
         async fn clear_introspection(&self);
 
@@ -136,12 +131,12 @@ mock! {
 
         async fn load_introspection(
             &self,
-        ) -> Result<Vec<IntrospectionInterface>, SessionError>;
+        ) -> Result<Vec<IntrospectionInterface>, Error<SessionError>>;
 
         async fn remove_interfaces<'a>(
             &self,
             interfaces: &[IntrospectionInterface<&'a str>],
-        ) -> Result<(), SessionError>;
+        ) -> Result<(), Error<SessionError>>;
     }
 }
 

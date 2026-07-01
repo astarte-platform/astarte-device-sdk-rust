@@ -16,27 +16,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::{Error, WrapError};
 use rumqttc::Publish;
 
+use crate::transport::mqtt::error::MqttError;
+
 use super::context::Connection;
-use super::{ConnError, handle_event};
+use super::handle_event;
 
 #[derive(Debug)]
 pub(super) struct Connected {
     pub(super) connection: Connection,
 }
 impl Connected {
-    pub(super) async fn next_publish(&mut self) -> Result<Publish, ConnError> {
+    pub(super) async fn next_publish(&mut self) -> Result<Publish, Error<MqttError>> {
         loop {
             let publish = self
                 .connection
                 .eventloop_mut()
                 .poll()
                 .await
-                .map_err(|err| ConnError::Connection {
-                    ctx: "next publish",
-                    source: err,
-                })
+                .wrap_err_ctx(MqttError::Connection, "polling next publish")
                 .and_then(handle_event)?;
 
             if let Some(publish) = publish {

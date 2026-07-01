@@ -16,12 +16,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::Error;
 use tracing::{debug, error};
 
 use crate::error::Report;
 use crate::pairing::PairingConfig;
 use crate::pairing::api::client::{ApiClient, ClientArgs};
-use crate::transport::mqtt::{ClientSender, PairingError};
+use crate::transport::mqtt::{ClientSender, PairingApiError};
 
 use super::context::{ConnCtx, Connection};
 
@@ -40,7 +41,7 @@ impl Disconnected {
         &mut self,
         ctx: &mut ConnCtx<'_, S>,
         cfg: &PairingConfig,
-    ) -> Result<&mut Connection, PairingError> {
+    ) -> Result<&mut Connection, Error<PairingApiError>> {
         let args = ClientArgs {
             realm: &cfg.client_id.realm,
             device_id: &cfg.client_id.device_id,
@@ -124,7 +125,7 @@ impl Disconnected {
         cfg: &PairingConfig,
         api: &ApiClient<'_>,
         transport: rumqttc::Transport,
-    ) -> Result<&'a mut Connection, PairingError> {
+    ) -> Result<&'a mut Connection, Error<PairingApiError>> {
         let broker_url = api.get_broker_url().await?;
 
         let (mqtt_opts, net_opts) =

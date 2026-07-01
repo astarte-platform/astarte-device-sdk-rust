@@ -33,8 +33,7 @@ use futures::future::Either;
 use serde::Deserialize;
 
 use astarte_device_sdk::{
-    builder::DeviceBuilder, client::RecvError, prelude::*, store::memory::MemoryStore,
-    transport::mqtt::MqttConfig,
+    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
 };
 use tokio::task::JoinSet;
 use tracing::{error, info, level_filters::LevelFilter};
@@ -164,39 +163,35 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn({
         let client = client.clone();
         async move {
-            loop {
-                match client.recv().await {
-                    Ok(event) => {
-                        if let Value::Individual{data, timestamp: _ } = event.data {
-                            let mut iter = event.path.splitn(3, '/').skip(1);
+            while let Some(event) = client.recv().await {
+                if let Value::Individual{data, timestamp: _ } = event.data {
+                    let mut iter = event.path.splitn(3, '/').skip(1);
 
-                            let led_id = iter
-                                .next()
-                                .and_then(|id| id.parse::<u16>().ok())
-                                .ok_or_eyre("Incorrect error received.")?;
+                    let led_id = iter
+                        .next()
+                        .and_then(|id| id.parse::<u16>().ok())
+                        .ok_or_eyre("Incorrect error received.")?;
 
-                            match iter.next() {
-                                Some("enable") => {
-                                     let status = if data == true { "ON" } else { "OFF" };
+                    match iter.next() {
+                        Some("enable") => {
+                            let status = if data == true { "ON" } else { "OFF" };
 
-                                    info!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
-                                }
-                                Some("intensity") => {
-                                    let value: f64 = data.try_into()?;
-                                    info!(
-                                "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
-                            );
-                                }
-                                item => {
-                                    error!("unrecognized {item:?}")
-                                }
-                            }
+                            info!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
+                        }
+                        Some("intensity") => {
+                            let value: f64 = data.try_into()?;
+                            info!(
+                            "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
+                        );
+                        }
+                        item => {
+                            error!("unrecognized {item:?}")
                         }
                     }
-                    Err(RecvError::Disconnected) => return Ok(()),
-                    Err(err) => error!(%err),
                 }
             }
+
+            Ok(())
         }
     });
 

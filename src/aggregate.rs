@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2023 - 2025 SECO Mind Srl
+// Copyright 2023-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -235,5 +235,35 @@ mod tests {
         let other = AstarteObject::from_iter(other);
 
         assert_eq!(value, other);
+    }
+
+    #[cfg(feature = "derive")]
+    #[test]
+    fn should_implement() {
+        use crate as astarte_device_sdk;
+        use astarte_device_sdk_derive::IntoAstarteObject;
+
+        #[derive(IntoAstarteObject)]
+        #[astarte_object(rename_all = "camelCase")]
+        struct Foo {
+            #[astarte_object(rename = "some")]
+            bar: String,
+            #[astarte_object(failable)]
+            try_from: f64,
+        }
+
+        let val = Foo {
+            bar: "some".to_string(),
+            try_from: 42.,
+        };
+
+        let res = AstarteObject::try_from(val).unwrap();
+
+        let obj = AstarteObject::from_iter([
+            ("some".to_string(), AstarteData::String("some".to_string())),
+            ("tryFrom".to_string(), AstarteData::try_from(42f64).unwrap()),
+        ]);
+
+        assert_eq!(res, obj)
     }
 }

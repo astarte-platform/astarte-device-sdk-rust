@@ -24,7 +24,7 @@
 //! The module includes traits for publishing and receiving Astarte data over a connection,
 //! as well as registering and managing interfaces on a device.
 
-use std::{collections::HashMap, future::Future};
+use std::collections::HashMap;
 
 use astarte_interfaces::{
     DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
@@ -33,7 +33,7 @@ use astarte_interfaces::{
 use crate::{
     Timestamp,
     aggregate::AstarteObject,
-    client::RecvError,
+    error::AstarteError,
     interfaces::{self, Interfaces, MappingRef},
     retention::{PublishInfo, RetentionId},
     store::{OptStoredProp, StoreCapabilities},
@@ -48,16 +48,6 @@ pub mod mqtt;
 
 #[cfg(test)]
 pub(crate) mod mock;
-
-#[derive(thiserror::Error, Debug)]
-pub(crate) enum TransportError {
-    /// Error that will be sent to the client
-    #[error("error that will be sent to the client, {0:?}")]
-    Recv(#[from] RecvError),
-    /// Error from the underline transport
-    #[error("error from the underline transport")]
-    Transport(#[source] crate::Error),
-}
 
 /// Holds generic event data such as interface name and path
 /// The payload must be deserialized after verification with the
@@ -97,13 +87,13 @@ pub(crate) trait Publish {
     fn send_individual(
         &mut self,
         data: ValidatedIndividual,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Sends validated objects values over this connection
     fn send_object(
         &mut self,
         data: ValidatedObject,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Sends validated individual values with stored retention over this connection.
     ///
@@ -112,7 +102,7 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: ValidatedIndividual,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Sends validated objects values with stored retention over this connection
     ///
@@ -121,38 +111,38 @@ pub(crate) trait Publish {
         &mut self,
         id: RetentionId,
         data: ValidatedObject,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Resend previously stored publish.
     fn resend_stored(
         &mut self,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Resend previously stored property.
     fn resend_stored_property(
         &mut self,
         property_data: OptStoredProp,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Sends validated property values over this connection
     fn send_property(
         &mut self,
         data: ValidatedProperty,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Unset a property value over this connection.
     fn unset(
         &mut self,
         data: ValidatedUnset,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Serializes an individual astarte value.
-    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, AstarteError>;
 
     /// Serializes an aggregate object.
-    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, crate::Error>;
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, AstarteError>;
 }
 
 pub(crate) trait Receive {
@@ -167,7 +157,7 @@ pub(crate) trait Receive {
     /// This function returns [`None`] to signal a disconnection from Astarte.
     fn next_event(
         &mut self,
-    ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, TransportError>> + Send;
+    ) -> impl Future<Output = Result<Option<ReceivedEvent<Self::Payload>>, AstarteError>> + Send;
 
     /// Function called by [`DeviceConnection`](crate::connection::DeviceConnection) when the
     /// [`Receive::next_event`] returns [`None`].
@@ -177,21 +167,21 @@ pub(crate) trait Receive {
     fn reconnect(
         &mut self,
         interfaces: &Interfaces,
-    ) -> impl Future<Output = Result<AttemptStatus<Self::Payload>, TransportError>> + Send;
+    ) -> impl Future<Output = Result<AttemptStatus<Self::Payload>, AstarteError>> + Send;
 
     /// Deserializes a received payload to an property.
     fn deserialize_property(
         &self,
         mapping: &MappingRef<'_, Properties>,
         payload: Self::Payload,
-    ) -> Result<Option<AstarteData>, TransportError>;
+    ) -> Result<Option<AstarteData>, AstarteError>;
 
     /// Deserializes a received payload to an individual astarte value
     fn deserialize_individual(
         &self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
         payload: Self::Payload,
-    ) -> Result<(AstarteData, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteData, Option<Timestamp>), AstarteError>;
 
     /// Deserializes a received payload to an aggregate object
     fn deserialize_object(
@@ -199,7 +189,7 @@ pub(crate) trait Receive {
         object: &DatastreamObject,
         path: &MappingPath<'_>,
         payload: Self::Payload,
-    ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
+    ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError>;
 }
 
 /// Status of the connection after a reconnect attempt
@@ -217,7 +207,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::Validated,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Called when multiple interfaces are added.
     ///
@@ -228,7 +218,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         added_interface: &interfaces::ValidatedCollection,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Called when an interface gets removed from the device interface list.
     /// It relays to the server the removal of the interface.
@@ -236,7 +226,7 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         removed_interface: &Interface,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Called when multiple interfaces get removed from the device interface list.
     /// It relays to the server the removal of the interface.
@@ -244,11 +234,11 @@ pub(crate) trait Register {
         &mut self,
         interfaces: &Interfaces,
         removed_interfaces: &HashMap<&str, &Interface>,
-    ) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 }
 
 /// Gracefully close the connection.
 pub(crate) trait Disconnect {
     /// Gracefully disconnect from the transport
-    fn disconnect(&mut self) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    fn disconnect(&mut self) -> impl Future<Output = Result<(), AstarteError>> + Send;
 }

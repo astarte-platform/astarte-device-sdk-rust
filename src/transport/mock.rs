@@ -26,13 +26,14 @@ use astarte_interfaces::{
 };
 use mockall::mock;
 
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, TransportError};
+use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register};
 use crate::aggregate::AstarteObject;
 use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
+use crate::error::AstarteError;
 use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::store::StoreCapabilities;
-use crate::{AstarteData, Error, Timestamp};
+use crate::{AstarteData, Timestamp};
 
 type GenericPayload = Box<dyn Any + Send + Sync>;
 
@@ -42,9 +43,8 @@ mock! {
     impl<S: StoreCapabilities> ConnectionConfig<S> for Config<S> {
         type Store = S;
         type Conn = MockCon<S>;
-        type Err = Error;
 
-        async fn connect(self, config: BuildConfig<S>) -> Result<DeviceTransport<MockCon<S>>, Error>;
+        async fn connect(self, config: BuildConfig<S>) -> Result<DeviceTransport<MockCon<S>>, AstarteError>;
     }
 }
 
@@ -64,29 +64,29 @@ mock! {
 
         async fn next_event(
             &mut self,
-        ) -> Result<Option<ReceivedEvent<GenericPayload>>, TransportError>;
+        ) -> Result<Option<ReceivedEvent<GenericPayload>>, AstarteError>;
 
-        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus<GenericPayload>, TransportError>> + Send {
+        fn reconnect(&mut self, interfaces: &Interfaces) -> impl Future<Output = Result<crate::transport::AttemptStatus<GenericPayload>, AstarteError>> + Send {
         }
 
         fn deserialize_property<'a>(
             &self,
             mapping: &MappingRef<'a, Properties> ,
             payload: GenericPayload,
-        ) -> Result<Option<AstarteData>, TransportError>;
+        ) -> Result<Option<AstarteData>, AstarteError>;
 
         fn deserialize_individual<'a>(
             &self,
             mapping: &MappingRef<'a, DatastreamIndividual> ,
             payload: GenericPayload,
-        ) -> Result<(AstarteData, Option<Timestamp>), TransportError>;
+        ) -> Result<(AstarteData, Option<Timestamp>), AstarteError>;
 
         fn deserialize_object<'a>(
             &self,
             object: &DatastreamObject,
             path: &MappingPath<'a> ,
             payload: GenericPayload,
-        ) -> Result<(AstarteObject, Option<Timestamp>), TransportError>;
+        ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError>;
     }
 }
 
@@ -101,49 +101,49 @@ mock! {
         async fn send_individual(
             &mut self,
             data: crate::validate::ValidatedIndividual,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_object(
             &mut self,
             data: crate::validate::ValidatedObject,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_individual_stored(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::validate::ValidatedIndividual,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_object_stored(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::validate::ValidatedObject,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn resend_stored<'a>(
             &mut self,
             id: crate::retention::RetentionId,
             data: crate::retention::PublishInfo<'a> ,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn resend_stored_property(
             &mut self,
             property_data: crate::store::OptStoredProp,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_property(
             &mut self,
             data: crate::validate::ValidatedProperty,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn unset(
             &mut self,
             data: crate::validate::ValidatedUnset,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
-        fn serialize_individual(&self, data: &crate::validate::ValidatedIndividual) -> Result<Vec<u8>, crate::Error>;
+        fn serialize_individual(&self, data: &crate::validate::ValidatedIndividual) -> Result<Vec<u8>, AstarteError>;
 
-        fn serialize_object(&self, data: &crate::validate::ValidatedObject) -> Result<Vec<u8>, crate::Error>;
+        fn serialize_object(&self, data: &crate::validate::ValidatedObject) -> Result<Vec<u8>, AstarteError>;
     }
 
     impl Register for Sender {
@@ -151,28 +151,28 @@ mock! {
             &mut self,
             interfaces: &Interfaces,
             added_interface: &interfaces::Validated,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn extend_interfaces(
             &mut self,
             interfaces: &Interfaces,
             added_interface: &interfaces::ValidatedCollection,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn remove_interface(
             &mut self,
             interfaces: &Interfaces,
             removed_interface: &Interface,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn remove_interfaces<'a,'b>(
             &mut self,
             interfaces: &Interfaces,
             removed_interfaces: &HashMap<&'a str, &'b Interface>,
-        ) -> Result<(), crate::Error>;
+        ) -> Result<(), AstarteError>;
     }
 
     impl Disconnect for Sender {
-        async fn disconnect(&mut self) -> Result<(), crate::Error>;
+        async fn disconnect(&mut self) -> Result<(), AstarteError>;
     }
 }
