@@ -18,11 +18,12 @@
 
 //! Handles the sending of object datastream.
 
+use astarte_device_error::ResultExt;
 use astarte_interfaces::MappingPath;
 use tracing::info;
 
-use crate::Error;
 use crate::client::ValidatedObject;
+use crate::error::{AstarteError, ErrorKind};
 use crate::{aggregate::AstarteObject, transport::Connection};
 
 use super::{DeviceClient, Publish};
@@ -37,14 +38,17 @@ where
         path: &MappingPath<'_>,
         data: AstarteObject,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<(), Error>
+    ) -> Result<(), AstarteError>
     where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces().read().await;
-        let interface = interfaces.get_object(interface_name, path)?;
+        let interface = interfaces
+            .get_object(interface_name, path)
+            .map_kind(ErrorKind::Interface)?;
 
-        let validated = ValidatedObject::validate(interface, path, data, timestamp)?;
+        let validated = ValidatedObject::validate(interface, path, data, timestamp)
+            .map_kind(ErrorKind::Interface)?;
 
         info!(interface = interface_name, path = %path, "sending object",);
 
@@ -66,6 +70,7 @@ mod tests {
     use super::*;
 
     use crate::client::tests::{mock_client, mock_client_with_store};
+    use crate::error::InterfaceError;
     use crate::interfaces::tests::DEVICE_OBJECT;
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, RetentionId, StoredRetention};
@@ -274,25 +279,15 @@ mod tests {
             .unwrap();
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 0);
         assert_eq!(stored.len(), 0);
         stored.clear();
 
         // reset sent
-        client.store.store.reset_all_publishes().await.unwrap();
+        client.store.reset_all_publishes().await.unwrap();
 
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -457,12 +452,7 @@ mod tests {
             .unwrap();
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -524,15 +514,10 @@ mod tests {
             .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Disconnected));
+        assert_eq!(*err.kind(), ErrorKind::Disconnected);
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
 
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
@@ -577,12 +562,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            Error::InterfaceNotFound {
-                name,
-            } if name == interface
-        ));
+        assert_eq!(
+            *err.kind(),
+            ErrorKind::Interface(InterfaceError::InterfaceNotFound)
+        );
     }
 
     #[tokio::test]
@@ -611,6 +594,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, Error::Aggregation(..)));
+        assert_eq!(
+            *err.kind(),
+            ErrorKind::Interface(InterfaceError::Aggregation)
+        );
     }
 }

@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use astarte_device_error::{Error, WrapError};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{error, instrument, trace, warn};
 
@@ -61,11 +62,10 @@ impl Connections {
     /// It will call the closure in a [`tokio::task::spawn_blocking`] so all the SQLite operation
     /// will not block the runtime.
     #[instrument(skip_all, fields(db = %self.db_file.display()))]
-    pub(crate) async fn acquire_writer<F, O, E>(&self, f: F) -> Result<O, E>
+    pub(crate) async fn acquire_writer<F, O>(&self, f: F) -> Result<O, Error<SqliteError>>
     where
-        F: FnOnce(&mut WriteConnection) -> Result<O, E> + Send + 'static,
+        F: FnOnce(&mut WriteConnection) -> Result<O, Error<SqliteError>> + Send + 'static,
         O: Send + 'static,
-        E: From<SqliteError> + Send + 'static,
     {
         trace!("locking writer connection");
 
@@ -78,20 +78,21 @@ impl Connections {
         let options = { *self.options.read().await };
 
         // this need to be a spawn blocking to both support single and multi threaded runtimes
-        let (writer, out) =
-            tokio::task::spawn_blocking(move || -> HandleResult<WriteConnection, O, E> {
+        let (writer, out) = tokio::task::spawn_blocking(
+            move || -> HandleResult<WriteConnection, O, Error<SqliteError>> {
                 let mut writer = WriteConnection::lazy(writer, &db_file, &options)?;
 
                 let out = (f)(&mut writer);
 
                 Ok((writer, out))
-            })
-            .await
-            .map_err(|err| {
-                error!(error = %Report::new(err), "couldn't join sqlite task");
+            },
+        )
+        .await
+        .wrap_err_with(|err| {
+            error!(error = %Report::new(err), "couldn't join sqlite task");
 
-                SqliteError::Join
-            })??;
+            Error::new(SqliteError::Join)
+        })??;
 
         trace!("restoring writer connection");
 
@@ -105,11 +106,10 @@ impl Connections {
     /// It will call the closure in a [`tokio::task::spawn_blocking`] so all the SQLite operation
     /// will not block the runtime.
     #[instrument(skip_all, fields(db = %self.db_file.display()))]
-    pub(crate) async fn acquire_reader<F, O, E>(&self, f: F) -> Result<O, E>
+    pub(crate) async fn acquire_reader<F, O>(&self, f: F) -> Result<O, Error<SqliteError>>
     where
-        F: FnOnce(&mut ReadConnection) -> Result<O, E> + Send + 'static,
+        F: FnOnce(&mut ReadConnection) -> Result<O, Error<SqliteError>> + Send + 'static,
         O: Send + 'static,
-        E: From<SqliteError> + Send + 'static,
     {
         trace!("acquiring reader permit");
 
@@ -117,7 +117,7 @@ impl Connections {
             .reader_sem
             .acquire()
             .await
-            .map_err(|_| SqliteError::Reader)?;
+            .wrap_err(SqliteError::Reader)?;
 
         trace!("reader permit acquired");
 
@@ -128,20 +128,21 @@ impl Connections {
         let options = { *self.options.read().await };
 
         // this need to be a spawn blocking to both support single and multi threaded runtimes
-        let (reader, out) =
-            tokio::task::spawn_blocking(move || -> HandleResult<ReadConnection, O, E> {
+        let (reader, out) = tokio::task::spawn_blocking(
+            move || -> HandleResult<ReadConnection, O, Error<SqliteError>> {
                 let mut reader = ReadConnection::lazy(reader, &db_file, &options)?;
 
                 let out = (f)(&mut reader);
 
                 Ok((reader, out))
-            })
-            .await
-            .map_err(|err| {
-                error!(error = %Report::new(err), "couldn't join sqlite task");
+            },
+        )
+        .await
+        .wrap_err_with(|err| {
+            error!(error = %Report::new(err), "couldn't join sqlite task");
 
-                SqliteError::Join
-            })??;
+            Error::new(SqliteError::Join)
+        })??;
 
         {
             self.readers.lock().await.push_back(reader)
@@ -184,14 +185,20 @@ mod tests {
 
         let pool = Connections::new(tpm.path().join("sdk.db"), SqliteOptions::default());
 
-        let res: Result<(), SqliteError> = pool.acquire_writer(|_writer| panic!()).await;
+        let res = pool
+            .acquire_writer::<_, ()>(|_writer| panic!())
+            .await
+            .unwrap_err();
 
-        assert!(matches!(res.unwrap_err(), SqliteError::Join));
+        assert_eq!(*res.kind(), SqliteError::Join);
 
         let pool = Connections::new(tpm.path().join("sdk.db"), SqliteOptions::default());
 
-        let res: Result<(), SqliteError> = pool.acquire_reader(|_reader| panic!()).await;
+        let res = pool
+            .acquire_reader::<_, ()>(|_reader| panic!())
+            .await
+            .unwrap_err();
 
-        assert!(matches!(res.unwrap_err(), SqliteError::Join));
+        assert_eq!(*res.kind(), SqliteError::Join);
     }
 }

@@ -20,18 +20,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
+use astarte_device_error::WrapError;
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::{Interface, Schema};
-use tokio::fs;
 use tracing::{debug, error};
 
-use crate::Error;
-use crate::error::Report;
-use crate::introspection::{AddInterfaceError, DeviceIntrospection};
+use crate::error::{AstarteError, ErrorKind, InterfaceError, Report};
+use crate::introspection::DeviceIntrospection;
 use crate::prelude::DynamicIntrospection;
 use crate::retention::StoredRetention;
 use crate::retention::memory::VolatileStore;
-use crate::store::wrapper::StoreWrapper;
 use crate::store::{PropertyStore, StoreCapabilities};
 use crate::transport::{Connection, Register};
 
@@ -48,7 +46,7 @@ where
     // given interface from each store.
     async fn cleanup_interface(
         volatile_store: &VolatileStore,
-        store: &StoreWrapper<C::Store>,
+        store: &C::Store,
         interface: &Interface,
     ) {
         match interface.inner() {
@@ -71,7 +69,7 @@ where
     // Cleans up the volatile and store retention.
     async fn cleanup_retention(
         volatile_store: &VolatileStore,
-        store: &StoreWrapper<C::Store>,
+        store: &C::Store,
         interface_name: &str,
     ) {
         volatile_store.delete_interface(interface_name).await;
@@ -105,13 +103,16 @@ where
     C: Connection,
     C::Sender: Register,
 {
-    async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error> {
+    async fn add_interface(&mut self, interface: Interface) -> Result<bool, AstarteError> {
         // Lock for writing for the whole scope, even the checks
         let mut interfaces = self.state.interfaces().write().await;
 
-        let map_err = interfaces
-            .validate(interface)
-            .map_err(AddInterfaceError::Interface)?;
+        let map_err = interfaces.validate(interface).wrap_err_with(|_| {
+            AstarteError::with(
+                ErrorKind::Interface(InterfaceError::Invalid),
+                "couldn't add interface",
+            )
+        })?;
 
         let Some(to_add) = map_err else {
             debug!("interfaces already present");
@@ -132,16 +133,19 @@ where
         Ok(true)
     }
 
-    async fn extend_interfaces<I>(&mut self, iter: I) -> Result<Vec<String>, Error>
+    async fn extend_interfaces<I>(&mut self, iter: I) -> Result<Vec<String>, AstarteError>
     where
         I: IntoIterator<Item = Interface> + Send,
     {
         // Lock for writing for the whole scope, even the checks
         let mut interfaces = self.state.interfaces().write().await;
 
-        let to_add = interfaces
-            .validate_many(iter)
-            .map_err(AddInterfaceError::Interface)?;
+        let to_add = interfaces.validate_many(iter).wrap_err_with(|_| {
+            AstarteError::with(
+                ErrorKind::Interface(InterfaceError::Invalid),
+                "couldn't add interfaces",
+            )
+        })?;
 
         if to_add.is_empty() {
             debug!("All interfaces already present");
@@ -171,34 +175,38 @@ where
         Ok(names)
     }
 
-    async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, Error>
+    async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, AstarteError>
     where
         P: AsRef<Path> + Send + Sync,
     {
-        let interface =
-            fs::read_to_string(&file_path)
-                .await
-                .map_err(|err| AddInterfaceError::Io {
-                    path: file_path.as_ref().to_owned(),
-                    backtrace: err,
-                })?;
-
-        let interface =
-            Interface::from_str(&interface).map_err(|err| AddInterfaceError::InterfaceFile {
-                path: file_path.as_ref().to_owned(),
-                backtrace: err,
+        let interface = tokio::fs::read_to_string(&file_path)
+            .await
+            .wrap_err_with(|err| {
+                AstarteError::with(ErrorKind::Io(err.kind()), "couldn't read interface")
+                    .set_ctx(file_path.as_ref().display().to_string())
             })?;
 
+        let interface = Interface::from_str(&interface).wrap_err_with(|_| {
+            AstarteError::with(
+                ErrorKind::Interface(InterfaceError::Invalid),
+                "couldn't add interface",
+            )
+            .set_ctx(file_path.as_ref().display().to_string())
+        })?;
+
         self.add_interface(interface).await
     }
 
-    async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, Error> {
-        let interface = Interface::from_str(json_str).map_err(AddInterfaceError::Interface)?;
+    async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, AstarteError> {
+        let interface = Interface::from_str(json_str).wrap_err_msg(
+            ErrorKind::Interface(InterfaceError::Invalid),
+            "couldn't add interface",
+        )?;
 
         self.add_interface(interface).await
     }
 
-    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error> {
+    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, AstarteError> {
         // Lock for writing for the whole scope, even the checks
         let mut interfaces = self.state.interfaces().write().await;
 
@@ -218,7 +226,10 @@ where
         Ok(true)
     }
 
-    async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
+    async fn remove_interfaces<I>(
+        &mut self,
+        interfaces_name: I,
+    ) -> Result<Vec<String>, AstarteError>
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send,

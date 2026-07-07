@@ -18,42 +18,42 @@
 
 //! Handles the properties for the device.
 
+use std::fmt::Display;
+use std::io::Read;
 use std::{future::Future, io::Write};
 
-use astarte_interfaces::{
-    MappingPath, Schema, interface::InterfaceTypeAggregation, schema::InterfaceType,
-};
+use astarte_device_error::{Error, ResultExt, WrapError};
+use astarte_interfaces::{MappingPath, Schema, interface::InterfaceTypeAggregation};
 use flate2::{Compression, bufread::ZlibDecoder, write::ZlibEncoder};
 use futures::{StreamExt, TryStreamExt, future};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
-use crate::{
-    client::DeviceClient,
-    error::{Error, InterfaceTypeError},
-    store::{PropertyMapping, PropertyStore, StoredProp},
-    transport::Connection,
-    types::AstarteData,
-};
+use crate::client::DeviceClient;
+use crate::error::{AstarteError, ErrorKind, InterfaceError};
+use crate::store::{PropertyMapping, PropertyStore, StoredProp};
+use crate::transport::Connection;
+use crate::types::AstarteData;
 
 /// Error handling the properties.
 #[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum PropertiesError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PurgePropError {
     /// The payload is too short, it should be at least 4 bytes long.
-    #[error("the payload should at least 4 bytes long, got {0}")]
-    PayloadTooShort(usize),
-    /// The payload is too log, it should be at most a u32.
-    #[error("the payload should be at most a u32")]
-    PayloadTooLong,
-    /// Couldn't convert the size from u32 to usize.
-    #[error("error converting the size from u32 to usize")]
-    Conversion(#[from] std::num::TryFromIntError),
+    Invalid,
     /// Error decoding the zlib compressed payload.
-    #[error("error decoding the zlib compressed payload")]
-    Decode(#[source] std::io::Error),
+    Decode,
     /// Error encoding the zlib compressed payload.
-    #[error("error encoding the zlib compressed payload")]
-    Encode(#[source] std::io::Error),
+    Encode,
+}
+
+impl Display for PurgePropError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PurgePropError::Invalid => write!(f, "invalid purge properties message"),
+            PurgePropError::Decode => write!(f, "couldn't decode purge properties"),
+            PurgePropError::Encode => write!(f, "couldn't encode purge properties"),
+        }
+    }
 }
 
 /// Trait to access the stored properties.
@@ -93,54 +93,63 @@ pub trait PropAccess {
         &self,
         interface: &str,
         path: &str,
-    ) -> impl Future<Output = Result<Option<AstarteData>, Error>> + Send;
+    ) -> impl Future<Output = Result<Option<AstarteData>, AstarteError>> + Send;
     /// Get all the properties of the given interface.
     fn interface_props(
         &self,
         interface: &str,
-    ) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<StoredProp>, AstarteError>> + Send;
     /// Get all the stored properties, device or server owners.
-    fn all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
+    fn all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, AstarteError>> + Send;
     /// Get all the stored device properties.
-    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
+    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, AstarteError>> + Send;
     /// Get all the stored server properties.
-    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Error>> + Send;
+    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, AstarteError>> + Send;
 }
 
 impl<C> PropAccess for DeviceClient<C>
 where
     C: Connection,
 {
+    #[instrument(skip(self))]
     async fn property(
         &self,
         interface_name: &str,
         path: &str,
-    ) -> Result<Option<AstarteData>, Error> {
-        let path = MappingPath::try_from(path)?;
+    ) -> Result<Option<AstarteData>, AstarteError> {
+        let path = MappingPath::try_from(path)
+            .wrap_err(crate::error::ErrorKind::Interface(InterfaceError::Path))?;
 
         let interfaces = self.state.interfaces().read().await;
-        let mapping = interfaces.get_property(interface_name, &path)?;
+        let mapping = interfaces
+            .get_property(interface_name, &path)
+            .map_kind(ErrorKind::Interface)?;
 
         self.try_load_prop(&mapping).await
     }
 
-    async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, Error> {
+    #[instrument(skip(self))]
+    async fn interface_props(&self, interface_name: &str) -> Result<Vec<StoredProp>, AstarteError> {
         let interfaces = self.state.interfaces().read().await;
-        let interface = interfaces
-            .get(interface_name)
-            .ok_or_else(|| Error::InterfaceNotFound {
-                name: interface_name.to_string(),
-            })?;
+        let interface = interfaces.get(interface_name).ok_or_else(|| {
+            Error::new(ErrorKind::Interface(InterfaceError::InterfaceNotFound))
+                .set_ctx(interface_name.to_string())
+        })?;
 
         let InterfaceTypeAggregation::Properties(interface) = interface.inner() else {
-            return Err(Error::InterfaceType(InterfaceTypeError::new(
-                interface_name,
-                InterfaceType::Properties,
-                interface.interface_type(),
-            )));
+            return Err(
+                Error::new(ErrorKind::Interface(InterfaceError::InterfaceType)).set_ctx(format!(
+                    "for {interface_name} expected property but got {}",
+                    interface.interface_type()
+                )),
+            );
         };
 
-        let stored_prop = self.store.interface_props(interface).await?;
+        let stored_prop = self
+            .store
+            .interface_props(interface)
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         futures::stream::iter(stored_prop)
             .then(|stored_prop| async {
@@ -155,7 +164,8 @@ where
 
                     self.store
                         .delete_prop(&PropertyMapping::from(&stored_prop))
-                        .await?;
+                        .await
+                        .map_kind(ErrorKind::Store)?;
 
                     Ok(None)
                 } else {
@@ -167,42 +177,48 @@ where
             .await
     }
 
-    async fn all_props(&self) -> Result<Vec<StoredProp>, Error> {
-        self.store.load_all_props().await.map_err(Error::from)
+    #[instrument(skip(self))]
+    async fn all_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+        self.store.load_all_props().await.map_kind(ErrorKind::Store)
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error> {
-        self.store.device_props().await.map_err(Error::from)
+    #[instrument(skip(self))]
+    async fn device_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+        self.store.device_props().await.map_kind(ErrorKind::Store)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error> {
-        self.store.server_props().await.map_err(Error::from)
+    #[instrument(skip(self))]
+    async fn server_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
+        self.store.server_props().await.map_kind(ErrorKind::Store)
     }
 }
 
 /// Extracts the properties from a set payload.
 ///
 /// See https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#purge-properties
-pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, PropertiesError> {
-    use std::io::Read;
+pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Error<PurgePropError>> {
+    let (size, data) = bdata.split_first_chunk::<4>().ok_or_else(|| {
+        Error::with(
+            PurgePropError::Invalid,
+            "payload should be at least 4 bytes",
+        )
+        .set_ctx(format!("got {} bytes", bdata.len()))
+    })?;
 
-    if bdata.len() < 4 {
-        return Err(PropertiesError::PayloadTooShort(bdata.len()));
-    }
-
-    let (size, data) = bdata.split_at(4);
     // The size is a u32 in big endian, so we need to convert it to usize
-    let size: u32 = u32::from_be_bytes([size[0], size[1], size[2], size[3]]);
-    let size: usize = size.try_into()?;
+    let size = u32::from_be_bytes(*size);
+    let size = usize::try_from(size)
+        .wrap_err_msg(PurgePropError::Invalid, "payload too big to use as usize")?;
 
     let mut d = ZlibDecoder::new(data);
     let mut s = String::new();
-    let bytes_read = d.read_to_string(&mut s).map_err(PropertiesError::Decode)?;
+    let bytes_read = d.read_to_string(&mut s).wrap_err(PurgePropError::Decode)?;
 
     debug_assert_eq!(
         bytes_read, size,
         "Byte red and size mismatch: {bytes_read} != {size}"
     );
+
     // Signal the error in production
     if bytes_read != size {
         error!(
@@ -222,7 +238,9 @@ pub(crate) fn extract_set_properties(bdata: &[u8]) -> Result<Vec<String>, Proper
 /// Extracts the properties from a set payload.
 ///
 /// See https://docs.astarte-platform.org/astarte/latest/080-mqtt-v1-protocol.html#purge-properties
-pub(crate) fn encode_set_properties<'a, I>(interface_paths: I) -> Result<Vec<u8>, PropertiesError>
+pub(crate) fn encode_set_properties<'a, I>(
+    interface_paths: I,
+) -> Result<Vec<u8>, Error<PurgePropError>>
 where
     I: IntoIterator<Item = &'a String>,
 {
@@ -238,7 +256,7 @@ where
     let Some(first) = iter.next() else {
         debug!("no properties to retain, sending empty purge");
 
-        return encoder.finish().map_err(PropertiesError::Encode);
+        return encoder.finish().wrap_err(PurgePropError::Encode);
     };
 
     uncompressed_size = encode_prop(&mut encoder, uncompressed_size, first)?;
@@ -250,7 +268,7 @@ where
         uncompressed_size = encode_prop(&mut encoder, uncompressed_size, prop)?;
     }
 
-    let mut res = encoder.finish().map_err(PropertiesError::Encode)?;
+    let mut res = encoder.finish().wrap_err(PurgePropError::Encode)?;
 
     let bytes = uncompressed_size.to_be_bytes();
 
@@ -264,15 +282,20 @@ fn encode_prop(
     encoder: &mut ZlibEncoder<Vec<u8>>,
     uncompressed_size: u32,
     value: &str,
-) -> Result<u32, PropertiesError> {
+) -> Result<u32, Error<PurgePropError>> {
     let bytes = value.as_bytes();
 
     let uncompressed_size = u32::try_from(bytes.len())
         .ok()
         .and_then(|val| uncompressed_size.checked_add(val))
-        .ok_or(PropertiesError::PayloadTooLong)?;
+        .ok_or_else(|| {
+            Error::with(
+                PurgePropError::Invalid,
+                "overflow calculating uncompressed size",
+            )
+        })?;
 
-    encoder.write_all(bytes).map_err(PropertiesError::Encode)?;
+    encoder.write_all(bytes).wrap_err(PurgePropError::Encode)?;
 
     Ok(uncompressed_size)
 }

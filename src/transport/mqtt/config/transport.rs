@@ -20,6 +20,7 @@ use core::str;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use rumqttc::Transport;
 use rustls::RootCertStore;
 use rustls::pki_types::PrivatePkcs8KeyDer;
@@ -30,7 +31,7 @@ use super::ClientId;
 use super::{CertificateFile, PrivateKeyFile, tls::ClientAuth};
 use crate::error::Report;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::pairing::api::PairingError;
+use crate::pairing::api::PairingApiError;
 use crate::pairing::api::client::ApiClient;
 use crate::transport::mqtt::config::tls::{
     insecure_tls_config_builder, is_env_ignore_ssl, read_root_cert_store, tls_config_builder,
@@ -50,7 +51,7 @@ impl TransportProvider {
     pub(crate) async fn configure(
         store_dir: Option<PathBuf>,
         insecure_ssl: bool,
-    ) -> Result<Self, PairingError> {
+    ) -> Result<Self, Error<PairingApiError>> {
         let insecure_ssl = insecure_ssl || is_env_ignore_ssl();
 
         if insecure_ssl {
@@ -67,7 +68,7 @@ impl TransportProvider {
         })
     }
 
-    pub(crate) fn api_tls_config(&self) -> Result<rustls::ClientConfig, PairingError> {
+    pub(crate) fn api_tls_config(&self) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
         let client_cfg = if self.insecure_ssl {
             insecure_tls_config_builder()?.with_no_client_auth()
         } else {
@@ -87,7 +88,7 @@ impl TransportProvider {
     pub(crate) fn config_transport(
         &self,
         client_auth: ClientAuth,
-    ) -> Result<Transport, PairingError> {
+    ) -> Result<Transport, Error<PairingApiError>> {
         let config = if self.insecure_ssl {
             notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
 
@@ -110,7 +111,7 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
         client_id: ClientId<&str>,
-    ) -> Result<Option<ClientAuth>, PairingError> {
+    ) -> Result<Option<ClientAuth>, Error<PairingApiError>> {
         debug!("retrieving credentials");
 
         let auth = self.read_credentials(client_id).await;
@@ -141,7 +142,7 @@ impl TransportProvider {
         &self,
         client: &ApiClient<'_>,
         client_id: ClientId<&str>,
-    ) -> Result<ClientAuth, PairingError> {
+    ) -> Result<ClientAuth, Error<PairingApiError>> {
         debug!("creating new transport credentials");
 
         let (bundle, certificate) = self.create_certificate(client).await?;
@@ -162,19 +163,30 @@ impl TransportProvider {
             .await
         }
 
-        match ClientAuth::try_from_pem_cert(certificate, bundle.private_key, client_id) {
-            Ok(Some(auth)) => Ok(auth),
-            Ok(None) => Err(PairingError::MissingCredentials),
-            Err(e) => Err(PairingError::InvalidCredentials(e)),
-        }
+        ClientAuth::try_from_pem_cert(certificate, bundle.private_key, client_id)
+            .wrap_err_with(|err| {
+                Error::with(
+                    PairingApiError::Io(err.kind()),
+                    "reading credentials certificate",
+                )
+            })
+            .and_then(|auth| {
+                auth.ok_or_else(|| {
+                    Error::with(
+                        PairingApiError::InvalidArgument,
+                        "while parsing client auth",
+                    )
+                })
+            })
     }
 
     /// Create the certificate using the Astarte API
     async fn create_certificate(
         &self,
         client: &ApiClient<'_>,
-    ) -> Result<(Bundle, String), PairingError> {
-        let bundle = Bundle::generate_key(client.realm, client.device_id)?;
+    ) -> Result<(Bundle, String), Error<PairingApiError>> {
+        let bundle = Bundle::generate_key(client.realm, client.device_id)
+            .map_kind(PairingApiError::Crypto)?;
         notify_security_event(SecurityEvent::CsrPendingApproval);
 
         let certificate = client

@@ -23,6 +23,7 @@ use std::borrow::Borrow;
 use std::fmt::Display;
 use std::ops::Deref;
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::MappingType;
 use bson::Bson;
 use serde::Serialize;
@@ -77,13 +78,15 @@ macro_rules! impl_reverse_type_conversion_traits {
     ($(($variant:tt, $typ:ty),)*) => {
         $(
             impl std::convert::TryFrom<AstarteData> for $typ {
-                type Error = $crate::types::TypeError;
+                type Error = astarte_device_error::Error<$crate::types::TypeError>;
 
                 fn try_from(var: AstarteData) -> Result<Self, Self::Error> {
                     if let AstarteData::$variant(val) = var {
                         Ok(val)
                     } else {
-                        Err(Self::Error::conversion(format!("from {} into $typ", var.display_type())))
+                        let error = $crate::types::TypeError::conversion(format!("from {} into $typ", var.display_type()));
+
+                        Err(error)
                     }
                 }
             }
@@ -93,32 +96,40 @@ macro_rules! impl_reverse_type_conversion_traits {
 
 /// Astarte type conversion errors.
 #[non_exhaustive]
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeError {
     /// Invalid floating point value
-    #[error("forbidden floating point number, Nan, Infinite or subnormal numbers are invalid")]
     Float,
     /// Conversion error
-    #[error("couldn't convert value {ctx}")]
-    Conversion {
-        /// Context of the failed conversion
-        ctx: String,
-    },
+    Conversion,
     /// Failed to convert from Bson value
-    #[error("error converting from Bson to AstarteData ({0})")]
-    FromBsonError(String),
+    FromBson,
     /// Failed to convert from Bson array
-    #[error("type mismatch in bson array from astarte")]
-    FromBsonArrayError,
+    FromBsonArray,
     /// Invalid type convert between the BSON and [`AstarteData`]
-    #[error("type mismatch for bson and mapping")]
     InvalidType,
 }
 
 impl TypeError {
-    /// Error with context for the conversion
-    pub(crate) const fn conversion(ctx: String) -> Self {
-        Self::Conversion { ctx }
+    fn conversion(message: String) -> Error<Self> {
+        Error::new(Self::Conversion).set_ctx(message)
+    }
+}
+
+impl Display for TypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Float => write!(
+                f,
+                "forbidden floating point number, Nan, Infinite or subnormal numbers are invalid"
+            ),
+            Self::Conversion => write!(f, "couldn't convert value "),
+            Self::FromBson => {
+                write!(f, "error converting from Bson to AstarteData")
+            }
+            Self::FromBsonArray => write!(f, "type mismatch in bson array from astarte"),
+            Self::InvalidType => write!(f, "type mismatch for bson and mapping"),
+        }
     }
 }
 
@@ -218,7 +229,7 @@ impl AstarteData {
     pub(crate) fn try_from_array(
         array: Vec<Bson>,
         item_type: ArrayType,
-    ) -> Result<Self, TypeError> {
+    ) -> Result<Self, Error<TypeError>> {
         if array.is_empty() {
             return Ok(item_type.as_empty());
         }
@@ -298,7 +309,7 @@ impl PartialEq<AstarteData> for f64 {
 }
 
 impl TryFrom<f64> for AstarteData {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         Double::try_from(value).map(AstarteData::Double)
@@ -306,7 +317,7 @@ impl TryFrom<f64> for AstarteData {
 }
 
 impl TryFrom<Vec<f64>> for AstarteData {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: Vec<f64>) -> Result<Self, Self::Error> {
         value
@@ -318,14 +329,14 @@ impl TryFrom<Vec<f64>> for AstarteData {
 }
 
 impl TryFrom<AstarteData> for Vec<f64> {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         let AstarteData::DoubleArray(value) = value else {
-            return Err(TypeError::conversion(format!(
-                "from {} into Vec<f64>",
-                value.display_type()
-            )));
+            let error = Error::new(TypeError::Conversion)
+                .set_ctx(format!("from {} into Vec<f64>", value.display_type()));
+
+            return Err(error);
         };
 
         let vec = value.into_iter().map(Double::into).collect();
@@ -355,7 +366,7 @@ impl PartialEq<AstarteData> for Vec<f64> {
 }
 
 impl TryFrom<AstarteData> for f64 {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
 
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         match value {
@@ -369,7 +380,8 @@ impl TryFrom<AstarteData> for f64 {
 }
 
 impl TryFrom<AstarteData> for i64 {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
+
     fn try_from(value: AstarteData) -> Result<Self, Self::Error> {
         match value {
             AstarteData::LongInteger(val) => Ok(val),
@@ -423,10 +435,11 @@ impl_reverse_type_conversion_traits!(
 pub struct Double(f64);
 
 impl TryFrom<f64> for Double {
-    type Error = TypeError;
+    type Error = Error<TypeError>;
+
     fn try_from(value: f64) -> Result<Self, Self::Error> {
         if value.is_nan() || value.is_infinite() || value.is_subnormal() {
-            return Err(Self::Error::Float);
+            return Err(Error::new(TypeError::Float));
         }
 
         Ok(Self(value))
@@ -592,106 +605,108 @@ pub(crate) mod test {
     #[test]
     fn test_conversion_to_astarte_type() {
         for case in all_astarte_types() {
-            match case.clone() {
+            let err = match case.clone() {
                 AstarteData::Double(value) => {
                     let inv: Double = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::Integer(value) => {
                     let inv: i32 = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::Boolean(value) => {
                     let inv: bool = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    f64::try_from(case).unwrap_err();
+                    f64::try_from(case).unwrap_err()
                 }
                 AstarteData::LongInteger(value) => {
                     let inv: i64 = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::String(value) => {
                     let inv: String = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::BinaryBlob(value) => {
                     let inv: Vec<u8> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::DateTime(value) => {
                     let inv: DateTime<Utc> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::DoubleArray(value) => {
                     let inv: Vec<f64> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::IntegerArray(value) => {
                     let inv: Vec<i32> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::BooleanArray(value) => {
                     let inv: Vec<bool> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::LongIntegerArray(value) => {
                     let inv: Vec<i64> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::StringArray(value) => {
                     let inv: Vec<String> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::BinaryBlobArray(value) => {
                     let inv: Vec<Vec<u8>> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
                 AstarteData::DateTimeArray(value) => {
                     let inv: Vec<DateTime<Utc>> = case.clone().try_into().unwrap();
                     assert_eq!(inv, value);
                     let conv = AstarteData::from(value);
                     assert_eq!(conv, case);
-                    bool::try_from(case).unwrap_err();
+                    bool::try_from(case).unwrap_err()
                 }
-            }
+            };
+
+            assert_eq!(*err.kind(), TypeError::Conversion);
         }
     }
 
@@ -713,7 +728,8 @@ pub(crate) mod test {
     fn test_conversion_from_astarte_integer_to_f64() {
         let value = AstarteData::Integer(5);
 
-        f64::try_from(value).unwrap_err();
+        let err = f64::try_from(value).unwrap_err();
+        assert_eq!(*err.kind(), TypeError::Conversion);
     }
 
     #[test]
@@ -726,7 +742,8 @@ pub(crate) mod test {
 
         assert_eq!(value, 5);
 
-        i64::try_from(AstarteData::Boolean(false)).unwrap_err();
+        let err = i64::try_from(AstarteData::Boolean(false)).unwrap_err();
+        assert_eq!(*err.kind(), TypeError::Conversion);
     }
 
     #[test]
@@ -735,7 +752,11 @@ pub(crate) mod test {
             AstarteData::try_from(54.4).unwrap(),
             AstarteData::Double(54.4.try_into().unwrap())
         );
-        AstarteData::try_from(f64::NAN).unwrap_err();
-        AstarteData::try_from(vec![1.0, 2.0, f64::NAN, 4.0]).unwrap_err();
+
+        let err = AstarteData::try_from(f64::NAN).unwrap_err();
+        assert_eq!(*err.kind(), TypeError::Float);
+
+        let err = AstarteData::try_from(vec![1.0, 2.0, f64::NAN, 4.0]).unwrap_err();
+        assert_eq!(*err.kind(), TypeError::Float);
     }
 }

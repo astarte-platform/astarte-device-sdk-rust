@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2024 - 2025 SECO Mind Srl
+// Copyright 2024-2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,69 +18,11 @@
 
 //! Handle the introspection for the device
 
-use std::{
-    future::Future,
-    path::{Path, PathBuf},
-};
+use std::{future::Future, path::Path};
 
-use astarte_interfaces::{Interface, error::Error as InterfaceError};
-use tracing::debug;
+use astarte_interfaces::Interface;
 
-use crate::Error;
-
-/// Error while adding an [`Interface`] to the device introspection.
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum AddInterfaceError {
-    /// Couldn't add the interface.
-    #[error("error adding interface")]
-    Interface(#[from] InterfaceError),
-    /// Failed to read interface directory.
-    #[error("couldn't read interface path {}", .path.display())]
-    Io {
-        /// The path of the interface json file we couldn't read.
-        path: PathBuf,
-        #[source]
-        /// The IO error.
-        backtrace: std::io::Error,
-    },
-    /// Cannot read the interface file.
-    #[error("invalid interface file {}", .path.display())]
-    InterfaceFile {
-        /// The path of the invalid interface json.
-        path: PathBuf,
-        /// Reason why the interface couldn't be added.
-        #[source]
-        backtrace: InterfaceError,
-    },
-}
-
-impl AddInterfaceError {
-    // Add a path to the error context.
-    pub(crate) fn add_path_context(self, path: PathBuf) -> Self {
-        match self {
-            AddInterfaceError::Interface(backtrace) => {
-                AddInterfaceError::InterfaceFile { path, backtrace }
-            }
-            AddInterfaceError::Io {
-                path: prev,
-                backtrace,
-            } => {
-                debug!("overwriting previous path {}", prev.display());
-
-                AddInterfaceError::Io { path, backtrace }
-            }
-            AddInterfaceError::InterfaceFile {
-                path: prev,
-                backtrace,
-            } => {
-                debug!("overwriting previous path {}", prev.display());
-
-                AddInterfaceError::InterfaceFile { path, backtrace }
-            }
-        }
-    }
-}
+use crate::error::AstarteError;
 
 /// Trait that permits a client to query the interfaces in the device introspection.
 pub trait DeviceIntrospection {
@@ -98,7 +40,7 @@ pub trait DynamicIntrospection {
     fn add_interface(
         &mut self,
         interface: Interface,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     /// Add one or more [`Interface`] to the device introspection.
     ///
@@ -106,7 +48,7 @@ pub trait DynamicIntrospection {
     fn extend_interfaces<I>(
         &mut self,
         interfaces: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, AstarteError>> + Send
     where
         I: IntoIterator<Item = Interface> + Send;
 
@@ -116,7 +58,7 @@ pub trait DynamicIntrospection {
     fn add_interface_from_file<P>(
         &mut self,
         file_path: P,
-    ) -> impl Future<Output = Result<bool, Error>> + Send
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send
     where
         P: AsRef<Path> + Send + Sync;
 
@@ -127,7 +69,7 @@ pub trait DynamicIntrospection {
     fn add_interface_from_str(
         &mut self,
         json_str: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     /// Remove the interface with the name specified as argument.
     ///
@@ -135,7 +77,7 @@ pub trait DynamicIntrospection {
     fn remove_interface(
         &mut self,
         interface_name: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     /// Remove interfaces with names specified as argument.
     ///
@@ -143,7 +85,7 @@ pub trait DynamicIntrospection {
     fn remove_interfaces<I>(
         &mut self,
         interfaces_name: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, AstarteError>> + Send
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send;

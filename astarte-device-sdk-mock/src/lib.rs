@@ -16,17 +16,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#![expect(clippy::result_large_err)]
-
 use std::{future::Future, path::Path};
 
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::astarte_interfaces::Interface;
-use astarte_device_sdk::client::{ClientConnection, RecvError};
+use astarte_device_sdk::client::ClientConnection;
+use astarte_device_sdk::error::AstarteError;
 use astarte_device_sdk::properties::PropAccess;
 use astarte_device_sdk::store::StoredProp;
 use astarte_device_sdk::transport::Connection;
-use astarte_device_sdk::{AstarteData, Client, DeviceEvent, Error};
+use astarte_device_sdk::{AstarteData, Client, DeviceEvent};
 use mockall::mock;
 
 // Export public facing dependencies
@@ -43,36 +42,36 @@ pub trait DynamicIntrospection {
     fn add_interface(
         &mut self,
         interface: Interface,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     fn extend_interfaces<I>(
         &mut self,
         interfaces: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, AstarteError>> + Send
     where
         I: IntoIterator<Item = Interface> + Send + 'static;
 
     fn add_interface_from_file<P>(
         &mut self,
         file_path: P,
-    ) -> impl Future<Output = Result<bool, Error>> + Send
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send
     where
         P: AsRef<Path> + Send + Sync + 'static;
 
     fn add_interface_from_str(
         &mut self,
         json_str: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     fn remove_interface(
         &mut self,
         interface_name: &str,
-    ) -> impl Future<Output = Result<bool, Error>> + Send;
+    ) -> impl Future<Output = Result<bool, AstarteError>> + Send;
 
     fn remove_interfaces<I>(
         &mut self,
         interfaces_name: I,
-    ) -> impl Future<Output = Result<Vec<String>, Error>> + Send
+    ) -> impl Future<Output = Result<Vec<String>, AstarteError>> + Send
     where
         I: IntoIterator<Item = String> + Send + 'static,
         I::IntoIter: Send;
@@ -92,14 +91,14 @@ mock! {
             interface_path: &str,
             data: AstarteObject,
             timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_object(
             &mut self,
             interface_name: &str,
             interface_path: &str,
             data: AstarteObject,
-        ) -> Result<(), Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_individual_with_timestamp(
             &mut self,
@@ -107,25 +106,25 @@ mock! {
             interface_path: &str,
             data: AstarteData,
             timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn send_individual(
             &mut self,
             interface_name: &str,
             interface_path: &str,
             data: AstarteData,
-        ) -> Result<(), Error>;
+        ) -> Result<(), AstarteError>;
 
         async fn set_property(
             &mut self,
             interface_name: &str,
             interface_path: &str,
             data: AstarteData
-        ) -> Result<(), Error>;
+        ) -> Result<(), AstarteError>;
 
-        async fn unset_property(&mut self, interface_name: &str, interface_path: &str) -> Result<(), Error>;
+        async fn unset_property(&mut self, interface_name: &str, interface_path: &str) -> Result<(), AstarteError>;
 
-        async fn recv(&self) -> Result<DeviceEvent, RecvError>;
+        async fn recv(&self) -> Option<DeviceEvent>;
     }
 
     impl<C: Connection> DeviceIntrospection for DeviceClient<C> {
@@ -136,36 +135,36 @@ mock! {
     }
 
     impl<C: Connection> DynamicIntrospection for DeviceClient<C> {
-        async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error>;
+        async fn add_interface(&mut self, interface: Interface) -> Result<bool, AstarteError>;
 
-        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, AstarteError>
         where
             I: IntoIterator<Item = Interface> + Send + 'static;
 
-        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, AstarteError>
         where
             P: AsRef<Path> + Send + Sync + 'static;
 
-        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, Error>;
+        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, AstarteError>;
 
-        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error>;
+        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, AstarteError>;
 
-        async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, AstarteError>
             where
                 I: IntoIterator<Item = String> + Send + 'static,
                 I::IntoIter: Send;
     }
 
     impl<C: Connection> PropAccess for DeviceClient<C> {
-        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteData>, Error>;
-        async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, Error>;
-        async fn all_props(&self) -> Result<Vec<StoredProp>, Error>;
-        async fn device_props(&self) -> Result<Vec<StoredProp>, Error>;
-        async fn server_props(&self) -> Result<Vec<StoredProp>, Error>;
+        async fn property(&self, interface: &str, path: &str) -> Result<Option<AstarteData>, AstarteError>;
+        async fn interface_props(&self, interface: &str) -> Result<Vec<StoredProp>, AstarteError>;
+        async fn all_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
+        async fn device_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
+        async fn server_props(&self) -> Result<Vec<StoredProp>, AstarteError>;
     }
 
     impl<C: Connection> ClientConnection for DeviceClient<C> {
-        async fn disconnect(&mut self) -> Result<(), Error>;
+        async fn disconnect(&mut self) -> Result<(), AstarteError>;
 
         fn is_paired(&self) -> bool;
     }
@@ -175,7 +174,7 @@ mock! {
     pub DeviceConnection<C: Connection + 'static> {}
 
     impl<C: Connection> astarte_device_sdk::EventLoop for DeviceConnection<C> {
-        async fn handle_events(self) -> Result<(), crate::Error>;
+        async fn handle_events(self) -> Result<(), AstarteError>;
     }
 }
 
@@ -194,7 +193,7 @@ mod tests {
             _interface_path: &str,
             _data: AstarteObject,
             _timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
@@ -203,7 +202,7 @@ mod tests {
             _interface_name: &str,
             _interface_path: &str,
             _data: AstarteObject,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
@@ -213,7 +212,7 @@ mod tests {
             _interface_path: &str,
             _data: AstarteData,
             _timestamp: chrono::DateTime<chrono::Utc>,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
@@ -222,7 +221,7 @@ mod tests {
             _interface_name: &str,
             _interface_path: &str,
             _data: AstarteData,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
@@ -231,7 +230,7 @@ mod tests {
             _interface_name: &str,
             _mapping_path: &str,
             _data: AstarteData,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
@@ -239,12 +238,12 @@ mod tests {
             &mut self,
             _interface_name: &str,
             _mapping_path: &str,
-        ) -> Result<(), Error> {
+        ) -> Result<(), AstarteError> {
             Ok(())
         }
 
-        async fn recv(&self) -> Result<DeviceEvent, RecvError> {
-            Ok(DeviceEvent {
+        async fn recv(&self) -> Option<DeviceEvent> {
+            Some(DeviceEvent {
                 interface: Default::default(),
                 path: Default::default(),
                 data: astarte_device_sdk::Value::Property(None),
@@ -276,12 +275,12 @@ mod tests {
     }
 
     impl DynamicIntrospection for CheckMocks {
-        async fn add_interface(&mut self, interface: Interface) -> Result<bool, Error> {
+        async fn add_interface(&mut self, interface: Interface) -> Result<bool, AstarteError> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface(self, interface)
                 .await
         }
 
-        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(&mut self, interfaces: I) -> Result<Vec<String>, AstarteError>
         where
             I: IntoIterator<Item = Interface> + Send + 'static,
         {
@@ -291,7 +290,7 @@ mod tests {
             .await
         }
 
-        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, AstarteError>
         where
             P: AsRef<Path> + Send + Sync + 'static,
         {
@@ -301,14 +300,14 @@ mod tests {
             .await
         }
 
-        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, Error> {
+        async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, AstarteError> {
             astarte_device_sdk::introspection::DynamicIntrospection::add_interface_from_str(
                 self, json_str,
             )
             .await
         }
 
-        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, Error> {
+        async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, AstarteError> {
             astarte_device_sdk::introspection::DynamicIntrospection::remove_interface(
                 self,
                 interface_name,
@@ -316,7 +315,10 @@ mod tests {
             .await
         }
 
-        async fn remove_interfaces<I>(&mut self, interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(
+            &mut self,
+            interfaces_name: I,
+        ) -> Result<Vec<String>, AstarteError>
         where
             I: IntoIterator<Item = String> + Send + 'static,
             I::IntoIter: Send,
@@ -330,33 +332,39 @@ mod tests {
     }
 
     impl astarte_device_sdk::introspection::DynamicIntrospection for CheckMocks {
-        async fn add_interface(&mut self, _interface: Interface) -> Result<bool, Error> {
+        async fn add_interface(&mut self, _interface: Interface) -> Result<bool, AstarteError> {
             Ok(Default::default())
         }
 
-        async fn extend_interfaces<I>(&mut self, _interfaces: I) -> Result<Vec<String>, Error>
+        async fn extend_interfaces<I>(
+            &mut self,
+            _interfaces: I,
+        ) -> Result<Vec<String>, AstarteError>
         where
             I: IntoIterator<Item = Interface> + Send,
         {
             Ok(Default::default())
         }
 
-        async fn add_interface_from_file<P>(&mut self, _file_path: P) -> Result<bool, Error>
+        async fn add_interface_from_file<P>(&mut self, _file_path: P) -> Result<bool, AstarteError>
         where
             P: AsRef<Path> + Send + Sync,
         {
             Ok(Default::default())
         }
 
-        async fn add_interface_from_str(&mut self, _json_str: &str) -> Result<bool, Error> {
+        async fn add_interface_from_str(&mut self, _json_str: &str) -> Result<bool, AstarteError> {
             Ok(Default::default())
         }
 
-        async fn remove_interface(&mut self, _interface_name: &str) -> Result<bool, Error> {
+        async fn remove_interface(&mut self, _interface_name: &str) -> Result<bool, AstarteError> {
             Ok(Default::default())
         }
 
-        async fn remove_interfaces<I>(&mut self, _interfaces_name: I) -> Result<Vec<String>, Error>
+        async fn remove_interfaces<I>(
+            &mut self,
+            _interfaces_name: I,
+        ) -> Result<Vec<String>, AstarteError>
         where
             I: IntoIterator<Item = String> + Send,
             I::IntoIter: Send,

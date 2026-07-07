@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,77 +16,93 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::{Error, WrapError};
 use rusqlite::ToSql;
+use tracing::instrument;
 
 use crate::session::IntrospectionInterface;
 use crate::store::sqlite::connection::{ReadConnection, WriteConnection};
-use crate::store::sqlite::{SqliteError, statements::include_query};
+use crate::store::sqlite::error::SqliteError;
+use crate::store::sqlite::statements::include_query;
 
 impl WriteConnection {
+    #[instrument(skip_all)]
     pub(crate) fn add_interfaces<S>(
         &mut self,
         interfaces: &[IntrospectionInterface<S>],
-    ) -> Result<(), SqliteError>
+    ) -> Result<(), Error<SqliteError>>
     where
         S: ToSql,
     {
-        let trn = self.transaction()?;
+        let trn = self.transaction().wrap_err(SqliteError::Transaction)?;
 
         {
             let mut statement = trn
                 .prepare_cached(include_query!(
                     "queries/session/write/store_introspection.sql"
                 ))
-                .map_err(SqliteError::Prepare)?;
+                .wrap_err(SqliteError::Prepare)?;
 
             for i in interfaces {
-                statement.execute((i.name(), i.version_major(), i.version_minor()))?;
+                statement
+                    .execute((i.name(), i.version_major(), i.version_minor()))
+                    .wrap_err(SqliteError::Query)?;
             }
         }
 
-        trn.commit()?;
+        trn.commit().wrap_err(SqliteError::Transaction)?;
 
         Ok(())
     }
 
-    pub(crate) fn clear_introspection(&self) -> Result<(), SqliteError> {
-        let mut statement = self.prepare_cached(include_query!(
-            "queries/session/write/clear_introspection.sql"
-        ))?;
+    #[instrument(skip_all)]
+    pub(crate) fn clear_introspection(&self) -> Result<(), Error<SqliteError>> {
+        let mut statement = self
+            .prepare_cached(include_query!(
+                "queries/session/write/clear_introspection.sql"
+            ))
+            .wrap_err(SqliteError::Prepare)?;
 
-        statement.execute(())?;
+        statement.execute(()).wrap_err(SqliteError::Query)?;
 
         Ok(())
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn remove_interfaces(
         &mut self,
         interfaces: &[IntrospectionInterface],
-    ) -> Result<(), SqliteError> {
-        let trn = self.transaction()?;
+    ) -> Result<(), Error<SqliteError>> {
+        let trn = self.transaction().wrap_err(SqliteError::Transaction)?;
 
         {
-            let mut statement =
-                trn.prepare_cached(include_query!("queries/session/write/remove_interface.sql"))?;
+            let mut statement = trn
+                .prepare_cached(include_query!("queries/session/write/remove_interface.sql"))
+                .wrap_err(SqliteError::Prepare)?;
 
             for i in interfaces {
-                statement.execute((i.name(), i.version_major(), i.version_minor()))?;
+                statement
+                    .execute((i.name(), i.version_major(), i.version_minor()))
+                    .wrap_err(SqliteError::Query)?;
             }
         }
 
-        trn.commit()?;
+        trn.commit().wrap_err(SqliteError::Transaction)?;
 
         Ok(())
     }
 }
 
 impl ReadConnection {
-    pub(crate) fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SqliteError> {
+    #[instrument(skip(self))]
+    pub(crate) fn load_introspection(
+        &self,
+    ) -> Result<Vec<IntrospectionInterface>, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!(
                 "queries/session/read/load_introspection.sql"
             ))
-            .map_err(SqliteError::Prepare)?;
+            .wrap_err(SqliteError::Prepare)?;
 
         let interfaces = statement
             .query_map([], |row| {
@@ -96,9 +112,9 @@ impl ReadConnection {
                     version_minor: row.get(2)?,
                 })
             })
-            .map_err(SqliteError::Query)?
+            .wrap_err(SqliteError::Query)?
             .collect::<Result<Vec<IntrospectionInterface>, rusqlite::Error>>()
-            .map_err(SqliteError::Query)?;
+            .wrap_err(SqliteError::Query)?;
 
         Ok(interfaces)
     }

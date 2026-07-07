@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{MappingType, Ownership};
 use astarte_interfaces::{Properties, Schema};
 use rusqlite::ToSql;
@@ -33,16 +34,19 @@ use statements::include_query;
 use tracing::{debug, error, info, instrument, trace};
 
 use self::connection::SqliteConnection;
+use self::error::{SqliteError, ValueError};
 use self::pool::Connections;
+use super::error::StoreError;
 use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
 use crate::store::sqlite::options::SqliteOptions;
 use crate::{
     store::PropertyState,
-    transport::mqtt::payload::{Payload, PayloadError},
-    types::{AstarteData, TypeError, de::BsonConverter},
+    transport::mqtt::payload::Payload,
+    types::{AstarteData, de::BsonConverter},
 };
 
 pub(crate) mod connection;
+pub mod error;
 pub mod options;
 pub(crate) mod pool;
 pub(crate) mod statements;
@@ -81,51 +85,6 @@ pub const SQLITE_WAL_AUTOCHECKPOINT: u32 = 1000;
 ///
 /// This is the default if we cannot access the available_parallelism
 pub const DEFAULT_MAX_READERS: NonZero<usize> = NonZero::<usize>::new(4).unwrap();
-
-/// Error returned by the [`SqliteStore`].
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum SqliteError {
-    /// Error returned when the database connection fails.
-    #[error("could not connect to database")]
-    Connection(#[source] rusqlite::Error),
-    /// Couldn't set SQLite option.
-    #[error("couldn't set database option")]
-    Option(#[source] rusqlite::Error),
-    /// Couldn't prepare the SQLite statement.
-    #[error("couldn't prepare sqlite statement")]
-    Prepare(#[source] rusqlite::Error),
-    /// Couldn't start a transaction.
-    #[error("could not start a transaction database")]
-    Transaction(#[source] rusqlite::Error),
-    /// Couldn't run migration
-    #[error("couldn't run migration")]
-    Migration(#[source] rusqlite::Error),
-    /// Error returned when the database query fails.
-    #[error("could not execute query")]
-    Query(#[from] rusqlite::Error),
-    /// Couldn't convert the stored value.
-    #[error("couldn't convert the stored value")]
-    Value(#[from] ValueError),
-    /// Couldn't convert ownership value
-    #[error("could not deserialize ownership")]
-    Ownership(#[from] OwnershipError),
-    /// Couldn't set max size
-    #[error("couldn't set max size {ctx}")]
-    InvalidMaxSize {
-        /// Context of the error
-        ctx: &'static str,
-    },
-    /// Couldn't acquire a reader permit
-    #[error("couldn't acquire a reader permit")]
-    Reader,
-    /// Couldn't join the connection task
-    #[error("couldn't join the connection task")]
-    Join,
-    /// Couldn't convert passed input
-    #[error("couldn't convert passed input")]
-    Conversion(usize),
-}
 
 /// Error when converting a u8 into the [`Ownership`] struct.
 #[derive(Debug, thiserror::Error)]
@@ -178,30 +137,13 @@ impl FromSql for RecordOwnership {
         match value {
             0 => Ok(RecordOwnership::Device),
             1 => Ok(RecordOwnership::Server),
-            _ => Err(FromSqlError::Other(OwnershipError { value }.into())),
+            _ => Err(FromSqlError::Other(
+                Error::with(SqliteError::Ownership, "invalid ownership value")
+                    .set_ctx(value)
+                    .into(),
+            )),
         }
     }
-}
-
-/// Error when de/serializing a value stored in the [`SqliteStore`].
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum ValueError {
-    /// Couldn't convert to AstarteData.
-    #[error("couldn't convert to AstarteData")]
-    Conversion(#[from] TypeError),
-    /// Couldn't decode the BSON buffer.
-    #[error("couldn't decode property from bson")]
-    Decode(#[source] PayloadError),
-    /// Couldn't encode the BSON buffer.
-    #[error("couldn't encode property from bson")]
-    Encode(#[source] PayloadError),
-    /// Unsupported [`AstarteData`].
-    #[error("unsupported property type {0}")]
-    UnsupportedType(&'static str),
-    /// Unsupported [`AstarteData`].
-    #[error("unsupported stored type {0}, expected [0-13]")]
-    StoredType(u8),
 }
 
 /// Dimension of the database
@@ -295,7 +237,7 @@ struct PropRecord {
 }
 
 impl PropRecord {
-    fn try_into_value(self) -> Result<Option<AstarteData>, ValueError> {
+    fn try_into_value(self) -> Result<Option<AstarteData>, Error<ValueError>> {
         self.value
             .map(|value| deserialize_prop(self.stored_type, &value))
             .transpose()
@@ -388,12 +330,12 @@ struct StoredRecord {
 }
 
 impl StoredRecord {
-    pub(crate) fn try_into_prop(self) -> Result<Option<StoredProp>, SqliteError> {
+    pub(crate) fn try_into_prop(self) -> Result<Option<StoredProp>, Error<SqliteError>> {
         let Some(value) = self.value else {
             return Ok(None);
         };
 
-        let value = deserialize_prop(self.stored_type, &value)?;
+        let value = deserialize_prop(self.stored_type, &value).map_kind(SqliteError::Value)?;
 
         Ok(Some(StoredProp {
             interface: self.interface,
@@ -406,12 +348,12 @@ impl StoredRecord {
 }
 
 impl TryFrom<StoredRecord> for OptStoredProp {
-    type Error = SqliteError;
+    type Error = Error<SqliteError>;
 
     fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
         let value = record
             .value
-            .map(|value| deserialize_prop(record.stored_type, &value))
+            .map(|value| deserialize_prop(record.stored_type, &value).map_kind(SqliteError::Value))
             .transpose()?;
 
         Ok(Self {
@@ -424,8 +366,8 @@ impl TryFrom<StoredRecord> for OptStoredProp {
     }
 }
 
-fn into_stored_type(value: &AstarteData) -> Result<u8, ValueError> {
-    let mapping_type = match value {
+fn into_stored_type(value: &AstarteData) -> u8 {
+    match value {
         AstarteData::Double(_) => 1,
         AstarteData::Integer(_) => 2,
         AstarteData::Boolean(_) => 3,
@@ -440,12 +382,10 @@ fn into_stored_type(value: &AstarteData) -> Result<u8, ValueError> {
         AstarteData::StringArray(_) => 12,
         AstarteData::BinaryBlobArray(_) => 13,
         AstarteData::DateTimeArray(_) => 14,
-    };
-
-    Ok(mapping_type)
+    }
 }
 
-fn from_stored_type(value: u8) -> Result<MappingType, ValueError> {
+fn from_stored_type(value: u8) -> Result<MappingType, Error<ValueError>> {
     let mapping_type = match value {
         1 => MappingType::Double,
         2 => MappingType::Integer,
@@ -462,7 +402,7 @@ fn from_stored_type(value: u8) -> Result<MappingType, ValueError> {
         13 => MappingType::BinaryBlobArray,
         14 => MappingType::DateTimeArray,
         0 | 15.. => {
-            return Err(ValueError::StoredType(value));
+            return Err(Error::new(ValueError::StoredType).set_ctx(format!("got {value}")));
         }
     };
 
@@ -490,7 +430,7 @@ impl SqliteStore {
     }
 
     /// Creates a SQLite database for the Astarte device.
-    async fn new(db_file: PathBuf, options: SqliteOptions) -> Result<Self, SqliteError> {
+    async fn new(db_file: PathBuf, options: SqliteOptions) -> Result<Self, Error<SqliteError>> {
         let sqlite_store = SqliteStore {
             pool: Arc::new(Connections::new(db_file, options)),
         };
@@ -504,7 +444,7 @@ impl SqliteStore {
             .acquire_writer(|writer| {
                 writer
                     .execute("PRAGMA incremental_vacuum", ())
-                    .map_err(SqliteError::Option)
+                    .wrap_err_msg(SqliteError::Option, "while running incremental VACUUM")
             })
             .await?;
 
@@ -528,7 +468,7 @@ impl SqliteStore {
     pub async fn with_writable_dir(
         writable_path: impl AsRef<Path>,
         options: SqliteOptions,
-    ) -> Result<Self, SqliteError> {
+    ) -> Result<Self, Error<SqliteError>> {
         let path = writable_path.as_ref();
 
         if let Err(error) = tokio::fs::create_dir_all(path).await {
@@ -556,12 +496,12 @@ impl SqliteStore {
     pub async fn with_db_file(
         database_file: impl AsRef<Path>,
         options: SqliteOptions,
-    ) -> Result<Self, SqliteError> {
+    ) -> Result<Self, Error<SqliteError>> {
         Self::new(database_file.as_ref().to_path_buf(), options).await
     }
 
     #[instrument(skip(self))]
-    async fn migrate(&self) -> Result<(), SqliteError> {
+    async fn migrate(&self) -> Result<(), Error<SqliteError>> {
         // Order is important
         const MIGRATIONS: &[&str] = &[
             include_query!("migrations/0001_init.sql"),
@@ -576,7 +516,7 @@ impl SqliteStore {
         };
 
         self.pool
-            .acquire_writer(|writer| -> Result<(), SqliteError> {
+            .acquire_writer(|writer| -> Result<(), Error<SqliteError>> {
                 // re-run migrations on error
                 let version: usize = writer
                     .get_pragma::<u32>("user_version")
@@ -599,7 +539,7 @@ impl SqliteStore {
                 for migration in &MIGRATIONS[version..] {
                     writer
                         .execute_batch(migration)
-                        .map_err(SqliteError::Migration)?;
+                        .wrap_err(SqliteError::Migration)?;
                 }
 
                 debug!(version = MIGRATIONS.len(), "setting new database version");
@@ -630,9 +570,10 @@ impl StoreCapabilities for SqliteStore {
 }
 
 impl PropertyStore for SqliteStore {
-    type Err = SqliteError;
-
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
+    async fn store_prop(
+        &self,
+        prop: StoredProp<&str, &AstarteData>,
+    ) -> Result<(), Error<StoreError>> {
         trace!(
             interface = prop.interface,
             path = prop.path,
@@ -641,12 +582,17 @@ impl PropertyStore for SqliteStore {
 
         let buf = Payload::new(prop.value)
             .to_vec()
-            .map_err(ValueError::Encode)?;
+            .wrap_err_msg(
+                SqliteError::Value(ValueError::Encode),
+                "serializing the property",
+            )
+            .wrap_err(StoreError::Store)?;
 
         let prop = StoredProp::<String, AstarteData>::from(prop);
         self.pool
             .acquire_writer(move |writer| writer.store_prop((&prop).into(), &buf))
-            .await?;
+            .await
+            .wrap_err(StoreError::Store)?;
 
         Ok(())
     }
@@ -656,7 +602,7 @@ impl PropertyStore for SqliteStore {
         property: &PropertyMapping<'_>,
         state: PropertyState,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
+    ) -> Result<bool, Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
 
@@ -665,7 +611,8 @@ impl PropertyStore for SqliteStore {
             .acquire_writer(move |writer| {
                 writer.update_state(&interface_name, &path, expected.as_ref(), state)
             })
-            .await?;
+            .await
+            .wrap_err(StoreError::UpdateState)?;
 
         Ok(updated > 0)
     }
@@ -673,14 +620,15 @@ impl PropertyStore for SqliteStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
 
         let opt_record = self
             .pool
             .acquire_reader(move |reader| reader.load_prop(&interface_name, &path))
-            .await?;
+            .await
+            .wrap_err(StoreError::Load)?;
 
         match opt_record {
             Some(record) => {
@@ -705,33 +653,40 @@ impl PropertyStore for SqliteStore {
                     return Ok(None);
                 }
 
-                record.try_into_value().map_err(SqliteError::Value)
+                record
+                    .try_into_value()
+                    .map_kind(SqliteError::Value)
+                    .wrap_err(StoreError::Load)
             }
             None => Ok(None),
         }
     }
 
-    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
+
         self.pool
             .acquire_writer(move |writer| writer.unset_prop(&interface_name, &path))
             .await
+            .wrap_err(StoreError::Unset)
     }
 
-    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Self::Err> {
+    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
+
         self.pool
             .acquire_writer(move |writer| writer.delete_prop(&interface_name, &path))
             .await
+            .wrap_err(StoreError::Delete)
     }
 
     async fn delete_expected_prop(
         &self,
         property: &PropertyMapping<'_>,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
+    ) -> Result<bool, Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
 
@@ -740,49 +695,59 @@ impl PropertyStore for SqliteStore {
             .acquire_writer(move |writer| {
                 writer.delete_expected_prop(&interface_name, &path, expected.as_ref())
             })
-            .await?;
+            .await
+            .wrap_err(StoreError::DeleteInterface)?;
 
         Ok(updated > 0)
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
+    async fn clear(&self) -> Result<(), Error<StoreError>> {
         self.pool
             .acquire_writer(|writer| writer.clear_props())
             .await
+            .wrap_err(StoreError::Clear)
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
             .acquire_reader(|reader| reader.load_all_props())
             .await
+            .wrap_err(StoreError::LoadAll)
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
             .acquire_reader(|reader| reader.props_with_ownership(Ownership::Device))
             .await
+            .wrap_err(StoreError::DeviceProps)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
             .acquire_reader(|reader| reader.props_with_ownership(Ownership::Server))
             .await
+            .wrap_err(StoreError::ServerProps)
     }
 
-    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(
+        &self,
+        interface: &Properties,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let interface_name = interface.name().to_string();
 
         self.pool
             .acquire_reader(move |reader| reader.interface_props(&interface_name))
             .await
+            .wrap_err(StoreError::InterfaceProps)
     }
 
-    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Error<StoreError>> {
         let interface_name = interface.name().to_string();
 
         self.pool
             .acquire_writer(move |writer| writer.delete_interface_props(&interface_name))
             .await
+            .wrap_err(StoreError::DeleteInterface)
     }
 
     async fn device_props_with_unset(
@@ -790,29 +755,31 @@ impl PropertyStore for SqliteStore {
         state: PropertyState,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<OptStoredProp>, Self::Err> {
+    ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         self.pool
             .acquire_reader(move |reader| {
                 reader.props_with_unset(Ownership::Device, state, limit, offset)
             })
             .await
+            .wrap_err(StoreError::DeviceProps)
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
         self.pool
             .acquire_writer(move |writer| writer.reset_state(ownership))
             .await
+            .wrap_err(StoreError::ResetState)
     }
 }
 
 /// Deserialize a property from the store.
-fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteData, ValueError> {
+fn deserialize_prop(stored_type: u8, buf: &[u8]) -> Result<AstarteData, Error<ValueError>> {
     let mapping_type = from_stored_type(stored_type)?;
 
-    let payload = Payload::from_slice(buf).map_err(ValueError::Decode)?;
+    let payload = Payload::from_slice(buf).wrap_err_msg(ValueError::Decode, "property payload")?;
     let value = BsonConverter::new(mapping_type, payload.value);
 
-    value.try_into().map_err(ValueError::from)
+    AstarteData::try_from(value).wrap_err_msg(ValueError::Decode, "invalid Astarte data")
 }
 
 #[cfg(test)]
@@ -909,12 +876,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            SqliteError::InvalidMaxSize {
-                ctx,
-            } if ctx == "cannot shrink the database"
-        ));
+        assert_eq!(*err.kind(), SqliteError::InvalidMaxSize);
     }
 
     #[tokio::test]
@@ -928,9 +890,10 @@ mod tests {
                 .unwrap();
 
             db.pool
-                .acquire_writer(|writer| -> Result<_, SqliteError> {
+                .acquire_writer(|writer| -> Result<(i64, i64), Error<SqliteError>> {
                     let size = writer.get_pragma::<i64>("page_size")?;
                     let count = writer.get_pragma::<i64>("page_count")?;
+
                     Ok((size, count))
                 })
                 .await
@@ -961,10 +924,16 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            err,
-            SqliteError::Query(err) if err.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull)
-        ));
+        // 1. Store
+        // |_ 2. Query
+        //   |_ 3. rusqlite
+        let err = std::error::Error::source(&err)
+            .and_then(std::error::Error::source)
+            .unwrap()
+            .downcast_ref::<rusqlite::Error>()
+            .unwrap();
+
+        assert_eq!(err.sqlite_error_code(), Some(rusqlite::ErrorCode::DiskFull));
     }
 
     #[tokio::test]
@@ -1018,11 +987,13 @@ mod tests {
         // even a 1 page limit (4096B) would not work
         let size = Size::Kb(NonZero::<u64>::new(1).unwrap());
 
-        SqliteStore::options()
+        let err = SqliteStore::options()
             .set_db_max_size(size)
             .with_writable_dir(dir.path())
             .await
             .unwrap_err();
+
+        assert_eq!(*err.kind(), SqliteError::Migration, "{err:#}");
     }
 
     #[test]

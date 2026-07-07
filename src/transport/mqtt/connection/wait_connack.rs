@@ -18,12 +18,13 @@
 
 use std::time::Instant;
 
+use astarte_device_error::Error;
 use rumqttc::{Event, Packet};
 use tracing::{debug, error, trace};
 
 use crate::error::Report;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::transport::mqtt::connection::ConnError;
+use crate::transport::mqtt::error::MqttError;
 
 use super::context::{ConnCtx, Connection};
 
@@ -33,7 +34,10 @@ pub(super) struct Connack<'a> {
 }
 
 impl<'a> Connack<'a> {
-    pub(super) async fn wait<S>(&mut self, ctx: &mut ConnCtx<'_, S>) -> Result<bool, ConnError> {
+    pub(super) async fn wait<S>(
+        &mut self,
+        ctx: &mut ConnCtx<'_, S>,
+    ) -> Result<bool, Error<MqttError>> {
         let instant = Instant::now();
         // NOTE: this is to remove an infinite loop and prevent a miss-behaves broker to never send
         //       the CONNACK. We just need to check the elapsed time, since we are guarantied to
@@ -50,10 +54,9 @@ impl<'a> Connack<'a> {
                 Err(err) => {
                     error!(error = %Report::new(&err),"error received from mqtt connection");
 
-                    return Err(ConnError::Connection {
-                        source: err,
-                        ctx: "wait connack",
-                    });
+                    return Err(
+                        Error::with(MqttError::Connection, "waiting for CONNACK").set_source(err)
+                    );
                 }
             };
 
@@ -66,14 +69,17 @@ impl<'a> Connack<'a> {
                 Event::Incoming(Packet::Disconnect) => {
                     error!("disconnect received");
 
-                    return Err(ConnError::Disconnect);
+                    return Err(Error::new(MqttError::Disconnect));
                 }
                 Event::Incoming(incoming) => {
                     error!(incoming = ?incoming,"unexpected packet received while waiting for connack");
 
                     notify_security_event(SecurityEvent::UnexpectedMessageReceived);
 
-                    return Err(ConnError::ConAck);
+                    return Err(Error::with(
+                        MqttError::Connection,
+                        "expected CONNACK packet",
+                    ));
                 }
                 Event::Outgoing(outgoing) => {
                     debug!("outgoing packet while waiting for connack {outgoing:?}");
@@ -83,6 +89,9 @@ impl<'a> Connack<'a> {
 
         error!("timeout reached while waiting for CONNACK");
 
-        Err(ConnError::ConAck)
+        Err(Error::with(
+            MqttError::Connection,
+            "timeout waiting for CONNACK packet",
+        ))
     }
 }

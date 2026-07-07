@@ -16,9 +16,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::Error;
+
+use crate::transport::mqtt::error::MqttError;
+
+use super::Disconnected;
 use super::connected::Connected;
 use super::wait_sends::{TaskHandle, WaitTask};
-use super::{ConnError, Disconnected};
 
 /// This cannot be a type state machine, because any additional data cannot be moved out of the enum
 /// when polling. The only data that can be easily changed is the current state into the next one.
@@ -55,7 +59,7 @@ impl State {
         &mut self,
         session_present: bool,
         handle: TaskHandle,
-    ) -> Result<&mut WaitTask, ConnError> {
+    ) -> Result<&mut WaitTask, Error<MqttError>> {
         let connection = match std::mem::replace(self, State::Transition) {
             State::Disconnected(Disconnected {
                 connection: Some(connection),
@@ -63,7 +67,10 @@ impl State {
             state => {
                 *self = state;
 
-                return Err(ConnError::State);
+                return Err(Error::with(
+                    MqttError::Connection,
+                    "inconsistent connection state",
+                ));
             }
         };
 
@@ -80,7 +87,7 @@ impl State {
         Ok(wait_task)
     }
 
-    pub(super) fn set_connected(&mut self) -> Result<(), ConnError> {
+    pub(super) fn set_connected(&mut self) -> Result<(), Error<MqttError>> {
         let connected = match std::mem::replace(self, State::Transition) {
             State::WaitAcks(wait_task) => Connected {
                 connection: wait_task.connection,
@@ -89,7 +96,10 @@ impl State {
             state => {
                 *self = state;
 
-                return Err(ConnError::State);
+                return Err(Error::with(
+                    MqttError::Connection,
+                    "couldn't change connection state",
+                ));
             }
         };
 

@@ -24,11 +24,13 @@
 
 use std::sync::Arc;
 
+use astarte_device_error::Error;
+use astarte_device_error::ResultExt;
+use astarte_device_error::WrapError;
 use astarte_interfaces::Properties;
 use astarte_interfaces::Schema;
 use astarte_interfaces::schema::Ownership;
 use astarte_message_hub_proto::PropertyFilter;
-use astarte_message_hub_proto::tonic;
 use futures::TryFutureExt;
 use tokio::sync::Mutex;
 use tracing::error;
@@ -41,10 +43,9 @@ use crate::{
     store::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp},
 };
 
-use super::{
-    MsgHubClient,
-    convert::{self, MessageHubProtoError},
-};
+use super::MsgHubClient;
+use super::convert;
+use super::error::GrpcError;
 
 // Store implementation designed specifically for the grpc connection
 /// Used mainly to request device owned properties to the message hub instead of looking them up in the local storage
@@ -65,7 +66,7 @@ impl<S> GrpcStore<S> {
     async fn grpc_server_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, GrpcStoreError> {
+    ) -> Result<Option<AstarteData>, Error<GrpcError>> {
         self.client
             .lock()
             .await
@@ -74,16 +75,18 @@ impl<S> GrpcStore<S> {
                 path: property.path().to_owned(),
             })
             .await
-            .map(tonic::Response::into_inner)
-            .map_err(GrpcStoreError::from)
-            .and_then(|i| {
-                i.data
-                    .map(|data| AstarteData::try_from(data).map_err(GrpcStoreError::from))
+            .map_err(|status| {
+                Error::with(GrpcError::Status, "getting server property").set_ctx(status)
+            })
+            .and_then(|resp| {
+                resp.into_inner()
+                    .data
+                    .map(|data| AstarteData::try_from(data).map_kind(GrpcError::Conversion))
                     .transpose()
             })
     }
 
-    async fn grpc_server_properties(&self) -> Result<Vec<StoredProp>, GrpcStoreError> {
+    async fn grpc_server_properties(&self) -> Result<Vec<StoredProp>, Error<GrpcError>> {
         self.client
             .lock()
             .await
@@ -91,14 +94,20 @@ impl<S> GrpcStore<S> {
                 ownership: Some(astarte_message_hub_proto::Ownership::Server.into()),
             })
             .await
-            .map_err(GrpcStoreError::from)
-            .and_then(|res| Ok(convert::map_set_stored_properties(res.into_inner())?))
+            .map_err(|status| {
+                Error::with(GrpcError::Status, "getting server properties").set_ctx(status)
+            })
+            .and_then(|resp| {
+                let resp = resp.into_inner();
+
+                convert::map_set_stored_properties(resp).map_kind(GrpcError::Conversion)
+            })
     }
 
     async fn grpc_interface_properties(
         &self,
         interface: &Properties,
-    ) -> Result<Vec<StoredProp>, GrpcStoreError> {
+    ) -> Result<Vec<StoredProp>, Error<GrpcError>> {
         self.client
             .lock()
             .await
@@ -106,32 +115,14 @@ impl<S> GrpcStore<S> {
                 name: interface.interface_name().to_string(),
             })
             .await
-            .map(tonic::Response::into_inner)
-            .map_err(GrpcStoreError::from)
-            .and_then(|p| Ok(convert::map_set_stored_properties(p)?))
-    }
-}
+            .map_err(|status| {
+                Error::with(GrpcError::Status, "getting interface properties").set_ctx(status)
+            })
+            .and_then(|resp| {
+                let resp = resp.into_inner();
 
-/// Error returned while operating on the store of a grpc connection
-/// This store needs to request properties from the message hub server
-/// and has additional errors consequently
-#[non_exhaustive]
-#[derive(thiserror::Error, Debug)]
-pub enum GrpcStoreError {
-    /// Error while retrieving data from the message hub server
-    #[error("Error while retrieving data from the message hub server: {0}")]
-    Status(tonic::Status),
-    /// Error while converting a proto received value to an internal type
-    #[error("Error while converting a proto received value to an internal type: {0}")]
-    Conversion(#[from] MessageHubProtoError),
-    /// Error of the inner store
-    #[error("Inner store error")]
-    StoreError(#[from] StoreError),
-}
-
-impl From<tonic::Status> for GrpcStoreError {
-    fn from(value: tonic::Status) -> Self {
-        Self::Status(value)
+                convert::map_set_stored_properties(resp).map_kind(GrpcError::Conversion)
+            })
     }
 }
 
@@ -159,15 +150,11 @@ impl<S> PropertyStore for GrpcStore<S>
 where
     S: PropertyStore,
 {
-    type Err = GrpcStoreError;
-
-    async fn store_prop(&self, prop: StoredProp<&str, &AstarteData>) -> Result<(), Self::Err> {
-        self.inner
-            .store_prop(prop)
-            .await
-            .map_err(StoreError::store)?;
-
-        Ok(())
+    async fn store_prop(
+        &self,
+        prop: StoredProp<&str, &AstarteData>,
+    ) -> Result<(), Error<StoreError>> {
+        self.inner.store_prop(prop).await
     }
 
     async fn update_state(
@@ -175,17 +162,14 @@ where
         property: &PropertyMapping<'_>,
         state: PropertyState,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
-        self.inner
-            .update_state(property, state, expected)
-            .await
-            .map_err(|e| GrpcStoreError::from(StoreError::update_state(e)))
+    ) -> Result<bool, Error<StoreError>> {
+        self.inner.update_state(property, state, expected).await
     }
 
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Self::Err> {
+    ) -> Result<Option<AstarteData>, Error<StoreError>> {
         if property.ownership() == Ownership::Server {
             let server_prop = self.grpc_server_prop(property).await;
 
@@ -195,88 +179,66 @@ where
                 }
                 Err(e) => {
                     // NOTE if an error occurs we'll try to load a server property from the local store
-                    error!(err=%Report::new(e), "error while requesting server property, returning stored server property");
+                    error!(error = %Report::new(e), "error while requesting server property, returning stored server property");
                 }
             }
         }
 
-        self.inner
-            .load_prop(property)
-            .await
-            .map_err(|e| GrpcStoreError::StoreError(StoreError::load(e)))
+        self.inner.load_prop(property).await
     }
 
-    async fn unset_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        self.inner
-            .unset_prop(prop)
-            .await
-            .map_err(StoreError::unset)?;
-
-        Ok(())
+    async fn unset_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
+        self.inner.unset_prop(prop).await
     }
 
-    async fn delete_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Self::Err> {
-        self.inner
-            .delete_prop(prop)
-            .await
-            .map_err(StoreError::delete)?;
-
-        Ok(())
+    async fn delete_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
+        self.inner.delete_prop(prop).await
     }
 
     async fn delete_expected_prop(
         &self,
         property: &PropertyMapping<'_>,
         expected: Option<AstarteData>,
-    ) -> Result<bool, Self::Err> {
-        self.inner
-            .delete_expected_prop(property, expected)
-            .await
-            .map_err(|e| GrpcStoreError::StoreError(StoreError::delete(e)))
+    ) -> Result<bool, Error<StoreError>> {
+        self.inner.delete_expected_prop(property, expected).await
     }
 
-    async fn clear(&self) -> Result<(), Self::Err> {
-        self.inner.clear().await.map_err(StoreError::clear)?;
-
-        Ok(())
+    async fn clear(&self) -> Result<(), Error<StoreError>> {
+        self.inner.clear().await
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        let mut device_props = self
-            .inner
-            .device_props()
-            .await
-            .map_err(StoreError::device_props)?;
+    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        let mut device_props = self.inner.device_props().await?;
 
-        let server_props = self.server_props().await?;
+        let server_props = self.server_props().await.wrap_err(StoreError::LoadAll)?;
 
         device_props.extend(server_props);
 
         Ok(device_props)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let inner = self.inner.clone();
 
         self.grpc_server_properties()
             .or_else(move |e| {
-                error!(err=%Report::new(e), "error while requesting server properties, returning stored server properties");
+                error!(error=%Report::new(e), "error while requesting server properties, returning stored server properties");
 
                 async move {
-                    inner.server_props().await.map_err(|e| GrpcStoreError::from(StoreError::device_props(e)))
+                    inner.server_props().await.wrap_err(StoreError::ServerProps)
                 }
             })
             .await
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Self::Err> {
-        self.inner
-            .device_props()
-            .await
-            .map_err(|e| GrpcStoreError::from(StoreError::device_props(e)))
+    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        self.inner.device_props().await
     }
 
-    async fn interface_props(&self, interface: &Properties) -> Result<Vec<StoredProp>, Self::Err> {
+    async fn interface_props(
+        &self,
+        interface: &Properties,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         if interface.ownership() == Ownership::Server {
             let server_prop = self.grpc_interface_properties(interface).await;
 
@@ -286,24 +248,16 @@ where
                 }
                 Err(e) => {
                     // NOTE if an error occurs we'll try to load a server property from the local store
-                    error!(err=%Report::new(e), "error while requesting server properties, returning stored server properties");
+                    error!(error = %Report::new(e), "error while requesting server properties, returning stored server properties");
                 }
             }
         }
 
-        self.inner
-            .interface_props(interface)
-            .await
-            .map_err(|e| GrpcStoreError::from(StoreError::interface_props(e)))
+        self.inner.interface_props(interface).await
     }
 
-    async fn delete_interface(&self, interface: &Properties) -> Result<(), Self::Err> {
-        self.inner
-            .delete_interface(interface)
-            .await
-            .map_err(StoreError::delete_interface)?;
-
-        Ok(())
+    async fn delete_interface(&self, interface: &Properties) -> Result<(), Error<StoreError>> {
+        self.inner.delete_interface(interface).await
     }
 
     async fn device_props_with_unset(
@@ -311,18 +265,14 @@ where
         state: PropertyState,
         limit: usize,
         offset: usize,
-    ) -> Result<Vec<OptStoredProp>, Self::Err> {
+    ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         self.inner
             .device_props_with_unset(state, limit, offset)
             .await
-            .map_err(|e| GrpcStoreError::from(StoreError::device_props(e)))
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Self::Err> {
-        self.inner
-            .reset_state(ownership)
-            .await
-            .map_err(|e| GrpcStoreError::from(StoreError::reset_state(e)))
+    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
+        self.inner.reset_state(ownership).await
     }
 }
 

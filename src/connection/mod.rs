@@ -21,6 +21,8 @@
 use std::future::Future;
 use std::pin::pin;
 
+use astarte_device_error::Error;
+use astarte_device_error::WrapError;
 use async_channel::SendError;
 use chrono::Utc;
 use futures::future::Either;
@@ -28,17 +30,15 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::Timestamp;
+use crate::error::AstarteError;
+use crate::error::ErrorKind;
+use crate::error::InterfaceError;
 use crate::error::Report;
+use crate::event::DeviceEvent;
 use crate::retry::RandomExponentialIter;
 use crate::state::{ConnStatus, ConnectionState};
-use crate::transport::{ReceivedEvent, TransportError};
-use crate::{
-    Error,
-    client::RecvError,
-    event::DeviceEvent,
-    store::wrapper::StoreWrapper,
-    transport::{Connection, Publish, Receive},
-};
+use crate::transport::ReceivedEvent;
+use crate::transport::{Connection, Publish, Receive};
 
 mod incoming;
 mod resend;
@@ -75,14 +75,14 @@ pub trait EventLoop {
     ///     tokio::spawn(async move {
     ///         loop {
     ///             let event = client.recv().await;
-    ///             assert!(event.is_ok());
+    ///             assert!(event.is_some());
     ///         }
     ///     });
     ///
     ///     connection.handle_events().await;
     /// }
     /// ```
-    fn handle_events(self) -> impl Future<Output = Result<(), crate::Error>> + Send;
+    fn handle_events(self) -> impl Future<Output = Result<(), AstarteError>> + Send;
 }
 
 /// Astarte device implementation.
@@ -91,9 +91,9 @@ pub struct DeviceConnection<C>
 where
     C: Connection,
 {
-    events: async_channel::Sender<Result<DeviceEvent, RecvError>>,
+    events: async_channel::Sender<DeviceEvent>,
     disconnect: async_channel::Receiver<()>,
-    store: StoreWrapper<C::Store>,
+    store: C::Store,
     connection: C,
     sender: C::Sender,
     state: ConnectionState,
@@ -106,9 +106,9 @@ where
     C: Connection,
 {
     pub(crate) fn new(
-        events: async_channel::Sender<Result<DeviceEvent, RecvError>>,
+        events: async_channel::Sender<DeviceEvent>,
         disconnect: async_channel::Receiver<()>,
-        store: StoreWrapper<C::Store>,
+        store: C::Store,
         state: ConnectionState,
         connection: C,
         sender: C::Sender,
@@ -135,7 +135,7 @@ where
         path: &str,
         explicit_timestamp: bool,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Timestamp, RecvError> {
+    ) -> Result<Timestamp, AstarteError> {
         match (timestamp, explicit_timestamp) {
             (None, false) => Ok(Utc::now()),
             (Some(timestamp), true) => Ok(timestamp),
@@ -148,10 +148,11 @@ where
                 error!("missing timestamp on interface with `explicit_timestamp`");
 
                 if cfg!(debug_assertions) {
-                    Err(RecvError::MissingTimestamp {
-                        interface_name: interface_name.to_string(),
-                        path: path.to_string(),
-                    })
+                    Err(Error::with(
+                        ErrorKind::Interface(InterfaceError::Timestamp),
+                        "set but missing timestamp on received data",
+                    )
+                    .set_ctx(format!("for {interface_name}{path}")))
                 } else {
                     Ok(Utc::now())
                 }
@@ -161,7 +162,7 @@ where
 
     /// Keeps polling connection events
     #[instrument(skip(self))]
-    pub(super) async fn poll(&mut self) -> Result<ConnStatus, TransportError>
+    pub(super) async fn poll(&mut self) -> Result<ConnStatus, AstarteError>
     where
         C: Receive,
         C::Sender: Publish + 'static,
@@ -186,37 +187,44 @@ where
     async fn handle_and_send_to_client(
         &self,
         event: ReceivedEvent<C::Payload>,
-    ) -> Result<(), TransportError>
+    ) -> Result<(), AstarteError>
     where
         C: Receive,
     {
-        let event = self
+        let data = self
             .handle_event(&event.interface, &event.path, event.payload)
-            .await
-            .map(|data| DeviceEvent {
-                interface: event.interface,
-                path: event.path,
-                data,
-            })?;
+            .await;
 
-        self.send_to_clients(Ok(event)).await.map_err(|err| {
+        let data = match data {
+            Ok(data) => data,
+            Err(error) => {
+                error!(error = %Report::new(error), "error in received event");
+
+                return Ok(());
+            }
+        };
+
+        let event = DeviceEvent {
+            interface: event.interface,
+            path: event.path,
+            data,
+        };
+
+        self.send_to_clients(event).await.wrap_err_with(|err| {
             debug!(error = %Report::new(err), "disconnected");
 
-            TransportError::Transport(Error::Disconnected)
+            Error::new(ErrorKind::Disconnected)
         })?;
 
         Ok(())
     }
 
-    async fn send_to_clients(
-        &self,
-        event: Result<DeviceEvent, RecvError>,
-    ) -> Result<(), SendError<Result<DeviceEvent, RecvError>>> {
+    async fn send_to_clients(&self, event: DeviceEvent) -> Result<(), SendError<DeviceEvent>> {
         let send = pin!(self.events.send(event));
         let timeout = pin!(tokio::time::sleep(self.state.config().slow_receive));
 
         match futures::future::select(send, timeout).await {
-            Either::Left((send_res, _)) => send_res.inspect(|()| trace!("event sent to device")),
+            Either::Left((send_res, _)) => send_res.inspect(|()| trace!("event sent to clients")),
             Either::Right(((), send)) => {
                 warn!(
                     duration = ?self.state.config().slow_receive,
@@ -280,7 +288,7 @@ where
     C::Sender: Publish + 'static,
 {
     #[instrument(skip(self))]
-    async fn handle_events(mut self) -> Result<(), crate::Error> {
+    async fn handle_events(mut self) -> Result<(), AstarteError> {
         trace!("starting connection");
 
         // Check the status to since a client may already have called disconnect
@@ -303,30 +311,15 @@ where
         }
 
         loop {
-            match self.poll().await {
-                Ok(ConnStatus::Connected) => {}
-                Ok(ConnStatus::Disconnected) => {
+            match self.poll().await? {
+                ConnStatus::Connected => {}
+                ConnStatus::Disconnected => {
                     if self.reconnect_and_resend().await?.is_break() {
                         break;
                     }
                 }
-                Ok(ConnStatus::Closed) => {
+                ConnStatus::Closed => {
                     break;
-                }
-                Err(TransportError::Transport(err)) => {
-                    return Err(err);
-                }
-                // send the error to the client
-                Err(TransportError::Recv(recv_err)) => {
-                    self.send_to_clients(Err(recv_err))
-                        .await
-                        .map_err(|send_err| {
-                            if let Err(err) = send_err.into_inner() {
-                                error!(error = %Report::new(err), "failed to send receive error");
-                            }
-
-                            Error::Disconnected
-                        })?;
                 }
             }
         }
@@ -367,7 +360,7 @@ mod tests {
         S: StoreCapabilities,
     {
         pub(crate) inner: DeviceConnection<MockCon<S>>,
-        pub(crate) events: async_channel::Receiver<Result<DeviceEvent, RecvError>>,
+        pub(crate) events: async_channel::Receiver<DeviceEvent>,
         pub(crate) disconnect: async_channel::Sender<()>,
     }
 
@@ -424,7 +417,7 @@ mod tests {
         let connection = DeviceConnection::new(
             events_tx,
             disconnect_rx,
-            StoreWrapper::new(store),
+            store,
             ConnectionState::new(Arc::new(state)),
             connection,
             sender,
@@ -553,7 +546,7 @@ mod tests {
 
         assert_eq!(status, ConnStatus::Connected);
 
-        let event = connection.events.try_recv().unwrap().unwrap();
+        let event = connection.events.try_recv().unwrap();
 
         // Cannot eq the timestamp
         assert_eq!(event.interface, E2E_SERVER_DATASTREAM_NAME);

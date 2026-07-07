@@ -18,10 +18,14 @@
 
 //! Handles the sending of individual datastream.
 
+use astarte_device_error::ResultExt;
 use astarte_interfaces::MappingPath;
 use tracing::debug;
 
-use crate::{AstarteData, Error, Timestamp, client::ValidatedIndividual, transport::Connection};
+use crate::client::ValidatedIndividual;
+use crate::error::{AstarteError, ErrorKind};
+use crate::transport::Connection;
+use crate::{AstarteData, Timestamp};
 
 use super::{DeviceClient, Publish};
 
@@ -35,14 +39,17 @@ where
         path: &MappingPath<'_>,
         data: AstarteData,
         timestamp: Option<Timestamp>,
-    ) -> Result<(), Error>
+    ) -> Result<(), AstarteError>
     where
         C::Sender: Publish,
     {
         let interfaces = self.state.interfaces().read().await;
-        let mapping = interfaces.get_individual(interface_name, path)?;
+        let mapping = interfaces
+            .get_individual(interface_name, path)
+            .map_kind(ErrorKind::Interface)?;
 
-        let validated = ValidatedIndividual::validate(mapping, data, timestamp)?;
+        let validated = ValidatedIndividual::validate(mapping, data, timestamp)
+            .map_kind(ErrorKind::Interface)?;
 
         debug!("sending individual {}{}", interface_name, path);
         debug!("sending individual type {}", validated.data.display_type());
@@ -66,6 +73,7 @@ mod tests {
 
     use crate::Client;
     use crate::client::tests::{mock_client, mock_client_with_store};
+    use crate::error::ErrorKind;
     use crate::retention::memory::ItemValue;
     use crate::retention::{PublishInfo, RetentionId, StoredRetention};
     use crate::state::ConnStatus;
@@ -244,25 +252,15 @@ mod tests {
             .unwrap();
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 0);
         assert_eq!(stored.len(), 0);
         stored.clear();
 
         // reset sent
-        client.store.store.reset_all_publishes().await.unwrap();
+        client.store.reset_all_publishes().await.unwrap();
 
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -399,12 +397,7 @@ mod tests {
             .unwrap();
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -461,15 +454,10 @@ mod tests {
             .send_individual(STORED_DEVICE_DATASTREAM_NAME, path, value.into())
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::Disconnected));
+        assert_eq!(*err.kind(), ErrorKind::Disconnected);
 
         let mut stored = Vec::new();
-        let read = client
-            .store
-            .store
-            .unsent_publishes(2, &mut stored)
-            .await
-            .unwrap();
+        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(

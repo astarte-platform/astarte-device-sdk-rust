@@ -16,6 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use astarte_device_error::{Error, WrapError};
 use tracing::error;
 
 use crate::{error::Report, store::SqliteStore};
@@ -52,7 +53,7 @@ impl StoredSession for SqliteStore {
     async fn add_interfaces(
         &self,
         interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         let interfaces: Vec<IntrospectionInterface> = interfaces
             .iter()
             .map(|i| IntrospectionInterface::from(*i))
@@ -61,20 +62,20 @@ impl StoredSession for SqliteStore {
         self.pool
             .acquire_writer(move |writer| writer.add_interfaces(&interfaces))
             .await
-            .map_err(SessionError::add_interfaces)
+            .wrap_err(SessionError::AddInterfaces)
     }
 
-    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
+    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, Error<SessionError>> {
         self.pool
             .acquire_reader(|reader| reader.load_introspection())
             .await
-            .map_err(SessionError::load_introspection)
+            .wrap_err(SessionError::LoadIntrospection)
     }
 
     async fn remove_interfaces(
         &self,
         interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         let interfaces: Vec<IntrospectionInterface> = interfaces
             .iter()
             .map(|i| IntrospectionInterface::from(*i))
@@ -83,7 +84,7 @@ impl StoredSession for SqliteStore {
         self.pool
             .acquire_writer(move |writer| writer.remove_interfaces(&interfaces))
             .await
-            .map_err(SessionError::remove_interfaces)
+            .wrap_err(SessionError::RemoveInterfaces)
     }
 }
 

@@ -31,7 +31,6 @@
 )]
 #![cfg_attr(astarte_device_sdk_docsrs, feature(doc_cfg))]
 #![cfg_attr(__coverage, feature(coverage_attribute))]
-#![expect(clippy::result_large_err)]
 
 pub mod _docs;
 
@@ -59,12 +58,12 @@ mod validate;
 /// Re-exported internal structs
 pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{DeviceConnection, EventLoop};
-pub use crate::error::Error;
 pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::types::AstarteData;
 
-// Re-export rumqttc since we return its types in some methods
+// Re-export for returned types in some methods
+pub use astarte_device_error;
 #[cfg(feature = "fdo")]
 pub use astarte_device_fdo;
 pub use astarte_interfaces;

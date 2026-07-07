@@ -18,25 +18,28 @@
 
 //! Provides functionality for instantiating an Astarte sqlite database.
 
-use std::{
-    collections::HashSet, error::Error as StdError, fmt::Debug, future::Future, num::NonZeroUsize,
-};
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::future::Future;
+use std::num::NonZeroUsize;
 
+use astarte_device_error::Error;
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{Properties, Schema};
 
+use self::error::StoreError;
 pub use self::sqlite::SqliteStore;
 use crate::interfaces::MappingRef;
+use crate::retention::StoredRetention;
 use crate::retention::{Id, PublishInfo, RetentionError, StoredInterface};
 use crate::session::{IntrospectionInterface, SessionError, StoredSession};
-use crate::{retention::StoredRetention, types::AstarteData};
+use crate::types::AstarteData;
 
 pub mod error;
 pub mod memory;
 #[cfg(test)]
 pub(crate) mod mock;
 pub mod sqlite;
-pub mod wrapper;
 
 /// Inform what capabilities are implemented for a store.
 ///
@@ -74,23 +77,19 @@ impl StoredRetention for MissingCapability {
         &self,
         _id: &Id,
         _publish: PublishInfo<'_>,
-    ) -> Result<(), RetentionError> {
+    ) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), RetentionError> {
+    async fn update_sent_flag(&self, _id: &Id, _sent: bool) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn mark_received(&self, _packet: &Id) -> Result<(), RetentionError> {
+    async fn mark_received(&self, _packet: &Id) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn delete_publish(&self, _id: &Id) -> Result<(), RetentionError> {
-        unreachable!("the type is Un-constructable");
-    }
-
-    async fn delete_interface(&self, _interface: &str) -> Result<(), RetentionError> {
+    async fn delete_interface(&self, _interface: &str) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
@@ -98,19 +97,24 @@ impl StoredRetention for MissingCapability {
         &self,
         _limit: usize,
         _buf: &mut Vec<(Id, PublishInfo<'static>)>,
-    ) -> Result<usize, RetentionError> {
+    ) -> Result<usize, Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn reset_all_publishes(&self) -> Result<(), RetentionError> {
+    async fn reset_all_publishes(&self) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn fetch_all_interfaces(&self) -> Result<HashSet<StoredInterface>, RetentionError> {
+    async fn fetch_all_interfaces(
+        &self,
+    ) -> Result<HashSet<StoredInterface>, Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 
-    async fn set_max_retention_items(&self, _size: NonZeroUsize) -> Result<(), RetentionError> {
+    async fn set_max_retention_items(
+        &self,
+        _size: NonZeroUsize,
+    ) -> Result<(), Error<RetentionError>> {
         unreachable!("the type is Un-constructable");
     }
 }
@@ -120,11 +124,11 @@ impl StoredSession for MissingCapability {
     async fn add_interfaces(
         &self,
         _interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 
-    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, SessionError> {
+    async fn load_introspection(&self) -> Result<Vec<IntrospectionInterface>, Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 
@@ -139,7 +143,7 @@ impl StoredSession for MissingCapability {
     async fn remove_interfaces(
         &self,
         _interfaces: &[IntrospectionInterface<&str>],
-    ) -> Result<(), SessionError> {
+    ) -> Result<(), Error<SessionError>> {
         unreachable!("the type is un-constructable");
     }
 }
@@ -213,27 +217,19 @@ where
 ///
 /// This SDK provides an implementation of a sqlite database for which this trait has already
 /// been implemented, see [`crate::store::sqlite::SqliteStore`].
-pub trait PropertyStore: Clone + Debug + Send + Sync + 'static
-where
-    // NOTE: the bounds are required to be compatible with the tokio tasks, with an additional Sync
-    //       bound to further restrict the error type.
-    Self::Err: StdError + Send + Sync + 'static,
-{
-    /// Reason for a failed operation.
-    type Err;
-
+pub trait PropertyStore: Clone + Debug + Send + Sync + 'static {
     /// Stores a property within the database.
     fn store_prop(
         &self,
         prop: StoredProp<&str, &AstarteData>,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Update state flag of a property only if the value matches the expected one
     fn update_state(
         &self,
         property: &PropertyMapping<'_>,
         state: PropertyState,
         expected: Option<AstarteData>,
-    ) -> impl Future<Output = Result<bool, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<bool, Error<StoreError>>> + Send;
     /// Load a property from the database.
     ///
     /// The property store should delete the property from the database if the major version of the
@@ -241,56 +237,62 @@ where
     fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> impl Future<Output = Result<Option<AstarteData>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<Option<AstarteData>, Error<StoreError>>> + Send;
     /// Unset a property from the database.
     fn unset_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Delete a property from the database.
     fn delete_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Delete a property from the database after checking that the value contained is the expected one
     fn delete_expected_prop(
         &self,
         property: &PropertyMapping<'_>,
         expected: Option<AstarteData>,
-    ) -> impl Future<Output = Result<bool, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<bool, Error<StoreError>>> + Send;
     /// Removes all saved properties from the database.
-    fn clear(&self) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    fn clear(&self) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    fn load_all_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
+    fn load_all_props(
+        &self,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error<StoreError>>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    fn device_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
+    fn device_props(
+        &self,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error<StoreError>>> + Send;
     /// Retrieves all property values in the database, together with their interface name, path
     /// and major version.
-    fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
+    fn server_props(
+        &self,
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error<StoreError>>> + Send;
     /// Retrieves all the property values of a specific interface in the database.
     fn interface_props(
         &self,
         interface: &Properties,
-    ) -> impl Future<Output = Result<Vec<StoredProp>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<Vec<StoredProp>, Error<StoreError>>> + Send;
     /// Deletes all the properties of the interface from the database.
     fn delete_interface(
         &self,
         interface: &Properties,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
     /// Retrieves all the device properties, including the one that were unset but not deleted.
     fn device_props_with_unset(
         &self,
         state: PropertyState,
         limit: usize,
         offset: usize,
-    ) -> impl Future<Output = Result<Vec<OptStoredProp>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<Vec<OptStoredProp>, Error<StoreError>>> + Send;
     /// Resets the state of properties
     fn reset_state(
         &self,
         ownership: Ownership,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<(), Error<StoreError>>> + Send;
 }
 
 /// A property that may be unset.
@@ -397,7 +399,7 @@ where
 mod tests {
     use std::str::FromStr;
 
-    use crate::store::{memory::MemoryStore, wrapper::StoreWrapper};
+    use crate::store::memory::MemoryStore;
     use crate::test::{
         E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME, E2E_SERVER_PROPERTY,
         E2E_SERVER_PROPERTY_NAME,
@@ -639,7 +641,7 @@ mod tests {
     /// Test that the error is Send + Sync + 'static to be send across task boundaries.
     #[tokio::test]
     async fn error_should_compatible_with_tokio() {
-        let mem = StoreWrapper::new(MemoryStore::new());
+        let mem = MemoryStore::new();
 
         let exp = AstarteData::Integer(1);
         let prop = StoredProp {
