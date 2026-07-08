@@ -25,6 +25,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.13.0...v0.14.0) - 2026-07-08
+
+### Added
+
+- _(pairing)_ add method to check whether the device is paired
+- _(object)_ add `required` field to interface
+
+### Changed
+
+- _(object)_ make all data keys optional
+- _(connection)_ [**breaking**] pair ascyncronously while connecting
+- _(pairing)_ improve logging and error handling
+
+### Fixed
+
+- _(cargo)_ remove unneeded feature "security-events"
+
+
 ## [0.13.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.12.1...v0.13.0) - 2026-04-02
 
 ### Added

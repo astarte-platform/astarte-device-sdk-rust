@@ -24,5 +24,6 @@ homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Generic error struct with context information."
 
 [dependencies]
