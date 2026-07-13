@@ -35,7 +35,7 @@ use astarte_device_fdo::{Crypto, Ctx as FdoCtx};
 use tracing::{error, info, instrument};
 use url::Url;
 
-use crate::builder::{BuildConfig, Config, ConnectionConfig, DeviceTransport};
+use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
 use crate::error::{AstarteError, ErrorKind};
 use crate::pairing::api::client::{ApiClient, ClientArgs};
 use crate::store::StoreCapabilities;
@@ -212,7 +212,7 @@ impl<C> FdoConfig<C> {
             token: &amod.secret,
         };
 
-        let api = ApiClient::from_transport(&Config::default(), pairing_ctx.provider, args)
+        let api = ApiClient::from_transport(&pairing_ctx.state.config, pairing_ctx.provider, args)
             .map_err(|error| {
                 error!(%error, "couldn't create pairing api client");
                 Error::new(FdoError::Invalid, "pairing api client")
@@ -220,7 +220,7 @@ impl<C> FdoConfig<C> {
 
         let client_id = ClientId::<&str> {
             realm: &amod.realm,
-            device_id: &amod.realm,
+            device_id: &amod.device_id,
         };
 
         // Make sure the credentials are valid and we can connect to astarte,
