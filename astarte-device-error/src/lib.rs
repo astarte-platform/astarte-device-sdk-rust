@@ -111,6 +111,11 @@ impl<K> Error<K> {
         }
     }
 
+    /// Sets a static message for the error.
+    pub fn set_message(&mut self, message: &'static str) {
+        self.message = Some(message);
+    }
+
     /// Sets the message for the error
     pub fn set_ctx<T>(mut self, message: T) -> Self
     where
