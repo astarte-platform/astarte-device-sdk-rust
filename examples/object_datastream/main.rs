@@ -118,7 +118,9 @@ where
     path = "/%{led_id}"
 )]
 struct ServerDatastream {
+    #[mapping(required)]
     enable: bool,
+    #[mapping(required)]
     intensity: f64,
 }
 
