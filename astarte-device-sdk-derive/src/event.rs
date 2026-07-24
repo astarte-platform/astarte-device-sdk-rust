@@ -152,27 +152,49 @@ impl FromEventDerive {
         let fields = fields
             .iter()
             .filter_map(|field| {
+                let required = field.required.unwrap_or_default();
                 errors.handle_in(|| {
-                    field.field_name(self.rename_all).ok_or_else(|| {
-                        darling::Error::custom("missing field names").with_span(&self.ident)
-                    })
+                    field
+                        .field_name(self.rename_all)
+                        .ok_or_else(|| {
+                            darling::Error::custom("missing field names").with_span(&self.ident)
+                        })
+                        .map(|(i, name)| (i, name, required))
                 })
             })
-            .collect::<Vec<(&syn::Ident, String)>>();
+            .collect::<Vec<(&syn::Ident, String, bool)>>();
 
-        let fields_val = fields.iter().map(|(i, name)| {
-            quote_spanned! {i.span() =>
-                let #i = object
-                    .remove(#name)
-                    .ok_or_else(||{
-                        Error::new(FromEventError::Interface(InterfaceError::MappingRequired))
-                            .set_ctx(format!("for interface {} endpoint {}{}", interface, base_path, #name))
-                    })?
-                    .try_into()
-                    .map_kind(FromEventError::Conversion)?;
+        let fields_val = fields.iter().map(|(i, name, required)| {
+            if *required {
+                quote_spanned! {i.span() =>
+                    let #i = object
+                        .remove(#name)
+                        .ok_or_else(||{
+                            Error::new(FromEventError::Interface(InterfaceError::MappingRequired))
+                                .set_ctx(format!("for interface {} endpoint {}{}", interface, base_path, #name))
+                        })?
+                        .try_into()
+                        .map_kind(FromEventError::Conversion)
+                        .map_err(|mut err| {
+                            err.set_message(concat!("for mapping ", #name));
+                            err
+                        })?;
+                }
+            } else {
+                quote_spanned! {i.span() =>
+                    let #i = object
+                        .remove(#name)
+                        .map(AstarteData::try_into)
+                        .transpose()
+                        .map_kind(FromEventError::Conversion)
+                        .map_err(|mut err| {
+                            err.set_message(concat!("for mapping ", #name));
+                            err
+                        })?;
+                }
             }
         });
-        let fields = fields.iter().map(|(i, _)| i);
+        let fields = fields.iter().map(|(i, _, _)| i);
         let interface = &self.interface;
         let st_name = &self.ident;
 
@@ -189,7 +211,7 @@ impl FromEventDerive {
                 type Err = astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::event::FromEventError>;
 
                 fn from_event(event: astarte_device_sdk::DeviceEvent) -> ::std::result::Result<Self, Self::Err> {
-                    use astarte_device_sdk::Value;
+                    use astarte_device_sdk::{Value, AstarteData};
                     use astarte_device_sdk::astarte_device_error::{Error, WrapError, ResultExt};
                     use astarte_device_sdk::error::InterfaceError;
                     use astarte_device_sdk::event::FromEventError;
@@ -509,6 +531,8 @@ impl FromEventDerive {
 pub(crate) struct FromEventField {
     /// Rename the filed or variant.
     rename: Option<String>,
+    /// The filed is for a required object mapping.
+    required: Option<bool>,
     /// Field name
     ident: Option<syn::Ident>,
 }
