@@ -84,7 +84,7 @@ macro_rules! impl_reverse_type_conversion_traits {
                     if let AstarteData::$variant(val) = var {
                         Ok(val)
                     } else {
-                        let error = $crate::types::TypeError::conversion(format!("from {} into $typ", var.display_type()));
+                        let error = $crate::types::TypeError::conversion(format!(concat!("from {} into ", stringify!($typ)), var.display_type()));
 
                         Err(error)
                     }
@@ -123,7 +123,7 @@ impl Display for TypeError {
                 f,
                 "forbidden floating point number, Nan, Infinite or subnormal numbers are invalid"
             ),
-            Self::Conversion => write!(f, "couldn't convert value "),
+            Self::Conversion => write!(f, "couldn't convert value"),
             Self::FromBson => {
                 write!(f, "error converting from Bson to AstarteData")
             }
@@ -488,7 +488,9 @@ impl PartialEq<Double> for f64 {
 
 #[cfg(test)]
 pub(crate) mod test {
+    use astarte_test_utils::with_insta;
     use chrono::{DateTime, TimeZone, Utc};
+    use insta::assert_snapshot;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -758,5 +760,16 @@ pub(crate) mod test {
 
         let err = AstarteData::try_from(vec![1.0, 2.0, f64::NAN, 4.0]).unwrap_err();
         assert_eq!(*err.kind(), TypeError::Float);
+    }
+
+    #[test]
+    fn tesat_astarte_data_to_typ_error() {
+        let data = AstarteData::Integer(54);
+
+        let err = String::try_from(data).unwrap_err();
+
+        with_insta!({
+            assert_snapshot!(err);
+        });
     }
 }

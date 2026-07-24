@@ -177,7 +177,7 @@ impl ValidatedObject {
                 Some((key, value)) => {
                     if !value.eq_mapping_type(mapping.mapping_type()) {
                         return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
-                            "for interface {interface}{path}{key}, expected {} but got {}",
+                            "for interface {interface}{path}/{key}, expected {} but got {}",
                             mapping.mapping_type(),
                             value.display_type()
                         )));
