@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,6 +31,9 @@ use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, instrument, trace};
 use uuid::Uuid;
+
+// NOTE: arbitrary limit of 10, should usually be the next event
+const NEXT_EVENT_LIMIT: usize = 10;
 
 #[derive(Debug)]
 pub enum Reply {
@@ -182,7 +185,7 @@ impl Channel {
 
     #[instrument(skip(self))]
     pub(crate) async fn next_data_event(&self) -> eyre::Result<IncomingData> {
-        for i in 0.. {
+        for i in 0..NEXT_EVENT_LIMIT {
             debug!(i, "waiting for next device data event");
 
             let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
@@ -206,7 +209,7 @@ impl Channel {
 
     #[instrument(skip(self))]
     pub(crate) async fn next_device_disconnected(&mut self) -> eyre::Result<()> {
-        for i in 0.. {
+        for i in 0..NEXT_EVENT_LIMIT {
             debug!(i, "waiting for next device disconnected");
 
             let reply = tokio::time::timeout(Duration::from_secs(2), self.rx.recv())
