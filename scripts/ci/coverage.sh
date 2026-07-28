@@ -74,7 +74,12 @@ gethtml_wrapper() {
 
 crate="astarte-device-sdk"
 
+# Clean up old coverage artifacts
+rm -rf "$CARGO_TARGET_DIR/lcov" || true
+cargo llvm-cov clean || true
+
 if [[ -n "${EXPORT_FOR_CI:-}" ]]; then
+    rm "$PWD/coverage-$crate.info" || true
     out_path="$PWD/coverage-$crate.info"
 else
     mkdir -p "$CARGO_TARGET_DIR/lcov"
