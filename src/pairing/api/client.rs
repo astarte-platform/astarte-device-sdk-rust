@@ -18,10 +18,12 @@
 
 //! Provides the functionalities to pair a device with the Astarte Cluster.
 
+use std::str::FromStr;
+
 use astarte_device_error::{Error, WrapError};
 use http::header::CONTENT_TYPE;
 use http_body_util::{BodyExt, Limited};
-use mime::APPLICATION_JSON;
+use mime::{APPLICATION_JAVASCRIPT_UTF_8, APPLICATION_JSON, Mime};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
@@ -157,7 +159,16 @@ impl<'a> ApiClient<'a> {
                 return false;
             };
 
-            APPLICATION_JSON == value
+            let value = match Mime::from_str(value) {
+                Ok(mime) => mime,
+                Err(error) => {
+                    error!(%error,"couldn't parse mime");
+
+                    return false;
+                }
+            };
+
+            value == APPLICATION_JSON || value == APPLICATION_JAVASCRIPT_UTF_8
         });
 
         if !is_json {
