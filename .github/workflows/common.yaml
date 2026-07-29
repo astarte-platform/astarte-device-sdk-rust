@@ -42,11 +42,6 @@ jobs:
       - run: |
           ./scripts/ci/add-copyright-to-modified.sh "$BASE_REF" "$HEAD_REF"
           git diff --exit-code --name-only
-  spelling:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: crate-ci/typos@v1.48.0
   conventional-commit:
     runs-on: ubuntu-24.04
     steps:

@@ -24,7 +24,7 @@ use astarte_device_sdk::pairing::api::PairingApi;
 use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Credential, Mqtt, MqttArgs};
 use clap::Parser;
-use eyre::{Context, eyre};
+use eyre::eyre;
 use tokio::task::JoinSet;
 use tracing::{error, info, trace};
 use tracing_subscriber::EnvFilter;
@@ -212,15 +212,9 @@ async fn main() -> eyre::Result<()> {
 fn init_tracing() -> eyre::Result<()> {
     let fmt = tracing_subscriber::fmt::layer().with_ansi(stdout().is_terminal());
 
-    let env = match std::env::var("RUST_LOG") {
-        Ok(env) => env,
-        Err(env::VarError::NotPresent) => "e2e_test=debug,astarte_device_sdk=debug".to_string(),
-        Err(err) => {
-            return Err(err).wrap_err("invalid RUST_LOG env variable");
-        }
-    };
-
-    let env = EnvFilter::builder().parse(env)?;
+    let env = EnvFilter::builder()
+        .with_default_directive(tracing::Level::DEBUG.into())
+        .from_env()?;
 
     tracing_subscriber::registry()
         .with(fmt)

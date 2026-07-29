@@ -199,8 +199,11 @@ impl FromEventDerive {
 
                     let interface = #interface;
                     let base_path = #path;
-                    let endpoint: Endpoint<&str> = Endpoint::try_from(base_path)
-                        .wrap_err_msg(FromEventError::Interface(InterfaceError::Invalid), "while parsing endpoint")?;
+                    let endpoint: Endpoint<&str> = WrapError::wrap_err_msg(
+                        Endpoint::try_from(base_path),
+                        FromEventError::Interface(InterfaceError::Invalid),
+                        "while parsing endpoint"
+                    )?;
 
                     if event.interface != interface {
                         return Err(
@@ -209,8 +212,9 @@ impl FromEventDerive {
                         );
                     }
 
-                    let path = MappingPath::try_from(event.path.as_str())
-                        .wrap_err_with(|_| {
+                    let path =  WrapError::wrap_err_with(
+                        MappingPath::try_from(event.path.as_str()),
+                        |_| {
                             Error::with(FromEventError::Interface(InterfaceError::Path), "while parsing event path")
                                 .set_ctx(format!("for {interface}{}", event.path))
                         })?;
@@ -261,11 +265,13 @@ impl FromEventDerive {
             let endpoint = v.endpoint.as_str();
 
             quote! {
-                Endpoint::<&str>::try_from(#endpoint)
-                    .wrap_err_with(|_| {
+                WrapError::wrap_err_with(
+                    Endpoint::<&str>::try_from(#endpoint),
+                    |_| {
                         Error::with(FromEventError::Interface(InterfaceError::Invalid), "endpoint")
                             .set_ctx(format!("for {INTERFACE} with endpoint {}", #endpoint))
-                    })?
+                    }
+                )?
             }
         });
 
@@ -347,11 +353,13 @@ impl FromEventDerive {
 
                     let endpoints = [ #(#endpoints),* ];
 
-                    let path = MappingPath::try_from(event.path.as_str())
-                        .wrap_err_with(|_| {
+                    let path = WrapError::wrap_err_with(
+                        MappingPath::try_from(event.path.as_str()),
+                        |_| {
                             Error::with(FromEventError::Interface(InterfaceError::Path), "from event")
                                 .set_ctx(format!("for {INTERFACE}"))
-                        })?;
+                        }
+                    )?;
 
                     let position = endpoints.iter()
                         .position(|e| e.eq_mapping(&path))
@@ -395,11 +403,13 @@ impl FromEventDerive {
             let endpoint = v.endpoint.as_str();
 
             quote! {
-                Endpoint::<&str>::try_from(#endpoint)
-                    .wrap_err_with(|_| {
+                WrapError::wrap_err_with(
+                    Endpoint::<&str>::try_from(#endpoint),
+                    |_| {
                         Error::with(FromEventError::Interface(InterfaceError::Invalid), "from event endpoint")
                             .set_ctx(format!("for {INTERFACE}"))
-                    })?
+                    }
+                )?
             }
         });
 
@@ -472,11 +482,13 @@ impl FromEventDerive {
 
                     let endpoints = [ #(#endpoints),* ];
 
-                    let path = MappingPath::try_from(event.path.as_str())
-                        .wrap_err_with(|_| {
+                    let path = WrapError::wrap_err_with(
+                        MappingPath::try_from(event.path.as_str()),
+                        |_| {
                             Error::with(FromEventError::Interface(InterfaceError::Path), "while parsign event path")
                                 .set_ctx(event.path.to_string())
-                        })?;
+                        }
+                    )?;
 
                     let position = endpoints.iter()
                         .position(|e| e.eq_mapping(&path))

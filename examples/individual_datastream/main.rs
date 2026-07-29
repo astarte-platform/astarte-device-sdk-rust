@@ -18,34 +18,37 @@
 
 use std::{
     num::NonZeroU32,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
-use astarte_device_sdk::{
-    AstarteData, Value,
-    transport::mqtt::{Credential, MqttArgs},
-};
+use astarte_device_sdk::AstarteData;
+use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
 use chrono::Utc;
 use clap::Parser;
-use eyre::OptionExt;
-use futures::future::Either;
+use eyre::{Context, OptionExt};
 use serde::Deserialize;
 
-use astarte_device_sdk::{
-    builder::DeviceBuilder, prelude::*, store::memory::MemoryStore, transport::mqtt::MqttConfig,
-};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::memory::MemoryStore;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
 use tokio::task::JoinSet;
-use tracing::{error, info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio_util::sync::CancellationToken;
+use tracing::level_filters::LevelFilter;
+use tracing::{error, info};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use url::Url;
 
 #[derive(Deserialize)]
 struct Config {
     realm: String,
     device_id: String,
-    credentials_secret: String,
+    #[serde(flatten)]
+    credential: Credential,
     pairing_url: Url,
+    store_dir: Option<PathBuf>,
 }
 
 #[derive(Parser, Debug)]
@@ -55,20 +58,29 @@ struct Args {
     config: Option<PathBuf>,
     /// Limit run time of the transmission of the example (in seconds)
     #[arg(short, long)]
-    transmission_timeout_sec: Option<NonZeroU32>,
+    timeout_secs: Option<NonZeroU32>,
     /// Limit number of iteration of the send loop
     #[arg(short, long)]
     loop_times: Option<NonZeroU32>,
+    /// Ignore ssl errors
+    #[arg(short, long, default_value = "false")]
+    ignore_ssl: bool,
 }
 
-async fn send_loop<I>(mut client: impl Client, iter: I) -> eyre::Result<()>
+async fn send_loop<C>(
+    mut client: C,
+    limit: Option<NonZeroU32>,
+    cancel: CancellationToken,
+) -> eyre::Result<()>
 where
-    I: IntoIterator<Item = u32>,
+    C: Client + ClientConnection,
 {
+    let limit = limit.map(NonZeroU32::get).unwrap_or(u32::MAX);
+
     let now = SystemTime::now();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-    for _ in iter {
+    for _ in 0..limit {
         interval.tick().await;
 
         // Send endpoint 1
@@ -84,6 +96,7 @@ where
         info!("Data sent on endpoint 1, content: {elapsed}");
         // Sleep 1 sec
         tokio::time::sleep(Duration::from_secs(1)).await;
+
         // Send endpoint 2
         let elapsed = now.elapsed()?.as_secs_f64();
         client
@@ -96,6 +109,60 @@ where
             .await?;
         info!("Data sent on endpoint 2, content: {elapsed}");
     }
+
+    client.disconnect().await?;
+    cancel.cancel();
+
+    Ok(())
+}
+
+#[derive(Debug, FromEvent)]
+#[from_event(
+    interface = "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream"
+)]
+enum ServerDatastream {
+    #[mapping(endpoint = "/%{led_id}/enable")]
+    Enable(bool),
+    #[mapping(endpoint = "/%{led_id}/intensity")]
+    Intensity(f64),
+}
+
+async fn receive_loop<C>(client: C, cancel: CancellationToken) -> eyre::Result<()>
+where
+    C: Client,
+{
+    while let Some(event) = cancel.run_until_cancelled(client.recv()).await.flatten() {
+        match event.interface.as_str() {
+            "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream" => {
+                let mut iter = event.path.splitn(3, '/').skip(1);
+
+                let led_id = iter
+                    .next()
+                    .and_then(|id| id.parse::<u16>().ok())
+                    .ok_or_eyre("Incorrect error received.")?;
+
+                let data = ServerDatastream::from_event(event)?;
+
+                match data {
+                    ServerDatastream::Enable(enable) => {
+                        info!(
+                            "Received new enable datastream for LED number {led_id}. LED status is now {}",
+                            if enable { "ON" } else { "OFF" }
+                        );
+                    }
+                    ServerDatastream::Intensity(intensity) => {
+                        info!(
+                            "Received new intensity datastream for LED number {led_id}. LED intensity is now {intensity}"
+                        );
+                    }
+                }
+            }
+            interface => {
+                error!(interface, "unknown interface");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -103,43 +170,48 @@ where
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     init_tracing()?;
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
     let Args {
         config,
-        transmission_timeout_sec,
+        timeout_secs,
         loop_times,
+        ignore_ssl,
     } = Args::parse();
-
-    let transmission_timeout =
-        transmission_timeout_sec.map(|s| Duration::from_secs(s.get().into()));
 
     // Load configuration
     let file_path = config
-        .map(|p| p.into_os_string().into_string())
-        .transpose()
-        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
-        .unwrap_or_else(|| "./examples/individual_datastream/configuration.json".to_string());
-    let file = std::fs::read_to_string(file_path)?;
+        .as_deref()
+        .unwrap_or_else(|| Path::new("./examples/object_datastream/configuration.json"));
+
+    let file = tokio::fs::read_to_string(file_path).await?;
     let Config {
         realm,
         device_id,
-        credentials_secret,
+        credential,
         pairing_url,
+        store_dir,
     } = serde_json::from_str(&file)?;
 
     let args = MqttArgs {
         realm,
         device_id,
-        credential: Credential::secret(credentials_secret),
+        credential,
         pairing_url,
     };
 
-    let mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
+    let mut mqtt_config = MqttConfig::new(args);
 
-    let (mut client, connection) = DeviceBuilder::new()
+    if ignore_ssl {
+        mqtt_config = mqtt_config.ignore_ssl_errors();
+    }
+
+    let mut builder = DeviceBuilder::new();
+
+    if let Some(store_dir) = store_dir {
+        builder = builder.writable_dir(store_dir);
+    }
+
+    let (mut client, connection) = builder
         .store(MemoryStore::new())
         .interface_directory("./examples/individual_datastream/interfaces")?
         .connection(mqtt_config)
@@ -150,50 +222,7 @@ async fn main() -> eyre::Result<()> {
 
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create a task to transmit
-    if let Some(c) = loop_times {
-        let client = client.clone();
-        tasks.spawn(send_loop(client, 0..c.get()));
-    } else {
-        let client = client.clone();
-        tasks.spawn(send_loop(client, 0u32..));
-    }
-
-    // Spawn a task to receive
-    tasks.spawn({
-        let client = client.clone();
-        async move {
-            while let Some(event) = client.recv().await {
-                if let Value::Individual{data, timestamp: _ } = event.data {
-                    let mut iter = event.path.splitn(3, '/').skip(1);
-
-                    let led_id = iter
-                        .next()
-                        .and_then(|id| id.parse::<u16>().ok())
-                        .ok_or_eyre("Incorrect error received.")?;
-
-                    match iter.next() {
-                        Some("enable") => {
-                            let status = if data == true { "ON" } else { "OFF" };
-
-                            info!( "Received new enable datastream for LED number {led_id}. LED status is now {status}" );
-                        }
-                        Some("intensity") => {
-                            let value: f64 = data.try_into()?;
-                            info!(
-                            "Received new intensity datastream for LED number {led_id}. LED intensity is now {value}"
-                        );
-                        }
-                        item => {
-                            error!("unrecognized {item:?}")
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        }
-    });
+    let cancel = CancellationToken::new();
 
     tasks.spawn(async move {
         connection.handle_events().await?;
@@ -201,34 +230,67 @@ async fn main() -> eyre::Result<()> {
         Ok(())
     });
 
-    tasks.spawn(async move { tokio::signal::ctrl_c().await.map_err(Into::into) });
+    // Create a task to transmit
+    tasks.spawn(send_loop(client.clone(), loop_times, cancel.clone()));
 
-    if let Some(timeout) = transmission_timeout {
-        let out = futures::future::select(
-            Box::pin(tasks.join_next()),
-            Box::pin(tokio::time::sleep(timeout)),
-        )
-        .await;
+    // Spawn a task to receive
+    tasks.spawn(receive_loop(client.clone(), cancel.clone()));
 
-        match out {
-            Either::Left((o, _)) => info!(o = ?o, "Task exited"),
-            Either::Right(_) => info!("Reached timeout"),
+    tasks.spawn({
+        let mut client = client.clone();
+        let cancel = cancel.clone();
+
+        async move {
+            if let Some(res) = cancel.run_until_cancelled(tokio::signal::ctrl_c()).await {
+                res?;
+
+                client.disconnect().await?;
+            }
+
+            Ok(())
         }
-    } else {
-        while let Some(res) = tasks.join_next().await {
-            match res {
-                Ok(res) => {
-                    res?;
-                    break;
-                }
-                Err(err) if err.is_cancelled() => {}
-                Err(err) => return Err(err.into()),
+    });
+
+    if let Some(timeout) = timeout_secs {
+        tasks.spawn({
+            let cancel = cancel.clone();
+
+            async move {
+                tokio::time::timeout(
+                    Duration::from_secs(timeout.get().into()),
+                    cancel.cancelled(),
+                )
+                .await
+                .wrap_err("timeout reached")?;
+
+                Ok(())
+            }
+        });
+    }
+
+    while let Some(next) = tasks.join_next().await {
+        match next {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                client.disconnect().await?;
+                cancel.cancel();
+
+                tasks.shutdown().await;
+
+                return Err(error);
+            }
+            Err(err) => {
+                error!(%err, "couldn't join tasks");
+
+                client.disconnect().await?;
+                cancel.cancel();
+
+                tasks.shutdown().await;
+
+                return Err(err).wrap_err("couldn't join tasks");
             }
         }
     }
-
-    client.disconnect().await?;
-    tasks.shutdown().await;
 
     Ok(())
 }
