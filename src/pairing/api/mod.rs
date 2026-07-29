@@ -124,7 +124,7 @@ impl PairingApi {
             .config
             .writable_dir
             .as_ref()
-            .map(|dir| dir.join(CERTIFICATE_FILE))
+            .map(|dir| dir.join(CREDENTIAL_FILE))
             .ok_or(Error::with(
                 PairingApiError::InvalidArgument,
                 "missing writable dir to store credentials",
@@ -218,5 +218,62 @@ impl Pairing for PairingApi {
                     "couldn't read credentials file"
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    use crate::builder::Config;
+    use crate::interfaces::Interfaces;
+    use crate::retention::memory::VolatileStore;
+    use crate::state::SharedState;
+    use crate::transport::mqtt::DEFAULT_KEEP_ALIVE;
+    use crate::transport::mqtt::config::transport::TransportProvider;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn should_get_credentials() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut pairing = PairingApi::new(MqttConfig {
+            realm: "test".to_string(),
+            device_id: "Kwfp-1ahSFOw6fnV1eC46g".to_string(),
+            credential: Credential::ParingToken {
+                pairing_token: "paring-token".to_string(),
+            },
+            pairing_url: "http://api.astarte.host/pairing".parse().unwrap(),
+            ignore_ssl_errors: false,
+            keepalive: DEFAULT_KEEP_ALIVE,
+        });
+
+        let exp = "credential-secret";
+        tokio::fs::write(temp_dir.path().join("credential"), exp)
+            .await
+            .unwrap();
+
+        let mut ctx = ConnCtx {
+            sender: &Arc::default(),
+            state: &SharedState::new(
+                Config {
+                    writable_dir: Some(temp_dir.path().to_path_buf()),
+                    ..Default::default()
+                },
+                Interfaces::default(),
+                VolatileStore::default(),
+            ),
+            provider: &TransportProvider::configure(None, true).await.unwrap(),
+            store: &(),
+            interfaces: &Interfaces::default(),
+            session_synced: true,
+        };
+
+        let res = pairing.credentials(&mut ctx).await.unwrap();
+
+        assert_eq!(res, exp);
     }
 }
