@@ -238,32 +238,48 @@ mod tests {
     }
 
     #[cfg(feature = "derive")]
-    #[test]
-    fn should_implement() {
+    mod derive {
         use crate as astarte_device_sdk;
+        use crate::AstarteData;
+        use crate::aggregate::AstarteObject;
         use astarte_device_sdk_derive::IntoAstarteObject;
+        use pretty_assertions::assert_eq;
 
-        #[derive(IntoAstarteObject)]
-        #[astarte_object(rename_all = "camelCase")]
-        struct Foo {
-            #[astarte_object(rename = "some")]
-            bar: String,
-            #[astarte_object(fallible)]
-            try_from: f64,
+        #[test]
+        fn should_implement() {
+            #[derive(IntoAstarteObject)]
+            #[astarte_object(rename_all = "camelCase")]
+            struct Foo {
+                #[astarte_object(rename = "some")]
+                bar: String,
+                #[astarte_object(fallible)]
+                try_from: f64,
+                #[astarte_object(required = false)]
+                optional: Option<i32>,
+                #[astarte_object(fallible, required = false)]
+                optional_fallible: Option<f64>,
+            }
+
+            let val = Foo {
+                bar: "some".to_string(),
+                try_from: 42.,
+                optional: Some(42),
+                optional_fallible: Some(42.0),
+            };
+
+            let res = AstarteObject::try_from(val).unwrap();
+
+            let obj = AstarteObject::from_iter([
+                ("some".to_string(), AstarteData::String("some".to_string())),
+                ("tryFrom".to_string(), AstarteData::try_from(42f64).unwrap()),
+                ("optional".to_string(), AstarteData::Integer(42)),
+                (
+                    "optionalFallible".to_string(),
+                    AstarteData::try_from(42.0).unwrap(),
+                ),
+            ]);
+
+            assert_eq!(res, obj)
         }
-
-        let val = Foo {
-            bar: "some".to_string(),
-            try_from: 42.,
-        };
-
-        let res = AstarteObject::try_from(val).unwrap();
-
-        let obj = AstarteObject::from_iter([
-            ("some".to_string(), AstarteData::String("some".to_string())),
-            ("tryFrom".to_string(), AstarteData::try_from(42f64).unwrap()),
-        ]);
-
-        assert_eq!(res, obj)
     }
 }
