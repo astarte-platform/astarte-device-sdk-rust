@@ -1,0 +1,9 @@
+# Copyright 2022 Huawei OSTC
+#
+# SPDX-License-Identifier: CC0-1.0
+
+#.dockerignore
+.git/
+#.gitignore
+/target
+Cargo.lock
