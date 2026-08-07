@@ -26,62 +26,34 @@ defaults:
   run:
     shell: bash
 env:
+  CI: "true"
   CARGO_TERM_COLOR: always
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
-  # e2e-config
-  E2E_REALM: "test"
-  E2E_BASE_DOMAIN: autotest.astarte-platform.org
-  E2E_SECURE_TRANSPORT: "true"
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  NEXTEST_PROFILE: "ci"
+  MAIN_CRATE: "astarte-device-sdk"
+  EXPORT_FOR_CI: "true"
 jobs:
   e2e-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: true
       - name: Create Astarte Cluster
         id: astarte
-        uses: astarte-platform/astarte-cluster-action@v2
+        uses: astarte-platform/astarte-cluster-action@v2.0.0
         with:
           astarte_version: 1.3.0
-      - uses: actions/checkout@v7.0.1
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt-get -y install libsqlite3-dev
+      - uses: ./.github/actions/install-deps
       - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - name: Wait for Astarte to be healthy
-        timeout-minutes: 10
-        # use the full command to use the sccache
-        run: |
-          cargo run --locked -p e2e-test -- healthy --wait
-      - name: Install interface
-        run: |
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/*.json --non-interactive
-          astartectl realm-management interfaces sync $GITHUB_WORKSPACE/e2e-test/interfaces/**/*.json --non-interactive
-          astartectl realm-management interfaces ls
-      - name: Register device
-        run: |
-          echo "E2E_DEVICE_ID=$(astartectl utils device-id generate-random)" >> $GITHUB_ENV
-          echo "E2E_TOKEN=$(astartectl utils gen-jwt all-realm-apis)" >> $GITHUB_ENV
-          echo "E2E_PAIRING_TOKEN=$(astartectl utils gen-jwt pairing)" >> $GITHUB_ENV
-          echo "E2E_STORE_DIR=$(mktemp -d)" >> $GITHUB_ENV
-      - name: Run test
-        # use the full command to use the sccache
-        run: |
-          cargo run --locked -p e2e-test -- run
-      - name: Run examples
-        uses: ./.github/actions/run-examples
-        with:
-          sdk_path: ${{ github.workspace }}
-          astarte_realm: ${{ env.E2E_REALM }}
-          astarte_pairing_url: https://api.${{ env.E2E_BASE_DOMAIN }}/pairing
-      - name: Run offline examples
-        uses: ./.github/actions/run-offline-test
-        with:
-          sdk_path: ${{ github.workspace }}
-          astarte_realm: ${{ env.E2E_REALM }}
-          astarte_pairing_url: https://api.${{ env.E2E_BASE_DOMAIN }}/pairing
+      - run: ./scripts/ci/e2e-test.sh
+      - run: ./scripts/ci/run-examples.sh
+      - run: ./scripts/offline/run-test-offline.sh
       - name: post
         if: ${{ failure() || cancelled() }}
-        run: ./scripts/e2e-test/post.sh 'astarte'
+        run: ./scripts/ci/e2e-post.sh 'astarte'

@@ -16,29 +16,42 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::path::PathBuf;
+use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use astarte_device_sdk::pairing::api::registration::{RegisterDevice, register_device};
 use clap::Parser;
 use rustls_platform_verifier::BuilderVerifierExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct Config {
     realm: String,
     device_id: String,
     pairing_token: String,
     pairing_url: Url,
+    #[serde(rename = "store_dir")]
+    _store_dir: Option<PathBuf>,
 }
 
-#[derive(Debug, clap::Parser)]
+#[derive(Parser, Debug)]
 struct Args {
     /// Path to the config file for the example
     #[arg(short, long)]
     config: Option<PathBuf>,
+    /// Limit run time of the transmission of the example (in seconds)
+    #[arg(short, long)]
+    timeout_secs: Option<NonZeroU32>,
+    /// Limit number of iteration of the send loop
+    #[arg(short, long)]
+    loop_times: Option<NonZeroU32>,
+    /// Ignore ssl errors
+    #[arg(short, long, default_value = "false")]
+    ignore_ssl: bool,
 }
 
 #[tokio::main]
@@ -46,34 +59,37 @@ async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     init_tracing()?;
 
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
-
     let args = Args::parse();
 
     // Load configuration
     let file_path = args
         .config
-        .map(|p| p.into_os_string().into_string())
-        .transpose()
-        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
-        .unwrap_or_else(|| "./examples/registration/configuration.json".to_string());
+        .as_deref()
+        .unwrap_or_else(|| Path::new("./examples/object_datastream/configuration.json"));
     let file = std::fs::read_to_string(file_path)?;
-    let cfg: Config = serde_json::from_str(&file)?;
+    let Config {
+        realm,
+        device_id,
+        pairing_token,
+        pairing_url,
+        _store_dir,
+    } = serde_json::from_str(&file)?;
 
-    info!(%cfg.device_id, "attempting to register the device");
+    info!(%device_id, "attempting to register the device");
 
-    let tls = rustls::ClientConfig::builder()
-        .with_platform_verifier()?
-        .with_no_client_auth();
+    let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_platform_verifier()?
+    .with_no_client_auth();
 
     let args = RegisterDevice {
         tls,
-        pairing_url: &cfg.pairing_url,
-        token: &cfg.pairing_token,
-        realm: &cfg.realm,
-        device_id: &cfg.device_id,
+        pairing_url: &pairing_url,
+        token: &pairing_token,
+        realm: &realm,
+        device_id: &device_id,
     };
     let credentials_secret = register_device(args).await?;
 

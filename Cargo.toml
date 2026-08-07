@@ -90,9 +90,19 @@ bindgen = ["rusqlite/buildtime_bindgen", "dep:aws-lc-rs", "aws-lc-rs/bindgen"]
 cross = ["vendored", "bindgen"]
 
 [[example]]
-name = "msghub_client"
+name = "message_hub_client"
 path = "examples/message_hub_client/main.rs"
 required-features = ["message-hub", "derive"]
+
+[[example]]
+name = "individual_datastream"
+path = "examples/individual_datastream/main.rs"
+required-features = ["derive"]
+
+[[example]]
+name = "individual_properties"
+path = "examples/individual_properties/main.rs"
+required-features = ["derive"]
 
 [[example]]
 name = "object_datastream"

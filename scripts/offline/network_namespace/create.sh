@@ -2,13 +2,13 @@
 
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#    http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +18,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -eEuo pipefail
+set -exEuo pipefail
 
 pushd "$(dirname "$0")"
 . ./common_config.sh
@@ -28,14 +28,14 @@ popd
 
 # Check for root privileges
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ This script must be run as root. Please use sudo."
-  exit 1
+    echo "❌ This script must be run as root. Please use sudo."
+    exit 1
 fi
 
 # Check if the main interface was found
 if [ -z "$MAIN_INTERFACE" ]; then
-  echo "❌ Could not determine the main network interface. Please set MAIN_INTERFACE manually."
-  exit 1
+    echo "❌ Could not determine the main network interface. Please set MAIN_INTERFACE manually."
+    exit 1
 fi
 
 CURRENT_STATUS=$(sysctl -n net.ipv4.ip_forward)
@@ -43,12 +43,12 @@ CURRENT_STATUS=$(sysctl -n net.ipv4.ip_forward)
 if [ "$CURRENT_STATUS" -eq 1 ]; then
     echo "👍 IP forwarding is already enabled. No changes made."
 else
-  # If disabled save current status so that we can restore it later
-  echo "$CURRENT_STATUS" > "$STATUS_FILE"
-  echo "💾 Original status ($CURRENT_STATUS) saved to $STATUS_FILE"
-  # enable ip forwarding
-  echo "🟡 IP forwarding is disabled. Enabling it now..."
-  sysctl -w net.ipv4.ip_forward=1 > /dev/null
+    # If disabled save current status so that we can restore it later
+    echo "$CURRENT_STATUS" >"$STATUS_FILE"
+    echo "💾 Original status ($CURRENT_STATUS) saved to $STATUS_FILE"
+    # enable ip forwarding
+    echo "🟡 IP forwarding is disabled. Enabling it now..."
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
 fi
 
 echo "🚀 Starting network sandbox..."

@@ -213,7 +213,7 @@ pub fn astarte_aggregate_derive(input: TokenStream) -> TokenStream {
 ///
 /// ```no_compile
 /// #[derive(FromEvent)]
-/// #[from_event(interface = "com.example.Sensor", interface_type = "property", aggregation = "individual")]
+/// #[from_event(interface = "com.example.Sensor", interface_type = "properties", aggregation = "individual")]
 /// enum Sensor {
 ///     #[mapping(endpoint = "/sensor/luminosity")]
 ///     Luminosity(i32),

@@ -46,7 +46,7 @@
 //!
 //! let display = err.to_string();
 //!
-//! let exp = "io error entity not found while reading /foo/bar";
+//! let exp = "io error entity not found while reading /foo/bar: entity not found";
 //!
 //! assert_eq!(display, exp);
 //! ```
@@ -157,9 +157,7 @@ where
             write!(f, " {ctx}")?;
         }
 
-        if let Some(source) = source
-            && f.alternate()
-        {
+        if let Some(source) = source {
             write!(f, ": {source}")?;
         }
 
@@ -323,7 +321,7 @@ mod tests {
 
         let display = err.to_string();
 
-        let exp = "io error entity not found while reading /foo/bar";
+        let exp = "io error entity not found while reading /foo/bar: entity not found";
 
         assert_eq!(display, exp);
     }
