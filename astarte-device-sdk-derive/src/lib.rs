@@ -70,7 +70,7 @@ impl ObjectDerive {
                 "enum",
                 &"object must be astruct",
             )
-            .with_span(&self.ident));
+                .with_span(&self.ident));
         };
 
         let mut errors = darling::Error::accumulator();
@@ -84,20 +84,41 @@ impl ObjectDerive {
                             .with_span(&self.ident)
                     ))
                     .map(|(field_i, field_n)| {
-                        if field.fallible {
+                        // Value comes from the other quotes
+                        let conversion = if field.fallible {
                             quote_spanned! {field_i.span() =>
-                                let v: astarte_device_sdk::types::AstarteData = ::std::convert::TryInto::try_into(value.#field_i)?;
-                                object.insert(#field_n.to_string(), v);
+                                { 
+                                    let res: Result<
+                                        astarte_device_sdk::types::AstarteData,
+                                        astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::types::TypeError>
+                                    > = ::std::convert::TryInto::try_into(value); 
+
+                                    res?
+                                }
                             }
                         } else {
                             quote_spanned! {field_i.span() =>
-                                let v: astarte_device_sdk::types::AstarteData = ::std::convert::Into::into(value.#field_i);
-                                object.insert(#field_n.to_string(), v);
+                                ::std::convert::Into::<astarte_device_sdk::types::AstarteData>::into(value)
+                            }
+                        };
+
+                        if field.required {
+                            quote_spanned! {field_i.span() =>
+                                object.insert(#field_n.to_string(), {
+                                    let value = value.#field_i;
+
+                                    #conversion
+                                });
+                            }
+                        } else {
+                            quote_spanned! {field_i.span() => 
+                                if let Some(value) = value.#field_i {
+                                    object.insert(#field_n.to_string(), #conversion);
+                                }
                             }
                         }
-
                     })
-            }).collect::<Vec<_>>();
+            }).collect::<Vec<proc_macro2::TokenStream>>();
 
         errors.finish()?;
 
@@ -141,6 +162,9 @@ struct ObjectField {
     /// Use a fallible conversion.
     #[darling(default)]
     fallible: bool,
+    /// Use a fallible conversion.
+    #[darling(default = || true)]
+    required: bool,
     /// Name of the field
     ident: Option<syn::Ident>,
 }
