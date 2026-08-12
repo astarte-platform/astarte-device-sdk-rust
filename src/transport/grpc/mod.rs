@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,10 +23,7 @@
 //! receiving, and registering interfaces.
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::sync::Arc;
+use std::ops::ControlFlow;
 
 use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{Aggregation, InterfaceType};
@@ -41,7 +38,7 @@ use astarte_message_hub_proto::tonic::transport::{Channel, Endpoint};
 use astarte_message_hub_proto::tonic::{Request, Status};
 use astarte_message_hub_proto::{
     AstarteMessage, InterfacesJson, InterfacesName, MessageHubEvent, Node,
-    astarte_message::Payload as ProtoPayload,
+    astarte_message::Payload as ProtoPayload, message_hub_event::Event,
 };
 use bytes::Bytes;
 use sync_wrapper::SyncWrapper;
@@ -51,19 +48,24 @@ use uuid::Uuid;
 use self::convert::{try_from_individual, try_from_object, try_from_property};
 use self::error::GrpcError;
 use self::store::GrpcStore;
-use super::{Connection, Disconnect, Publish, Receive, ReceivedEvent, Register, ValidatedProperty};
+
+use super::{
+    Decode, Encode, Introspection, RemovedInterface, Sender, Transport, ValidatedProperty,
+};
 use crate::Timestamp;
 use crate::aggregate::AstarteObject;
-use crate::builder::{BuildConfig, ConnectionConfig, DeviceTransport};
+use crate::builder::{BuildConfig, ConnectionConfig};
+use crate::connection::incoming::ctx::ConnectionCtx;
 use crate::error::{AstarteError, ErrorKind, InterfaceError, Report};
 use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::retention::{PublishInfo, RetentionId, StoredRetention};
-use crate::state::SharedState;
-use crate::store::{OptStoredProp, PropertyStore, StoreCapabilities};
-use crate::transport::AttemptStatus;
+use crate::state::{ConnectionState, SharedState};
+use crate::store::{OptStoredProp, PropertyState, StoreCapabilities};
 use crate::types::AstarteData;
-use crate::validate::{ValidatedIndividual, ValidatedObject, ValidatedUnset};
+use crate::validate::individual::ValidatedIndividual;
+use crate::validate::object::ValidatedObject;
+use crate::validate::properties::ValidatedUnset;
 
 pub mod convert;
 pub mod error;
@@ -109,41 +111,14 @@ impl Interceptor for NodeIdInterceptor {
 
 /// Client to send packets to the [Message Hub](https://github.com/astarte-platform/astarte-message-hub).
 #[derive(Debug, Clone)]
-pub struct GrpcClient<S> {
+pub struct GrpcClient {
     client: MsgHubClient,
-    store: S,
-    state: Arc<SharedState>,
 }
 
-impl<S> GrpcClient<S> {
+impl GrpcClient {
     /// Create a new client.
-    pub(crate) fn new(client: MsgHubClient, store: S, state: Arc<SharedState>) -> Self {
-        Self {
-            client,
-            store,
-            state,
-        }
-    }
-
-    async fn mark_received(&self, id: &RetentionId) -> Result<(), AstarteError>
-    where
-        S: StoreCapabilities,
-    {
-        match id {
-            RetentionId::Volatile(id) => {
-                self.state.volatile_store.mark_received(id).await;
-            }
-            RetentionId::Stored(id) => {
-                if let Some(retention) = self.store.get_retention() {
-                    retention
-                        .mark_received(id)
-                        .await
-                        .map_kind(ErrorKind::Retention)?;
-                }
-            }
-        }
-
-        Ok(())
+    pub(crate) fn new(client: MsgHubClient) -> Self {
+        Self { client }
     }
 
     async fn detach(&mut self) -> Result<(), AstarteError> {
@@ -159,10 +134,45 @@ impl<S> GrpcClient<S> {
     }
 }
 
-impl<S> Publish for GrpcClient<S>
+async fn mark_received<S>(state: &ConnectionState<S>, id: &RetentionId) -> Result<(), AstarteError>
 where
-    S: StoreCapabilities + Send + Sync,
+    S: StoreCapabilities,
 {
+    match id {
+        RetentionId::Volatile(id) => {
+            state.volatile_store().mark_received(id).await;
+        }
+        RetentionId::Stored(id) => {
+            if let Some(retention) = state.store().get_retention() {
+                retention
+                    .mark_received(id)
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+impl Sender for GrpcClient {
+    async fn handshake<S>(
+        &mut self,
+        _ctx: &ConnectionState<S>,
+        _interfaces: &Interfaces,
+        _session_present: bool,
+    ) -> Result<ControlFlow<()>, AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        Ok(ControlFlow::Break(()))
+    }
+
+    async fn disconnect(&mut self) -> Result<(), AstarteError> {
+        self.detach().await?;
+
+        Ok(())
+    }
+
     async fn send_individual(&mut self, data: ValidatedIndividual) -> Result<(), AstarteError> {
         let data = AstarteMessage::from(data);
 
@@ -175,20 +185,6 @@ where
                     "while sending individual",
                 )
                 .set_ctx(status)
-            })?;
-
-        Ok(())
-    }
-
-    async fn send_property(&mut self, data: ValidatedProperty) -> Result<(), AstarteError> {
-        let data = AstarteMessage::from(data);
-
-        self.client
-            .send(tonic::Request::new(data))
-            .await
-            .map_err(|status| {
-                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while sending property")
-                    .set_ctx(status)
             })?;
 
         Ok(())
@@ -208,11 +204,15 @@ where
         Ok(())
     }
 
-    async fn send_individual_stored(
+    async fn send_individual_stored<S>(
         &mut self,
+        ctx: &ConnectionState<S>,
         id: RetentionId,
         data: ValidatedIndividual,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let data = AstarteMessage::from(data);
 
         self.client
@@ -226,16 +226,20 @@ where
                 .set_ctx(status)
             })?;
 
-        self.mark_received(&id).await?;
+        mark_received(ctx, &id).await?;
 
         Ok(())
     }
 
-    async fn send_object_stored(
+    async fn send_object_stored<S>(
         &mut self,
+        state: &ConnectionState<S>,
         id: RetentionId,
         data: ValidatedObject,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let data = AstarteMessage::from(data);
 
         self.client
@@ -249,16 +253,20 @@ where
                 .set_ctx(status)
             })?;
 
-        self.mark_received(&id).await?;
+        mark_received(state, &id).await?;
 
         Ok(())
     }
 
-    async fn resend_stored(
+    async fn resend_stored<S>(
         &mut self,
+        state: &ConnectionState<S>,
         id: RetentionId,
         data: PublishInfo<'_>,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let msg = AstarteMessage::decode(data.value.borrow()).wrap_err_msg(
             ErrorKind::Grpc(GrpcError::Decode),
             "while decoding stored payload",
@@ -272,24 +280,86 @@ where
                     .set_ctx(status)
             })?;
 
-        self.mark_received(&id).await?;
+        mark_received(state, &id).await?;
 
         Ok(())
     }
 
-    async fn resend_stored_property(&mut self, data: OptStoredProp) -> Result<(), AstarteError> {
+    async fn resend_stored_property<S>(
+        &mut self,
+        state: &ConnectionState<S>,
+        property_data: OptStoredProp,
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let interface = property_data.interface.clone();
+        let path = property_data.path.clone();
+        let epoch = property_data.epoch();
+
         self.client
-            .send(tonic::Request::new(data.into()))
+            .send(tonic::Request::new(property_data.into()))
             .await
             .map_err(|status| {
-                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while resending stored")
+                AstarteError::with(
+                    ErrorKind::Grpc(GrpcError::Status),
+                    "while resending stored property",
+                )
+                .set_ctx(status)
+            })?;
+
+        state
+            .store()
+            .update_state(&interface, &path, PropertyState::Completed, epoch)
+            .await
+            .map_kind(ErrorKind::Store)?;
+
+        Ok(())
+    }
+
+    async fn send_property<S>(
+        &mut self,
+        state: &ConnectionState<S>,
+        data: ValidatedProperty,
+        epoch: u8,
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let interface = data.interface.clone();
+        let path = data.path.clone();
+
+        let msg = AstarteMessage::from(data);
+
+        self.client
+            .send(tonic::Request::new(msg))
+            .await
+            .map_err(|status| {
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while sending property")
                     .set_ctx(status)
             })?;
 
+        state
+            .store()
+            .update_state(&interface, &path, PropertyState::Completed, epoch)
+            .await
+            .map_kind(ErrorKind::Store)?;
+
         Ok(())
     }
 
-    async fn unset(&mut self, data: ValidatedUnset) -> Result<(), AstarteError> {
+    async fn unset<S>(
+        &mut self,
+        state: &ConnectionState<S>,
+        data: ValidatedUnset,
+        epoch: u8,
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let interface = data.interface.clone();
+        let path = data.path.clone();
+
         self.client
             .send(tonic::Request::new(data.into()))
             .await
@@ -301,32 +371,27 @@ where
                 .set_ctx(status)
             })?;
 
+        state
+            .store()
+            .update_state(&interface, &path, PropertyState::Completed, epoch)
+            .await
+            .map_kind(ErrorKind::Store)?;
+
         Ok(())
-    }
-
-    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, AstarteError> {
-        let data = AstarteMessage::from(data.clone());
-
-        Ok(data.encode_to_vec())
-    }
-
-    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, AstarteError> {
-        let data = AstarteMessage::from(data.clone());
-
-        Ok(data.encode_to_vec())
     }
 }
 
-impl<S> Register for GrpcClient<S>
-where
-    S: Send,
-{
-    async fn add_interface(
+impl Introspection for GrpcClient {
+    async fn add_interface<S>(
         &mut self,
+        _ctx: &ConnectionState<S>,
         _interfaces: &Interfaces,
-        added: &interfaces::Validated,
-    ) -> Result<(), AstarteError> {
-        let interfaces_json = InterfacesJson::try_from_iter([added.deref()])
+        added: &Interface,
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let interfaces_json = InterfacesJson::try_from_iter([added])
             .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
 
         self.client
@@ -340,11 +405,15 @@ where
         Ok(())
     }
 
-    async fn extend_interfaces(
+    async fn extend_interfaces<S>(
         &mut self,
+        _ctx: &ConnectionState<S>,
         _interfaces: &Interfaces,
         added: &interfaces::ValidatedCollection,
-    ) -> Result<(), AstarteError> {
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
             .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
 
@@ -362,11 +431,15 @@ where
         Ok(())
     }
 
-    async fn remove_interface(
+    async fn remove_interface<S>(
         &mut self,
+        _ctx: &ConnectionState<S>,
         _interfaces: &Interfaces,
-        removed: &Interface,
-    ) -> Result<(), AstarteError> {
+        removed: &RemovedInterface,
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let interfaces_name = InterfacesName {
             names: vec![removed.interface_name().to_string()],
         };
@@ -385,19 +458,21 @@ where
         Ok(())
     }
 
-    async fn remove_interfaces(
+    async fn remove_interfaces<S>(
         &mut self,
+        _ctx: &ConnectionState<S>,
         _interfaces: &Interfaces,
-        removed_interfaces: &HashMap<&str, &Interface>,
-    ) -> Result<(), AstarteError> {
-        let interfaces_name = removed_interfaces
-            .keys()
-            .map(|iface_name| iface_name.to_string())
+        removed_interfaces: &[RemovedInterface],
+    ) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let names = removed_interfaces
+            .iter()
+            .map(|iface| iface.interface_name().to_string())
             .collect();
 
-        let interfaces_name = InterfacesName {
-            names: interfaces_name,
-        };
+        let interfaces_name = InterfacesName { names };
 
         self.client
             .remove_interfaces(tonic::Request::new(interfaces_name))
@@ -414,36 +489,23 @@ where
     }
 }
 
-impl<S> Disconnect for GrpcClient<S>
-where
-    S: Send,
-{
-    async fn disconnect(&mut self) -> Result<(), AstarteError> {
-        self.detach().await?;
-
-        Ok(())
-    }
-}
-
 /// Handles a gRPC connection between the device and Astarte.
 ///
 /// It manages the interaction with the
 /// [astarte-message-hub](https://github.com/astarte-platform/astarte-message-hub), sending and
 /// receiving [`AstarteMessage`] following the Astarte message hub protocol.
-pub struct Grpc<S> {
+pub struct GrpcConnection {
     uuid: Uuid,
     client: MsgHubClient,
     stream: Option<SyncWrapper<Streaming<MessageHubEvent>>>,
-    _store_type: PhantomData<S>,
 }
 
-impl<S> Grpc<S> {
+impl GrpcConnection {
     pub(crate) fn new_disconnected(uuid: Uuid, client: MsgHubClient) -> Self {
         Self {
             uuid,
             client,
             stream: None,
-            _store_type: PhantomData,
         }
     }
 
@@ -473,7 +535,7 @@ impl<S> Grpc<S> {
     }
 }
 
-impl<S> std::fmt::Debug for Grpc<S> {
+impl std::fmt::Debug for GrpcConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Grpc")
             .field("uuid", &self.uuid)
@@ -481,71 +543,98 @@ impl<S> std::fmt::Debug for Grpc<S> {
     }
 }
 
-impl<S> Receive for Grpc<S>
-where
-    S: PropertyStore,
-{
-    type Payload = GrpcPayload;
+impl Transport for GrpcConnection {
+    async fn connect<S>(
+        &mut self,
+        _state: &ConnectionState<S>,
+        interfaces: &Interfaces,
+        _first: bool,
+    ) -> Result<ControlFlow<bool>, AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let data = NodeData::try_from(interfaces).map_kind(ErrorKind::Grpc)?;
 
-    async fn next_event(&mut self) -> Result<Option<ReceivedEvent<Self::Payload>>, AstarteError> {
+        match GrpcConnection::attach(&mut self.client, data).await {
+            Ok(stream) => {
+                self.stream = Some(SyncWrapper::new(stream));
+                Ok(ControlFlow::Break(false))
+            }
+            Err(err) => {
+                error!(error = %Report::new(err), "error while trying to connect");
+                self.stream = None;
+                Ok(ControlFlow::Continue(()))
+            }
+        }
+    }
+
+    async fn poll<S>(&mut self, ctx: &ConnectionCtx<'_, S>) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         loop {
             match self.next_message().await {
                 Ok(Some(message)) => {
-                    let event = match ReceivedEvent::try_from(message) {
-                        Ok(event) => event,
-                        Err(error) => {
-                            error!(%error, "couldn't convert MessageHUb event");
+                    let Some(event) = message.event else {
+                        error!("empty event");
+
+                        continue;
+                    };
+
+                    let msg = match event {
+                        Event::Message(msg) => msg,
+                        Event::Error(err) => {
+                            error!(%err, "server returned error");
 
                             continue;
                         }
                     };
 
-                    return Ok(Some(event));
+                    let interface = &msg.interface_name;
+                    let path = &msg.path;
+
+                    let Some(payload) = msg.payload else {
+                        error!("missing payload in message");
+
+                        continue;
+                    };
+
+                    ctx.handle_event(interface, path, GrpcDecoder::new(payload))
+                        .await?;
                 }
                 Err(status) => {
                     error!(%status, "error returned by the server");
 
-                    return Ok(None);
+                    return Ok(());
                 }
                 Ok(None) => {
                     warn!("Stream closed");
 
-                    return Ok(None);
+                    return Ok(());
                 }
             }
         }
     }
+}
 
-    async fn reconnect(
-        &mut self,
-        interfaces: &Interfaces,
-    ) -> Result<AttemptStatus<Self::Payload>, AstarteError> {
-        // try reattaching
-        let data = NodeData::try_from(interfaces).map_kind(ErrorKind::Grpc)?;
+/// Internal struct holding the received grpc message
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GrpcDecoder {
+    data: ProtoPayload,
+}
 
-        match Grpc::<S>::attach(&mut self.client, data.clone()).await {
-            Ok(stream) => {
-                self.stream = Some(SyncWrapper::new(stream));
-
-                Ok(AttemptStatus::Connected {
-                    session_present: false,
-                })
-            }
-            Err(err) => {
-                error!(error = %Report::new(err), "error while trying to reconnect");
-                self.stream = None;
-
-                Ok(AttemptStatus::Disconnected)
-            }
-        }
+impl GrpcDecoder {
+    pub(crate) fn new(data: ProtoPayload) -> Self {
+        Self { data }
     }
+}
 
+impl Decode for GrpcDecoder {
     fn deserialize_property(
-        &self,
+        self,
         mapping: &MappingRef<'_, Properties>,
-        payload: Self::Payload,
     ) -> Result<Option<AstarteData>, AstarteError> {
-        let ProtoPayload::PropertyIndividual(prop) = payload.data else {
+        let ProtoPayload::PropertyIndividual(prop) = self.data else {
             return Err(InterfaceError::interface_type(
                 "while deserializing property",
                 mapping.interface(),
@@ -568,11 +657,10 @@ where
     }
 
     fn deserialize_individual(
-        &self,
+        self,
         mapping: &MappingRef<'_, DatastreamIndividual>,
-        payload: Self::Payload,
     ) -> Result<(AstarteData, Option<Timestamp>), AstarteError> {
-        let individual = match payload.data {
+        let individual = match self.data {
             ProtoPayload::DatastreamIndividual(individual) => individual,
             ProtoPayload::DatastreamObject(_) => {
                 return Err(InterfaceError::aggregation(
@@ -605,12 +693,11 @@ where
     }
 
     fn deserialize_object(
-        &self,
+        self,
         object: &DatastreamObject,
         path: &MappingPath<'_>,
-        payload: Self::Payload,
     ) -> Result<(AstarteObject, Option<Timestamp>), AstarteError> {
-        let data = match payload.data {
+        let data = match self.data {
             ProtoPayload::DatastreamObject(object) => object,
             ProtoPayload::DatastreamIndividual(_) => {
                 return Err(InterfaceError::aggregation(
@@ -643,40 +730,32 @@ where
     }
 }
 
-impl<S> Connection for Grpc<S>
-where
-    S: StoreCapabilities,
-{
-    type Sender = GrpcClient<GrpcStore<S>>;
+/// Encoder for gRPC messages.
+#[derive(Debug, Clone, Copy)]
+pub struct GrpcEncoder {}
 
-    type Store = GrpcStore<S>;
+impl Encode for GrpcEncoder {
+    fn serialize_individual(&self, data: &ValidatedIndividual) -> Result<Vec<u8>, AstarteError> {
+        let data = AstarteMessage::from(data.clone());
 
-    async fn is_paired(&self) -> Result<bool, std::io::Error> {
-        // The device never pairs with the message-hub
-        Ok(false)
+        Ok(data.encode_to_vec())
     }
-}
 
-/// Internal struct holding the received grpc message
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct GrpcPayload {
-    data: ProtoPayload,
-}
+    fn serialize_object(&self, data: &ValidatedObject) -> Result<Vec<u8>, AstarteError> {
+        let data = AstarteMessage::from(data.clone());
 
-impl GrpcPayload {
-    pub(crate) fn new(data: ProtoPayload) -> Self {
-        Self { data }
+        Ok(data.encode_to_vec())
     }
 }
 
 /// Configuration for the mqtt connection
 #[derive(Debug, Clone)]
-pub struct GrpcConfig {
+pub struct Grpc {
     uuid: Uuid,
     endpoint: Endpoint,
 }
 
-impl GrpcConfig {
+impl Grpc {
     /// Create a new config.
     pub const fn new(uuid: Uuid, endpoint: Endpoint) -> Self {
         Self { uuid, endpoint }
@@ -696,33 +775,70 @@ impl GrpcConfig {
     }
 }
 
-impl<S> ConnectionConfig<S> for GrpcConfig
-where
-    S: StoreCapabilities + PropertyStore,
-{
-    type Conn = Grpc<S>;
-    type Store = GrpcStore<S>;
+impl ConnectionConfig for Grpc {
+    type Store<S>
+        = GrpcStore<S>
+    where
+        S: Send + Sync + 'static;
+    type Connection = GrpcConnection;
+    type Client = GrpcClient;
+    type Encoder = GrpcEncoder;
 
-    async fn connect(
-        self,
-        config: BuildConfig<S>,
-    ) -> Result<DeviceTransport<Self::Conn>, AstarteError> {
+    async fn configure<S>(
+        &mut self,
+        state: SharedState<S>,
+    ) -> Result<BuildConfig<GrpcStore<S>, Self::Encoder>, AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         let channel = self.endpoint.connect_lazy();
-        let node_id_interceptor = NodeIdInterceptor::new(self.uuid);
-        let client = MessageHubClient::with_interceptor(channel, node_id_interceptor);
-        let store = GrpcStore::new(client.clone(), config.store);
+        let interceptor = NodeIdInterceptor::new(self.uuid);
+        let client = MessageHubClient::with_interceptor(channel, interceptor);
 
-        let state = Arc::clone(&config.state);
+        let store = GrpcStore::new(client, state.store);
 
-        let sender = GrpcClient::new(client.clone(), store.clone(), state);
-
-        let connection = Grpc::new_disconnected(self.uuid, client);
-
-        Ok(DeviceTransport {
-            sender,
-            connection,
+        let new_state = SharedState {
+            config: state.config,
+            property_ctx: state.property_ctx,
+            retention_ctx: state.retention_ctx,
+            interfaces: state.interfaces,
+            status: state.status,
+            device_status: state.device_status,
+            cert_expiry: state.cert_expiry,
+            volatile_store: state.volatile_store,
             store,
+            backoff: state.backoff,
+            tls: state.tls,
+        };
+
+        Ok(BuildConfig {
+            state: new_state,
+            encoder: GrpcEncoder {},
         })
+    }
+
+    async fn is_registered<S>(&mut self, _state: &SharedState<S>) -> Result<bool, AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        Ok(false)
+    }
+
+    async fn register<S>(
+        &mut self,
+        _state: &ConnectionState<S>,
+    ) -> Result<ControlFlow<(Self::Client, Self::Connection)>, AstarteError>
+    where
+        S: StoreCapabilities,
+    {
+        let channel = self.endpoint.connect_lazy();
+        let interceptor = NodeIdInterceptor::new(self.uuid);
+        let client = MessageHubClient::with_interceptor(channel, interceptor);
+
+        let sender = GrpcClient::new(client.clone());
+        let connection = GrpcConnection::new_disconnected(self.uuid, client);
+
+        Ok(ControlFlow::Break((sender, connection)))
     }
 }
 
@@ -754,41 +870,27 @@ impl<'a> TryFrom<&'a Interfaces> for NodeData {
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
+    use std::sync::Arc;
 
     use astarte_message_hub_proto::tonic::Request;
     use astarte_message_hub_proto::{AstarteDatastreamIndividual, AstarteMessage};
     use astarte_message_hub_proto::{AstarteDatastreamObject, AstartePropertyIndividual, tonic};
+
     use astarte_message_hub_proto_mock::mockall::{Sequence, predicate};
     use chrono::Utc;
-    use itertools::Itertools;
     use pretty_assertions::assert_eq;
     use uuid::uuid;
 
-    use crate::builder::Config;
-    use crate::retention::memory::VolatileStore;
+    use crate::aggregate::AstarteObject;
+    use crate::state::ConnStatus;
+    use crate::state::tests::mock_state;
     use crate::store::memory::MemoryStore;
+    use crate::store::mock::MockStore;
     use crate::test::{
-        DEVICE_OBJECT, DEVICE_PROPERTIES, DEVICE_PROPERTIES_NAME, E2E_DEVICE_PROPERTY,
-        E2E_DEVICE_PROPERTY_NAME, E2E_SERVER_DATASTREAM,
+        DEVICE_OBJECT, DEVICE_PROPERTIES, E2E_DEVICE_PROPERTY, E2E_SERVER_AGGREGATE,
     };
-    use crate::{aggregate::AstarteObject, builder::DEFAULT_VOLATILE_CAPACITY};
 
     use super::*;
-
-    impl<S> Grpc<S> {
-        pub(crate) fn new(
-            uuid: Uuid,
-            client: MsgHubClient,
-            stream: Streaming<MessageHubEvent>,
-        ) -> Self {
-            Self {
-                uuid,
-                client,
-                stream: Some(SyncWrapper::new(stream)),
-                _store_type: PhantomData,
-            }
-        }
-    }
 
     pub(crate) const ID: Uuid = uuid!("67e55044-10b1-426f-9247-bb680e5fe0c8");
 
@@ -864,8 +966,10 @@ mod test {
             let mut request_interfaces = self.get_ref().names.clone();
             request_interfaces.sort_unstable();
 
-            let mut expected_interfaces =
-                interfaces.iter().map(|i| i.interface_name()).collect_vec();
+            let mut expected_interfaces = interfaces
+                .iter()
+                .map(|i| i.interface_name())
+                .collect::<Vec<_>>();
             expected_interfaces.sort_unstable();
 
             Ok(request_interfaces == expected_interfaces)
@@ -880,35 +984,22 @@ mod test {
             let mut request_interfaces = self.names.clone();
             request_interfaces.sort_unstable();
 
-            let mut expected_interfaces =
-                interfaces.iter().map(|i| i.interface_name()).collect_vec();
+            let mut expected_interfaces = interfaces
+                .iter()
+                .map(|i| i.interface_name())
+                .collect::<Vec<_>>();
             expected_interfaces.sort_unstable();
 
             Ok(request_interfaces == expected_interfaces)
         }
     }
 
-    async fn mock_grpc<S>(
+    async fn mock_grpc(
         message_hub_client_tx: MsgHubClient,
-        mut message_hub_client_rx: MsgHubClient,
-        interfaces: Interfaces,
-        store: S,
-    ) -> Result<(GrpcClient<S>, Grpc<S>), Box<dyn std::error::Error>>
-    where
-        S: PropertyStore,
-    {
-        let node_data = NodeData::try_from(&interfaces)?;
-        let state = SharedState::new(
-            Config::default(),
-            interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
-        );
-
-        let client = GrpcClient::new(message_hub_client_tx, store, Arc::new(state));
-
-        let stream = Grpc::<S>::attach(&mut message_hub_client_rx, node_data).await?;
-        let connection = Grpc::new(ID, message_hub_client_rx, stream);
-
+        message_hub_client_rx: MsgHubClient,
+    ) -> Result<(GrpcClient, GrpcConnection), Box<dyn std::error::Error>> {
+        let client = GrpcClient::new(message_hub_client_tx);
+        let connection = GrpcConnection::new_disconnected(ID, message_hub_client_rx);
         Ok((client, connection))
     }
 
@@ -918,12 +1009,15 @@ mod test {
         T: Send + Clone,
     {
         let mut streaming_server_response = Streaming::new();
+        let mut seq = Sequence::new();
 
-        v.into_iter().for_each(|resp| {
+        for resp in v {
             streaming_server_response
                 .expect_message()
-                .return_once(move || resp);
-        });
+                .once()
+                .in_sequence(&mut seq)
+                .returning(move || resp.clone());
+        }
 
         streaming_server_response
     }
@@ -970,9 +1064,6 @@ mod test {
     #[tokio::test]
     async fn test_attach_detach() {
         let mut seq = Sequence::new();
-        // no expectations for the store
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
         let mut mock_client_tx = MsgHubClient::new();
         let mut mock_client_rx = MsgHubClient::new();
 
@@ -992,92 +1083,29 @@ mod test {
             .in_sequence(&mut seq)
             .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
-        let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (mut client, mut connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
-        client.disconnect().await.unwrap();
-    }
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Offline);
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MockStore::new(),
+            status_tx,
+            Interfaces::new(),
+        )));
 
-    #[tokio::test]
-    async fn test_server_error() {
-        let mut seq = Sequence::new();
-        // no expectations for the store
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
-        let mut mock_client_tx = MsgHubClient::new();
-        let mut mock_client_rx = MsgHubClient::new();
+        let interfaces = state.interfaces().read().await;
 
-        // 2 attach and 2 error returned
-        mock_client_rx
-            .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(2)
-            .in_sequence(&mut seq)
-            .returning(|_i| {
-                Ok(tonic::Response::new(mock_stream(
-                    // send an Err response as the first message
-                    [Err(tonic::Status::unknown("Test unknown reattach"))],
-                )))
-            });
-        // attach no responses
-        mock_client_rx
-            .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i| Ok(tonic::Response::new(mock_stream([]))));
-        // expect detach
-        mock_client_tx
-            .expect_detach::<Request<()>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
+        let res = connection.connect(&state, &interfaces, true).await.unwrap();
+        assert_eq!(res, ControlFlow::Break(false));
 
-        // first attach is called when the connection is created
-        let (mut client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
-        // poll the next message (error)
-        assert_eq!(connection.next_event().await.unwrap(), None);
-        // reconnect (second attach)
-        assert_eq!(
-            connection.reconnect(&Interfaces::new()).await.unwrap(),
-            AttemptStatus::Connected {
-                session_present: false
-            }
-        );
-        // poll the next message (second error)
-        assert_eq!(connection.next_event().await.unwrap(), None);
-        // after the second error we reconnect with no messages
-        assert_eq!(
-            connection.reconnect(&Interfaces::new()).await.unwrap(),
-            AttemptStatus::Connected {
-                session_present: false
-            }
-        );
-
-        // manually calling detach
         client.disconnect().await.unwrap();
     }
 
     #[tokio::test]
     async fn test_add_remove_interface() {
         let mut seq = Sequence::new();
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
         let mut mock_client_tx = MsgHubClient::new();
-        let mut mock_client_rx = MsgHubClient::new();
+        let mock_client_rx = MsgHubClient::new();
 
-        // When the grpc connection gets created the attach methods is called
-        mock_client_rx
-            .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i| {
-                // no messages are read as responses by the server so we pass an empty vec
-                Ok(tonic::Response::new(mock_stream(vec![])))
-            });
         mock_client_tx
             .expect_add_interfaces::<Request<astarte_message_hub_proto::InterfacesJson>>()
             .times(1)
@@ -1127,17 +1155,23 @@ mod test {
             .in_sequence(&mut seq)
             .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
-        let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (mut client, _connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
-        let interfaces = Interfaces::new();
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Offline);
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MemoryStore::new(),
+            status_tx,
+            Interfaces::new(),
+        )));
+
         let interface = Interface::from_str(DEVICE_PROPERTIES).unwrap();
-        let validated = interfaces.validate(interface.clone()).unwrap().unwrap();
-        client.add_interface(&interfaces, &validated).await.unwrap();
         client
-            .remove_interface(&interfaces, &validated)
+            .add_interface(&state, &Interfaces::new(), &interface)
+            .await
+            .unwrap();
+        let removed = RemovedInterface::from(&interface);
+        client
+            .remove_interface(&state, &Interfaces::new(), &removed)
             .await
             .unwrap();
 
@@ -1146,16 +1180,16 @@ mod test {
             .validate_many([interface.clone(), additional_interface.clone()])
             .unwrap();
         client
-            .extend_interfaces(&interfaces, &list_to_add)
+            .extend_interfaces(&state, &Interfaces::new(), &list_to_add)
             .await
             .unwrap();
 
-        let to_remove = HashMap::from([
-            (DEVICE_PROPERTIES_NAME, &interface),
-            (E2E_DEVICE_PROPERTY_NAME, &additional_interface),
-        ]);
+        let to_remove = vec![
+            RemovedInterface::from(&interface),
+            RemovedInterface::from(&additional_interface),
+        ];
         client
-            .remove_interfaces(&interfaces, &to_remove)
+            .remove_interfaces(&state, &Interfaces::new(), &to_remove)
             .await
             .unwrap();
 
@@ -1166,24 +1200,13 @@ mod test {
     #[tokio::test]
     async fn test_send_individual() {
         let mut seq = Sequence::new();
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
         let mut mock_client_tx = MsgHubClient::new();
-        let mut mock_client_rx = MsgHubClient::new();
+        let mock_client_rx = MsgHubClient::new();
 
         const PATH: &str = "/string_endpoint";
         const STRING_VALUE: &str = "value";
         let interface = Interface::from_str(crate::test::E2E_DEVICE_DATASTREAM).unwrap();
         let interface_name = interface.interface_name().to_owned();
-
-        mock_client_rx
-            .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i| {
-                // no messages are read as responses by the server so we pass an empty vec
-                Ok(tonic::Response::new(mock_stream(vec![])))
-            });
 
         let interface_name_cl = interface_name.clone();
         mock_client_tx
@@ -1206,10 +1229,7 @@ mod test {
             .in_sequence(&mut seq)
             .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
-        let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (mut client, _connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
         let path = MappingPath::try_from(PATH).unwrap();
         let interfaces = Interfaces::from_iter([interface]);
@@ -1227,23 +1247,12 @@ mod test {
     #[tokio::test]
     async fn test_send_object_timestamp() {
         let mut seq = Sequence::new();
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
         let mut mock_client_tx = MsgHubClient::new();
-        let mut mock_client_rx = MsgHubClient::new();
+        let mock_client_rx = MsgHubClient::new();
 
         const PATH: &str = "/1";
         let interface = DatastreamObject::from_str(DEVICE_OBJECT).unwrap();
         let interface_name = interface.name().to_string();
-
-        mock_client_rx
-            .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(1)
-            .in_sequence(&mut seq)
-            .returning(|_i| {
-                // no messages are read as responses by the server so we pass an empty vec
-                Ok(tonic::Response::new(mock_stream([])))
-            });
 
         let interface_name_cl = interface_name.clone();
         mock_client_tx
@@ -1260,10 +1269,7 @@ mod test {
             })
             .returning(|_i: Request<_>| Ok(tonic::Response::new(())));
 
-        let (mut client, _connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (mut client, _connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
         let path = MappingPath::try_from(PATH).unwrap();
         let validated = ValidatedObject::validate(
@@ -1279,14 +1285,8 @@ mod test {
 
     #[tokio::test]
     async fn test_connection_receive_object() {
-        let mut seq = Sequence::new();
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
-        let mock_client_tx = MsgHubClient::new();
-        let mut mock_client_rx = MsgHubClient::new();
-
         const PATH: &str = "/1";
-        let interface = Interface::from_str(E2E_SERVER_DATASTREAM).unwrap();
+        let interface = Interface::from_str(E2E_SERVER_AGGREGATE).unwrap();
         let interface_name = interface.interface_name().to_owned();
         let proto_payload = ProtoPayload::DatastreamObject(AstarteDatastreamObject {
             data: MockServerObject::mock_object()
@@ -1302,41 +1302,61 @@ mod test {
             proto_payload.clone(),
         );
 
+        let mock_client_tx = MsgHubClient::new();
+        let mut mock_client_rx = MsgHubClient::new();
+        let mut seq = Sequence::new();
+
         mock_client_rx
             .expect_attach::<Request<astarte_message_hub_proto::Node>>()
-            .times(1)
+            .once()
             .in_sequence(&mut seq)
             .returning(move |_i| {
-                Ok(tonic::Response::new(mock_stream([Ok(Some(
-                    astarte_message_hub_proto::MessageHubEvent {
+                let stream = mock_stream([
+                    Ok(Some(astarte_message_hub_proto::MessageHubEvent {
                         event: Some(
                             astarte_message_hub_proto::message_hub_event::Event::Message(
                                 astarte_message.clone(),
                             ),
                         ),
-                    },
-                ))])))
+                    })),
+                    Ok(None),
+                ]);
+
+                Ok(tonic::Response::new(stream))
             });
 
-        let (_client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (_client, mut connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
-        let Some(event) = connection.next_event().await.unwrap() else {
-            panic!("Event received did not match the pattern");
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Offline);
+
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MemoryStore::new(),
+            status_tx,
+            Interfaces::from_iter([interface]),
+        )));
+
+        let interfaces = state.interfaces().read().await;
+
+        let res = connection.connect(&state, &interfaces, true).await.unwrap();
+        assert_eq!(res, ControlFlow::Break(false));
+
+        let (events_tx, events_rx) = async_channel::bounded(10);
+
+        let ctx = ConnectionCtx {
+            state: &state,
+            events: &events_tx,
         };
 
+        connection.poll(&ctx).await.unwrap();
+
+        let event = events_rx.try_recv().unwrap();
         assert_eq!(event.interface, interface_name);
         assert_eq!(event.path, PATH);
-        assert_eq!(event.payload.data, proto_payload);
     }
 
     #[tokio::test]
     async fn test_connection_receive_unset() {
         let mut seq = Sequence::new();
-        let mock_store_client = MsgHubClient::new();
-        let store = GrpcStore::new(mock_store_client, MemoryStore::new());
         let mock_client_tx = MsgHubClient::new();
         let mut mock_client_rx = MsgHubClient::new();
 
@@ -1356,36 +1376,55 @@ mod test {
             .times(1)
             .in_sequence(&mut seq)
             .returning(move |_i| {
-                Ok(tonic::Response::new(mock_stream([Ok(Some(
-                    astarte_message_hub_proto::MessageHubEvent {
+                let stream = mock_stream([
+                    Ok(Some(astarte_message_hub_proto::MessageHubEvent {
                         event: Some(
                             astarte_message_hub_proto::message_hub_event::Event::Message(
                                 astarte_message.clone(),
                             ),
                         ),
-                    },
-                ))])))
+                    })),
+                    Ok(None),
+                ]);
+
+                Ok(tonic::Response::new(stream))
             });
 
-        let (_client, mut connection) =
-            mock_grpc(mock_client_tx, mock_client_rx, Interfaces::new(), store)
-                .await
-                .unwrap();
+        let (_client, mut connection) = mock_grpc(mock_client_tx, mock_client_rx).await.unwrap();
 
-        let Some(event) = connection.next_event().await.unwrap() else {
-            panic!("Event received did not match the pattern");
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Offline);
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MemoryStore::new(),
+            status_tx,
+            Interfaces::from_iter([interface]),
+        )));
+        let interfaces = state.interfaces().read().await;
+
+        let res = connection.connect(&state, &interfaces, true).await.unwrap();
+        assert_eq!(res, ControlFlow::Break(false));
+
+        let (_status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Connected {
+            session_present: false,
+        });
+        let (events_tx, events_rx) = async_channel::bounded(10);
+
+        let ctx = ConnectionCtx {
+            state: &state,
+            events: &events_tx,
         };
 
+        connection.poll(&ctx).await.unwrap();
+
+        let event = events_rx.try_recv().unwrap();
         assert_eq!(event.interface, interface_name);
         assert_eq!(event.path, PATH);
-        assert_eq!(event.payload.data, proto_payload);
     }
 
     #[test]
     fn create_config() {
         let uuid = Uuid::new_v4();
 
-        let mut config = GrpcConfig::from_url(uuid, "http://hub.example.com").unwrap();
+        let mut config = Grpc::from_url(uuid, "http://hub.example.com").unwrap();
 
         assert_eq!(config.endpoint_mut().uri().host(), Some("hub.example.com"));
     }

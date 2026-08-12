@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,7 +50,6 @@ pub struct FdoConfigBuilder<'a, C, T> {
     crypto: Option<C>,
     manufacturing_url: Option<&'a Url>,
     keepalive: Duration,
-    insecure_ssl: bool,
     // NOTE: state for the builder to make sure that at compile time the field is set before build
     _mark: PhantomData<T>,
 }
@@ -63,7 +62,6 @@ impl<'a, C> FdoConfigBuilder<'a, C, AddManufacturingUrl> {
             crypto: None,
             manufacturing_url: None,
             keepalive: DEFAULT_KEEP_ALIVE,
-            insecure_ssl: false,
             _mark: PhantomData,
         }
     }
@@ -77,7 +75,6 @@ impl<'a, C, T> FdoConfigBuilder<'a, C, T> {
             crypto: self.crypto,
             manufacturing_url: self.manufacturing_url,
             keepalive: self.keepalive,
-            insecure_ssl: self.insecure_ssl,
             _mark: PhantomData,
         }
     }
@@ -85,13 +82,6 @@ impl<'a, C, T> FdoConfigBuilder<'a, C, T> {
     /// Configure the MQTT keepalive
     pub fn set_keepalive(mut self, keepalive: Duration) -> Self {
         self.keepalive = keepalive;
-
-        self
-    }
-
-    /// Configure the insecure ssl
-    pub fn set_insecure_ssl(mut self, insecure_ssl: bool) -> Self {
-        self.insecure_ssl = insecure_ssl;
 
         self
     }
@@ -138,7 +128,6 @@ impl<'a, C> FdoConfigBuilder<'a, C, Build> {
             serial_no: self.serial_no,
             manufacturing_url,
             keepalive: self.keepalive,
-            insecure_ssl: self.insecure_ssl,
             crypto,
         })
     }

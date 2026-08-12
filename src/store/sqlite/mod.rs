@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,6 +27,7 @@ use std::time::Duration;
 use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{MappingType, Ownership};
 use astarte_interfaces::{Properties, Schema};
+use chrono::{TimeZone, Utc};
 use rusqlite::ToSql;
 use rusqlite::types::{FromSql, FromSqlError};
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,10 @@ use self::connection::SqliteConnection;
 use self::error::{SqliteError, ValueError};
 use self::pool::Connections;
 use super::error::StoreError;
-use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
+use super::{
+    OptStoredProp, Prop, PropMetadata, PropertyMapping, PropertyStore, StoreCapabilities,
+    StoredProp, UpdatedAt,
+};
 use crate::store::sqlite::options::SqliteOptions;
 use crate::{
     store::PropertyState,
@@ -228,46 +232,6 @@ impl Size {
     }
 }
 
-/// Result of the load_prop query
-#[derive(Clone)]
-struct PropRecord {
-    value: Option<Vec<u8>>,
-    stored_type: u8,
-    interface_major: i32,
-}
-
-impl PropRecord {
-    fn try_into_value(self) -> Result<Option<AstarteData>, Error<ValueError>> {
-        self.value
-            .map(|value| deserialize_prop(self.stored_type, &value))
-            .transpose()
-    }
-}
-
-impl Debug for PropRecord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use itertools::Itertools;
-
-        // Print the value as an hex string instead of an array of numbers
-
-        let mut d = f.debug_struct("PropRecord");
-
-        d.field("interface_major", &self.interface_major);
-
-        match &self.value {
-            Some(value) => {
-                let hex_value = value
-                    .iter()
-                    .format_with("", |element, f| f(&format_args!("Some({element:x})")));
-
-                d.field("value", &format_args!("{hex_value}"))
-            }
-            None => d.field("value", &self.value),
-        }
-        .finish()
-    }
-}
-
 /// Error when converting a u8 into the [`PropertyState`] struct.
 #[derive(Debug, thiserror::Error)]
 #[error("invalid property state value {value}")]
@@ -327,23 +291,26 @@ struct StoredRecord {
     stored_type: u8,
     interface_major: i32,
     ownership: RecordOwnership,
+    epoch: u8,
+    updated_at: i64,
+    updated_at_nanos: u32,
+    updated_at_counter: u32,
 }
 
 impl StoredRecord {
     pub(crate) fn try_into_prop(self) -> Result<Option<StoredProp>, Error<SqliteError>> {
-        let Some(value) = self.value else {
-            return Ok(None);
-        };
-
-        let value = deserialize_prop(self.stored_type, &value).map_kind(SqliteError::Value)?;
-
-        Ok(Some(StoredProp {
-            interface: self.interface,
-            path: self.path,
-            value,
-            interface_major: self.interface_major,
-            ownership: self.ownership.into(),
-        }))
+        OptStoredProp::try_from(self).map(|prop| {
+            let value = prop.value?;
+            Some(StoredProp {
+                interface: prop.interface,
+                path: prop.path,
+                value,
+                interface_major: prop.interface_major,
+                ownership: prop.ownership,
+                epoch: prop.epoch,
+                updated_at: prop.updated_at,
+            })
+        })
     }
 }
 
@@ -351,10 +318,23 @@ impl TryFrom<StoredRecord> for OptStoredProp {
     type Error = Error<SqliteError>;
 
     fn try_from(record: StoredRecord) -> Result<Self, Self::Error> {
-        let value = record
-            .value
-            .map(|value| deserialize_prop(record.stored_type, &value).map_kind(SqliteError::Value))
-            .transpose()?;
+        let value = match record.value {
+            Some(value) => {
+                let value =
+                    deserialize_prop(record.stored_type, &value).map_kind(SqliteError::Value)?;
+
+                Some(value)
+            }
+            None => None,
+        };
+
+        let timestamp = Utc
+            .timestamp_opt(record.updated_at, record.updated_at_nanos)
+            .earliest()
+            .ok_or(Error::with(
+                SqliteError::Conversion,
+                "for updated_at timestamp out of range",
+            ))?;
 
         Ok(Self {
             interface: record.interface,
@@ -362,6 +342,8 @@ impl TryFrom<StoredRecord> for OptStoredProp {
             value,
             interface_major: record.interface_major,
             ownership: record.ownership.into(),
+            epoch: record.epoch,
+            updated_at: UpdatedAt::new(timestamp, record.updated_at_counter),
         })
     }
 }
@@ -508,6 +490,7 @@ impl SqliteStore {
             include_query!("migrations/0002_unset_property.sql"),
             include_query!("migrations/0003_session.sql"),
             include_query!("migrations/0004_sent_properties.sql"),
+            include_query!("migrations/0005_offline.sql"),
         ];
         const USER_VERSION: u32 = {
             assert!(MIGRATIONS.len() < (u32::MAX as usize));
@@ -570,17 +553,14 @@ impl StoreCapabilities for SqliteStore {
 }
 
 impl PropertyStore for SqliteStore {
-    async fn store_prop(
-        &self,
-        prop: StoredProp<&str, &AstarteData>,
-    ) -> Result<(), Error<StoreError>> {
+    async fn store_prop(&self, prop: Prop) -> Result<PropMetadata, Error<StoreError>> {
         trace!(
             interface = prop.interface,
             path = prop.path,
             "storing property",
         );
 
-        let buf = Payload::new(prop.value)
+        let buf = Payload::new(&prop.value)
             .to_vec()
             .wrap_err_msg(
                 SqliteError::Value(ValueError::Encode),
@@ -588,29 +568,28 @@ impl PropertyStore for SqliteStore {
             )
             .wrap_err(StoreError::Store)?;
 
-        let prop = StoredProp::<String, AstarteData>::from(prop);
-        self.pool
-            .acquire_writer(move |writer| writer.store_prop((&prop).into(), &buf))
+        let epoch = self
+            .pool
+            .acquire_writer(move |writer| writer.store_prop(&prop, &buf))
             .await
             .wrap_err(StoreError::Store)?;
 
-        Ok(())
+        Ok(PropMetadata { epoch })
     }
 
     async fn update_state(
         &self,
-        property: &PropertyMapping<'_>,
+        interface_name: &str,
+        path: &str,
         state: PropertyState,
-        expected: Option<AstarteData>,
+        epoch: u8,
     ) -> Result<bool, Error<StoreError>> {
-        let interface_name = property.interface_name().to_string();
-        let path = property.path().to_string();
+        let interface_name = interface_name.to_string();
+        let path = path.to_string();
 
         let updated = self
             .pool
-            .acquire_writer(move |writer| {
-                writer.update_state(&interface_name, &path, expected.as_ref(), state)
-            })
+            .acquire_writer(move |writer| writer.update_state(&interface_name, &path, state, epoch))
             .await
             .wrap_err(StoreError::UpdateState)?;
 
@@ -620,13 +599,15 @@ impl PropertyStore for SqliteStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Error<StoreError>> {
-        let interface_name = property.interface_name().to_string();
-        let path = property.path().to_string();
-
+    ) -> Result<Option<StoredProp>, Error<StoreError>> {
         let opt_record = self
             .pool
-            .acquire_reader(move |reader| reader.load_prop(&interface_name, &path))
+            .acquire_reader({
+                let interface_name = property.interface_name().to_string();
+                let path = property.path().to_string();
+
+                move |reader| reader.load_prop(&interface_name, &path)
+            })
             .await
             .wrap_err(StoreError::Load)?;
 
@@ -648,57 +629,73 @@ impl PropertyStore for SqliteStore {
                         property.version_major()
                     );
 
-                    self.delete_prop(property).await?;
+                    self.pool
+                        .acquire_writer({
+                            let interface_name = record.interface;
+                            let path = record.path;
+                            let major = record.interface_major;
 
-                    return Ok(None);
+                            move |writer| {
+                                writer.delete_prop_with_major(&interface_name, &path, major)
+                            }
+                        })
+                        .await
+                        .wrap_err(StoreError::Load)?;
+
+                    Ok(None)
+                } else {
+                    record.try_into_prop().wrap_err(StoreError::Load)
                 }
-
-                record
-                    .try_into_value()
-                    .map_kind(SqliteError::Value)
-                    .wrap_err(StoreError::Load)
             }
             None => Ok(None),
         }
     }
 
-    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
+    async fn unset_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        updated_at: UpdatedAt,
+    ) -> Result<PropMetadata, Error<StoreError>> {
         let interface_name = property.interface_name().to_string();
         let path = property.path().to_string();
+        let interface_major = property.version_major;
 
         self.pool
-            .acquire_writer(move |writer| writer.unset_prop(&interface_name, &path))
+            .acquire_writer(move |writer| {
+                writer.unset_prop(&interface_name, &path, interface_major, updated_at)
+            })
             .await
+            .map(|epoch| PropMetadata { epoch })
             .wrap_err(StoreError::Unset)
     }
 
-    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
-        let interface_name = property.interface_name().to_string();
-        let path = property.path().to_string();
+    async fn delete_device_prop(
+        &self,
+        interface_name: &str,
+        path: &str,
+        epoch: u8,
+    ) -> Result<bool, Error<StoreError>> {
+        let interface_name = interface_name.to_string();
+        let path = path.to_string();
 
         self.pool
-            .acquire_writer(move |writer| writer.delete_prop(&interface_name, &path))
+            .acquire_writer(move |writer| writer.delete_device_prop(&interface_name, &path, epoch))
             .await
             .wrap_err(StoreError::Delete)
     }
 
-    async fn delete_expected_prop(
+    async fn delete_server_prop(
         &self,
-        property: &PropertyMapping<'_>,
-        expected: Option<AstarteData>,
+        interface_name: &str,
+        path: &str,
     ) -> Result<bool, Error<StoreError>> {
-        let interface_name = property.interface_name().to_string();
-        let path = property.path().to_string();
+        let interface_name = interface_name.to_string();
+        let path = path.to_string();
 
-        let updated = self
-            .pool
-            .acquire_writer(move |writer| {
-                writer.delete_expected_prop(&interface_name, &path, expected.as_ref())
-            })
+        self.pool
+            .acquire_writer(move |writer| writer.delete_server_prop(&interface_name, &path))
             .await
-            .wrap_err(StoreError::DeleteInterface)?;
-
-        Ok(updated > 0)
+            .wrap_err(StoreError::Delete)
     }
 
     async fn clear(&self) -> Result<(), Error<StoreError>> {
@@ -708,23 +705,39 @@ impl PropertyStore for SqliteStore {
             .wrap_err(StoreError::Clear)
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn load_all_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
-            .acquire_reader(|reader| reader.load_all_props())
+            .acquire_reader(move |reader| reader.load_all_props(limit.get(), last_updated_at))
             .await
             .wrap_err(StoreError::LoadAll)
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn device_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
-            .acquire_reader(|reader| reader.props_with_ownership(Ownership::Device))
+            .acquire_reader(move |reader| {
+                reader.props_with_ownership(Ownership::Device, limit.get(), last_updated_at)
+            })
             .await
             .wrap_err(StoreError::DeviceProps)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn server_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         self.pool
-            .acquire_reader(|reader| reader.props_with_ownership(Ownership::Server))
+            .acquire_reader(move |reader| {
+                reader.props_with_ownership(Ownership::Server, limit.get(), last_updated_at)
+            })
             .await
             .wrap_err(StoreError::ServerProps)
     }
@@ -732,11 +745,15 @@ impl PropertyStore for SqliteStore {
     async fn interface_props(
         &self,
         interface: &Properties,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let interface_name = interface.name().to_string();
 
         self.pool
-            .acquire_reader(move |reader| reader.interface_props(&interface_name))
+            .acquire_reader(move |reader| {
+                reader.interface_props(&interface_name, limit.get(), last_updated_at)
+            })
             .await
             .wrap_err(StoreError::InterfaceProps)
     }
@@ -753,20 +770,20 @@ impl PropertyStore for SqliteStore {
     async fn device_props_with_unset(
         &self,
         state: PropertyState,
-        limit: usize,
-        offset: usize,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         self.pool
             .acquire_reader(move |reader| {
-                reader.props_with_unset(Ownership::Device, state, limit, offset)
+                reader.props_with_unset(Ownership::Device, state, limit.get(), last_updated_at)
             })
             .await
             .wrap_err(StoreError::DeviceProps)
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
+    async fn reset_session(&self) -> Result<(), Error<StoreError>> {
         self.pool
-            .acquire_writer(move |writer| writer.reset_state(ownership))
+            .acquire_writer(move |writer| writer.reset_session())
             .await
             .wrap_err(StoreError::ResetState)
     }
@@ -787,7 +804,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::tests::test_property_store;
+    use crate::state::Context;
+    use crate::store::tests::{prop_to_stored_prop, test_property_store};
 
     #[tokio::test]
     async fn test_sqlite_store() {
@@ -812,25 +830,33 @@ mod tests {
             .unwrap();
 
         let test = |store: SqliteStore| async move {
+            let ctx = Context::new();
+
             let value = AstarteData::Integer(42);
-            let prop = StoredProp {
-                interface: "com.test",
-                path: "/test",
-                value: &value,
+            let prop = Prop {
+                interface: "com.test".to_string(),
+                path: "/test".to_string(),
+                value,
                 interface_major: 1,
                 ownership: Ownership::Device,
+                updated_at: ctx.next_updated_at(),
             };
-            let prop_interface_data = PropertyMapping::from(&prop);
+            let prop_interface_data = PropertyMapping {
+                interface_name: &prop.interface,
+                version_major: prop.interface_major,
+                ownership: prop.ownership,
+                path: &prop.path,
+            };
 
-            store.store_prop(prop).await.unwrap();
-            assert_eq!(
-                store
-                    .load_prop(&prop_interface_data)
-                    .await
-                    .unwrap()
-                    .unwrap(),
-                value
-            );
+            let meta = store.store_prop(prop.clone()).await.unwrap();
+
+            let exp = prop_to_stored_prop(&prop, meta.epoch());
+            let res = store
+                .load_prop(&prop_interface_data)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(res, exp);
         };
 
         (test)(db1).await;
@@ -859,12 +885,13 @@ mod tests {
                 .await
                 .unwrap();
 
-            db.store_prop(StoredProp {
-                interface: "interface",
-                path: "/path",
-                value: &AstarteData::BinaryBlob(vec![1; usize::try_from(page_size).unwrap() * 3]),
+            db.store_prop(Prop {
+                interface: "interface".to_string(),
+                path: "/path".to_string(),
+                value: AstarteData::BinaryBlob(vec![1; usize::try_from(page_size).unwrap() * 3]),
                 interface_major: 0,
                 ownership: Ownership::Device,
+                updated_at: UpdatedAt::new(Utc::now(), 0),
             })
             .await
             .unwrap();
@@ -914,12 +941,13 @@ mod tests {
         let size = usize::try_from(page_size * page_count + 1).unwrap();
 
         let err = db
-            .store_prop(StoredProp {
-                interface: "interface",
-                path: "/path",
-                value: &AstarteData::BinaryBlob(vec![1; size]),
+            .store_prop(Prop {
+                interface: "interface".to_string(),
+                path: "/path".to_string(),
+                value: AstarteData::BinaryBlob(vec![1; size]),
                 interface_major: 0,
                 ownership: Ownership::Device,
+                updated_at: UpdatedAt::new(Utc::now(), 0),
             })
             .await
             .unwrap_err();

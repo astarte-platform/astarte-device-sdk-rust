@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -374,14 +374,10 @@ pub(crate) mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use astarte_interfaces::{interface::Retention, schema::Reliability};
-    use itertools::Itertools;
 
-    use crate::{
-        retention::{
-            Context, StoredRetention, TimestampMillis, sqlite::tests::publish_with_expiry,
-        },
-        store::SqliteStore,
-    };
+    use crate::retention::{StoredRetention, TimestampMillis, sqlite::tests::publish_with_expiry};
+    use crate::state::Context;
+    use crate::store::SqliteStore;
 
     use super::*;
 
@@ -935,7 +931,7 @@ pub(crate) mod tests {
                     },
                 )
             })
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         let mut res = Vec::new();
         let count = store.unsent_publishes(100, &mut res).await.unwrap();
@@ -1069,7 +1065,7 @@ pub(crate) mod tests {
                     },
                 )
             })
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         let mut res = Vec::new();
         let count = store.unsent_publishes(100, &mut res).await.unwrap();
@@ -1165,7 +1161,7 @@ pub(crate) mod tests {
                     },
                 )
             })
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         let mut res = Vec::new();
         let count = store.unsent_publishes(100, &mut res).await.unwrap();

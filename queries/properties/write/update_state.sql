@@ -1,5 +1,9 @@
 UPDATE propcache
-SET state = ?
+SET
+    state = ?1,
+    epoch = ?2
 WHERE
-    interface = ?
-    AND path = ?;
+    ownership = 0
+    AND interface = ?3
+    AND path = ?4
+    AND epoch = ?5;

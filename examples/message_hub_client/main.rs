@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,14 +20,14 @@
 
 use std::{f64, time::Duration};
 
-use astarte_device_sdk::{
-    DeviceClient, DeviceConnection,
-    aggregate::AstarteObject,
-    builder::DeviceBuilder,
-    prelude::*,
-    store::{SqliteStore, StoreCapabilities},
-    transport::grpc::{Grpc, GrpcConfig, tonic::transport::Endpoint},
-};
+use astarte_device_sdk::aggregate::AstarteObject;
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::store::{SqliteStore, StoreCapabilities};
+use astarte_device_sdk::transport::grpc::Grpc;
+use astarte_device_sdk::transport::grpc::store::GrpcStore;
+use astarte_device_sdk::transport::grpc::tonic::transport::Endpoint;
+use astarte_device_sdk::{DeviceClient, DeviceConnection};
 use eyre::OptionExt;
 use tokio::task::JoinSet;
 use tracing::{error, info, level_filters::LevelFilter, warn};
@@ -70,13 +70,13 @@ enum ServerIndividual {
 }
 
 async fn init() -> eyre::Result<(
-    DeviceClient<Grpc<SqliteStore>>,
-    DeviceConnection<Grpc<SqliteStore>>,
+    DeviceClient<Grpc, GrpcStore<SqliteStore>>,
+    DeviceConnection<Grpc, GrpcStore<SqliteStore>>,
 )> {
     tokio::fs::create_dir_all(&STORE_DIRECTORY).await?;
 
     let endpoint = Endpoint::from_static(MESSAGE_HUB_URL);
-    let grpc_config = GrpcConfig::new(NODE_UUID, endpoint);
+    let grpc_config = Grpc::new(NODE_UUID, endpoint);
 
     let store = SqliteStore::options()
         .with_writable_dir(STORE_DIRECTORY)
@@ -97,7 +97,7 @@ async fn init() -> eyre::Result<(
     Ok((client, connection))
 }
 
-async fn receive_data<S>(client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+async fn receive_data<S>(client: DeviceClient<Grpc, S>) -> eyre::Result<()>
 where
     S: PropertyStore + StoreCapabilities,
 {
@@ -151,7 +151,7 @@ impl StoredObjectDatastream {
 }
 
 /// Send data after an interval to every interface
-async fn send_data<S>(mut client: DeviceClient<Grpc<S>>) -> eyre::Result<()>
+async fn send_data<S>(client: DeviceClient<Grpc, S>) -> eyre::Result<()>
 where
     S: PropertyStore + StoreCapabilities,
 {

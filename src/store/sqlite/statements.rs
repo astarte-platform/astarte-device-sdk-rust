@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,18 +16,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use astarte_device_error::{Error, ResultExt, WrapError};
+use astarte_device_error::{Error, WrapError};
 use astarte_interfaces::schema::Ownership;
 use rusqlite::OptionalExtension;
 use tracing::{instrument, warn};
 
-use crate::{
-    AstarteData,
-    store::{OptStoredProp, PropertyState, StoredProp, sqlite::RecordPropertyState},
-};
+use crate::store::{OptStoredProp, Prop, PropertyState, sqlite::RecordPropertyState};
+use crate::store::{StoredProp, UpdatedAt};
 
 use super::connection::{ReadConnection, WriteConnection};
-use super::{PropRecord, RecordOwnership, SqliteError, StoredRecord, into_stored_type};
+use super::{RecordOwnership, SqliteError, StoredRecord, into_stored_type};
 
 macro_rules! include_query {
     ($file:expr) => {
@@ -41,34 +39,37 @@ impl WriteConnection {
     #[instrument(skip_all)]
     pub(super) fn store_prop(
         &mut self,
-        prop: StoredProp<&str, &AstarteData>,
+        prop: &Prop,
         buf: &[u8],
-    ) -> Result<(), Error<SqliteError>> {
-        let mapping_type = into_stored_type(prop.value);
-
+    ) -> Result<Option<u8>, Error<SqliteError>> {
+        let mapping_type = into_stored_type(&prop.value);
         let ownership = RecordOwnership::from(prop.ownership);
+        let (updated_at, nanos, counter) = updated_at_to_i64(prop.updated_at);
 
         let mut statement = self
             .prepare_cached(include_query!("queries/properties/write/store_prop.sql"))
             .wrap_err_msg(SqliteError::Prepare, "while storing property")?;
 
-        statement
-            .execute((
-                prop.interface,
-                prop.path,
-                buf,
-                mapping_type,
-                prop.interface_major,
-                ownership,
-                // NOTE the state when we store a property will always be changed
-                // the old value of the property has to be checked before calling store_prop
-                // if the value gets changed after the check and before this store is executed by another task
-                // we expect to send multiple time the data even if the value is the same
-                RecordPropertyState::Changed,
-            ))
+        let epoch = statement
+            .query_one::<u8, _, _>(
+                (
+                    &prop.interface,
+                    &prop.path,
+                    buf,
+                    mapping_type,
+                    prop.interface_major,
+                    ownership,
+                    RecordPropertyState::Changed,
+                    updated_at,
+                    nanos,
+                    counter,
+                ),
+                |r| r.get(0),
+            )
+            .optional()
             .wrap_err_msg(SqliteError::Query, "while storing property")?;
 
-        Ok(())
+        Ok(epoch)
     }
 
     #[instrument(skip_all)]
@@ -76,68 +77,95 @@ impl WriteConnection {
         &mut self,
         interface: &str,
         path: &str,
-        expected: Option<&AstarteData>,
         state: PropertyState,
+        epoch: u8,
     ) -> Result<usize, Error<SqliteError>> {
-        let transaction = self
-            .transaction()
-            .wrap_err_msg(SqliteError::Transaction, "while updating state")?;
+        let mut statement = self
+            .prepare_cached(include_query!("queries/properties/write/update_state.sql"))
+            .wrap_err_msg(SqliteError::Prepare, "while updating state")?;
 
-        let result = {
-            let value = query_prop_row(&transaction, interface, path).and_then(|value| {
-                let Some(value) = value else {
-                    return Ok(None);
-                };
-
-                value.try_into_value().map_kind(SqliteError::Value)
-            })?;
-
-            if expected != value.as_ref() {
-                // if the value is different from the expected one no records will be updated
-                return Ok(0);
-            }
-
-            let mut statement = transaction
-                .prepare_cached(include_query!("queries/properties/write/update_state.sql"))
-                .wrap_err_msg(SqliteError::Prepare, "while updating state")?;
-
-            let result = statement
-                .execute((RecordPropertyState::from(state), interface, path))
-                .wrap_err_msg(SqliteError::Query, "while updating state")?;
-
-            debug_assert!(1 == result);
-
-            result
+        let new_epoch = if state == PropertyState::Completed {
+            0
+        } else {
+            epoch
         };
 
-        transaction
-            .commit()
-            .wrap_err_msg(SqliteError::Transaction, "while updating state")?;
+        let result = statement
+            .execute((
+                RecordPropertyState::from(state),
+                new_epoch,
+                interface,
+                path,
+                epoch,
+            ))
+            .wrap_err_msg(SqliteError::Query, "while updating state")?;
+
+        debug_assert!((0..=1usize).contains(&result));
 
         Ok(result)
     }
 
     #[instrument(skip(self))]
-    pub(super) fn unset_prop(&self, interface: &str, path: &str) -> Result<(), Error<SqliteError>> {
+    pub(super) fn unset_prop(
+        &self,
+        interface: &str,
+        path: &str,
+        interface_major: i32,
+        updated_at: UpdatedAt,
+    ) -> Result<Option<u8>, Error<SqliteError>> {
+        let (updated_at, nanos, counter) = updated_at_to_i64(updated_at);
+
         let mut statement = self
             .prepare_cached(include_query!("queries/properties/write/unset_prop.sql"))
             .wrap_err(SqliteError::Prepare)?;
 
-        let updated = statement
-            .execute((RecordPropertyState::Changed, interface, path))
+        let epoch = statement
+            .query_one::<u8, _, _>(
+                (
+                    RecordPropertyState::Changed,
+                    updated_at,
+                    nanos,
+                    counter,
+                    interface,
+                    path,
+                    interface_major,
+                ),
+                |r| r.get(0),
+            )
+            .optional()
             .wrap_err(SqliteError::Query)?;
 
-        debug_assert!((0..=1).contains(&updated));
-
-        Ok(())
+        Ok(epoch)
     }
 
     #[instrument(skip(self))]
-    pub(super) fn delete_prop(
+    pub(super) fn delete_device_prop(
         &self,
         interface: &str,
         path: &str,
-    ) -> Result<(), Error<SqliteError>> {
+        epoch: u8,
+    ) -> Result<bool, Error<SqliteError>> {
+        let mut statement = self
+            .prepare_cached(include_query!(
+                "queries/properties/write/delete_device_prop.sql"
+            ))
+            .wrap_err(SqliteError::Prepare)?;
+
+        let deleted = statement
+            .execute((interface, path, epoch))
+            .wrap_err(SqliteError::Query)?;
+
+        debug_assert!((0..=1).contains(&deleted));
+
+        Ok(deleted != 0)
+    }
+
+    #[instrument(skip(self))]
+    pub(super) fn delete_server_prop(
+        &self,
+        interface: &str,
+        path: &str,
+    ) -> Result<bool, Error<SqliteError>> {
         let mut statement = self
             .prepare_cached(include_query!("queries/properties/write/delete_prop.sql"))
             .wrap_err(SqliteError::Prepare)?;
@@ -148,48 +176,7 @@ impl WriteConnection {
 
         debug_assert!((0..=1).contains(&deleted));
 
-        Ok(())
-    }
-
-    #[instrument(skip(self, expected))]
-    pub(super) fn delete_expected_prop(
-        &mut self,
-        interface: &str,
-        path: &str,
-        expected: Option<&AstarteData>,
-    ) -> Result<usize, Error<SqliteError>> {
-        let transaction = self.transaction().wrap_err(SqliteError::Transaction)?;
-
-        let deleted = {
-            let value = query_prop_row(&transaction, interface, path).and_then(|value| {
-                let Some(value) = value else {
-                    return Ok(None);
-                };
-
-                value.try_into_value().map_kind(SqliteError::Value)
-            })?;
-
-            if expected != value.as_ref() {
-                // if the value is different from the expected one no records will be updated
-                return Ok(0);
-            }
-
-            let mut statement = transaction
-                .prepare_cached(include_query!("queries/properties/write/delete_prop.sql"))
-                .wrap_err(SqliteError::Prepare)?;
-
-            let deleted = statement
-                .execute((interface, path))
-                .wrap_err(SqliteError::Query)?;
-
-            debug_assert!((0..=1).contains(&deleted));
-
-            deleted
-        };
-
-        transaction.commit().wrap_err(SqliteError::Transaction)?;
-
-        Ok(deleted)
+        Ok(deleted != 0)
     }
 
     #[instrument(skip(self))]
@@ -219,19 +206,49 @@ impl WriteConnection {
     }
 
     #[instrument(skip_all)]
-    pub(super) fn reset_state(&self, ownership: Ownership) -> Result<(), Error<SqliteError>> {
-        let mut statement = self
+    pub(super) fn reset_session(&self) -> Result<(), Error<SqliteError>> {
+        let mut reset_statement = self
             .prepare_cached(include_query!("queries/properties/write/reset_state.sql"))
             .wrap_err(SqliteError::Prepare)?;
 
-        statement
+        reset_statement
             .execute((
                 RecordPropertyState::Changed,
-                RecordOwnership::from(ownership),
+                RecordOwnership::from(Ownership::Device),
             ))
             .wrap_err(SqliteError::Query)?;
 
+        let mut delete_statement = self
+            .prepare_cached(include_query!(
+                "queries/properties/write/delete_all_unset.sql"
+            ))
+            .wrap_err(SqliteError::Prepare)?;
+
+        delete_statement.execute(()).wrap_err(SqliteError::Query)?;
+
         Ok(())
+    }
+
+    // Delete a property with a wrong version major
+    pub(crate) fn delete_prop_with_major(
+        &self,
+        interface_name: &str,
+        path: &str,
+        version_major: i32,
+    ) -> Result<usize, Error<SqliteError>> {
+        let mut statement = self
+            .prepare_cached(include_query!(
+                "queries/properties/write/delete_prop_with_major.sql"
+            ))
+            .wrap_err(SqliteError::Prepare)?;
+
+        let changed = statement
+            .execute((interface_name, path, version_major))
+            .wrap_err(SqliteError::Query)?;
+
+        debug_assert!((0..=1).contains(&changed));
+
+        Ok(changed)
     }
 }
 
@@ -239,17 +256,24 @@ fn query_prop_row(
     connection: &rusqlite::Connection,
     interface: &str,
     path: &str,
-) -> Result<Option<PropRecord>, Error<SqliteError>> {
+) -> Result<Option<StoredRecord>, Error<SqliteError>> {
     let mut statement = connection
         .prepare_cached(include_query!("queries/properties/read/load_prop.sql"))
         .wrap_err_msg(SqliteError::Prepare, "while querying property")?;
 
     statement
         .query_row((interface, path), |row| {
-            Ok(PropRecord {
-                value: row.get(0)?,
-                stored_type: row.get(1)?,
-                interface_major: row.get(2)?,
+            Ok(StoredRecord {
+                interface: row.get(0)?,
+                path: row.get(1)?,
+                value: row.get(2)?,
+                stored_type: row.get(3)?,
+                interface_major: row.get(4)?,
+                ownership: row.get(5)?,
+                epoch: row.get(6)?,
+                updated_at: row.get(7)?,
+                updated_at_nanos: row.get(8)?,
+                updated_at_counter: row.get(9)?,
             })
         })
         .optional()
@@ -262,18 +286,26 @@ impl ReadConnection {
         &self,
         interface: &str,
         path: &str,
-    ) -> Result<Option<PropRecord>, Error<SqliteError>> {
+    ) -> Result<Option<StoredRecord>, Error<SqliteError>> {
         query_prop_row(self, interface, path)
     }
 
     #[instrument(skip(self))]
-    pub(super) fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<SqliteError>> {
+    pub(super) fn load_all_props(
+        &self,
+        limit: usize,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<SqliteError>> {
+        let limit = i64::try_from(limit)
+            .wrap_err_with(|_| Error::new(SqliteError::Conversion).set_ctx(limit))?;
+        let (updated_at, nanos, counter) = opt_updated_at_to_i64(last_updated_at);
+
         let mut statement = self
             .prepare_cached(include_query!("queries/properties/read/load_all_props.sql"))
             .wrap_err(SqliteError::Prepare)?;
 
         let vec = statement
-            .query_map((), |row| {
+            .query_map((updated_at, nanos, counter, limit), |row| {
                 Ok(StoredRecord {
                     interface: row.get(0)?,
                     path: row.get(1)?,
@@ -281,6 +313,10 @@ impl ReadConnection {
                     stored_type: row.get(3)?,
                     interface_major: row.get(4)?,
                     ownership: row.get(5)?,
+                    epoch: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    updated_at_nanos: row.get(8)?,
+                    updated_at_counter: row.get(9)?,
                 })
             })
             .wrap_err(SqliteError::Query)?
@@ -298,8 +334,13 @@ impl ReadConnection {
     pub(super) fn props_with_ownership(
         &self,
         ownership: Ownership,
+        limit: usize,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<StoredProp>, Error<SqliteError>> {
         let ownership_par = RecordOwnership::from(ownership);
+        let limit = i64::try_from(limit)
+            .wrap_err_with(|_| Error::new(SqliteError::Conversion).set_ctx(limit))?;
+        let (updated_at, nanos, counter) = opt_updated_at_to_i64(last_updated_at);
 
         let mut statement = self
             .prepare_cached(include_query!(
@@ -308,7 +349,7 @@ impl ReadConnection {
             .wrap_err(SqliteError::Prepare)?;
 
         let v = statement
-            .query_map([ownership_par], |row| {
+            .query_map((ownership_par, updated_at, nanos, counter, limit), |row| {
                 Ok(StoredRecord {
                     interface: row.get(0)?,
                     path: row.get(1)?,
@@ -316,6 +357,10 @@ impl ReadConnection {
                     stored_type: row.get(3)?,
                     interface_major: row.get(4)?,
                     ownership: row.get(5)?,
+                    epoch: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    updated_at_nanos: row.get(8)?,
+                    updated_at_counter: row.get(9)?,
                 })
             })
             .wrap_err(SqliteError::Query)?
@@ -345,12 +390,11 @@ impl ReadConnection {
         ownership: Ownership,
         state: PropertyState,
         limit: usize,
-        offset: usize,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<OptStoredProp>, Error<SqliteError>> {
         let limit = i64::try_from(limit)
             .wrap_err_with(|_| Error::new(SqliteError::Conversion).set_ctx(limit))?;
-        let offset = i64::try_from(offset)
-            .wrap_err_with(|_| Error::new(SqliteError::Conversion).set_ctx(offset))?;
+        let (updated_at, nanos, counter) = opt_updated_at_to_i64(last_updated_at);
 
         let ownership_par = RecordOwnership::from(ownership);
 
@@ -365,8 +409,10 @@ impl ReadConnection {
                 (
                     ownership_par,
                     RecordPropertyState::from(state),
+                    updated_at,
+                    nanos,
+                    counter,
                     limit,
-                    offset,
                 ),
                 |row| {
                     Ok(StoredRecord {
@@ -376,6 +422,10 @@ impl ReadConnection {
                         stored_type: row.get(3)?,
                         interface_major: row.get(4)?,
                         ownership: row.get(5)?,
+                        epoch: row.get(6)?,
+                        updated_at: row.get(7)?,
+                        updated_at_nanos: row.get(8)?,
+                        updated_at_counter: row.get(9)?,
                     })
                 },
             )
@@ -397,7 +447,13 @@ impl ReadConnection {
     pub(super) fn interface_props(
         &self,
         interface: &str,
+        limit: usize,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<StoredProp>, Error<SqliteError>> {
+        let limit = i64::try_from(limit)
+            .wrap_err_with(|_| Error::new(SqliteError::Conversion).set_ctx(limit))?;
+        let (updated_at, nanos, counter) = opt_updated_at_to_i64(last_updated_at);
+
         let mut statement = self
             .prepare_cached(include_query!(
                 "queries/properties/read/interface_props.sql"
@@ -405,7 +461,7 @@ impl ReadConnection {
             .wrap_err(SqliteError::Prepare)?;
 
         let v = statement
-            .query_map([interface], |row| {
+            .query_map((interface, updated_at, nanos, counter, limit), |row| {
                 Ok(StoredRecord {
                     interface: row.get(0)?,
                     path: row.get(1)?,
@@ -413,6 +469,10 @@ impl ReadConnection {
                     stored_type: row.get(3)?,
                     interface_major: row.get(4)?,
                     ownership: row.get(5)?,
+                    epoch: row.get(6)?,
+                    updated_at: row.get(7)?,
+                    updated_at_nanos: row.get(8)?,
+                    updated_at_counter: row.get(9)?,
                 })
             })
             .wrap_err(SqliteError::Query)?
@@ -425,6 +485,24 @@ impl ReadConnection {
 
         Ok(v)
     }
+}
+
+fn opt_updated_at_to_i64(opt: Option<UpdatedAt>) -> (Option<i64>, Option<i64>, Option<i64>) {
+    let Some(updated_at) = opt else {
+        return (None, None, None);
+    };
+
+    let (updated_at, nanos, counter) = updated_at_to_i64(updated_at);
+
+    (Some(updated_at), Some(nanos), Some(counter))
+}
+
+fn updated_at_to_i64(updated_at: UpdatedAt) -> (i64, i64, i64) {
+    (
+        updated_at.timestamp().timestamp(),
+        i64::from(updated_at.timestamp().timestamp_subsec_nanos()),
+        i64::from(updated_at.counter()),
+    )
 }
 
 #[cfg(test)]
