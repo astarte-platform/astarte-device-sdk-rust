@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,7 +20,6 @@ use std::env;
 use std::io::{IsTerminal, stdout};
 
 use astarte_device_sdk::DeviceClient;
-use astarte_device_sdk::pairing::api::PairingApi;
 use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Credential, Mqtt, MqttArgs};
 use clap::Parser;
@@ -31,7 +30,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
 
 use self::api::ApiClient;
 use self::channel::Channel;
@@ -49,7 +49,7 @@ pub(crate) mod utils;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
 
-pub(crate) type AstarteClient = DeviceClient<Mqtt<SqliteStore, PairingApi>>;
+pub(crate) type AstarteClient = DeviceClient<Mqtt, SqliteStore>;
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
@@ -95,17 +95,12 @@ async fn main() -> eyre::Result<()> {
         }
     };
 
-    let mut mqtt_config = MqttConfig::new(MqttArgs {
+    let mqtt_config = Mqtt::new(MqttArgs {
         realm: config.run.realm.to_string(),
         device_id: config.run.device_id.to_string(),
         credential: Credential::paring_token(config.run.pairing_token.clone()),
         pairing_url: config.url.pairing_url()?,
     });
-
-    // Ignore SSL for local testing
-    if config.url.ignore_ssl {
-        mqtt_config = mqtt_config.ignore_ssl_errors();
-    }
 
     let api = config.api_client()?;
 
@@ -129,7 +124,14 @@ async fn main() -> eyre::Result<()> {
         .with_writable_dir(&config.run.store_dir)
         .await?;
 
-    let (mut client, connection) = DeviceBuilder::new()
+    let mut builder = DeviceBuilder::new();
+
+    // Ignore SSL for local testing
+    if config.url.ignore_ssl {
+        builder = builder.insecure_tls()?;
+    }
+
+    let (mut client, connection) = builder
         .writable_dir(&config.run.store_dir)
         .store(store)
         .interface_directory(INTERFACE_DIR)?

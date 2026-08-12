@@ -192,6 +192,7 @@ dependencies = [
  "astarte-device-error",
  "astarte-device-fdo",
  "astarte-device-sdk-derive",
+ "astarte-device-tls",
  "astarte-interfaces",
  "astarte-message-hub-proto",
  "astarte-message-hub-proto-mock",
@@ -211,9 +212,8 @@ dependencies = [
  "http",
  "http-body-util",
  "insta",
- "itertools 0.14.0",
  "mime",
- "mockall",
+ "mockall 0.15.0",
  "mockito",
  "pretty_assertions",
  "rand 0.10.2",
@@ -239,7 +239,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "webpki-roots",
  "x509-parser",
 ]
 
@@ -259,7 +258,7 @@ version = "0.15.0"
 dependencies = [
  "astarte-device-sdk",
  "chrono",
- "mockall",
+ "mockall 0.15.0",
 ]
 
 [[package]]
@@ -330,7 +329,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52eb621603009d03ec888d1280b3429127e6b5c193247e4d575020db7ecfe62f"
 dependencies = [
  "astarte-message-hub-proto",
- "mockall",
+ "mockall 0.14.0",
  "tonic",
 ]
 
@@ -1063,6 +1062,7 @@ name = "e2e-test"
 version = "0.15.0"
 dependencies = [
  "astarte-device-sdk",
+ "astarte-device-tls",
  "async-channel",
  "base64 0.22.1",
  "chrono",
@@ -2100,7 +2100,21 @@ dependencies = [
  "cfg-if",
  "downcast",
  "fragile",
- "mockall_derive",
+ "mockall_derive 0.14.0",
+ "predicates",
+ "predicates-tree",
+]
+
+[[package]]
+name = "mockall"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a6ceddfe3ce334925e96bf420fdb2dcee5bed6c632a168ece622676dadeaf8a"
+dependencies = [
+ "cfg-if",
+ "downcast",
+ "fragile",
+ "mockall_derive 0.15.0",
  "predicates",
  "predicates-tree",
 ]
@@ -2110,6 +2124,18 @@ name = "mockall_derive"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca41ce716dda6a9be188b385aa78ee5260fc25cd3802cb2a8afdc6afbe6b6dbf"
+dependencies = [
+ "cfg-if",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "mockall_derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9cfe16fbe8a314aeec0b861ac24e60b1e123e97634bab045475b9d6a18416fd8"
 dependencies = [
  "cfg-if",
  "proc-macro2",

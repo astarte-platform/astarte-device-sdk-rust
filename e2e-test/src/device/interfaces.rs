@@ -1,12 +1,12 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use astarte_device_sdk::astarte_interfaces::Interface;
-use astarte_device_sdk::prelude::DynamicIntrospection;
+use astarte_device_sdk::prelude::DeviceIntrospection;
 use eyre::ensure;
 use tracing::{debug, instrument};
 

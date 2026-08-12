@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,13 +20,14 @@ use std::fmt::Display;
 
 use astarte_interfaces::schema::Reliability;
 use rumqttc::QoS;
+use serde::{Deserialize, Serialize};
 
 /// Borrowing wrapper for the client id
 ///
 /// To avoid directly allocating and returning a [`String`] each time
 /// the client id is needed this trait implements [`Display`]
 /// while only borrowing the field needed to construct the client id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ClientId<S = String> {
     pub(crate) realm: S,
     pub(crate) device_id: S,

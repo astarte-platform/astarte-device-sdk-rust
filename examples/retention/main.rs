@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,7 +23,7 @@ use std::time::Duration;
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
-use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::MqttConfig};
+use astarte_device_sdk::{builder::DeviceBuilder, prelude::*, transport::mqtt::Mqtt};
 use clap::Parser;
 use eyre::Context;
 use serde::Deserialize;
@@ -112,12 +112,12 @@ struct Args {
 }
 
 async fn send_loop<C>(
-    mut client: C,
+    client: C,
     limit: Option<NonZeroU32>,
     cancel: CancellationToken,
 ) -> eyre::Result<()>
 where
-    C: Client + ClientConnection,
+    C: Client,
 {
     let limit = limit.map(NonZeroU32::get).unwrap_or(u32::MAX);
     let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -182,7 +182,7 @@ async fn main() -> eyre::Result<()> {
     // Load configuration
     let file_path = config
         .as_deref()
-        .unwrap_or_else(|| Path::new("./examples/object_datastream/configuration.json"));
+        .unwrap_or_else(|| Path::new("./examples/retention/configuration.json"));
 
     let file = tokio::fs::read_to_string(file_path).await?;
     let Config {
@@ -200,16 +200,12 @@ async fn main() -> eyre::Result<()> {
         pairing_url,
     };
 
-    let mut mqtt_config = MqttConfig::new(args);
-
-    if ignore_ssl {
-        mqtt_config = mqtt_config.ignore_ssl_errors();
-    }
+    let mqtt_config = Mqtt::new(args);
 
     let store = SqliteStore::options().with_writable_dir(&store_dir).await?;
 
     // Create an Astarte Device (also performs the connection)
-    let (mut client, connection) = DeviceBuilder::new()
+    let mut builder = DeviceBuilder::new()
         .writable_dir(store_dir)
         .store(store)
         .interface_str(INDIVIDUAL_STORED)?
@@ -217,10 +213,13 @@ async fn main() -> eyre::Result<()> {
         .interface_str(OBJECT_STORED)?
         .interface_str(OBJECT_UNIQ_STORED)?
         .interface_str(OBJECT_VOLATILE)?
-        .interface_str(OBJECT_UNIQ_VOLATILE)?
-        .connection(mqtt_config)
-        .build()
-        .await?;
+        .interface_str(OBJECT_UNIQ_VOLATILE)?;
+
+    if ignore_ssl {
+        builder = builder.insecure_tls()?;
+    }
+
+    let (client, connection) = builder.connection(mqtt_config).build().await?;
 
     info!("Connection to Astarte established.");
 
@@ -237,11 +236,11 @@ async fn main() -> eyre::Result<()> {
     // Create a task to transmit
     tasks.spawn(send_loop(client.clone(), loop_times, cancel.clone()));
 
-    // TODO: Spawn a task to receive
+    // TODO: add a receive_loop
     // tasks.spawn(receive_loop(client.clone(), cancel.clone()));
 
     tasks.spawn({
-        let mut client = client.clone();
+        let client = client.clone();
         let cancel = cancel.clone();
 
         async move {
@@ -283,15 +282,15 @@ async fn main() -> eyre::Result<()> {
 
                 return Err(error);
             }
-            Err(err) => {
-                error!(%err, "couldn't join tasks");
+            Err(error) => {
+                error!(%error, "couldn't join tasks");
 
                 client.disconnect().await?;
                 cancel.cancel();
 
                 tasks.shutdown().await;
 
-                return Err(err).wrap_err("couldn't join tasks");
+                return Err(error).wrap_err("couldn't join tasks");
             }
         }
     }

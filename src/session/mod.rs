@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,14 +24,14 @@ use std::future::Future;
 
 use astarte_device_error::Error;
 use astarte_interfaces::Interface;
-use itertools::Itertools;
 
 use crate::interfaces::Interfaces;
+use crate::transport::RemovedInterface;
 
 mod sqlite;
 
 /// Interface data associated with the astarte introspection.
-#[derive(Debug, Clone, Copy, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct IntrospectionInterface<S = String> {
     /// Name of the interface.
     name: S,
@@ -65,14 +65,6 @@ impl<S> IntrospectionInterface<S> {
     }
 }
 
-impl<T: PartialEq<U>, U> PartialEq<IntrospectionInterface<U>> for IntrospectionInterface<T> {
-    fn eq(&self, other: &IntrospectionInterface<U>) -> bool {
-        self.name() == other.name()
-            && self.version_major() == other.version_major()
-            && self.version_minor() == other.version_minor()
-    }
-}
-
 impl<'a> From<&'a Interface> for IntrospectionInterface<&'a str> {
     fn from(val: &'a Interface) -> Self {
         IntrospectionInterface::new(
@@ -93,15 +85,25 @@ impl From<&Interface> for IntrospectionInterface {
     }
 }
 
+impl<'a> From<&'a RemovedInterface> for IntrospectionInterface<&'a str> {
+    fn from(value: &'a RemovedInterface) -> Self {
+        IntrospectionInterface::new(
+            value.interface_name(),
+            value.version_major(),
+            value.version_minor(),
+        )
+    }
+}
+
 impl<'a> From<&'a Interfaces> for Vec<IntrospectionInterface<&'a str>> {
     fn from(val: &'a Interfaces) -> Self {
-        val.iter().map(|i| i.into()).collect_vec()
+        val.iter().map(|i| i.into()).collect()
     }
 }
 
 impl From<&Interfaces> for Vec<IntrospectionInterface> {
     fn from(val: &Interfaces) -> Self {
-        val.iter().map(|i| i.into()).collect_vec()
+        val.iter().map(|i| i.into()).collect()
     }
 }
 
