@@ -9,18 +9,15 @@
   "mappings": [
     {
       "endpoint": "/%{sensor_id}/endpoint1",
-      "type": "double",
-      "explicit_timestamp": true
+      "type": "double"
     },
     {
       "endpoint": "/%{sensor_id}/endpoint2",
-      "type": "string",
-      "explicit_timestamp": true
+      "type": "string"
     },
     {
       "endpoint": "/%{sensor_id}/endpoint3",
-      "type": "booleanarray",
-      "explicit_timestamp": true
+      "type": "booleanarray"
     }
   ]
 }
