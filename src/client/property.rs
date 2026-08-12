@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,32 +20,32 @@
 
 use astarte_device_error::{Error, ResultExt};
 use astarte_interfaces::schema::Ownership;
-use astarte_interfaces::{InterfaceMapping, MappingPath, Properties, Schema};
-use tracing::{debug, error, instrument, trace};
+use astarte_interfaces::{MappingPath, Schema};
+use tracing::{debug, instrument, trace};
 
 use crate::AstarteData;
+use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind};
-use crate::interfaces::MappingRef;
 use crate::state::ConnStatus;
-use crate::store::{PropertyMapping, PropertyState, PropertyStore, StoredProp};
-use crate::transport::Connection;
-use crate::validate::{ValidatedProperty, ValidatedUnset};
+use crate::store::{Prop, PropertyMapping, StoreCapabilities};
+use crate::validate::Validated;
+use crate::validate::properties::{ValidatedProperty, ValidatedUnset};
 
-use super::{DeviceClient, Publish};
+use super::DeviceClient;
 
-impl<C> DeviceClient<C>
+impl<C, S> DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
-    #[instrument(skip(self, data))]
+    #[instrument(skip_all, fields(interface = interface_name, path = %path, mapping = data.display_type()))]
     pub(crate) async fn send_property(
-        &mut self,
+        &self,
         interface_name: &str,
         path: &MappingPath<'_>,
         data: AstarteData,
     ) -> Result<(), AstarteError>
     where
-        C::Sender: Publish,
+        S: StoreCapabilities,
     {
         let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces
@@ -57,55 +57,44 @@ where
 
         trace!("sending individual type {}", validated.data.display_type());
 
-        if self.is_prop_stored(&mapping, &validated).await? {
-            debug!("property was already sent, no need to send it again");
-            return Ok(());
-        }
-
-        let prop = StoredProp {
-            interface: validated.interface.as_str(),
-            path: validated.path.as_str(),
-            value: &validated.data,
+        let prop = Prop {
+            interface: validated.interface.clone(),
+            path: validated.path.clone(),
+            value: validated.data.clone(),
             interface_major: mapping.interface().version_major(),
             ownership: Ownership::Device,
+            updated_at: self.state.property_ctx().next_updated_at(),
         };
 
-        self.store
+        let meta = self
+            .state
+            .store()
             .store_prop(prop)
             .await
             .map_kind(ErrorKind::Store)?;
 
-        debug!(
-            "property sent {interface_name}{path}:{}",
-            mapping.interface().version_major()
-        );
+        let Some(epoch) = meta.epoch() else {
+            debug!("property was already sent, no need to send it again");
 
-        match self.state.connection().await {
-            ConnStatus::Connected => {
-                let expected = Some(validated.data.clone());
+            return Ok(());
+        };
 
-                self.sender.send_property(validated).await?;
+        debug!("property updated");
 
-                let updated = self
-                    .store
-                    .update_state(
-                        &PropertyMapping::from(&mapping),
-                        PropertyState::Completed,
-                        expected,
-                    )
-                    .await
-                    .map_kind(ErrorKind::Store)?;
+        match self.state.connection() {
+            ConnStatus::Online => {
+                self.send_timeout(Validated::Property {
+                    epoch,
+                    data: validated,
+                })
+                .await?;
 
-                trace!(
-                    ?updated,
-                    "property sent {interface_name}{path}:{}",
-                    mapping.interface().version_major()
-                );
+                debug!("property sent");
             }
-            ConnStatus::Disconnected => {
+            ConnStatus::Offline | ConnStatus::Connected { .. } => {
                 trace!("property not sent since offline")
             }
-            ConnStatus::Closed => {
+            ConnStatus::Disconnect | ConnStatus::Closed => {
                 return Err(Error::with(
                     ErrorKind::Disconnected,
                     "while sending property",
@@ -116,63 +105,14 @@ where
         Ok(())
     }
 
-    /// Checks whether a passed interface is a property and if it is already stored with the same value.
-    /// Useful to prevent sending a property twice with the same value.
-    async fn is_prop_stored(
-        &self,
-        mapping: &MappingRef<'_, Properties>,
-        new: &ValidatedProperty,
-    ) -> Result<bool, AstarteError> {
-        // Check if this property is already in db
-        let stored = self.try_load_prop(mapping).await?;
-
-        Ok(stored.is_some_and(|val| val == new.data))
-    }
-
-    /// Get a property or deletes it if a version or type miss-match happens.
-    pub(crate) async fn try_load_prop(
-        &self,
-        mapping: &MappingRef<'_, Properties>,
-    ) -> Result<Option<AstarteData>, AstarteError> {
-        let property_mapping = PropertyMapping::from(mapping);
-        let mapping = mapping.mapping();
-
-        let value = self
-            .store
-            .load_prop(&property_mapping)
-            .await
-            .map_kind(ErrorKind::Store)?;
-
-        let value = match value {
-            Some(value) if !value.eq_mapping_type(mapping.mapping_type()) => {
-                error!(
-                    ?value,
-                    "stored property type mismatch, expected {}",
-                    mapping.mapping_type(),
-                );
-                self.store
-                    .delete_prop(&property_mapping)
-                    .await
-                    .map_kind(ErrorKind::Store)?;
-
-                None
-            }
-
-            Some(value) => Some(value),
-            None => None,
-        };
-
-        Ok(value)
-    }
-
-    #[instrument(skip(self))]
+    #[instrument(skip_all, fields(interface = interface_name, path = %path))]
     pub(crate) async fn send_unset(
-        &mut self,
+        &self,
         interface_name: &str,
         path: &MappingPath<'_>,
     ) -> Result<(), AstarteError>
     where
-        C::Sender: Publish,
+        S: StoreCapabilities,
     {
         let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces
@@ -181,30 +121,40 @@ where
 
         let validated = ValidatedUnset::validate(mapping).map_kind(ErrorKind::Interface)?;
 
-        debug!("unsetting property {interface_name}{path}");
+        debug!("unsetting property");
 
         let property_mapping = PropertyMapping::from(&mapping);
-        self.store
-            .unset_prop(&property_mapping)
+
+        let meta = self
+            .state
+            .store()
+            .unset_prop(
+                &property_mapping,
+                self.state.property_ctx().next_updated_at(),
+            )
             .await
             .map_kind(ErrorKind::Store)?;
 
-        match self.state.connection().await {
-            ConnStatus::Connected => {
-                self.sender.unset(validated.clone()).await?;
+        let Some(epoch) = meta.epoch() else {
+            debug!("property was already unset, no need to send it again");
 
-                let updated = self
-                    .store
-                    .delete_expected_prop(&PropertyMapping::from(&mapping), None)
-                    .await
-                    .map_kind(ErrorKind::Store)?;
+            return Ok(());
+        };
 
-                debug!(?updated, "delete unset property");
+        match self.state.connection() {
+            ConnStatus::Online => {
+                self.send_timeout(Validated::Unset {
+                    epoch,
+                    data: validated,
+                })
+                .await?;
+
+                debug!("unset sent");
             }
-            ConnStatus::Disconnected => {
+            ConnStatus::Offline | ConnStatus::Connected { .. } => {
                 trace!("not deleting property from store, since disconnected");
             }
-            ConnStatus::Closed => {
+            ConnStatus::Disconnect | ConnStatus::Closed => {
                 return Err(Error::with(
                     ErrorKind::Disconnected,
                     "while unsetting property",
@@ -220,35 +170,17 @@ where
 mod tests {
     use super::*;
 
-    use mockall::{Sequence, predicate};
-
     use crate::client::tests::mock_client;
-    use crate::store::{PropertyMapping, PropertyStore, StoredProp};
+    use crate::store::{Prop, PropertyMapping, PropertyStore};
     use crate::test::{E2E_DEVICE_PROPERTY, E2E_DEVICE_PROPERTY_NAME};
-    use crate::validate::{ValidatedProperty, ValidatedUnset};
     use crate::{AstarteData, Client};
 
     #[tokio::test]
     async fn send_property_connected() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Online);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
-
-        let mut seq = Sequence::new();
-
-        client
-            .sender
-            .expect_send_property()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::eq(ValidatedProperty {
-                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
-                path: path.to_string(),
-                version_major: 0,
-                data: value.clone(),
-            }))
-            .returning(|_| Ok(()));
 
         // Send
         client
@@ -256,24 +188,41 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces().read().await;
-        let path = MappingPath::try_from(path).unwrap();
-        let mapping = interfaces
-            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
-            .unwrap();
+        let prop = {
+            let interfaces = client.state.interfaces().read().await;
+            let path = MappingPath::try_from(path).unwrap();
+            let mapping = interfaces
+                .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+                .unwrap();
 
-        let prop = client
-            .store
-            .load_prop(&PropertyMapping::from(&mapping))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(prop, value);
+            client
+                .state
+                .store()
+                .load_prop(&PropertyMapping::from(&mapping))
+                .await
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(prop.value, value);
+
+        let res = client.client_rx.try_recv().unwrap();
+        assert_eq!(
+            res,
+            Validated::Property {
+                epoch: prop.epoch(),
+                data: ValidatedProperty {
+                    interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                    path: path.to_string(),
+                    version_major: 0,
+                    data: value.clone(),
+                }
+            }
+        );
     }
 
     #[tokio::test]
     async fn send_property_offline() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Disconnected);
+        let client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Offline);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
@@ -284,6 +233,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(client.client_rx.is_empty());
+
         let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
@@ -291,31 +242,34 @@ mod tests {
             .unwrap();
 
         let prop = client
-            .store
+            .state
+            .store()
             .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
 
-        assert_eq!(prop, value);
+        assert_eq!(prop.value, value);
     }
 
     #[tokio::test]
     async fn send_property_connected_already_stored() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
+        let client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Online);
 
         let path = "/sensor_1/longinteger_endpoint";
         let value = AstarteData::LongInteger(42);
 
         // No expect, but store the prop
         client
-            .store
-            .store_prop(StoredProp {
-                interface: E2E_DEVICE_PROPERTY_NAME,
-                path,
-                value: &value,
+            .state
+            .store()
+            .store_prop(Prop {
+                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                path: path.to_string(),
+                value: value.clone(),
                 interface_major: 0,
                 ownership: Ownership::Device,
+                updated_at: client.state.property_ctx().next_updated_at(),
             })
             .await
             .unwrap();
@@ -326,6 +280,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(client.client_rx.is_empty());
+
         let interfaces = client.state.interfaces().read().await;
         let path = MappingPath::try_from(path).unwrap();
         let mapping = interfaces
@@ -333,33 +289,21 @@ mod tests {
             .unwrap();
 
         let prop = client
-            .store
+            .state
+            .store()
             .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap()
             .unwrap();
 
-        assert_eq!(prop, value);
+        assert_eq!(prop.value, value);
     }
 
     #[tokio::test]
     async fn unset_property_connected_already_stored() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
+        let client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Online);
 
         let path = "/sensor_1/longinteger_endpoint";
-
-        let mut seq = Sequence::new();
-
-        client
-            .sender
-            .expect_unset()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::eq(ValidatedUnset {
-                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
-                path: path.to_string(),
-            }))
-            .returning(|_| Ok(()));
 
         // Send
         client
@@ -367,80 +311,27 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces().read().await;
-        let path = MappingPath::try_from(path).unwrap();
-        let mapping = interfaces
-            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
-            .unwrap();
+        let prop = {
+            let interfaces = client.state.interfaces().read().await;
+            let path = MappingPath::try_from(path).unwrap();
+            let mapping = interfaces
+                .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+                .unwrap();
 
-        let prop = client
-            .store
-            .load_prop(&PropertyMapping::from(&mapping))
-            .await
-            .unwrap();
+            client
+                .state
+                .store()
+                .load_prop(&PropertyMapping::from(&mapping))
+                .await
+                .unwrap()
+        };
 
         assert_eq!(prop, None);
     }
 
     #[tokio::test]
-    async fn send_property_connected_already_stored_wrong_type() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
-
-        let path = "/sensor_1/longinteger_endpoint";
-        let value = AstarteData::LongInteger(42);
-
-        client
-            .store
-            .store_prop(StoredProp {
-                interface: E2E_DEVICE_PROPERTY_NAME,
-                path,
-                // Wrong type
-                value: &AstarteData::Boolean(false),
-                interface_major: 0,
-                ownership: Ownership::Device,
-            })
-            .await
-            .unwrap();
-
-        let mut seq = Sequence::new();
-
-        client
-            .sender
-            .expect_send_property()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::eq(ValidatedProperty {
-                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
-                path: path.to_string(),
-                version_major: 0,
-                data: value.clone(),
-            }))
-            .returning(|_| Ok(()));
-
-        // Send
-        client
-            .set_property(E2E_DEVICE_PROPERTY_NAME, path, value.clone())
-            .await
-            .unwrap();
-
-        let interfaces = client.state.interfaces().read().await;
-        let path = MappingPath::try_from(path).unwrap();
-        let mapping = interfaces
-            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
-            .unwrap();
-
-        let prop = client
-            .store
-            .load_prop(&PropertyMapping::from(&mapping))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(prop, value);
-    }
-
-    #[tokio::test]
     async fn unset_property_offline_already_stored() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Disconnected);
+        let client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Offline);
 
         let path = "/sensor_1/longinteger_endpoint";
 
@@ -450,17 +341,22 @@ mod tests {
             .await
             .unwrap();
 
-        let interfaces = client.state.interfaces().read().await;
-        let path = MappingPath::try_from(path).unwrap();
-        let mapping = interfaces
-            .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
-            .unwrap();
+        assert!(client.client_rx.is_empty());
 
-        let prop = client
-            .store
-            .load_prop(&PropertyMapping::from(&mapping))
-            .await
-            .unwrap();
+        let prop = {
+            let interfaces = client.state.interfaces().read().await;
+            let path = MappingPath::try_from(path).unwrap();
+            let mapping = interfaces
+                .get_property(E2E_DEVICE_PROPERTY_NAME, &path)
+                .unwrap();
+
+            client
+                .state
+                .store()
+                .load_prop(&PropertyMapping::from(&mapping))
+                .await
+                .unwrap()
+        };
 
         assert_eq!(prop, None);
     }
