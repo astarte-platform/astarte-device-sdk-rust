@@ -44,6 +44,7 @@ fi
 # You'll find the coverage report and `lcov` file under: $CARGO_TARGET_DIR/debug/coverage/
 #
 # Use absolute paths every where
+export RUSTUP_TOOLCHAIN="nightly"
 CARGO_TARGET_DIR=$(
     cargo metadata --format-version 1 --no-deps --locked |
         jq '.target_directory' --raw-output
@@ -87,7 +88,7 @@ else
 fi
 
 # Currently branch coverage can be broken on nightly
-cargo +nightly llvm-cov \
+cargo llvm-cov \
     --all-features -p "$crate" \
     --lcov \
     --output-path "$out_path"

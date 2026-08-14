@@ -70,7 +70,7 @@ impl ObjectDerive {
                 "enum",
                 &"object must be astruct",
             )
-                .with_span(&self.ident));
+            .with_span(&self.ident));
         };
 
         let mut errors = darling::Error::accumulator();
@@ -86,12 +86,11 @@ impl ObjectDerive {
                     .map(|(field_i, field_n)| {
                         // Value comes from the other quotes
                         let conversion = if field.fallible {
-                            quote_spanned! {field_i.span() =>
-                                { 
+                            quote_spanned! {field_i.span() => {
                                     let res: Result<
                                         astarte_device_sdk::types::AstarteData,
                                         astarte_device_sdk::astarte_device_error::Error<astarte_device_sdk::types::TypeError>
-                                    > = ::std::convert::TryInto::try_into(value); 
+                                    > = ::std::convert::TryInto::try_into(value);
 
                                     res?
                                 }
@@ -111,7 +110,7 @@ impl ObjectDerive {
                                 });
                             }
                         } else {
-                            quote_spanned! {field_i.span() => 
+                            quote_spanned! {field_i.span() =>
                                 if let Some(value) = value.#field_i {
                                     object.insert(#field_n.to_string(), #conversion);
                                 }
