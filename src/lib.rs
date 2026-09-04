@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -43,7 +43,6 @@ pub mod event;
 mod interfaces;
 pub mod introspection;
 pub(crate) mod logging;
-pub mod pairing;
 pub mod prelude;
 pub mod properties;
 pub mod retention;
@@ -57,7 +56,7 @@ mod validate;
 
 /// Re-exported internal structs
 pub use crate::client::{Client, DeviceClient};
-pub use crate::connection::{DeviceConnection, EventLoop};
+pub use crate::connection::{Connection, DeviceConnection};
 pub use crate::event::Value;
 pub use crate::event::{DeviceEvent, FromEvent};
 pub use crate::types::AstarteData;
@@ -86,9 +85,6 @@ mod test {
     pub(crate) const DEVICE_PROPERTIES: &str = include_str!(
         "../examples/individual_properties/interfaces/org.astarte-platform.rust.examples.individual-properties.DeviceProperties.json"
     );
-    pub(crate) const DEVICE_PROPERTIES_NAME: &str =
-        "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
-
     pub(crate) const SERVER_OBJECT: &str = include_str!(
         "../examples/object_datastream/interfaces/org.astarte-platform.rust.examples.object-datastream.ServerDatastream.json"
     );
@@ -103,8 +99,6 @@ mod test {
     pub(crate) const SERVER_INDIVIDUAL: &str = include_str!(
         "../examples/individual_datastream/interfaces/org.astarte-platform.rust.examples.individual-datastream.ServerDatastream.json"
     );
-    pub(crate) const SERVER_INDIVIDUAL_NAME: &str =
-        "org.astarte-platform.rust.examples.individual-datastream.ServerDatastream";
 
     // E2E Interfaces
     pub(crate) const E2E_DEVICE_DATASTREAM: &str = include_str!(
@@ -123,6 +117,9 @@ mod test {
     );
     pub(crate) const E2E_DEVICE_AGGREGATE_NAME: &str =
         "org.astarte-platform.rust.e2etest.DeviceAggregate";
+    pub(crate) const E2E_SERVER_AGGREGATE: &str = include_str!(
+        "../e2e-test/interfaces/org.astarte-platform.rust.e2etest.ServerAggregate.json"
+    );
     pub(crate) const E2E_DEVICE_PROPERTY: &str = include_str!(
         "../e2e-test/interfaces/additional/org.astarte-platform.rust.e2etest.DeviceProperty.json"
     );

@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,7 +30,7 @@ use astarte_device_sdk::IntoAstarteObject;
 use astarte_device_sdk::builder::DeviceBuilder;
 use astarte_device_sdk::prelude::*;
 use astarte_device_sdk::store::memory::MemoryStore;
-use astarte_device_sdk::transport::mqtt::MqttConfig;
+use astarte_device_sdk::transport::mqtt::Mqtt;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::level_filters::LevelFilter;
@@ -73,12 +73,12 @@ struct DataObject {
 }
 
 async fn send_loop<C>(
-    mut client: C,
+    client: C,
     limit: Option<NonZeroU32>,
     cancel: CancellationToken,
 ) -> eyre::Result<()>
 where
-    C: Client + ClientConnection,
+    C: Client,
 {
     let limit = limit.map(NonZeroU32::get).unwrap_or(u32::MAX);
 
@@ -188,11 +188,7 @@ async fn main() -> eyre::Result<()> {
         pairing_url,
     };
 
-    let mut mqtt_config = MqttConfig::new(args);
-
-    if ignore_ssl {
-        mqtt_config = mqtt_config.ignore_ssl_errors();
-    }
+    let mqtt_config = Mqtt::new(args);
 
     let mut builder = DeviceBuilder::new();
 
@@ -200,7 +196,11 @@ async fn main() -> eyre::Result<()> {
         builder = builder.writable_dir(store_dir);
     }
 
-    let (mut client, connection) = builder
+    if ignore_ssl {
+        builder = builder.insecure_tls()?;
+    }
+
+    let (client, connection) = builder
         .store(MemoryStore::new())
         .interface_directory("./examples/object_datastream/interfaces")?
         .connection(mqtt_config)
@@ -225,7 +225,7 @@ async fn main() -> eyre::Result<()> {
     tasks.spawn(receive_loop(client.clone(), cancel.clone()));
 
     tasks.spawn({
-        let mut client = client.clone();
+        let client = client.clone();
         let cancel = cancel.clone();
 
         async move {

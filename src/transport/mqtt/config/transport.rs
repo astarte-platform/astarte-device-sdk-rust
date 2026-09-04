@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,87 +17,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::str;
-use std::path::PathBuf;
+use std::io;
+use std::path::Path;
 use std::sync::Arc;
 
 use astarte_device_error::{Error, ResultExt, WrapError};
 use rumqttc::Transport;
-use rustls::RootCertStore;
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use tokio::fs;
-use tracing::{debug, error, instrument};
+use tokio::io::AsyncWriteExt;
+use tracing::{debug, error};
 
 use super::ClientId;
 use super::{CertificateFile, PrivateKeyFile, tls::ClientAuth};
 use crate::error::Report;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::pairing::api::PairingApiError;
-use crate::pairing::api::client::ApiClient;
-use crate::transport::mqtt::config::tls::{
-    insecure_tls_config_builder, is_env_ignore_ssl, read_root_cert_store, tls_config_builder,
-};
+use crate::state::ConnectionState;
 use crate::transport::mqtt::crypto::Bundle;
+use crate::transport::mqtt::pairing::PairingApiError;
+use crate::transport::mqtt::pairing::client::ApiClient;
 
 /// Structure to create an authenticated [`Transport`]
 #[derive(Debug)]
-pub(crate) struct TransportProvider {
-    store_dir: Option<PathBuf>,
-    insecure_ssl: bool,
-    root_cert_store: Arc<RootCertStore>,
-}
+pub(crate) struct TransportProvider {}
 
 impl TransportProvider {
-    #[instrument(skip_all)]
-    pub(crate) async fn configure(
-        store_dir: Option<PathBuf>,
-        insecure_ssl: bool,
-    ) -> Result<Self, Error<PairingApiError>> {
-        let insecure_ssl = insecure_ssl || is_env_ignore_ssl();
-
-        if insecure_ssl {
-            notify_security_event(SecurityEvent::TlsValidationCheckDisabledSuccessfully);
-        }
-
-        debug!("reading root cert store from native certs");
-        let root_certs = read_root_cert_store().await?;
-
-        Ok(Self {
-            insecure_ssl,
-            root_cert_store: Arc::new(root_certs),
-            store_dir,
-        })
-    }
-
-    pub(crate) fn api_tls_config(&self) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
-        let client_cfg = if self.insecure_ssl {
-            insecure_tls_config_builder()?.with_no_client_auth()
-        } else {
-            let roots = Arc::clone(&self.root_cert_store);
-
-            tls_config_builder(roots)?.with_no_client_auth()
-        };
-
-        debug!("TLS client config read");
-
-        Ok(client_cfg)
-    }
-
     /// Config the TLS for the transport.
     ///
     /// It  will be passed to the MQTT connection.
-    pub(crate) fn config_transport(
-        &self,
+    pub(crate) fn config_transport<S>(
+        state: &ConnectionState<S>,
         client_auth: ClientAuth,
     ) -> Result<Transport, Error<PairingApiError>> {
-        let config = if self.insecure_ssl {
-            notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
-
-            client_auth.insecure_tls_config()?
-        } else {
-            let roots = Arc::clone(&self.root_cert_store);
-
-            client_auth.tls_config(roots)?
-        };
+        let config = client_auth.tls_config(state.tls().clone())?;
 
         Ok(Transport::tls_with_config(
             rumqttc::TlsConfiguration::Rustls(Arc::new(config)),
@@ -108,13 +59,13 @@ impl TransportProvider {
     ///
     /// It also verifies certificate validity.
     pub(crate) async fn retrieve_credentials(
-        &self,
         client: &ApiClient<'_>,
         client_id: ClientId<&str>,
+        store_dir: Option<&Path>,
     ) -> Result<Option<ClientAuth>, Error<PairingApiError>> {
         debug!("retrieving credentials");
 
-        let auth = self.read_credentials(client_id).await;
+        let auth = Self::read_credentials(client_id, store_dir).await;
 
         let Some(auth) = auth else {
             notify_security_event(SecurityEvent::AlarmCertificateUnavailable);
@@ -138,23 +89,23 @@ impl TransportProvider {
     }
 
     /// Creates new credentials and if a store directory is set, it stores it
-    pub(crate) async fn create_credentials(
-        &self,
+    pub(crate) async fn create_credentials<S>(
+        state: &ConnectionState<S>,
         client: &ApiClient<'_>,
         client_id: ClientId<&str>,
     ) -> Result<ClientAuth, Error<PairingApiError>> {
         debug!("creating new transport credentials");
 
-        let (bundle, certificate) = self.create_certificate(client).await?;
+        let (bundle, certificate) = Self::create_certificate(client).await?;
 
         // If no store dir is set we just create a new certificate
-        if let Some(store_dir) = &self.store_dir {
+        if let Some(store_dir) = &state.config().writable_dir {
             debug!("storing credentials");
 
             let certificate_file = CertificateFile::new(store_dir);
             let private_key_file = PrivateKeyFile::new(store_dir);
 
-            self.store_credentials(
+            Self::store_credentials(
                 &private_key_file,
                 &bundle.private_key,
                 &certificate_file,
@@ -182,11 +133,9 @@ impl TransportProvider {
 
     /// Create the certificate using the Astarte API
     async fn create_certificate(
-        &self,
         client: &ApiClient<'_>,
     ) -> Result<(Bundle, String), Error<PairingApiError>> {
-        let bundle = Bundle::generate_key(client.realm, client.device_id)
-            .map_kind(PairingApiError::Crypto)?;
+        let bundle = Bundle::generate_key(&client.client_id).map_kind(PairingApiError::Crypto)?;
         notify_security_event(SecurityEvent::CsrPendingApproval);
 
         let certificate = client
@@ -206,14 +155,15 @@ impl TransportProvider {
 
     /// Store the credentials to files.
     async fn store_credentials(
-        &self,
         private_key_file: &PrivateKeyFile,
         private_key: &PrivatePkcs8KeyDer<'_>,
         certificate_file: &CertificateFile,
         certificate: &str,
     ) {
-        let store_cert = fs::write(&certificate_file, &certificate).await;
-        let store_key = fs::write(&private_key_file, &private_key.secret_pkcs8_der()).await;
+        let store_cert =
+            safe_write_private(certificate_file.as_ref(), certificate.as_bytes()).await;
+        let store_key =
+            safe_write_private(private_key_file.as_ref(), private_key.secret_pkcs8_der()).await;
 
         if store_cert.is_ok() && store_key.is_ok() {
             notify_security_event(SecurityEvent::CertificateStoredSuccessfully);
@@ -231,8 +181,11 @@ impl TransportProvider {
     }
 
     /// Read credentials from the filesystem.
-    async fn read_credentials(&self, client_id: ClientId<&str>) -> Option<ClientAuth> {
-        let Some(store_dir) = &self.store_dir else {
+    async fn read_credentials(
+        client_id: ClientId<&str>,
+        store_dir: Option<&Path>,
+    ) -> Option<ClientAuth> {
+        let Some(store_dir) = store_dir else {
             debug!("no store directory");
 
             return None;
@@ -247,6 +200,27 @@ impl TransportProvider {
     }
 }
 
+pub(crate) async fn safe_write_private(path: &Path, src: &[u8]) -> io::Result<()> {
+    let tmp_dir = tempfile::Builder::new().prefix(".astarte-sdk").tempdir()?;
+
+    let tmp_file = tmp_dir.path().join("tmpfile.tmp");
+
+    let mut file = tokio::fs::File::options();
+    file.create(true).write(true).truncate(true);
+
+    #[cfg(unix)]
+    file.mode(0o600);
+
+    let mut file = file.open(&tmp_file).await?;
+
+    file.write_all(src).await?;
+    file.sync_all().await?;
+
+    tokio::fs::rename(tmp_file, path).await?;
+
+    Ok(())
+}
+
 // TODO: test the certificate validation fail
 #[cfg(test)]
 mod tests {
@@ -258,9 +232,12 @@ mod tests {
     use tempfile::TempDir;
     use url::Url;
 
-    use crate::builder::Config;
-    use crate::pairing::api::client::ClientArgs;
-    use crate::pairing::api::client::tests::mock_create_certificate;
+    use crate::interfaces::Interfaces;
+    use crate::state::ConnStatus;
+    use crate::state::tests::mock_state;
+    use crate::store::mock::MockStore;
+    use crate::transport::mqtt::pairing::client::ClientArgs;
+    use crate::transport::mqtt::pairing::client::tests::mock_create_certificate;
 
     use super::*;
 
@@ -271,8 +248,10 @@ mod tests {
         };
 
         let args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
+            client_id: ClientId {
+                realm: "realm",
+                device_id: "device_id",
+            },
             pairing_url: url,
             token: "secret",
         };
@@ -297,74 +276,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_create_transport_insecure() {
-        let dir = TempDir::new().unwrap();
-
-        let mut server = Server::new_async().await;
-
-        let mock = mock_create_certificate(&mut server)
-            .expect(1)
-            .create_async()
-            .await;
-
-        // With store
-        let provider = TransportProvider::configure(Some(dir.path().to_owned()), true)
-            .await
-            .expect("failed to configure transport provider");
-
-        let url = server.url().parse().unwrap();
-
-        let (client_id, args) = mock_args(&url);
-
-        let api = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("failed to create api client");
-
-        let auth = provider.create_credentials(&api, client_id).await.unwrap();
-
-        let transport = provider.config_transport(auth).unwrap();
-
-        assert!(matches!(
-            transport,
-            Transport::Tls(TlsConfiguration::Rustls(..))
-        ));
-
-        mock.assert_async().await;
-
-        check_stored_keys(dir.path()).await;
-    }
-
-    #[tokio::test]
-    async fn should_create_transport_insecure_no_store() {
-        let mut server = Server::new_async().await;
-
-        let mock = mock_create_certificate(&mut server)
-            .expect(1)
-            .create_async()
-            .await;
-
-        // Without store
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("failed to configure transport provider");
-
-        let url = server.url().parse().unwrap();
-        let (client_id, args) = mock_args(&url);
-
-        let api = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("failed to create api client");
-
-        let auth = provider.create_credentials(&api, client_id).await.unwrap();
-        let transport = provider.config_transport(auth).unwrap();
-
-        assert!(matches!(
-            transport,
-            Transport::Tls(TlsConfiguration::Rustls(..))
-        ));
-
-        mock.assert_async().await;
-    }
-
-    #[tokio::test]
     async fn should_create_transport() {
         let dir = TempDir::new().unwrap();
 
@@ -375,19 +286,22 @@ mod tests {
             .create_async()
             .await;
 
-        // With store
-        let provider = TransportProvider::configure(Some(dir.path().to_owned()), false)
-            .await
-            .expect("failed to configure transport provider");
-
         let url = server.url().parse().unwrap();
         let (client_id, args) = mock_args(&url);
 
-        let api = ApiClient::from_transport(&Config::default(), &provider, args)
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Online);
+
+        let mut state = mock_state(MockStore::new(), status_tx, Interfaces::new());
+        state.config.writable_dir = Some(dir.path().to_path_buf());
+        let state = ConnectionState::new(Arc::new(state));
+
+        let api = ApiClient::create(args, state.config(), astarte_device_tls::config().unwrap())
             .expect("failed to create api client");
 
-        let auth = provider.create_credentials(&api, client_id).await.unwrap();
-        let transport = provider.config_transport(auth).unwrap();
+        let auth = TransportProvider::create_credentials(&state, &api, client_id)
+            .await
+            .unwrap();
+        let transport = TransportProvider::config_transport(&state, auth).unwrap();
 
         assert!(matches!(
             transport,
@@ -407,20 +321,26 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        // Without store
-        let provider = TransportProvider::configure(None, false)
-            .await
-            .expect("failed to configure transport provider");
 
         let url = server.url().parse().unwrap();
 
         let (client_id, args) = mock_args(&url);
 
-        let api = ApiClient::from_transport(&Config::default(), &provider, args)
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Online);
+
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MockStore::new(),
+            status_tx,
+            Interfaces::new(),
+        )));
+
+        let api = ApiClient::create(args, state.config(), astarte_device_tls::config().unwrap())
             .expect("failed to create api client");
 
-        let auth = provider.create_credentials(&api, client_id).await.unwrap();
-        let transport = provider.config_transport(auth).unwrap();
+        let auth = TransportProvider::create_credentials(&state, &api, client_id)
+            .await
+            .unwrap();
+        let transport = TransportProvider::config_transport(&state, auth).unwrap();
 
         assert!(matches!(
             transport,
@@ -441,18 +361,22 @@ mod tests {
             .create_async()
             .await;
 
-        let provider = TransportProvider::configure(Some(dir.path().join("non existing")), false)
-            .await
-            .expect("failed to configure transport provider");
-
         let url = server.url().parse().unwrap();
         let (client_id, args) = mock_args(&url);
 
-        let api = ApiClient::from_transport(&Config::default(), &provider, args)
+        let (status_tx, _status_rx) = tokio::sync::watch::channel(ConnStatus::Online);
+
+        let mut state = mock_state(MockStore::new(), status_tx, Interfaces::new());
+        state.config.writable_dir = Some(dir.path().join("non existing"));
+        let state = ConnectionState::new(Arc::new(state));
+
+        let api = ApiClient::create(args, state.config(), astarte_device_tls::config().unwrap())
             .expect("failed to create api client");
 
-        let auth = provider.create_credentials(&api, client_id).await.unwrap();
-        let transport = provider.config_transport(auth).unwrap();
+        let auth = TransportProvider::create_credentials(&state, &api, client_id)
+            .await
+            .unwrap();
+        let transport = TransportProvider::config_transport(&state, auth).unwrap();
 
         assert!(matches!(
             transport,
@@ -460,5 +384,28 @@ mod tests {
         ));
 
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn should_write_safe_private() {
+        let tmp = TempDir::new().unwrap();
+
+        let file = tmp.path().join("file");
+        let exp = "Hello, world!";
+
+        safe_write_private(&file, exp.as_bytes()).await.unwrap();
+
+        let content = tokio::fs::read_to_string(&file).await.unwrap();
+        assert_eq!(content, exp);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let mode = tokio::fs::metadata(&file).await.unwrap().mode();
+
+            // remove selinux etc
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 }

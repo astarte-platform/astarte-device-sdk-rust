@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,73 +20,78 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
-use astarte_device_error::WrapError;
+use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::interface::InterfaceTypeAggregation;
 use astarte_interfaces::{Interface, Schema};
-use tracing::{debug, error};
+use tracing::debug;
 
-use crate::error::{AstarteError, ErrorKind, InterfaceError, Report};
+use crate::builder::ConnectionConfig;
+use crate::error::{AstarteError, ErrorKind, InterfaceError};
 use crate::introspection::DeviceIntrospection;
-use crate::prelude::DynamicIntrospection;
-use crate::retention::StoredRetention;
-use crate::retention::memory::VolatileStore;
-use crate::store::{PropertyStore, StoreCapabilities};
-use crate::transport::{Connection, Register};
+use crate::retention::{RetentionError, StoredRetention};
+use crate::store::StoreCapabilities;
+use crate::transport::RemovedInterface;
+use crate::validate::Validated;
 
 use super::DeviceClient;
 
-impl<C> DeviceClient<C>
+impl<C, S> DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
     // Cleans up an interface, it will remove the properties and retention values.
     //
     // For the datastream, we would have to check all the mappings for each retention type and then
     // delete them from the stores (volatile and non). Instead we remove all the values with the
     // given interface from each store.
-    async fn cleanup_interface(
-        volatile_store: &VolatileStore,
-        store: &C::Store,
-        interface: &Interface,
-    ) {
+    async fn cleanup_interface(&self, interface: &Interface) -> Result<(), AstarteError>
+    where
+        S: StoreCapabilities,
+    {
         match interface.inner() {
             InterfaceTypeAggregation::DatastreamIndividual(interface) => {
-                Self::cleanup_retention(volatile_store, store, interface.name()).await
+                self.cleanup_retention(interface.name())
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
             }
             InterfaceTypeAggregation::DatastreamObject(interface) => {
-                Self::cleanup_retention(volatile_store, store, interface.name()).await
+                self.cleanup_retention(interface.name())
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
             }
-            InterfaceTypeAggregation::Properties(properties) => {
-                let res = store.delete_interface(properties).await;
-
-                if let Err(err) = res {
-                    error!(error = %Report::new(err),"failed to remove interfaces from properties");
-                }
-            }
+            InterfaceTypeAggregation::Properties(properties) => self
+                .state
+                .store()
+                .delete_interface(properties)
+                .await
+                .map_kind(ErrorKind::Store)?,
         }
+
+        Ok(())
     }
 
     // Cleans up the volatile and store retention.
-    async fn cleanup_retention(
-        volatile_store: &VolatileStore,
-        store: &C::Store,
-        interface_name: &str,
-    ) {
-        volatile_store.delete_interface(interface_name).await;
+    async fn cleanup_retention(&self, interface_name: &str) -> Result<(), Error<RetentionError>>
+    where
+        S: StoreCapabilities,
+    {
+        self.state
+            .volatile_store()
+            .delete_interface(interface_name)
+            .await;
 
-        if let Some(retention) = store.get_retention() {
-            let res = retention.delete_interface(interface_name).await;
-
-            if let Err(err) = res {
-                error!(error = %Report::new(err),"failed to remove interfaces from retention");
-            }
+        if let Some(retention) = self.state.store().get_retention() {
+            retention.delete_interface(interface_name).await?;
         }
+
+        Ok(())
     }
 }
 
-impl<C> DeviceIntrospection for DeviceClient<C>
+impl<C, S> DeviceIntrospection for DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
+    S: StoreCapabilities,
 {
     async fn get_interface<F, O>(&self, interface_name: &str, mut f: F) -> O
     where
@@ -96,14 +101,8 @@ where
 
         f(interfaces.get(interface_name))
     }
-}
 
-impl<C> DynamicIntrospection for DeviceClient<C>
-where
-    C: Connection,
-    C::Sender: Register,
-{
-    async fn add_interface(&mut self, interface: Interface) -> Result<bool, AstarteError> {
+    async fn add_interface(&self, interface: Interface) -> Result<bool, AstarteError> {
         // Lock for writing for the whole scope, even the checks
         let mut interfaces = self.state.interfaces().write().await;
 
@@ -120,11 +119,12 @@ where
             return Ok(false);
         };
 
-        self.sender.add_interface(&interfaces, &to_add).await?;
-
         if to_add.is_major_change() {
-            Self::cleanup_interface(self.state.volatile_store(), &self.store, &to_add).await;
+            self.cleanup_interface(&to_add).await?;
         }
+
+        self.send_timeout(Validated::AddInterface(to_add.interface().clone()))
+            .await?;
 
         debug!("adding interface to introspection");
 
@@ -133,7 +133,7 @@ where
         Ok(true)
     }
 
-    async fn extend_interfaces<I>(&mut self, iter: I) -> Result<Vec<String>, AstarteError>
+    async fn extend_interfaces<I>(&self, iter: I) -> Result<Vec<String>, AstarteError>
     where
         I: IntoIterator<Item = Interface> + Send,
     {
@@ -154,15 +154,16 @@ where
 
         debug!("Adding {} interfaces", to_add.len());
 
-        self.sender.extend_interfaces(&interfaces, &to_add).await?;
-
         let major_changes = to_add
             .values()
             .filter(|interface| interface.is_major_change());
 
         for interface in major_changes {
-            Self::cleanup_interface(self.state.volatile_store(), &self.store, interface).await;
+            self.cleanup_interface(interface).await?;
         }
+
+        self.send_timeout(Validated::ExtendInterfaces(to_add.clone()))
+            .await?;
 
         let names = to_add.keys().cloned().collect();
 
@@ -175,7 +176,7 @@ where
         Ok(names)
     }
 
-    async fn add_interface_from_file<P>(&mut self, file_path: P) -> Result<bool, AstarteError>
+    async fn add_interface_from_file<P>(&self, file_path: P) -> Result<bool, AstarteError>
     where
         P: AsRef<Path> + Send + Sync,
     {
@@ -197,7 +198,7 @@ where
         self.add_interface(interface).await
     }
 
-    async fn add_interface_from_str(&mut self, json_str: &str) -> Result<bool, AstarteError> {
+    async fn add_interface_from_str(&self, json_str: &str) -> Result<bool, AstarteError> {
         let interface = Interface::from_str(json_str).wrap_err_msg(
             ErrorKind::Interface(InterfaceError::Invalid),
             "couldn't add interface",
@@ -206,7 +207,7 @@ where
         self.add_interface(interface).await
     }
 
-    async fn remove_interface(&mut self, interface_name: &str) -> Result<bool, AstarteError> {
+    async fn remove_interface(&self, interface_name: &str) -> Result<bool, AstarteError> {
         // Lock for writing for the whole scope, even the checks
         let mut interfaces = self.state.interfaces().write().await;
 
@@ -215,9 +216,12 @@ where
             return Ok(false);
         };
 
-        self.sender.remove_interface(&interfaces, to_remove).await?;
+        self.cleanup_interface(to_remove).await?;
 
-        Self::cleanup_interface(self.state.volatile_store(), &self.store, to_remove).await;
+        self.send_timeout(Validated::RemoveInterface(RemovedInterface::from(
+            to_remove,
+        )))
+        .await?;
 
         debug!("removing interface from introspection");
 
@@ -226,10 +230,7 @@ where
         Ok(true)
     }
 
-    async fn remove_interfaces<I>(
-        &mut self,
-        interfaces_name: I,
-    ) -> Result<Vec<String>, AstarteError>
+    async fn remove_interfaces<I>(&self, interfaces_name: I) -> Result<Vec<String>, AstarteError>
     where
         I: IntoIterator<Item = String> + Send,
         I::IntoIter: Send,
@@ -254,13 +255,16 @@ where
             return Ok(Vec::new());
         }
 
-        self.sender
-            .remove_interfaces(&interfaces, &to_remove)
-            .await?;
-
         for interface in to_remove.values() {
-            Self::cleanup_interface(self.state.volatile_store(), &self.store, interface).await;
+            self.cleanup_interface(interface).await?;
         }
+
+        let value = to_remove
+            .values()
+            .map(|&v| RemovedInterface::from(v))
+            .collect();
+        self.send_timeout(Validated::RemoveInterfaceMany(value))
+            .await?;
 
         let removed_names: Vec<String> = to_remove.keys().map(|k| k.to_string()).collect();
 
@@ -278,7 +282,6 @@ mod tests {
     use astarte_interfaces::schema::Reliability;
     use astarte_interfaces::{MappingPath, Properties};
     use chrono::Utc;
-    use mockall::{Sequence, predicate};
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -290,18 +293,18 @@ mod tests {
     use crate::interfaces::tests::{mock_validated_collection, mock_validated_interface};
     use crate::retention::StoredRetentionExt;
     use crate::state::ConnStatus;
-    use crate::store::{PropertyMapping, SqliteStore};
+    use crate::store::{Prop, PropertyMapping, PropertyStore, SqliteStore};
     use crate::test::{
         E2E_DEVICE_AGGREGATE, E2E_DEVICE_AGGREGATE_NAME, E2E_DEVICE_PROPERTY,
         E2E_DEVICE_PROPERTY_NAME, for_update,
     };
-    use crate::validate::ValidatedIndividual;
+    use crate::validate::individual::ValidatedIndividual;
 
     #[tokio::test]
     async fn get_interface() {
         let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
+        let client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Online);
 
         client
             .get_interface(interface.interface_name(), |i| {
@@ -318,24 +321,18 @@ mod tests {
 
     #[tokio::test]
     async fn add_interface_missing() {
-        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        let exp_interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let mut client = mock_client(&[], ConnStatus::Connected);
+        let mut client = mock_client(&[], ConnStatus::Online);
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_add_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_interface(interface.clone(), false)),
-            )
-            .returning(|_, _| Ok(()));
-
-        let added = client.add_interface(interface.clone()).await.unwrap();
+        let added = client.add_interface(exp_interface.clone()).await.unwrap();
         assert!(added);
+
+        let Validated::AddInterface(interface) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        assert_eq!(interface, exp_interface);
 
         client
             .get_interface(interface.interface_name(), |i| {
@@ -345,25 +342,14 @@ mod tests {
 
         let added = client.add_interface(interface).await.unwrap();
         assert!(!added);
+        assert!(client.client_rx.is_empty());
     }
 
     #[tokio::test]
     async fn add_interface_missing_from_str() {
-        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        let exp_interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let mut client = mock_client(&[], ConnStatus::Connected);
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_add_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_interface(interface.clone(), false)),
-            )
-            .returning(|_, _| Ok(()));
+        let mut client = mock_client(&[], ConnStatus::Online);
 
         let added = client
             .add_interface_from_str(E2E_DEVICE_AGGREGATE)
@@ -371,33 +357,28 @@ mod tests {
             .unwrap();
         assert!(added);
 
+        let Validated::AddInterface(interface) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        assert_eq!(interface, exp_interface);
+
         client
-            .get_interface(interface.interface_name(), |i| {
-                assert_eq!(i, Some(&interface));
+            .get_interface(exp_interface.interface_name(), |i| {
+                assert_eq!(i, Some(&exp_interface));
             })
             .await;
 
-        let added = client.add_interface(interface).await.unwrap();
+        let added = client.add_interface(exp_interface).await.unwrap();
         assert!(!added);
+        assert!(client.client_rx.is_empty());
     }
 
     #[tokio::test]
     async fn add_interface_missing_from_file() {
-        let interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
+        let exp_interface = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
 
-        let mut client = mock_client(&[], ConnStatus::Connected);
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_add_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_interface(interface.clone(), false)),
-            )
-            .returning(|_, _| Ok(()));
+        let mut client = mock_client(&[], ConnStatus::Online);
 
         let dir = TempDir::new().unwrap();
 
@@ -407,24 +388,28 @@ mod tests {
         let added = client.add_interface_from_file(&path).await.unwrap();
         assert!(added);
 
+        let Validated::AddInterface(interface) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        assert_eq!(interface, exp_interface);
+
         client
-            .get_interface(interface.interface_name(), |i| {
-                assert_eq!(i, Some(&interface));
+            .get_interface(exp_interface.interface_name(), |i| {
+                assert_eq!(i, Some(&exp_interface));
             })
             .await;
 
-        let added = client.add_interface(interface).await.unwrap();
+        let added = client.add_interface(exp_interface).await.unwrap();
         assert!(!added);
+        assert!(client.client_rx.is_empty());
     }
 
     #[tokio::test]
     async fn add_interface_major_with_retention_volatile() {
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let mut client = mock_client(
-            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
-            ConnStatus::Connected,
-        );
+        let mut client = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_0_1], ConnStatus::Online);
 
         client
             .state
@@ -440,23 +425,18 @@ mod tests {
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
+                true,
             )
             .await;
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_add_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_interface(updated.clone(), true)),
-            )
-            .returning(|_, _| Ok(()));
-
         let added = client.add_interface(updated.clone()).await.unwrap();
         assert!(added);
+
+        let Validated::AddInterface(interface) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        assert_eq!(interface, updated);
 
         client
             .get_interface(updated.interface_name(), |i| {
@@ -477,7 +457,7 @@ mod tests {
 
         let mut client = mock_client_with_store(
             &[for_update::E2E_DEVICE_DATASTREAM_0_1],
-            ConnStatus::Connected,
+            ConnStatus::Online,
             store,
         );
 
@@ -485,7 +465,8 @@ mod tests {
 
         let id = client.state.retention_ctx().next();
         client
-            .store
+            .state
+            .store()
             .get_retention()
             .unwrap()
             .store_publish_individual(
@@ -505,20 +486,14 @@ mod tests {
             .await
             .unwrap();
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_add_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_interface(updated.clone(), true)),
-            )
-            .returning(|_, _| Ok(()));
-
         let added = client.add_interface(updated.clone()).await.unwrap();
         assert!(added);
+
+        let Validated::AddInterface(interface) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        assert_eq!(interface, updated);
 
         client
             .get_interface(updated.interface_name(), |i| {
@@ -527,7 +502,8 @@ mod tests {
             .await;
 
         let packets = client
-            .store
+            .state
+            .store()
             .get_retention()
             .unwrap()
             .fetch_all_interfaces()
@@ -540,10 +516,7 @@ mod tests {
     async fn extend_interfaces_major_with_retention_volatile() {
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
-        let mut client = mock_client(
-            &[for_update::E2E_DEVICE_DATASTREAM_0_1],
-            ConnStatus::Connected,
-        );
+        let mut client = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_0_1], ConnStatus::Online);
 
         client
             .state
@@ -559,26 +532,19 @@ mod tests {
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
                 },
+                true,
             )
             .await;
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_extend_interfaces()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_collection(&[mock_validated_interface(
-                    updated.clone(),
-                    true,
-                )])),
-            )
-            .returning(|_, _| Ok(()));
-
         let added = client.extend_interfaces([updated.clone()]).await.unwrap();
         assert_eq!(added, vec![updated.interface_name()]);
+
+        let Validated::ExtendInterfaces(interfaces) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        let exp = mock_validated_collection(&[mock_validated_interface(updated.clone(), true)]);
+        assert_eq!(interfaces, exp);
 
         client
             .get_interface(updated.interface_name(), |i| {
@@ -599,7 +565,7 @@ mod tests {
 
         let mut client = mock_client_with_store(
             &[for_update::E2E_DEVICE_DATASTREAM_0_1],
-            ConnStatus::Connected,
+            ConnStatus::Online,
             store,
         );
 
@@ -607,7 +573,8 @@ mod tests {
 
         let id = client.state.retention_ctx().next();
         client
-            .store
+            .state
+            .store()
             .get_retention()
             .unwrap()
             .store_publish_individual(
@@ -627,23 +594,15 @@ mod tests {
             .await
             .unwrap();
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_extend_interfaces()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::always(),
-                predicate::eq(mock_validated_collection(&[mock_validated_interface(
-                    updated.clone(),
-                    true,
-                )])),
-            )
-            .returning(|_, _| Ok(()));
-
         let added = client.extend_interfaces([updated.clone()]).await.unwrap();
         assert_eq!(added, [updated.interface_name()]);
+
+        let Validated::ExtendInterfaces(interfaces) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+
+        let exp = mock_validated_collection(&[mock_validated_interface(updated.clone(), true)]);
+        assert_eq!(interfaces, exp);
 
         client
             .get_interface(updated.interface_name(), |i| {
@@ -652,7 +611,8 @@ mod tests {
             .await;
 
         let packets = client
-            .store
+            .state
+            .store()
             .get_retention()
             .unwrap()
             .fetch_all_interfaces()
@@ -663,15 +623,13 @@ mod tests {
 
     #[tokio::test]
     async fn extend_interfaces_nothing_to_add() {
-        let mut client = mock_client(
-            &[for_update::E2E_DEVICE_DATASTREAM_1_0],
-            ConnStatus::Connected,
-        );
+        let client = mock_client(&[for_update::E2E_DEVICE_DATASTREAM_1_0], ConnStatus::Online);
 
         let updated = Interface::from_str(for_update::E2E_DEVICE_DATASTREAM_1_0).unwrap();
 
         let added = client.extend_interfaces([updated.clone()]).await.unwrap();
         assert!(added.is_empty());
+        assert!(client.client_rx.is_empty());
 
         client
             .get_interface(updated.interface_name(), |i| {
@@ -682,24 +640,21 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_present() {
-        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
+        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Online);
 
         let to_remove = Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap();
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_remove_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::always(), predicate::eq(to_remove.clone()))
-            .returning(|_, _| Ok(()));
 
         let removed = client
             .remove_interface(E2E_DEVICE_AGGREGATE_NAME)
             .await
             .unwrap();
         assert!(removed);
+
+        let Validated::RemoveInterface(removed) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        let exp = RemovedInterface::from(&to_remove);
+        assert_eq!(removed, exp);
 
         client
             .get_interface(E2E_DEVICE_AGGREGATE_NAME, |i| {
@@ -710,38 +665,37 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_property() {
-        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Connected);
+        let mut client = mock_client(&[E2E_DEVICE_PROPERTY], ConnStatus::Online);
 
         let to_remove = Interface::from_str(E2E_DEVICE_PROPERTY).unwrap();
 
         let path = "/sensor_1/double_endpoint";
 
         client
-            .store
-            .store_prop(crate::store::StoredProp {
-                interface: E2E_DEVICE_PROPERTY_NAME,
-                path,
-                value: &AstarteData::LongInteger(2),
+            .state
+            .store()
+            .store_prop(Prop {
+                interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+                path: path.to_string(),
+                value: AstarteData::LongInteger(2),
                 interface_major: to_remove.version_major(),
                 ownership: to_remove.ownership(),
+                updated_at: client.state.property_ctx().next_updated_at(),
             })
             .await
             .unwrap();
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_remove_interface()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::always(), predicate::eq(to_remove.clone()))
-            .returning(|_, _| Ok(()));
 
         let removed = client
             .remove_interface(E2E_DEVICE_PROPERTY_NAME)
             .await
             .unwrap();
         assert!(removed);
+
+        let Validated::RemoveInterface(removed) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        let exp = RemovedInterface::from(&to_remove);
+        assert_eq!(removed, exp);
 
         client
             .get_interface(E2E_DEVICE_PROPERTY_NAME, |i| {
@@ -754,7 +708,8 @@ mod tests {
         let mapping = MappingRef::new(&prop, &path).unwrap();
 
         let res = client
-            .store
+            .state
+            .store()
             .load_prop(&PropertyMapping::from(&mapping))
             .await
             .unwrap();
@@ -763,7 +718,7 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_not_found() {
-        let mut client = mock_client(&[], ConnStatus::Connected);
+        let client = mock_client(&[], ConnStatus::Online);
 
         let removed = client
             .remove_interface(E2E_DEVICE_AGGREGATE_NAME)
@@ -780,23 +735,19 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_many_present() {
-        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Connected);
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_remove_interfaces()
-            .once()
-            .in_sequence(&mut seq)
-            // The hashmap require a reference that lives for static
-            .withf(|_, a| a.len() == 1 && a.contains_key(E2E_DEVICE_AGGREGATE_NAME))
-            .returning(|_, _| Ok(()));
+        let mut client = mock_client(&[E2E_DEVICE_AGGREGATE], ConnStatus::Online);
 
         let removed = client
             .remove_interfaces([E2E_DEVICE_AGGREGATE_NAME.to_string()])
             .await
             .unwrap();
         assert_eq!(removed, [E2E_DEVICE_AGGREGATE_NAME]);
+
+        let Validated::RemoveInterfaceMany(removed) = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        let exp = RemovedInterface::from(&Interface::from_str(E2E_DEVICE_AGGREGATE).unwrap());
+        assert_eq!(removed, vec![exp]);
 
         client
             .get_interface(E2E_DEVICE_AGGREGATE_NAME, |i| {
@@ -807,13 +758,14 @@ mod tests {
 
     #[tokio::test]
     async fn remove_interface_many_missing() {
-        let mut client = mock_client(&[], ConnStatus::Connected);
+        let client = mock_client(&[], ConnStatus::Online);
 
         let removed = client
             .remove_interfaces([E2E_DEVICE_AGGREGATE_NAME.to_string()])
             .await
             .unwrap();
         assert!(removed.is_empty());
+        assert!(client.client_rx.is_empty());
 
         client
             .get_interface(E2E_DEVICE_AGGREGATE_NAME, |i| {

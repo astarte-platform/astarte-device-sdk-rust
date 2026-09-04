@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -25,118 +25,181 @@
 //! When an interface major version is updated the retention cache must be invalidated. Since the
 //! payload will be publish on the new introspection.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::{collections::HashMap, future::IntoFuture, task::Poll};
+use std::task::Poll;
 
-use rumqttc::{AckOfPub, Token, TokenError};
-use tracing::{debug, trace, warn};
+use astarte_device_error::Error;
+use rumqttc::{AckOfPub, Token};
+use tokio::task::JoinHandle;
+use tokio_util::either::Either;
+use tracing::{debug, error, info, instrument, trace};
 
-use crate::retention::RetentionId;
+use crate::retention::{RetentionId, StoredRetention};
+use crate::state::{ConnStatus, ConnectionState};
+use crate::store::StoreCapabilities;
 
-pub(crate) type RetSender = async_channel::Sender<(RetentionId, Token<AckOfPub>)>;
-pub(crate) type RetReceiver = async_channel::Receiver<(RetentionId, Token<AckOfPub>)>;
+use super::error::MqttError;
 
-pub(crate) struct MqttRetention {
+type Item = (RetentionId, Token<AckOfPub>);
+pub(crate) type RetSender = tokio::sync::mpsc::Sender<Item>;
+pub(crate) type RetReceiver = tokio::sync::mpsc::Receiver<Item>;
+
+pub(crate) struct RetentionTask<S> {
+    state: ConnectionState<S>,
     packets: HashMap<RetentionId, Token<AckOfPub>>,
     rx: RetReceiver,
+    status_rx: tokio::sync::watch::Receiver<ConnStatus>,
 }
 
-impl MqttRetention {
-    pub(crate) fn new(rx: RetReceiver) -> Self {
-        Self {
+impl<S> RetentionTask<S> {
+    pub(crate) fn spawn(
+        state: ConnectionState<S>,
+        rx: RetReceiver,
+    ) -> JoinHandle<Result<(), Error<MqttError>>>
+    where
+        S: StoreCapabilities,
+    {
+        let status_rx = state.subscribe_connection();
+
+        let mut this = Self {
+            state,
             packets: HashMap::new(),
             rx,
-        }
+            status_rx,
+        };
+
+        tokio::spawn(async move { this.handle_events().await })
     }
 
-    /// The retention client is disconnected and all packets have been handled
-    pub(crate) fn is_empty(&self) -> bool {
-        self.rx.is_empty() && self.packets.is_empty()
+    pub(crate) fn queue(&mut self, id: RetentionId, token: Token<AckOfPub>) {
+        let old = self.packets.insert(id, token);
+
+        debug_assert!(
+            old.is_none_or(|mut p| p.check().is_err()),
+            "duplicated packet {id}"
+        );
     }
 
-    /// Discards retention packets and returns the id of received packets
-    pub(crate) fn drain_filter_acked(&mut self) -> Vec<RetentionId> {
-        debug!("discarding retention packets");
-
-        self.packets
-            .drain()
-            .chain(std::iter::from_fn(|| self.rx.try_recv().ok()))
-            .filter_map(|(id, mut token)| token.check().map(|_| id).ok())
-            .collect()
-    }
-
-    pub(crate) fn queue(&mut self) -> usize {
-        if self.rx.is_empty() {
-            trace!("rx empty, queued 0 packets");
-
-            return 0;
-        }
-
-        let mut count: usize = 0;
-        // get all the already present publishes
-        while let Ok((id, notice)) = self.rx.try_recv() {
-            let prev = self.packets.insert(id, notice);
-
-            debug_assert!(prev.is_none(), "The IDs should be unique");
-
-            count = count.saturating_add(1);
-        }
-
-        debug_assert!(count > 0, "the rx shouldn't be empty");
-        trace!("queued {count} packets");
-
-        count
-    }
-}
-
-impl<'a> IntoFuture for &'a mut MqttRetention {
-    type Output = Result<RetentionId, TokenError>;
-
-    type IntoFuture = MqttRetentionFuture<'a>;
-
-    fn into_future(self) -> Self::IntoFuture {
-        MqttRetentionFuture(self)
-    }
-}
-
-pub(crate) struct MqttRetentionFuture<'a>(&'a mut MqttRetention);
-
-impl std::future::Future for MqttRetentionFuture<'_> {
-    type Output = Result<RetentionId, TokenError>;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = &mut *self.get_mut().0;
-
-        this.queue();
-
-        let first = this.packets.iter_mut().find_map(|(id, token)| {
-            let poll = <Token<AckOfPub> as Future>::poll(Pin::new(token), cx);
-
-            match poll {
-                Poll::Pending => None,
-                Poll::Ready(Ok(_)) => Some((*id, Ok(*id))),
-                Poll::Ready(Err(TokenError::Waiting)) => {
-                    warn!(%id, "future returned Ready(Waiting), this should not happen and it could lead to errors on the next poll");
-
-                    // NOTE: we could return None here, but after some consideration it's safer to
-                    //       error and drop the token instead of risking a panic if we poll the
-                    //       Future again
-                    Some((*id, Err(TokenError::Disconnected)))
+    pub(crate) async fn handle_events(&mut self) -> Result<(), Error<MqttError>>
+    where
+        S: StoreCapabilities,
+    {
+        while let Some(item) = self.next_item().await {
+            match item {
+                Either::Left((id, token)) => {
+                    self.queue(id, token);
                 }
-                Poll::Ready(Err(TokenError::Disconnected)) => {
-                    Some((*id, Err(TokenError::Disconnected)))
+                Either::Right(id) => {
+                    Self::mark_packet_received(&self.state, id).await;
                 }
             }
-        });
+        }
 
-        match first {
-            Some((id, res)) => {
-                let pkt = this.packets.remove(&id);
+        info!("retention task exiting");
 
-                debug_assert!(pkt.is_some());
+        self.on_exit().await;
 
-                Poll::Ready(res)
+        Ok(())
+    }
+
+    async fn next_item(&mut self) -> Option<Either<Item, RetentionId>>
+    where
+        S: StoreCapabilities,
+    {
+        let fut = NextFuture(&mut self.packets);
+
+        tokio::select! {
+            recv = self.rx.recv() => {
+                let recv = recv?;
+
+                Some(Either::Left(recv))
+            }
+            id = fut => {
+                Some(Either::Right(id))
+            }
+            // Only on close, no disconnect
+            _ = self.status_rx.wait_for(|c| *c == ConnStatus::Closed) => {
+                debug!("connection closed");
+
+                None
+            }
+        }
+    }
+
+    async fn on_exit(&mut self)
+    where
+        S: StoreCapabilities,
+    {
+        for (id, mut token) in self.packets.drain() {
+            if token.check().is_ok() {
+                Self::mark_packet_received(&self.state, id).await;
+            }
+        }
+    }
+
+    /// Marks the packets as received for the retention.
+    #[instrument(skip_all, fields(%id))]
+    async fn mark_packet_received(state: &ConnectionState<S>, id: RetentionId)
+    where
+        S: StoreCapabilities,
+    {
+        trace!("received packet");
+
+        match &id {
+            RetentionId::Volatile(id) => {
+                state.volatile_store().mark_received(id).await;
+            }
+            RetentionId::Stored(id) => {
+                if let Some(retention) = state.store().get_retention() {
+                    let res = retention.mark_received(id).await;
+
+                    if let Err(error) = res {
+                        error!(%error, "couln't mark packet as received");
+                    }
+                }
+            }
+        }
+
+        debug!("marked as received");
+    }
+}
+
+pub(crate) struct NextFuture<'a>(&'a mut HashMap<RetentionId, Token<AckOfPub>>);
+
+impl Future for NextFuture<'_> {
+    type Output = RetentionId;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let mut is_error = false;
+
+        let item = self
+            .0
+            .extract_if(|_id, f| match Pin::new(f).poll(cx) {
+                Poll::Ready(Ok(_)) => true,
+                Poll::Ready(Err(error)) => {
+                    error!(%error, "couldn't wait for Ack");
+
+                    is_error = true;
+
+                    true
+                }
+                Poll::Pending => false,
+            })
+            .next();
+
+        match item {
+            Some((id, _)) => {
+                if is_error {
+                    // NOTE Since the wake has been consumed. Wake the waker task again
+                    cx.waker().wake_by_ref();
+
+                    // Ignore the packet, since the state will be reset in the reconnection when resending
+                    Poll::Pending
+                } else {
+                    Poll::Ready(id)
+                }
             }
             None => Poll::Pending,
         }
@@ -145,22 +208,40 @@ impl std::future::Future for MqttRetentionFuture<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use rumqttc::Resolver;
 
-    use crate::retention::Context;
+    use crate::builder::DEFAULT_CHANNEL_SIZE;
+    use crate::interfaces::Interfaces;
+    use crate::state::tests::mock_state;
+    use crate::state::{ConnStatus, Context};
+    use crate::store::mock::MockStore;
 
     use super::*;
 
     #[tokio::test]
     async fn should_queue_and_get_next() {
-        let (tx, rx) = async_channel::unbounded();
+        let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_SIZE.get());
+        let (status_tx, status_rx) = tokio::sync::watch::channel(ConnStatus::Online);
 
-        let mut retention = MqttRetention::new(rx);
+        let state = ConnectionState::new(Arc::new(mock_state(
+            MockStore::new(),
+            status_tx,
+            Interfaces::new(),
+        )));
+
+        let mut retention = RetentionTask {
+            state,
+            packets: HashMap::new(),
+            rx,
+            status_rx,
+        };
 
         let ctx = Context::new();
 
         let i1 = ctx.next();
-        let (t1, n1) = Resolver::new();
+        let (_t1, n1) = Resolver::new();
 
         let i2 = ctx.next();
         let (t2, n2) = Resolver::new();
@@ -168,19 +249,20 @@ mod tests {
         let i3 = ctx.next();
         let (_t3, n3) = Resolver::new();
 
-        tx.try_send((RetentionId::Stored(i1), n1)).unwrap();
-        tx.try_send((RetentionId::Stored(i2), n2)).unwrap();
+        retention.queue(RetentionId::Stored(i1), n1);
+        retention.queue(RetentionId::Stored(i2), n2);
+
         tx.try_send((RetentionId::Stored(i3), n3)).unwrap();
 
-        assert_eq!(retention.queue(), 3);
+        assert!(matches!(
+            retention.next_item().await,
+            Some(Either::Left((RetentionId::Stored(id), _))) if id == i3
+        ));
 
         t2.resolve(AckOfPub::None);
-
-        let n = retention.into_future().await.unwrap();
-        assert_eq!(n, RetentionId::Stored(i2));
-
-        drop(t1);
-        let res = retention.into_future().await;
-        assert!(res.is_err(), "expected error but got {:?}", res.unwrap());
+        assert!(matches!(
+            retention.next_item().await,
+            Some(Either::Right(RetentionId::Stored(id))) if id == i2
+        ));
     }
 }

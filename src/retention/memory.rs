@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,10 +29,9 @@ use astarte_interfaces::interface::Retention;
 use tokio::sync::Mutex;
 use tracing::{error, trace};
 
-use crate::{
-    builder::DEFAULT_VOLATILE_CAPACITY,
-    validate::{ValidatedIndividual, ValidatedObject},
-};
+use crate::builder::DEFAULT_VOLATILE_CAPACITY;
+use crate::validate::individual::ValidatedIndividual;
+use crate::validate::object::ValidatedObject;
 
 use super::Id;
 
@@ -52,11 +51,11 @@ impl VolatileStore {
         }
     }
 
-    pub(crate) async fn push_sent<T>(&self, id: Id, value: T)
+    pub(crate) async fn push_sent<T>(&self, id: Id, value: T, sent: bool)
     where
         T: TryInto<ItemValue, Error = VolatileItemError>,
     {
-        self.store.lock().await.push(id, value, true);
+        self.store.lock().await.push(id, value, sent);
     }
 
     pub(crate) async fn push_unsent<T>(&self, id: Id, value: T)
@@ -182,13 +181,13 @@ impl State {
     fn delete_interface(&mut self, interface_name: &str) -> usize {
         let now = SystemTime::now();
 
-        let mut count = 0;
+        let mut count: usize = 0;
 
         self.store.retain(|v| {
             let expired_or_interface = v.is_expired(now) || v.is_interface(interface_name);
 
             if expired_or_interface {
-                count += 1;
+                count = count.saturating_add(1);
             }
 
             !expired_or_interface
@@ -318,7 +317,8 @@ mod tests {
     use astarte_interfaces::schema::Reliability;
     use pretty_assertions::assert_eq;
 
-    use crate::{AstarteData, aggregate::AstarteObject, retention::Context};
+    use crate::state::Context;
+    use crate::{AstarteData, aggregate::AstarteObject};
 
     use super::*;
 

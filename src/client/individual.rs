@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,28 +20,32 @@
 
 use astarte_device_error::ResultExt;
 use astarte_interfaces::MappingPath;
-use tracing::debug;
+use tracing::{debug, instrument};
 
-use crate::client::ValidatedIndividual;
+use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind};
-use crate::transport::Connection;
+use crate::store::StoreCapabilities;
+use crate::transport::Encode;
+use crate::validate::individual::ValidatedIndividual;
 use crate::{AstarteData, Timestamp};
 
-use super::{DeviceClient, Publish};
+use super::DeviceClient;
 
-impl<C> DeviceClient<C>
+impl<C, S> DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
+    #[instrument(skip_all, fields(interface = interface_name, path = %path, mapping = data.display_type()))]
     pub(crate) async fn send_datastream_individual(
-        &mut self,
+        &self,
         interface_name: &str,
         path: &MappingPath<'_>,
         data: AstarteData,
         timestamp: Option<Timestamp>,
     ) -> Result<(), AstarteError>
     where
-        C::Sender: Publish,
+        C::Encoder: Encode,
+        S: StoreCapabilities,
     {
         let interfaces = self.state.interfaces().read().await;
         let mapping = interfaces
@@ -51,15 +55,18 @@ where
         let validated = ValidatedIndividual::validate(mapping, data, timestamp)
             .map_kind(ErrorKind::Interface)?;
 
-        debug!("sending individual {}{}", interface_name, path);
-        debug!("sending individual type {}", validated.data.display_type());
+        debug!(
+            mapping_type = validated.data.display_type(),
+            "sending individual"
+        );
 
-        Self::send(&self.state, &self.store, &mut self.sender, validated).await
+        self.send(validated).await
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use core::panic;
     use std::time::Duration;
 
     use astarte_interfaces::interface::Retention;
@@ -82,32 +89,15 @@ mod tests {
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_DATASTREAM,
         STORED_DEVICE_DATASTREAM_NAME, VOLATILE_DEVICE_DATASTREAM, VOLATILE_DEVICE_DATASTREAM_NAME,
     };
+    use crate::validate::Validated;
 
     #[tokio::test]
     async fn send_datastream_individual_connected_discard() {
-        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Connected);
+        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Online);
 
         let path = "/integer_endpoint";
         let value = 42;
         let timestamp = Utc::now();
-
-        let mut seq = Sequence::new();
-
-        client
-            .sender
-            .expect_send_individual()
-            .once()
-            .in_sequence(&mut seq)
-            .with(predicate::eq(ValidatedIndividual {
-                interface: E2E_DEVICE_DATASTREAM_NAME.to_string(),
-                path: path.to_string(),
-                version_major: 0,
-                reliability: Reliability::Unreliable,
-                retention: Retention::Discard,
-                data: AstarteData::Integer(value),
-                timestamp: Some(timestamp),
-            }))
-            .returning(|_| Ok(()));
 
         client
             .send_individual_with_timestamp(
@@ -118,16 +108,31 @@ mod tests {
             )
             .await
             .unwrap();
+
+        let recv = client.client_rx.try_recv().unwrap();
+        assert_eq!(
+            recv,
+            Validated::Individual {
+                retention: None,
+                data: ValidatedIndividual {
+                    interface: E2E_DEVICE_DATASTREAM_NAME.to_string(),
+                    path: path.to_string(),
+                    version_major: 0,
+                    reliability: Reliability::Unreliable,
+                    retention: Retention::Discard,
+                    data: AstarteData::Integer(value),
+                    timestamp: Some(timestamp),
+                }
+            }
+        );
     }
 
     #[tokio::test]
     async fn send_datastream_individual_connected_volatile() {
-        let mut client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Connected);
+        let mut client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Online);
 
         let path = "/endpoint1";
         let value = 42i64;
-
-        let mut seq = Sequence::new();
 
         let expected = ValidatedIndividual {
             interface: VOLATILE_DEVICE_DATASTREAM_NAME.to_string(),
@@ -138,21 +143,17 @@ mod tests {
             data: AstarteData::LongInteger(value),
             timestamp: None,
         };
-        client
-            .sender
-            .expect_send_individual_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Volatile(_))),
-                predicate::eq(expected.clone()),
-            )
-            .returning(|_, _| Ok(()));
 
         client
             .send_individual(VOLATILE_DEVICE_DATASTREAM_NAME, path, value.into())
             .await
             .unwrap();
+
+        let Validated::Individual { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(data, expected);
+        assert!(retention.is_some_and(|r| matches!(r, RetentionId::Volatile(..))));
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
@@ -161,12 +162,10 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_connected_stored_no_retention_cap() {
-        let mut client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected);
+        let mut client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Online);
 
         let path = "/endpoint2";
         let value = true;
-
-        let mut seq = Sequence::new();
 
         let expected = ValidatedIndividual {
             interface: STORED_DEVICE_DATASTREAM_NAME.to_string(),
@@ -179,21 +178,17 @@ mod tests {
             data: AstarteData::Boolean(value),
             timestamp: None,
         };
-        client
-            .sender
-            .expect_send_individual_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Volatile(_))),
-                predicate::eq(expected.clone()),
-            )
-            .returning(|_, _| Ok(()));
 
         client
             .send_individual(STORED_DEVICE_DATASTREAM_NAME, path, value.into())
             .await
             .unwrap();
+
+        let Validated::Individual { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(data, expected);
+        assert!(retention.is_some_and(|r| matches!(r, RetentionId::Volatile(..))));
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
@@ -224,11 +219,11 @@ mod tests {
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
         let mut client =
-            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Connected, store);
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Online, store);
         let mut seq = Sequence::new();
 
         client
-            .sender
+            .encoder
             .expect_serialize_individual()
             .once()
             .in_sequence(&mut seq)
@@ -236,50 +231,31 @@ mod tests {
             .returning(|_| Ok(EXP_SER.to_vec()));
 
         client
-            .sender
-            .expect_send_individual_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Stored(_))),
-                predicate::eq(exp.clone()),
-            )
-            .returning(|_, _| Ok(()));
-
-        client
             .send_individual(STORED_DEVICE_DATASTREAM_NAME, path, value.into())
             .await
             .unwrap();
 
+        let Validated::Individual { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(data, exp);
+        assert!(retention.is_some_and(|r| matches!(r, RetentionId::Stored(..))));
+
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
-        assert_eq!(read, 0);
-        assert_eq!(stored.len(), 0);
-        stored.clear();
-
-        // reset sent
-        client.store.reset_all_publishes().await.unwrap();
-
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
-        assert_eq!(
-            stored.pop().unwrap().1,
-            PublishInfo {
-                interface: STORED_DEVICE_DATASTREAM_NAME.into(),
-                path: path.into(),
-                version_major: 0,
-                reliability: Reliability::Unique,
-                expiry: Some(Duration::from_secs(30)),
-                sent: false,
-                value: EXP_SER.into()
-            }
-        );
+        stored.clear();
     }
 
     #[tokio::test]
     async fn send_datastream_individual_offline_discard() {
-        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Disconnected);
+        let client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Offline);
 
         let path = "/integer_endpoint";
         let value = 42;
@@ -295,11 +271,13 @@ mod tests {
             )
             .await
             .unwrap();
+
+        assert!(client.client_rx.is_empty());
     }
 
     #[tokio::test]
     async fn send_datastream_individual_offline_volatile() {
-        let mut client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Disconnected);
+        let client = mock_client(&[VOLATILE_DEVICE_DATASTREAM], ConnStatus::Offline);
 
         let path = "/endpoint1";
         let value = 42i64;
@@ -319,6 +297,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(client.client_rx.is_empty());
+
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
@@ -326,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_individual_offline_stored_no_retention_cap() {
-        let mut client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Disconnected);
+        let client = mock_client(&[STORED_DEVICE_DATASTREAM], ConnStatus::Offline);
 
         let path = "/endpoint2";
         let value = true;
@@ -349,6 +329,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(client.client_rx.is_empty());
+
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
         assert_eq!(item, ItemValue::Individual(expected));
@@ -363,7 +345,7 @@ mod tests {
             .await
             .unwrap();
         let mut client =
-            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Disconnected, store);
+            mock_client_with_store(&[STORED_DEVICE_DATASTREAM], ConnStatus::Offline, store);
 
         let path = "/endpoint2";
         let value = true;
@@ -383,7 +365,7 @@ mod tests {
         let mut seq = Sequence::new();
 
         client
-            .sender
+            .encoder
             .expect_serialize_individual()
             .once()
             .in_sequence(&mut seq)
@@ -396,8 +378,15 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(client.client_rx.is_empty());
+
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -442,7 +431,7 @@ mod tests {
         let mut seq = Sequence::new();
 
         client
-            .sender
+            .encoder
             .expect_serialize_individual()
             .once()
             .in_sequence(&mut seq)
@@ -456,8 +445,15 @@ mod tests {
             .unwrap_err();
         assert_eq!(*err.kind(), ErrorKind::Disconnected);
 
+        assert!(client.client_rx.is_empty());
+
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(

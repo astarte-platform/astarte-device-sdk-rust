@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,263 +19,63 @@
 //! Validate the submission and reception of a payload.
 
 use astarte_device_error::Error;
-use astarte_interfaces::interface::Retention;
-use astarte_interfaces::schema::{Ownership, Reliability};
-use astarte_interfaces::{
-    DatastreamIndividual, DatastreamObject, InterfaceMapping, MappingPath, Properties, Schema,
-};
-use tracing::trace;
+use astarte_interfaces::Interface;
 
 use crate::Timestamp;
-use crate::aggregate::AstarteObject;
 use crate::error::InterfaceError;
-use crate::interfaces::MappingRef;
-use crate::types::AstarteData;
+use crate::interfaces::ValidatedCollection;
+use crate::retention::RetentionId;
+use crate::transport::RemovedInterface;
 
-use self::object::Iter;
+use self::individual::ValidatedIndividual;
+use self::object::ValidatedObject;
+use self::properties::{ValidatedProperty, ValidatedUnset};
 
-mod object;
+pub(crate) mod individual;
+pub(crate) mod object;
+pub(crate) mod properties;
 
+/// Used to send across to connection channel.
+// TODO: not sure if all the fields in validated are required to send the data
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ValidatedIndividual {
-    pub(crate) interface: String,
-    pub(crate) path: String,
-    pub(crate) version_major: i32,
-    pub(crate) reliability: Reliability,
-    pub(crate) retention: Retention,
-    pub(crate) data: AstarteData,
-    pub(crate) timestamp: Option<Timestamp>,
-}
-
-impl ValidatedIndividual {
-    pub(crate) fn validate(
-        mapping: MappingRef<'_, DatastreamIndividual>,
-        data: AstarteData,
-        timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedIndividual, Error<InterfaceError>> {
-        let interface = mapping.interface();
-        let path = mapping.path();
-        let mapping = mapping.mapping();
-
-        let ownership = interface.ownership();
-        if ownership != Ownership::Device {
-            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
-                "for sending on {}, not a device interface",
-                interface.name(),
-            )));
-        }
-
-        if !data.eq_mapping_type(mapping.mapping_type()) {
-            return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
-                "for interface {interface}{path}, expected {} but got {}",
-                mapping.mapping_type(),
-                data.display_type()
-            )));
-        }
-
-        validate_timestamp(
-            interface.interface_name().as_str(),
-            path.as_str(),
-            &timestamp,
-            mapping.explicit_timestamp(),
-        )?;
-
-        Ok(ValidatedIndividual {
-            interface: interface.interface_name().to_string(),
-            path: path.to_string(),
-            version_major: interface.version_major(),
-            reliability: mapping.reliability(),
-            retention: mapping.retention(),
-            data,
-            timestamp,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ValidatedObject {
-    pub(crate) interface: String,
-    pub(crate) path: String,
-    pub(crate) version_major: i32,
-    pub(crate) reliability: Reliability,
-    pub(crate) retention: Retention,
-    pub(crate) data: AstarteObject,
-    pub(crate) timestamp: Option<Timestamp>,
-}
-
-impl ValidatedObject {
-    pub(crate) fn validate(
-        interface: &DatastreamObject,
-        path: &MappingPath<'_>,
-        mut data: AstarteObject,
-        timestamp: Option<Timestamp>,
-    ) -> Result<ValidatedObject, Error<InterfaceError>> {
-        let ownership = interface.ownership();
-        if ownership != Ownership::Device {
-            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
-                "for sending on {}, not a device interface",
-                interface.name(),
-            )));
-        }
-
-        if !interface.is_object_path(path) {
-            return Err(Error::new(InterfaceError::ObjectPath).set_ctx(format!(
-                "for interface {} and path {path}",
-                interface.name()
-            )));
-        }
-
-        validate_timestamp(
-            interface.name(),
-            path.as_str(),
-            &timestamp,
-            interface.explicit_timestamp(),
-        )?;
-
-        data.inner.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-
-        Self::check_mappings(interface, path, &data)?;
-
-        Ok(ValidatedObject {
-            interface: interface.interface_name().to_string(),
-            path: path.to_string(),
-            version_major: interface.version_major(),
-            reliability: interface.reliability(),
-            retention: interface.retention(),
-            data,
-            timestamp,
-        })
-    }
-
-    /// Check the mappings of a DataStreamObject
+pub(crate) enum Validated {
+    /// Individual datastream to publish.
+    Individual {
+        retention: Option<RetentionId>,
+        data: ValidatedIndividual,
+    },
+    /// Object datastream to publish.
+    Object {
+        retention: Option<RetentionId>,
+        data: ValidatedObject,
+    },
+    /// Property to set.
+    Property {
+        /// Stored epoch to mark the value as sent
+        epoch: u8,
+        /// Property data
+        data: ValidatedProperty,
+    },
+    /// Property to unset.
+    Unset {
+        /// Stored epoch to mark the value as sent
+        epoch: u8,
+        /// Property data
+        data: ValidatedUnset,
+    },
+    /// Interface to add.
     ///
-    /// We assume the interface mappings and the Astarte object mappings are sorted beforehand, so
-    /// we can compare them two by two.
-    fn check_mappings(
-        interface: &DatastreamObject,
-        path: &MappingPath<'_>,
-        data: &AstarteObject,
-    ) -> Result<(), Error<InterfaceError>> {
-        debug_assert!(data.inner.is_sorted_by(|(a, _), (b, _)| a <= b));
-        debug_assert!(
-            interface
-                .iter_mappings()
-                .is_sorted_by(|a, b| a.endpoint() < b.endpoint())
-        );
-
-        Iter::new(data.iter(), interface.iter_mappings()).try_for_each(|(item, mapping)| {
-            let Some(mapping) = mapping else {
-                debug_assert!(item.is_some());
-
-                let key = item.map(|(k, _)| k.as_str()).unwrap_or_default();
-
-                return Err(Error::new(InterfaceError::MappingNotFound)
-                    .set_ctx(format!("for interface {interface}{path} with key {key}")));
-            };
-
-            match item {
-                Some((key, value)) => {
-                    if !value.eq_mapping_type(mapping.mapping_type()) {
-                        return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
-                            "for interface {interface}{path}/{key}, expected {} but got {}",
-                            mapping.mapping_type(),
-                            value.display_type()
-                        )));
-                    }
-
-                    trace!("valid object field {path} {}", value.display_type());
-                }
-                None => {
-                    if mapping.required() {
-                        return Err(Error::new(InterfaceError::MappingRequired).set_ctx(format!(
-                            "for interface {interface} endpoint {}",
-                            mapping.endpoint()
-                        )));
-                    }
-                }
-            }
-
-            Ok(())
-        })?;
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ValidatedProperty {
-    pub(crate) interface: String,
-    pub(crate) path: String,
-    pub(crate) version_major: i32,
-    pub(crate) data: AstarteData,
-}
-
-impl ValidatedProperty {
-    pub(crate) fn validate(
-        mapping: MappingRef<'_, Properties>,
-        data: AstarteData,
-    ) -> Result<Self, Error<InterfaceError>> {
-        let interface = mapping.interface();
-        let path = mapping.path();
-        let mapping = mapping.mapping();
-
-        let ownership = interface.ownership();
-        if ownership != Ownership::Device {
-            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
-                "for sending on {}, not a device interface",
-                interface.name(),
-            )));
-        }
-
-        if !data.eq_mapping_type(mapping.mapping_type()) {
-            return Err(Error::new(InterfaceError::MappingType).set_ctx(format!(
-                "for interface {interface}{path}, expected {} but got {}",
-                mapping.mapping_type(),
-                data.display_type()
-            )));
-        }
-
-        Ok(Self {
-            interface: interface.interface_name().to_string(),
-            path: path.to_string(),
-            version_major: interface.version_major(),
-            data,
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ValidatedUnset {
-    pub(crate) interface: String,
-    pub(crate) path: String,
-}
-
-impl ValidatedUnset {
-    pub(crate) fn validate(
-        mapping: MappingRef<'_, Properties>,
-    ) -> Result<Self, Error<InterfaceError>> {
-        let interface = mapping.interface();
-        let path = mapping.path();
-        let mapping = mapping.mapping();
-
-        let ownership = interface.ownership();
-        if ownership != Ownership::Device {
-            return Err(Error::new(InterfaceError::Ownership).set_ctx(format!(
-                "for sending on {}, not a device interface",
-                interface.name(),
-            )));
-        }
-
-        if !mapping.allow_unset() {
-            return Err(Error::new(InterfaceError::Unset)
-                .set_ctx(format!("for {}{path}, not allowed", interface.name(),)));
-        }
-
-        Ok(Self {
-            interface: interface.interface_name().to_string(),
-            path: path.to_string(),
-        })
-    }
+    /// Pass the full interface since on gRPC we need to send the full interfaces as JSON
+    AddInterface(Interface),
+    /// Interface to add.
+    ///
+    /// Pass the full interface since on gRPC we need to send the full interfaces as JSON
+    // TODO: remove the hashmap
+    ExtendInterfaces(ValidatedCollection),
+    /// Name of the interface to remove
+    RemoveInterface(RemovedInterface),
+    /// Name of the interface to remove
+    RemoveInterfaceMany(Vec<RemovedInterface>),
 }
 
 fn validate_timestamp(
@@ -303,11 +103,17 @@ fn validate_timestamp(
 mod tests {
     use std::str::FromStr;
 
+    use crate::AstarteData;
+    use crate::aggregate::AstarteObject;
+    use crate::interfaces::MappingRef;
     use crate::test::{DEVICE_OBJECT, DEVICE_PROPERTIES_NO_UNSET, SERVER_PROPERTIES};
+    use crate::validate::properties::ValidatedUnset;
 
     use super::*;
 
-    use astarte_interfaces::{Interface, MappingPath};
+    use astarte_interfaces::{
+        DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+    };
     use chrono::Utc;
 
     const DEVICE_DATASTREAM: &str = include_str!(

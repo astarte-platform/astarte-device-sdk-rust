@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,32 +19,33 @@
 //! Connection to Astarte, for handling events and reconnection on error.
 
 use std::future::Future;
-use std::pin::pin;
+use std::num::NonZero;
+use std::ops::ControlFlow;
 
-use astarte_device_error::Error;
-use astarte_device_error::WrapError;
-use async_channel::SendError;
-use chrono::Utc;
-use futures::future::Either;
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, instrument, trace, warn};
+use astarte_device_error::{ResultExt, WrapError};
+use tokio::task::JoinSet;
+use tracing::{debug, info, instrument, trace};
 
-use crate::Timestamp;
-use crate::error::AstarteError;
-use crate::error::ErrorKind;
-use crate::error::InterfaceError;
-use crate::error::Report;
+use crate::builder::ConnectionConfig;
+use crate::error::{AstarteError, ErrorKind};
 use crate::event::DeviceEvent;
-use crate::retry::RandomExponentialIter;
+use crate::retention::{StoredRetention, StoredRetentionExt};
+use crate::retry::{RetryAction, RetryFuture};
 use crate::state::{ConnStatus, ConnectionState};
-use crate::transport::ReceivedEvent;
-use crate::transport::{Connection, Publish, Receive};
+use crate::store::StoreCapabilities;
+use crate::transport::Introspection;
+use crate::transport::Sender;
+use crate::transport::Transport;
+use crate::validate::Validated;
 
-mod incoming;
-mod resend;
+use self::incoming::ReceiverTask;
+use self::outgoing::SenderTask;
+
+pub(crate) mod incoming;
+pub(crate) mod outgoing;
 
 /// Handles the messages from the device and astarte.
-pub trait EventLoop {
+pub trait Connection {
     /// Poll updates from the connection implementation, can be placed in a loop to receive data.
     ///
     /// This is a blocking function. It should be placed on a dedicated thread/task or as the main
@@ -86,242 +87,134 @@ pub trait EventLoop {
 }
 
 /// Astarte device implementation.
+// TODO: we cannot implement drop on device connection since we move it's fields
 #[derive(Debug)]
-pub struct DeviceConnection<C>
-where
-    C: Connection,
-{
-    events: async_channel::Sender<DeviceEvent>,
-    disconnect: async_channel::Receiver<()>,
-    store: C::Store,
+pub struct DeviceConnection<C, S> {
     connection: C,
-    sender: C::Sender,
-    state: ConnectionState,
-    resend: Option<JoinHandle<()>>,
-    backoff: RandomExponentialIter,
+    state: ConnectionState<S>,
+    events: async_channel::Sender<DeviceEvent>,
+    client_rx: tokio::sync::mpsc::Receiver<Validated>,
+    status_rx: tokio::sync::watch::Receiver<ConnStatus>,
 }
 
-impl<C> DeviceConnection<C>
-where
-    C: Connection,
-{
+impl<C, S> DeviceConnection<C, S> {
     pub(crate) fn new(
-        events: async_channel::Sender<DeviceEvent>,
-        disconnect: async_channel::Receiver<()>,
-        store: C::Store,
-        state: ConnectionState,
         connection: C,
-        sender: C::Sender,
-        backoff: RandomExponentialIter,
+        state: ConnectionState<S>,
+        events: async_channel::Sender<DeviceEvent>,
+        client_rx: tokio::sync::mpsc::Receiver<Validated>,
+        status_rx: tokio::sync::watch::Receiver<ConnStatus>,
     ) -> Self {
         Self {
             events,
-            store,
             state,
             connection,
-            sender,
-            resend: None,
-            backoff,
-            disconnect,
+            client_rx,
+            status_rx,
         }
     }
 
-    /// Validate a timestamp based on the mapping explicit_timestamp value.
-    ///
-    // The order of incoming message is guaranteed so, even if we generate the reception
-    // timestamp late, we still (should) have a consistent order of timestamp between messages
-    fn validate_timestamp(
-        interface_name: &str,
-        path: &str,
-        explicit_timestamp: bool,
-        timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<Timestamp, AstarteError> {
-        match (timestamp, explicit_timestamp) {
-            (None, false) => Ok(Utc::now()),
-            (Some(timestamp), true) => Ok(timestamp),
-            (Some(_), false) => {
-                warn!("received timestamp on interface without `explicit_timestamp`, ignoring");
-
-                Ok(Utc::now())
-            }
-            (None, true) => {
-                error!("missing timestamp on interface with `explicit_timestamp`");
-
-                if cfg!(debug_assertions) {
-                    Err(Error::with(
-                        ErrorKind::Interface(InterfaceError::Timestamp),
-                        "set but missing timestamp on received data",
-                    )
-                    .set_ctx(format!("for {interface_name}{path}")))
-                } else {
-                    Ok(Utc::now())
-                }
-            }
-        }
-    }
-
-    /// Keeps polling connection events
+    /// This function is called once at the start to send all the stored packet.
     #[instrument(skip(self))]
-    pub(super) async fn poll(&mut self) -> Result<ConnStatus, AstarteError>
-    where
-        C: Receive,
-        C::Sender: Publish + 'static,
-    {
-        trace!("polling connection");
-        let Some(event) = self.connection.next_event().await? else {
-            info!("disconnected");
-
-            self.state.set_connection(ConnStatus::Disconnected).await;
-
-            // This will check if the connection was closed
-            return Ok(ConnStatus::Disconnected);
-        };
-
-        trace!("event received");
-
-        self.handle_and_send_to_client(event).await?;
-
-        Ok(ConnStatus::Connected)
-    }
-
-    async fn handle_and_send_to_client(
+    pub(crate) async fn init_store(
         &self,
-        event: ReceivedEvent<C::Payload>,
+        stored_retention: NonZero<usize>,
     ) -> Result<(), AstarteError>
     where
-        C: Receive,
+        S: StoreCapabilities,
     {
-        let data = self
-            .handle_event(&event.interface, &event.path, event.payload)
-            .await;
+        trace!("initialize stored retention and properties");
 
-        let data = match data {
-            Ok(data) => data,
-            Err(error) => {
-                error!(error = %Report::new(error), "error in received event");
+        let interfaces = self.state.interfaces().read().await;
 
-                return Ok(());
+        // set max retention items in the store
+        if let Some(retention) = self.state.store().get_retention() {
+            {
+                debug!("cleaning up the retention introspection");
+                retention
+                    .cleanup_introspection(&interfaces)
+                    .await
+                    .map_kind(ErrorKind::Retention)?;
             }
-        };
 
-        let event = DeviceEvent {
-            interface: event.interface,
-            path: event.path,
-            data,
-        };
+            retention
+                .set_max_retention_items(stored_retention)
+                .await
+                .map_kind(ErrorKind::Retention)?;
 
-        self.send_to_clients(event).await.wrap_err_with(|err| {
-            debug!(error = %Report::new(err), "disconnected");
+            debug!("resetting all datastream sent flags");
+            retention
+                .reset_all_publishes()
+                .await
+                .map_kind(ErrorKind::Retention)?;
+        }
 
-            Error::new(ErrorKind::Disconnected)
-        })?;
+        trace!("resetting all properties state");
+
+        self.state
+            .store()
+            .reset_session()
+            .await
+            .map_kind(ErrorKind::Store)?;
 
         Ok(())
     }
-
-    async fn send_to_clients(&self, event: DeviceEvent) -> Result<(), SendError<DeviceEvent>> {
-        let send = pin!(self.events.send(event));
-        let timeout = pin!(tokio::time::sleep(self.state.config().slow_receive));
-
-        match futures::future::select(send, timeout).await {
-            Either::Left((send_res, _)) => send_res.inspect(|()| trace!("event sent to clients")),
-            Either::Right(((), send)) => {
-                warn!(
-                    duration = ?self.state.config().slow_receive,
-                    "slow to send Astarte events to client, maybe no one is consuming them"
-                );
-
-                send.await
-            }
-        }
-    }
-
-    async fn run_until_disconnect<F>(
-        disconnect: &async_channel::Receiver<()>,
-        f: F,
-    ) -> Option<F::Output>
-    where
-        F: Future,
-    {
-        if disconnect.is_empty() && disconnect.is_closed() {
-            return Some(f.await);
-        }
-
-        let disconnect = pin!(disconnect.recv());
-        let f = pin!(f);
-
-        match futures::future::select(disconnect, f).await {
-            Either::Left((Ok(()), _f)) => {
-                debug!("disconnect received");
-
-                None
-            }
-            Either::Left((Err(error), f)) => {
-                error!(%error, "disconnect closed");
-
-                Some(f.await)
-            }
-            Either::Right((f_out, _disconnect)) => Some(f_out),
-        }
-    }
 }
 
-/// Implement drop on the connection.
-///
-/// All the clients will error when the connection is dropped.
-impl<C> Drop for DeviceConnection<C>
+impl<C, S> Connection for DeviceConnection<C, S>
 where
-    C: Connection,
-{
-    fn drop(&mut self) {
-        let state = self.state.clone();
-
-        tokio::task::spawn(async move {
-            state.set_connection(ConnStatus::Closed).await;
-        });
-    }
-}
-
-impl<C> EventLoop for DeviceConnection<C>
-where
-    C: Connection + Receive + 'static,
-    C::Sender: Publish + 'static,
+    C: ConnectionConfig,
+    C::Connection: Transport,
+    C::Client: Sender + Introspection,
+    S: StoreCapabilities,
 {
     #[instrument(skip(self))]
     async fn handle_events(mut self) -> Result<(), AstarteError> {
         trace!("starting connection");
 
-        // Check the status to since a client may already have called disconnect
-        match self.state.get_connection().await {
-            ConnStatus::Connected => {}
-            ConnStatus::Disconnected => {
-                debug!("connecting device");
+        let mut backoff = RetryFuture {
+            rx: &mut self.status_rx,
+            state: &self.state,
+        };
 
-                if self.reconnect_and_resend().await?.is_break() {
-                    info!("connection closed successfully");
+        // register the device
+        let mut action = RegisterAction {
+            connection: &mut self.connection,
+            state: &self.state,
+        };
+        let Some((sender, connection)) = backoff.retry(&mut action).await? else {
+            info!("connection closed while pairing");
 
-                    return Ok(());
-                }
-            }
-            ConnStatus::Closed => {
-                info!("connection closed");
+            return Ok(());
+        };
 
-                return Ok(());
-            }
-        }
+        let mut tasks = JoinSet::new();
 
-        loop {
-            match self.poll().await? {
-                ConnStatus::Connected => {}
-                ConnStatus::Disconnected => {
-                    if self.reconnect_and_resend().await?.is_break() {
-                        break;
-                    }
-                }
-                ConnStatus::Closed => {
-                    break;
-                }
-            }
+        let mut receiver = ReceiverTask {
+            connection,
+            state: self.state.clone(),
+            status_rx: self.status_rx.clone(),
+            events: self.events,
+            first: true,
+        };
+
+        let mut sender = SenderTask {
+            client_rx: self.client_rx,
+            status_rx: self.status_rx,
+            sender,
+            state: self.state,
+        };
+
+        // spawn receive task
+        tasks.spawn(async move { receiver.receiver().await });
+
+        // spawn send task
+        tasks.spawn(async move { sender.sender().await });
+
+        // join tasks
+        while let Some(res) = tasks.join_next().await {
+            res.wrap_err_msg(ErrorKind::Disconnected, "while joining task")
+                .flatten()?;
         }
 
         info!("connection closed successfully");
@@ -330,28 +223,44 @@ where
     }
 }
 
+// TODO: check if the register is cancel safe
+struct RegisterAction<'a, C, S> {
+    connection: &'a mut C,
+    state: &'a ConnectionState<S>,
+}
+
+impl<'a, C, S> RetryAction for RegisterAction<'a, C, S>
+where
+    C: ConnectionConfig,
+    S: StoreCapabilities,
+{
+    type Out = (C::Client, C::Connection);
+
+    type Err = AstarteError;
+
+    async fn make(&mut self) -> Result<ControlFlow<Self::Out>, Self::Err> {
+        self.connection.register(self.state).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::ops::{ControlFlow, Deref, DerefMut};
+    use std::collections::HashSet;
+    use std::num::NonZero;
+    use std::ops::{Deref, DerefMut};
     use std::str::FromStr;
     use std::sync::Arc;
-    use std::time::Duration;
 
-    use astarte_interfaces::{Interface, Schema};
-    use futures::FutureExt;
-    use mockall::Sequence;
-    use pretty_assertions::assert_eq;
+    use astarte_interfaces::Interface;
+    use mockall::{Sequence, predicate};
 
-    use crate::AstarteData;
-    use crate::builder::{Config, DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
+    use crate::builder::DEFAULT_CHANNEL_SIZE;
     use crate::interfaces::Interfaces;
-    use crate::retention::memory::VolatileStore;
-    use crate::state::SharedState;
+    use crate::retention::StoredInterface;
+    use crate::state::tests::mock_state;
     use crate::store::StoreCapabilities;
-    use crate::store::memory::MemoryStore;
-    use crate::test::{E2E_SERVER_DATASTREAM, E2E_SERVER_DATASTREAM_NAME};
-    use crate::transport::ReceivedEvent;
-    use crate::transport::mock::{MockCon, MockSender};
+    use crate::store::mock::MockStore;
+    use crate::transport::mock::MockCon;
 
     use super::*;
 
@@ -359,16 +268,16 @@ mod tests {
     where
         S: StoreCapabilities,
     {
-        pub(crate) inner: DeviceConnection<MockCon<S>>,
-        pub(crate) events: async_channel::Receiver<DeviceEvent>,
-        pub(crate) disconnect: async_channel::Sender<()>,
+        pub(crate) inner: DeviceConnection<MockCon, S>,
+        pub(crate) _events: async_channel::Receiver<DeviceEvent>,
+        pub(crate) _client: tokio::sync::mpsc::Sender<Validated>,
     }
 
     impl<S> Deref for TestConnection<S>
     where
         S: StoreCapabilities,
     {
-        type Target = DeviceConnection<MockCon<S>>;
+        type Target = DeviceConnection<MockCon, S>;
 
         fn deref(&self) -> &Self::Target {
             &self.inner
@@ -384,13 +293,6 @@ mod tests {
         }
     }
 
-    pub(crate) fn mock_connection(
-        interfaces: &[&str],
-        initial_status: ConnStatus,
-    ) -> TestConnection<MemoryStore> {
-        mock_connection_with_store(interfaces, initial_status, MemoryStore::new())
-    }
-
     pub(crate) fn mock_connection_with_store<S>(
         interfaces: &[&str],
         initial_status: ConnStatus,
@@ -403,155 +305,103 @@ mod tests {
         let interfaces = Interfaces::from_iter(interfaces);
 
         let connection = MockCon::new();
-        let sender = MockSender::new();
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
-        let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
-        let mut state = SharedState::new(
-            Config::default(),
-            interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
-        );
-
-        *state.status.get_mut() = initial_status;
+        let (client_tx, client_rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_SIZE.get());
+        let (status_tx, status_rx) = tokio::sync::watch::channel(initial_status);
+        let state = mock_state(store, status_tx, interfaces);
 
         let connection = DeviceConnection::new(
-            events_tx,
-            disconnect_rx,
-            store,
-            ConnectionState::new(Arc::new(state)),
             connection,
-            sender,
-            RandomExponentialIter::default(),
+            ConnectionState::new(Arc::new(state)),
+            events_tx,
+            client_rx,
+            status_rx,
         );
 
         TestConnection {
             inner: connection,
-            events: events_rx,
-            disconnect: disconnect_tx,
+            _events: events_rx,
+            _client: client_tx,
         }
     }
 
     #[tokio::test]
-    async fn poll_disconnected() {
-        let mut connection = mock_connection(&[], ConnStatus::Connected);
+    async fn init_store_mock_store() {
+        let retention_size = NonZero::new(1).unwrap();
 
+        let retention_intf = "com.example";
+
+        let mut store = MockStore::new();
         let mut seq = Sequence::new();
 
-        connection
-            .connection
-            .expect_next_event()
+        store
+            .expect_return_retention()
             .once()
             .in_sequence(&mut seq)
-            .with()
-            .returning(|| Ok(None));
+            .returning(|| true);
+        store
+            .expect_fetch_all_interfaces_call()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| {
+                Ok(HashSet::from_iter([StoredInterface {
+                    name: retention_intf.to_string(),
+                    version_major: 1,
+                }]))
+            });
 
-        let status = connection.poll().await.unwrap();
+        store
+            .expect_delete_interface_call()
+            .once()
+            .in_sequence(&mut seq)
+            .with(predicate::eq(retention_intf))
+            .returning(|_| Ok(()));
 
-        assert_eq!(status, ConnStatus::Disconnected);
+        store
+            .expect_set_max_retention_items_call()
+            .once()
+            .with(predicate::eq(retention_size))
+            .in_sequence(&mut seq)
+            .returning(|_| Ok(()));
+
+        store
+            .expect_reset_all_publishes_call()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Ok(()));
+
+        store
+            .expect_reset_session()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Ok(()));
+
+        let connection = mock_connection_with_store(&[], ConnStatus::Offline, store);
+
+        connection.init_store(retention_size).await.unwrap();
     }
 
     #[tokio::test]
-    async fn reconnect_cancelled_for_disconnect() {
-        let mut connection = mock_connection(&[], ConnStatus::Disconnected);
-
+    async fn init_store_mock_store_no_retention() {
         let mut seq = Sequence::new();
-        connection
-            .connection
-            .expect_reconnect()
-            .times(0..)
+
+        let mut store = MockStore::new();
+        store
+            .expect_return_retention()
+            .once()
             .in_sequence(&mut seq)
-            .returning(|_| futures::future::pending().boxed());
+            .returning(|| false);
+        store
+            .expect_reset_session()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|| Ok(()));
 
-        let disconnect = connection.disconnect;
-        let handle = tokio::spawn(async move { connection.inner.reconnect_and_resend().await });
+        let connection = mock_connection_with_store(&[], ConnStatus::Offline, store);
 
-        disconnect.try_send(()).unwrap();
-
-        let status = tokio::time::timeout(Duration::from_secs(2), handle)
+        connection
+            .init_store(NonZero::new(1).unwrap())
             .await
-            .unwrap()
-            .unwrap()
             .unwrap();
-
-        assert_eq!(status, ControlFlow::Break(()));
-    }
-
-    #[tokio::test]
-    async fn poll_individual() {
-        let mut connection = mock_connection(&[E2E_SERVER_DATASTREAM], ConnStatus::Disconnected);
-
-        let endpoint = "/boolean_endpoint";
-        let value = true;
-
-        let mut seq = Sequence::new();
-
-        connection
-            .connection
-            .expect_reconnect()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|_| {
-                futures::future::ok(crate::transport::AttemptStatus::Connected {
-                    session_present: true,
-                })
-                .boxed()
-            });
-
-        connection
-            .sender
-            .expect_clone()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(MockSender::new);
-
-        connection
-            .connection
-            .expect_next_event()
-            .once()
-            .in_sequence(&mut seq)
-            .with()
-            .returning(move || {
-                Ok(Some(ReceivedEvent {
-                    interface: E2E_SERVER_DATASTREAM_NAME.to_string(),
-                    path: endpoint.to_string(),
-                    payload: Box::new(value),
-                }))
-            });
-
-        connection
-            .connection
-            .expect_deserialize_individual()
-            .once()
-            .in_sequence(&mut seq)
-            .withf(move |mapping, payload| {
-                mapping.interface().name() == E2E_SERVER_DATASTREAM_NAME
-                    && mapping.path().as_str() == endpoint
-                    && *payload.downcast_ref::<bool>().unwrap() == value
-            })
-            .returning(|_, payload| {
-                let value = payload
-                    .downcast_ref::<bool>()
-                    .map(|val| AstarteData::Boolean(*val))
-                    .unwrap();
-
-                Ok((value, None))
-            });
-
-        // first ensure the status is connected (starts off with a disconnected status)
-        let controlflow = connection.reconnect_and_resend().await.unwrap();
-
-        assert_eq!(controlflow, ControlFlow::Continue(()));
-
-        let status = connection.poll().await.unwrap();
-
-        assert_eq!(status, ConnStatus::Connected);
-
-        let event = connection.events.try_recv().unwrap();
-
-        // Cannot eq the timestamp
-        assert_eq!(event.interface, E2E_SERVER_DATASTREAM_NAME);
-        assert_eq!(event.path, endpoint);
-        let data = event.data.try_into_individual().unwrap();
-        assert_eq!(data.0, AstarteData::Boolean(value));
     }
 }

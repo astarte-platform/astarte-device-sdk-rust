@@ -35,7 +35,7 @@ edition = "2024"
 homepage = "https://astarte.cloud/"
 license = "Apache-2.0"
 repository = "https://github.com/astarte-platform/astarte-device-sdk-rust"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [package]
 name = "astarte-device-sdk"
@@ -64,7 +64,7 @@ rust-version.workspace = true
 description = "A library that provides communication and pairing primitives to an Astarte Cluster"
 
 [features]
-default = ["interface-strict", "sqlite-trace"]
+default = ["interface-strict", "sqlite-trace", "platform-verifier"]
 # Enable and exports the derive macros
 derive = ["dep:astarte-device-sdk-derive"]
 # Enable the registration of the device using the FIDO Device Onboard protocol
@@ -77,8 +77,10 @@ interface-strict = []
 message-hub = ["dep:astarte-message-hub-proto"]
 # Logs the SQLite queries and features
 sqlite-trace = ["rusqlite/trace"]
-# Uses the webpki-roots the Mozilla CA bundle for TLS
-webpki = ["dep:webpki-roots"]
+# Preferred, use the platform certificate and TLS verifier.
+platform-verifier = ["astarte-device-tls/platform-verifier"]
+# Compiled in copy of the root certificate trusted by Mozilla.
+webpki-roots = ["astarte-device-tls/webpki-roots"]
 # Enable the registration of the device using the FIDO Device Onboard protocol
 # NOTE: at the moment this is only supported on linux platforms
 tpm = ["astarte-device-fdo?/tpm"]
@@ -118,6 +120,7 @@ required-features = ["derive"]
 astarte-device-error.workspace = true
 astarte-device-fdo = { workspace = true, optional = true }
 astarte-device-sdk-derive = { workspace = true, optional = true }
+astarte-device-tls = { workspace = true, default-features = false }
 astarte-interfaces.workspace = true
 astarte-message-hub-proto = { workspace = true, optional = true }
 async-channel.workspace = true
@@ -130,41 +133,27 @@ flate2.workspace = true
 futures.workspace = true
 http.workspace = true
 http-body-util.workspace = true
-itertools.workspace = true
 mime.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
-rcgen = { workspace = true, default-features = false, features = [
-  "pem",
-  "crypto",
-  "aws_lc_rs"
-] }
-reqwest = { workspace = true, default-features = false, features = [
-  "charset",
-  "json",
-  "http2",
-  "system-proxy",
-  "rustls-no-provider"
-] }
+rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
+reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = [
-  "std",
-  "aws-lc-rs"
-] }
+rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws-lc-rs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sync_wrapper.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "parking_lot", "macros", "fs"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4", "v5"] }
-webpki-roots = { workspace = true, optional = true }
 x509-parser = { workspace = true, features = ["aws-lc-rs"] }
 
 # C dependencies, used to enable bindgen and vendoring
@@ -173,8 +162,9 @@ rusqlite.workspace = true
 
 [dev-dependencies]
 astarte-device-sdk-derive.workspace = true
-astarte-message-hub-proto-mock.workspace = true
+astarte-device-tls = { workspace = true, default-features = true }
 astarte-message-hub-proto.workspace = true
+astarte-message-hub-proto-mock.workspace = true
 astarte-test-utils.workspace = true
 clap = { workspace = true, features = ["derive"] }
 color-eyre.workspace = true
@@ -186,13 +176,7 @@ pretty_assertions.workspace = true
 rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rstest.workspace = true
 rustls-platform-verifier.workspace = true
-tempfile.workspace = true
-tokio = { workspace = true, features = [
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "test-util"
-] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal", "test-util"] }
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -213,7 +197,7 @@ astarte-device-error = { path = "./astarte-device-error", version = "=0.15.0" }
 astarte-device-fdo = "1.0.1"
 astarte-device-sdk = { path = "./", version = "=0.15.0" }
 astarte-device-sdk-derive = { version = "=0.15.0", path = "./astarte-device-sdk-derive" }
-astarte-device-tls = { path = "./astarte-device-tls", version = "=0.15.0" }
+astarte-device-tls = { path = "./astarte-device-tls", version = "=0.15.0", default-features = false }
 astarte-interfaces = "1.0.0"
 astarte-message-hub-proto = "0.10.1"
 astarte-message-hub-proto-mock = "0.10.1"
@@ -236,7 +220,7 @@ http-body-util = "0.1.2"
 insta = "1.47.2"
 itertools = "0.14.0"
 mime = "0.3.16"
-mockall = "0.14.0"
+mockall = "0.15.0"
 mockito = "1.4.0"
 phoenix-chan = "0.4.2"
 pretty_assertions = "1.4.1"
@@ -246,10 +230,10 @@ rand = "0.10.0"
 rcgen = { version = "0.14.0", default-features = false }
 regex = "1.11.0"
 reqwest = { version = "0.13.0", default-features = false }
+rstest = "0.26.1"
 rumqttc = { package = "rumqttc-dev-patched", version = "0.24.9-ack-notify" }
 # for last diesel release compatibility and MSRV
 rusqlite = ">=0.35.0, <0.40.0"
-rstest = "0.26.1"
 rustls = "0.23.41"
 rustls-native-certs = "0.8.1"
 rustls-pemfile = "2.2.0"

@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,8 @@
 
 //! In memory store for the properties.
 
+use std::collections::hash_map::Entry;
+use std::num::NonZero;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use astarte_device_error::Error;
@@ -27,7 +29,10 @@ use tokio::sync::RwLock;
 use tracing::error;
 
 use super::error::StoreError;
-use super::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp};
+use super::{
+    OptStoredProp, Prop, PropMetadata, PropertyMapping, PropertyStore, StoreCapabilities,
+    StoredProp, UpdatedAt,
+};
 use crate::store::{MissingCapability, PropertyState};
 use crate::types::AstarteData;
 
@@ -37,6 +42,7 @@ use crate::types::AstarteData;
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStore {
     // Store the properties in memory
+    // TODO: we could use a separate index struct to keep the sorted order by updated_at of elements
     store: Arc<RwLock<HashMap<Key, Value>>>,
 }
 
@@ -65,41 +71,74 @@ impl StoreCapabilities for MemoryStore {
 impl PropertyStore for MemoryStore {
     async fn store_prop(
         &self,
-        StoredProp {
+        Prop {
             interface,
             path,
             value,
             interface_major,
             ownership,
-        }: StoredProp<&str, &AstarteData>,
-    ) -> Result<(), Error<StoreError>> {
-        let key = Key::new(interface, path);
-        let value = Value {
-            value: Some(value.clone()),
-            interface_major,
-            ownership,
-            state: PropertyState::Changed,
-        };
-
+            updated_at,
+        }: Prop,
+    ) -> Result<PropMetadata, Error<StoreError>> {
         let mut store = self.store.write().await;
 
-        store.insert(key, value);
+        let key = Key { interface, path };
 
-        Ok(())
+        match store.entry(key) {
+            Entry::Occupied(mut occupied_entry) => {
+                let entry = occupied_entry.get_mut();
+
+                if entry.value.as_ref().is_some_and(|old| *old == value)
+                    && entry.interface_major == interface_major
+                {
+                    Ok(PropMetadata { epoch: None })
+                } else {
+                    entry.value = Some(value);
+                    entry.interface_major = interface_major;
+                    entry.state = PropertyState::Changed;
+                    entry.updated_at = updated_at;
+                    entry.epoch = entry.epoch.wrapping_add(1);
+
+                    Ok(PropMetadata {
+                        epoch: Some(entry.epoch),
+                    })
+                }
+            }
+            Entry::Vacant(vacant_entry) => {
+                let entry = vacant_entry.insert(Value::new(
+                    Some(value),
+                    interface_major,
+                    ownership,
+                    updated_at,
+                ));
+
+                Ok(PropMetadata {
+                    epoch: Some(entry.epoch),
+                })
+            }
+        }
     }
 
     async fn update_state(
         &self,
-        property: &PropertyMapping<'_>,
+        interface_name: &str,
+        path: &str,
         state: PropertyState,
-        expected: Option<AstarteData>,
+        epoch: u8,
     ) -> Result<bool, Error<StoreError>> {
-        let key = Key::new(property.interface_name(), property.path());
+        let key = Key {
+            interface: interface_name.to_string(),
+            path: path.to_string(),
+        };
 
         if let Some(val) = self.store.write().await.get_mut(&key)
-            && val.value == expected
+            && val.epoch == epoch
         {
             val.state = state;
+
+            if state == PropertyState::Completed {
+                val.epoch = 0;
+            }
 
             Ok(true)
         } else {
@@ -110,75 +149,109 @@ impl PropertyStore for MemoryStore {
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Error<StoreError>> {
-        let key = Key::new(property.interface_name(), property.path());
-
-        // We need to drop the lock before calling delete_prop
-        let opt_val = {
-            let store = self.store.read().await;
-
-            store.get(&key).cloned()
+    ) -> Result<Option<StoredProp>, Error<StoreError>> {
+        let key = Key {
+            interface: property.interface_name().to_string(),
+            path: property.path().to_string(),
         };
 
-        match opt_val {
-            Some(value) if value.interface_major != property.version_major() => {
-                error!(
-                    "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
-                    property.interface_name(),
-                    property.path(),
-                    value.interface_major,
-                    property.version_major()
-                );
+        let mut store = self.store.write().await;
 
-                self.delete_prop(property).await?;
+        // We need to drop the lock before calling delete_prop
+        match store.entry(key.clone()) {
+            Entry::Occupied(entry) => {
+                if property.version_major() != entry.get().interface_major {
+                    error!(
+                        "Version mismatch for property {}{} (stored {}, interface {}). Deleting.",
+                        property.interface_name(),
+                        property.path(),
+                        entry.get().interface_major,
+                        property.version_major()
+                    );
 
-                Ok(None)
+                    entry.remove();
+
+                    Ok(None)
+                } else {
+                    let value = entry.get().as_prop(&key);
+
+                    Ok(value)
+                }
             }
-            Some(value) => Ok(value.value),
-            None => Ok(None),
+            Entry::Vacant(_) => Ok(None),
         }
     }
 
-    async fn unset_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
-        let key = Key::new(property.interface_name(), property.path());
+    async fn unset_prop(
+        &self,
+        property: &PropertyMapping<'_>,
+        updated_at: UpdatedAt,
+    ) -> Result<PropMetadata, Error<StoreError>> {
+        let key = Key {
+            interface: property.interface_name().to_string(),
+            path: property.path().to_string(),
+        };
 
         let mut writer = self.store.write().await;
 
-        if let Some(value) = writer.get_mut(&key) {
-            value.value = None;
+        let Some(value) = writer.get_mut(&key) else {
+            return Ok(PropMetadata { epoch: None });
+        };
+
+        if value.value.is_none() {
+            return Ok(PropMetadata { epoch: None });
         }
 
-        Ok(())
+        value.value = None;
+        value.epoch = value.epoch.wrapping_add(1);
+        value.updated_at = updated_at;
+
+        Ok(PropMetadata {
+            epoch: Some(value.epoch),
+        })
     }
 
-    async fn delete_prop(&self, property: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
-        let key = Key::new(property.interface_name(), property.path());
-
-        let mut store = self.store.write().await;
-
-        store.remove(&key);
-
-        Ok(())
-    }
-
-    async fn delete_expected_prop(
+    async fn delete_device_prop(
         &self,
-        property: &PropertyMapping<'_>,
-        expected: Option<AstarteData>,
+        interface_name: &str,
+        path: &str,
+        epoch: u8,
     ) -> Result<bool, Error<StoreError>> {
-        let key = Key::new(property.interface_name(), property.path());
+        let key = Key {
+            interface: interface_name.to_string(),
+            path: path.to_string(),
+        };
 
         let mut store = self.store.write().await;
 
-        if let Some(val) = store.get_mut(&key)
-            && val.value == expected
-        {
-            store.remove(&key);
+        let Entry::Occupied(entry) = store.entry(key) else {
+            return Ok(false);
+        };
 
-            Ok(true)
-        } else {
-            Ok(false)
+        if entry.get().epoch != epoch {
+            return Ok(false);
         }
+
+        entry.remove();
+
+        Ok(true)
+    }
+
+    async fn delete_server_prop(
+        &self,
+        interface_name: &str,
+        path: &str,
+    ) -> Result<bool, Error<StoreError>> {
+        let key = Key {
+            interface: interface_name.to_string(),
+            path: path.to_string(),
+        };
+
+        let mut store = self.store.write().await;
+
+        let deleted = store.remove(&key).is_some();
+
+        Ok(deleted)
     }
 
     async fn clear(&self) -> Result<(), Error<StoreError>> {
@@ -189,38 +262,83 @@ impl PropertyStore for MemoryStore {
         Ok(())
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn load_all_props(
+        &self,
+        limit: NonZero<usize>,
+        last_update_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
-        let props = store.iter().filter_map(|(k, v)| v.as_prop(k)).collect();
+        let mut props = store
+            .iter()
+            .filter_map(|(k, v)| {
+                if last_update_at.is_some_and(|t| v.updated_at <= t) {
+                    return None;
+                }
+
+                v.as_prop(k)
+            })
+            .collect::<Vec<_>>();
+
+        props.sort_unstable_by_key(|p| p.updated_at);
+
+        props.truncate(limit.get());
 
         Ok(props)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn server_props(
+        &self,
+        limit: NonZero<usize>,
+        last_update_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
-        let props = store
+        let mut props = store
             .iter()
-            .filter_map(|(k, v)| match v.ownership {
-                Ownership::Device => None,
-                Ownership::Server => v.as_prop(k),
+            .filter_map(|(k, v)| {
+                if last_update_at.is_some_and(|t| v.updated_at <= t) {
+                    return None;
+                }
+
+                match v.ownership {
+                    Ownership::Device => None,
+                    Ownership::Server => v.as_prop(k),
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        props.sort_unstable_by_key(|p| p.updated_at);
+
+        props.truncate(limit.get());
 
         Ok(props)
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
+    async fn device_props(
+        &self,
+        limit: NonZero<usize>,
+        last_update_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
-        let props = store
+        let mut props = store
             .iter()
-            .filter_map(|(k, v)| match v.ownership {
-                Ownership::Device => v.as_prop(k),
-                Ownership::Server => None,
+            .filter_map(|(k, v)| {
+                if last_update_at.is_some_and(|t| v.updated_at <= t) {
+                    return None;
+                }
+
+                match v.ownership {
+                    Ownership::Device => v.as_prop(k),
+                    Ownership::Server => None,
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        props.sort_unstable_by_key(|p| p.updated_at);
+
+        props.truncate(limit.get());
 
         Ok(props)
     }
@@ -228,22 +346,31 @@ impl PropertyStore for MemoryStore {
     async fn interface_props(
         &self,
         interface: &Properties,
+        limit: NonZero<usize>,
+        last_update_at: Option<UpdatedAt>,
     ) -> Result<Vec<StoredProp>, Error<StoreError>> {
-        let collect = self
-            .store
-            .read()
-            .await
+        let store = self.store.read().await;
+
+        let mut props = store
             .iter()
             .filter_map(|(k, v)| {
+                if last_update_at.is_some_and(|t| v.updated_at <= t) {
+                    return None;
+                }
+
                 if k.interface == interface.name() {
                     v.as_prop(k)
                 } else {
                     None
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        Ok(collect)
+        props.sort_unstable_by_key(|p| p.updated_at);
+
+        props.truncate(limit.get());
+
+        Ok(props)
     }
 
     async fn delete_interface(&self, interface: &Properties) -> Result<(), Error<StoreError>> {
@@ -258,15 +385,20 @@ impl PropertyStore for MemoryStore {
     async fn device_props_with_unset(
         &self,
         state: PropertyState,
-        limit: usize,
-        offset: usize,
+        limit: NonZero<usize>,
+        last_update_at: Option<UpdatedAt>,
     ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         let store = self.store.read().await;
 
-        let props = store
+        // TODO: this allocates all the props
+        let mut props = store
             .iter()
             .filter_map(|(k, v)| {
                 if v.state != state {
+                    return None;
+                }
+
+                if last_update_at.is_some_and(|t| v.updated_at <= t) {
                     return None;
                 }
 
@@ -275,20 +407,27 @@ impl PropertyStore for MemoryStore {
                     Ownership::Server => None,
                 }
             })
-            .skip(offset)
-            .take(limit)
-            .collect();
+            .collect::<Vec<_>>();
+
+        props.sort_unstable_by_key(|p| p.updated_at);
+
+        props.truncate(limit.get());
 
         Ok(props)
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
-        self.store
-            .write()
-            .await
+    async fn reset_session(&self) -> Result<(), Error<StoreError>> {
+        let mut store = self.store.write().await;
+
+        store.retain(|_k, v| v.value.is_some());
+
+        store
             .values_mut()
-            .filter(|v| v.ownership == ownership)
-            .for_each(|v| v.state = PropertyState::Changed);
+            .filter(|v| v.ownership == Ownership::Device)
+            .for_each(|v| {
+                v.state = PropertyState::Changed;
+                v.epoch = 0;
+            });
 
         Ok(())
     }
@@ -300,16 +439,6 @@ impl PropertyStore for MemoryStore {
 struct Key {
     interface: String,
     path: String,
-}
-
-impl Key {
-    /// Creates a new Key
-    fn new(interface: &str, path: &str) -> Self {
-        Key {
-            interface: interface.to_string(),
-            path: path.to_string(),
-        }
-    }
 }
 
 impl Display for Key {
@@ -325,16 +454,40 @@ struct Value {
     interface_major: i32,
     ownership: Ownership,
     state: PropertyState,
+    epoch: u8,
+    updated_at: UpdatedAt,
 }
 
 impl Value {
+    fn new(
+        value: Option<AstarteData>,
+        interface_major: i32,
+        ownership: Ownership,
+        updated_at: UpdatedAt,
+    ) -> Self {
+        Self {
+            value,
+            interface_major,
+            ownership,
+            state: PropertyState::Changed,
+            epoch: 0,
+            updated_at,
+        }
+    }
+
     fn as_prop(&self, key: &Key) -> Option<StoredProp> {
-        self.value.as_ref().map(|value| StoredProp {
+        let Some(value) = &self.value else {
+            return None;
+        };
+
+        Some(StoredProp {
             interface: key.interface.clone(),
             path: key.path.clone(),
             value: value.clone(),
             interface_major: self.interface_major,
             ownership: self.ownership,
+            epoch: self.epoch,
+            updated_at: self.updated_at,
         })
     }
 }
@@ -347,6 +500,8 @@ impl From<(&Key, &Value)> for OptStoredProp {
             value: value.value.clone(),
             interface_major: value.interface_major,
             ownership: value.ownership,
+            epoch: value.epoch,
+            updated_at: value.updated_at,
         }
     }
 }

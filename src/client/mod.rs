@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,27 +20,24 @@
 
 use std::future::Future;
 
-use astarte_device_error::{ResultExt, WrapError};
+use astarte_device_error::WrapError;
 use astarte_interfaces::MappingPath;
 use astarte_interfaces::interface::Retention;
 use chrono::{DateTime, Utc};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::aggregate::AstarteObject;
+use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind, InterfaceError};
 use crate::event::DeviceEvent;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::pairing::Pairing;
 use crate::retention::memory::{ItemValue, VolatileItemError};
-use crate::retention::{
-    Id, RetentionId, StoredRetention, StoredRetentionExt, stored_mark_unsent, volatile_mark_unsent,
-};
+use crate::retention::{Id, RetentionId, StoredRetention};
 use crate::state::{ClientState, ConnStatus};
 use crate::store::StoreCapabilities;
-use crate::transport::mqtt::Mqtt;
-use crate::transport::{Connection, Disconnect, Publish};
+use crate::transport::Encode;
 use crate::types::AstarteData;
-use crate::validate::{ValidatedIndividual, ValidatedObject};
+use crate::validate::Validated;
 
 mod individual;
 mod introspection;
@@ -51,7 +48,7 @@ mod property;
 ///
 /// A device client is responsible for interacting with the Astarte platform by sending properties
 /// and datastreams, handling events, and managing device interfaces.
-pub trait Client: Clone {
+pub trait Client: Send + Sync + Clone {
     /// Send an individual datastream on an interface.
     ///
     /// ```no_run
@@ -82,7 +79,7 @@ pub trait Client: Clone {
     /// }
     /// ```
     fn send_individual(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -119,7 +116,7 @@ pub trait Client: Clone {
     /// }
     /// ```
     fn send_individual_with_timestamp(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -132,7 +129,7 @@ pub trait Client: Clone {
     /// [`send_object_with_timestamp`](crate::Client::send_object_with_timestamp),
     /// without the timestamp.
     fn send_object(
-        &mut self,
+        &self,
         interface_name: &str,
         base_path: &str,
         data: AstarteObject,
@@ -183,7 +180,7 @@ pub trait Client: Clone {
     /// }
     /// ```
     fn send_object_with_timestamp(
-        &mut self,
+        &self,
         interface_name: &str,
         base_path: &str,
         data: AstarteObject,
@@ -220,7 +217,7 @@ pub trait Client: Clone {
     /// }
     /// ```
     fn set_property(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -255,7 +252,7 @@ pub trait Client: Clone {
     /// }
     /// ```
     fn unset_property(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
     ) -> impl Future<Output = Result<(), AstarteError>> + Send;
@@ -269,14 +266,29 @@ pub trait Client: Clone {
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
     fn recv(&self) -> impl Future<Output = Option<DeviceEvent>> + Send;
-}
 
-/// Connection of the Client.
-///
-/// Manages introspects the connection and device status.
-pub trait ClientConnection {
+    /// Retrieve the expiry (not_after) timestamp of the current certificate
+    fn get_cert_expiry(&self) -> impl Future<Output = Option<DateTime<Utc>>> + Send;
+
+    /// Retrieve the expiry (not_after) timestamp of the current certificate
+    /// Note that this function will log a security event if the feature is enabled
+    /// when the certificate will expire at the passed datetime
+    fn is_valid_at(&self, check_dt: DateTime<Utc>) -> impl Future<Output = Option<bool>> + Send {
+        async move {
+            let expiry = self.get_cert_expiry().await?;
+
+            if check_dt < expiry {
+                Some(true)
+            } else {
+                notify_security_event(SecurityEvent::CertificateAboutToExpire);
+
+                Some(false)
+            }
+        }
+    }
+
     /// Cleanly disconnects the client consuming it.
-    fn disconnect(&mut self) -> impl Future<Output = Result<(), AstarteError>> + Send;
+    fn disconnect(&self) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
     /// Check if the client is already paired.
     fn is_paired(&self) -> bool;
@@ -289,65 +301,71 @@ pub trait ClientConnection {
 /// Cloning the client will not broadcast the [`DeviceEvent`]. Each message can
 /// only be received once.
 #[derive(Debug)]
-pub struct DeviceClient<C>
+pub struct DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
-    // Sender of the connection.
-    sender: C::Sender,
-    // We use multi producer multi consumer instead of the mpsc channel for the DeviceEvents for the connection to che
-    // client since we need the Receiver end to be cloneable.
-    // The tokio Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
+    /// Sender of the connection.
+    sender: tokio::sync::mpsc::Sender<Validated>,
+    /// Astarte data events.
+    ///
+    /// We use multi producer multi consumer instead of the mpsc channel for the DeviceEvents for
+    /// the connection to che client since we need the Receiver end to be cloneable. The tokio
+    /// Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
     events: async_channel::Receiver<DeviceEvent>,
-    pub(crate) disconnect: async_channel::Sender<()>,
-    pub(crate) store: C::Store,
-    pub(crate) state: ClientState,
+    pub(crate) state: ClientState<S>,
+    /// Encoder for the client
+    ///
+    /// Useful for tests to not call static methods. It can be a ZST.
+    pub(crate) encoder: C::Encoder,
 }
 
-impl<C> DeviceClient<C>
+impl<C, S> DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
     pub(crate) fn new(
-        sender: C::Sender,
+        sender: tokio::sync::mpsc::Sender<Validated>,
         rx: async_channel::Receiver<DeviceEvent>,
-        store: C::Store,
-        state: ClientState,
-        disconnect: async_channel::Sender<()>,
+        state: ClientState<S>,
+        encoder: C::Encoder,
     ) -> Self {
         Self {
             sender,
             events: rx,
-            store,
             state,
-            disconnect,
+            encoder,
         }
     }
 
-    async fn send<T>(
-        state: &ClientState,
-        store: &C::Store,
-        sender: &mut C::Sender,
-        data: T,
-    ) -> Result<(), AstarteError>
+    /// Sends the data to the other task with a timeout
+    pub(crate) async fn send_timeout(&self, value: Validated) -> Result<(), AstarteError> {
+        self.sender
+            .send_timeout(value, self.state.config().send_timeout)
+            .await
+            .wrap_err_msg(ErrorKind::Timeout, "while sending on channel")
+    }
+
+    async fn send<T>(&self, data: T) -> Result<(), AstarteError>
     where
-        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
-        C::Store: StoreCapabilities,
-        C::Sender: Publish,
+        C: ConnectionConfig,
+        C::Encoder: Encode,
+        S: StoreCapabilities,
+        T: ClientPacket,
     {
-        match state.connection().await {
-            ConnStatus::Connected => {
+        match self.state.connection() {
+            ConnStatus::Online => {
                 trace!("publish while connection is connected");
             }
-            ConnStatus::Disconnected => {
+            ConnStatus::Offline | ConnStatus::Connected { .. } => {
                 trace!("publish while connection is offline");
 
-                return Self::offline_send(state, store, sender, data).await;
+                return self.offline_send(data).await;
             }
-            ConnStatus::Closed => {
+            ConnStatus::Disconnect | ConnStatus::Closed => {
                 trace!("publish while connection is closed");
 
-                if let Err(error) = Self::offline_send(state, store, sender, data).await {
+                if let Err(error) = self.offline_send(data).await {
                     error!(%error, "couldn't store the send");
                 }
 
@@ -359,43 +377,50 @@ where
         }
 
         match data.get_retention() {
-            Retention::Volatile { .. } => Self::send_volatile(state, sender, data).await,
-            Retention::Stored { .. } => Self::send_stored(state, store, sender, data).await,
-            Retention::Discard => data.send(sender).await,
+            Retention::Volatile { .. } => self.send_volatile(data).await,
+            Retention::Stored { .. } => self.send_stored(data).await,
+            Retention::Discard => {
+                let data = data.validated(None);
+
+                if let Err(error) = self.sender.try_send(data) {
+                    warn!(%error, "message with retention discard dropped, queue full");
+                } else {
+                    trace!("message queued")
+                }
+
+                Ok(())
+            }
         }
     }
 
-    async fn offline_send<T>(
-        state: &ClientState,
-        store: &C::Store,
-        sender: &mut C::Sender,
-        data: T,
-    ) -> Result<(), AstarteError>
+    async fn offline_send<T>(&self, data: T) -> Result<(), AstarteError>
     where
-        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError>,
-        C::Store: StoreCapabilities,
-        C::Sender: Publish,
+        C: ConnectionConfig,
+        C::Encoder: Encode,
+        S: StoreCapabilities,
+        T: ClientPacket,
     {
         match data.get_retention() {
             Retention::Discard => {
                 debug!("drop publish with retention discard since disconnected");
             }
             Retention::Volatile { .. } => {
-                let id = state.retention_ctx().next();
+                let id = self.state.retention_ctx().next();
 
-                state.volatile_store().push_unsent(id, data).await;
+                self.state.volatile_store().push_unsent(id, data).await;
             }
             Retention::Stored { .. } => {
-                let id = state.retention_ctx().next();
+                let id = self.state.retention_ctx().next();
 
-                if let Some(retention) = store.get_retention() {
-                    data.store_publish(&id, sender, retention, false).await?;
+                if let Some(retention) = self.state.store().get_retention() {
+                    data.store_publish(retention, &self.encoder, &id, false)
+                        .await?;
                 } else {
                     warn!(
-                        ?store,
                         "storing interface with retention 'Stored' in volatile store since the store doesn't support retention"
                     );
-                    state.volatile_store().push_unsent(id, data).await;
+
+                    self.state.volatile_store().push_unsent(id, data).await;
                 }
             }
         }
@@ -403,114 +428,77 @@ where
         Ok(())
     }
 
-    async fn send_stored<T>(
-        state: &ClientState,
-        store: &C::Store,
-        sender: &mut C::Sender,
-        data: T,
-    ) -> Result<(), AstarteError>
+    async fn send_stored<T>(&self, data: T) -> Result<(), AstarteError>
     where
-        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
-        C::Store: StoreCapabilities,
-        C::Sender: Publish,
+        C: ConnectionConfig,
+        C::Encoder: Encode,
+        S: StoreCapabilities,
+        T: ClientPacket,
     {
-        let Some(retention) = store.get_retention() else {
+        let Some(retention) = self.state.store().get_retention() else {
             warn!(
-                ?store,
                 "storing interface with retention 'Stored' in volatile store since the store doesn't support retention"
             );
-            return Self::send_volatile(state, sender, data).await;
+
+            return self.send_volatile(data).await;
         };
 
         // generate id after the check to avoid wasting an id generation in case it gets regenerated in send_volatile
-        let id = state.retention_ctx().next();
+        let id = self.state.retention_ctx().next();
 
-        data.store_publish(&id, sender, retention, true).await?;
+        data.store_publish(retention, &self.encoder, &id, false)
+            .await?;
 
-        let result = data.send_stored(RetentionId::Stored(id), sender).await;
+        self.send_timeout(data.validated(Some(RetentionId::Stored(id))))
+            .await?;
 
-        if result.is_err() {
-            error!("error while sending stored marking unsent");
-            stored_mark_unsent(store, &id).await;
-        }
-
-        result
+        Ok(())
     }
 
-    async fn send_volatile<T>(
-        state: &ClientState,
-        sender: &mut C::Sender,
-        data: T,
-    ) -> Result<(), AstarteError>
+    async fn send_volatile<T>(&self, data: T) -> Result<(), AstarteError>
     where
-        T: ClientPacket + TryInto<ItemValue, Error = VolatileItemError> + Clone,
-        C::Store: StoreCapabilities,
-        C::Sender: Publish,
+        C: ConnectionConfig,
+        C::Encoder: Encode,
+        S: StoreCapabilities,
+        T: ClientPacket,
     {
-        let id = state.retention_ctx().next();
+        let id = self.state.retention_ctx().next();
 
-        state.volatile_store().push_sent(id, data.clone()).await;
+        self.state
+            .volatile_store()
+            .push_sent(id, data.clone(), false)
+            .await;
 
-        let result = data.send_stored(RetentionId::Volatile(id), sender).await;
+        self.send_timeout(data.validated(Some(RetentionId::Volatile(id))))
+            .await?;
 
-        if result.is_err() {
-            error!("error while sending volatile marking unsent");
-            volatile_mark_unsent(state.volatile_store(), &id).await;
-        }
-
-        result
-    }
-}
-
-impl<S, P> DeviceClient<Mqtt<S, P>>
-where
-    S: StoreCapabilities,
-    P: Pairing,
-{
-    /// Retrieve the expiry (not_after) timestamp of the current certificate
-    pub async fn get_cert_expiry(&self) -> Option<DateTime<Utc>> {
-        self.state.cert_expiry().await
-    }
-
-    /// Retrieve the expiry (not_after) timestamp of the current certificate
-    /// Note that this function will log a security event if the feature is enabled
-    /// when the certificate will expire at the passed datetime
-    pub async fn is_valid_at(&self, check_dt: DateTime<Utc>) -> Option<bool> {
-        let expiry = self.get_cert_expiry().await?;
-
-        if check_dt < expiry {
-            Some(true)
-        } else {
-            notify_security_event(SecurityEvent::CertificateAboutToExpire);
-
-            Some(false)
-        }
+        Ok(())
     }
 }
 
 // Cannot be derived it has specific generic bounds.
-impl<C> Clone for DeviceClient<C>
+impl<C, S> Clone for DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
             events: self.events.clone(),
-            store: self.store.clone(),
             state: self.state.clone(),
-            disconnect: self.disconnect.clone(),
+            encoder: self.encoder.clone(),
         }
     }
 }
 
-impl<C> Client for DeviceClient<C>
+impl<C, S> Client for DeviceClient<C, S>
 where
-    C: Connection,
-    C::Sender: Publish,
+    C: ConnectionConfig,
+    S: StoreCapabilities,
+    C::Encoder: Encode,
 {
     async fn send_object_with_timestamp(
-        &mut self,
+        &self,
         interface_name: &str,
         base_path: &str,
         data: AstarteObject,
@@ -524,7 +512,7 @@ where
     }
 
     async fn send_object(
-        &mut self,
+        &self,
         interface_name: &str,
         base_path: &str,
         data: AstarteObject,
@@ -537,7 +525,7 @@ where
     }
 
     async fn send_individual(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -550,7 +538,7 @@ where
     }
 
     async fn send_individual_with_timestamp(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -564,7 +552,7 @@ where
     }
 
     async fn set_property(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
         data: AstarteData,
@@ -578,7 +566,7 @@ where
     }
 
     async fn unset_property(
-        &mut self,
+        &self,
         interface_name: &str,
         mapping_path: &str,
     ) -> Result<(), AstarteError> {
@@ -601,27 +589,16 @@ where
             }
         }
     }
-}
 
-impl<C> ClientConnection for DeviceClient<C>
-where
-    C: Connection,
-    C::Sender: Disconnect,
-{
-    async fn disconnect(&mut self) -> Result<(), AstarteError> {
-        if self.state.connection().await == ConnStatus::Closed {
-            debug!("connection already closed");
+    /// Retrieve the expiry (not_after) timestamp of the current certificate
+    async fn get_cert_expiry(&self) -> Option<DateTime<Utc>> {
+        self.state.cert_expiry().await
+    }
 
-            return Ok(());
-        }
-
-        self.sender.disconnect().await?;
+    async fn disconnect(&self) -> Result<(), AstarteError> {
+        self.state.disconnect();
 
         info!("device disconnected");
-
-        if let Err(error) = self.disconnect.try_send(()) {
-            error!(%error, "multiple clients trying to disconnect");
-        }
 
         Ok(())
     }
@@ -631,127 +608,28 @@ where
     }
 }
 
-trait ClientPacket {
+pub(crate) trait ClientPacket
+where
+    Self: TryInto<ItemValue, Error = VolatileItemError> + Clone,
+{
     fn get_retention(&self) -> Retention;
 
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, AstarteError>
+    fn serialize<E>(&self, encodeer: &E) -> Result<Vec<u8>, AstarteError>
     where
-        S: Publish;
+        E: Encode;
 
-    fn send<S>(self, sender: &mut S) -> impl Future<Output = Result<(), AstarteError>> + Send
-    where
-        S: Publish + Send;
+    fn validated(self, retention: Option<RetentionId>) -> Validated;
 
-    fn send_stored<S>(
-        self,
-        id: RetentionId,
-        sender: &mut S,
-    ) -> impl Future<Output = Result<(), AstarteError>> + Send
-    where
-        S: Publish + Send;
-
-    fn store_publish<S, R>(
+    fn store_publish<S, E>(
         &self,
+        retention: &S,
+        encodeer: &E,
         id: &Id,
-        sender: &S,
-        retention: &R,
         sent: bool,
     ) -> impl Future<Output = Result<(), AstarteError>> + Send
     where
-        S: Publish + Sync,
-        R: StoredRetention + Sync;
-}
-
-impl ClientPacket for ValidatedIndividual {
-    fn get_retention(&self) -> Retention {
-        self.retention
-    }
-
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, AstarteError>
-    where
-        S: Publish,
-    {
-        sender.serialize_individual(self)
-    }
-
-    async fn send<S>(self, sender: &mut S) -> Result<(), AstarteError>
-    where
-        S: Publish + Send,
-    {
-        sender.send_individual(self).await
-    }
-
-    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), AstarteError>
-    where
-        S: Publish,
-    {
-        sender.send_individual_stored(id, self).await
-    }
-
-    async fn store_publish<S, R>(
-        &self,
-        id: &Id,
-        sender: &S,
-        retention: &R,
-        sent: bool,
-    ) -> Result<(), AstarteError>
-    where
-        S: Publish + Sync,
-        R: StoredRetention + Sync,
-    {
-        let serialized = self.serialize(sender)?;
-
-        retention
-            .store_publish_individual(id, self, &serialized, sent)
-            .await
-            .map_kind(ErrorKind::Retention)
-    }
-}
-
-impl ClientPacket for ValidatedObject {
-    fn get_retention(&self) -> Retention {
-        self.retention
-    }
-
-    fn serialize<S>(&self, sender: &S) -> Result<Vec<u8>, AstarteError>
-    where
-        S: Publish,
-    {
-        sender.serialize_object(self)
-    }
-
-    async fn send<S>(self, sender: &mut S) -> Result<(), AstarteError>
-    where
-        S: Publish + Send,
-    {
-        sender.send_object(self).await
-    }
-
-    async fn send_stored<S>(self, id: RetentionId, sender: &mut S) -> Result<(), AstarteError>
-    where
-        S: Publish + Send,
-    {
-        sender.send_object_stored(id, self).await
-    }
-
-    async fn store_publish<S, R>(
-        &self,
-        id: &Id,
-        sender: &S,
-        retention: &R,
-        sent: bool,
-    ) -> Result<(), AstarteError>
-    where
-        S: Publish + Sync,
-        R: StoredRetention + Sync,
-    {
-        let serialized = self.serialize(sender)?;
-
-        retention
-            .store_publish_object(id, self, &serialized, sent)
-            .await
-            .map_kind(ErrorKind::Retention)
-    }
+        S: StoredRetention,
+        E: Encode;
 }
 
 #[cfg(test)]
@@ -766,13 +644,12 @@ pub(crate) mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::Value;
-    use crate::builder::{Config, DEFAULT_CHANNEL_SIZE, DEFAULT_VOLATILE_CAPACITY};
+    use crate::builder::DEFAULT_CHANNEL_SIZE;
     use crate::interfaces::Interfaces;
-    use crate::retention::memory::VolatileStore;
-    use crate::state::SharedState;
+    use crate::state::tests::mock_state;
     use crate::store::StoreCapabilities;
     use crate::store::memory::MemoryStore;
-    use crate::transport::mock::{MockCon, MockSender};
+    use crate::transport::mock::{MockConfig, MockEncoder};
 
     use super::*;
 
@@ -780,16 +657,17 @@ pub(crate) mod tests {
     where
         S: StoreCapabilities,
     {
-        client: DeviceClient<MockCon<S>>,
-        pub(crate) disconnect: async_channel::Receiver<()>,
+        client: DeviceClient<MockConfig, S>,
+        pub(crate) client_rx: tokio::sync::mpsc::Receiver<Validated>,
         pub(crate) events: async_channel::Sender<DeviceEvent>,
+        pub(crate) status: tokio::sync::watch::Receiver<ConnStatus>,
     }
 
     impl<S> Deref for TestClient<S>
     where
         S: StoreCapabilities,
     {
-        type Target = DeviceClient<MockCon<S>>;
+        type Target = DeviceClient<MockConfig, S>;
 
         fn deref(&self) -> &Self::Target {
             &self.client
@@ -823,51 +701,45 @@ pub(crate) mod tests {
         let interfaces = interfaces.iter().map(|i| Interface::from_str(i).unwrap());
         let interfaces = Interfaces::from_iter(interfaces);
 
-        let sender = MockSender::new();
+        let (client_tx, client_rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_SIZE.get());
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
-        let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
+        let (status_tx, status_rx) = tokio::sync::watch::channel(initial_status);
 
-        let mut state = SharedState::new(
-            Config::default(),
-            interfaces,
-            VolatileStore::with_capacity(DEFAULT_VOLATILE_CAPACITY.get()),
-        );
-
-        *state.status.get_mut() = initial_status;
+        let state = mock_state(store, status_tx, interfaces);
 
         let client = DeviceClient::new(
-            sender,
+            client_tx,
             events_rx,
-            store,
             ClientState::new(Arc::new(state)),
-            disconnect_tx,
+            MockEncoder::new(),
         );
 
         TestClient {
             client,
-            disconnect: disconnect_rx,
+            client_rx,
             events: events_tx,
+            status: status_rx,
         }
     }
 
     #[test]
     fn client_must_be_clone() {
-        let mut client = mock_client(&[], ConnStatus::Connected);
+        let mut client = mock_client(&[], ConnStatus::Online);
 
         let mut seq = Sequence::new();
         client
-            .sender
+            .encoder
             .expect_clone()
             .once()
             .in_sequence(&mut seq)
-            .returning(MockSender::new);
+            .returning(MockEncoder::new);
 
-        let _b = client.clone();
+        let _ = client.client.clone();
     }
 
     #[tokio::test]
     async fn client_recv() {
-        let client = mock_client(&[], ConnStatus::Connected);
+        let client = mock_client(&[], ConnStatus::Online);
 
         let exp = DeviceEvent {
             interface: "interface".to_string(),
@@ -887,18 +759,10 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn client_disconnect_closed() {
-        let mut client = mock_client(&[], ConnStatus::Disconnected);
-
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_disconnect()
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|| Ok(()));
+        let mut client = mock_client(&[], ConnStatus::Offline);
 
         client.disconnect().await.unwrap();
 
-        client.disconnect.recv().await.unwrap();
+        assert_eq!(*client.status.borrow_and_update(), ConnStatus::Disconnect);
     }
 }

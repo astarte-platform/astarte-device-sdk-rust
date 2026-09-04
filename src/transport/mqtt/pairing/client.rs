@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,31 +23,30 @@ use std::str::FromStr;
 use astarte_device_error::{Error, WrapError};
 use http::header::CONTENT_TYPE;
 use http_body_util::{BodyExt, Limited};
-use mime::{APPLICATION_JAVASCRIPT_UTF_8, APPLICATION_JSON, Mime};
+use mime::{APPLICATION_JSON, Mime};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use tracing::{error, instrument, trace};
+use tracing::{debug, error, instrument, trace};
 
 use crate::builder::Config;
 use crate::logging::security::{SecurityEvent, notify_security_event};
 
-use crate::transport::mqtt::config::transport::TransportProvider;
+use crate::transport::mqtt::components::ClientId;
 
 use super::PairingApiError;
 
 /// Arguments for creating an API client
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ClientArgs<'a> {
-    pub(crate) realm: &'a str,
-    pub(crate) device_id: &'a str,
+    pub(crate) client_id: ClientId<&'a str>,
     pub(crate) pairing_url: &'a Url,
     pub(crate) token: &'a str,
 }
 
 /// Struct with the information for the pairing
 pub(crate) struct ApiClient<'a> {
-    pub(crate) realm: &'a str,
-    pub(crate) device_id: &'a str,
+    pub(crate) client_id: ClientId<&'a str>,
     pairing_url: &'a Url,
     client: reqwest::Client,
 }
@@ -59,8 +58,7 @@ impl<'a> ApiClient<'a> {
         tls: rustls::ClientConfig,
     ) -> Result<Self, Error<PairingApiError>> {
         let ClientArgs {
-            realm,
-            device_id,
+            client_id,
             pairing_url,
             token,
         } = args;
@@ -71,6 +69,11 @@ impl<'a> ApiClient<'a> {
             .wrap_err_msg(PairingApiError::InvalidArgument, "authorization header")?;
         value.set_sensitive(true);
         headers.insert(reqwest::header::AUTHORIZATION, value);
+
+        if pairing_url.scheme() == "http" {
+            // TODO: this doesn't considers redirects
+            notify_security_event(SecurityEvent::AlarmUnsecureCommunication);
+        }
 
         let client = reqwest::Client::builder()
             .use_preconfigured_tls(tls)
@@ -84,21 +87,10 @@ impl<'a> ApiClient<'a> {
             )?;
 
         Ok(Self {
-            realm,
-            device_id,
+            client_id,
             pairing_url,
             client,
         })
-    }
-
-    pub(crate) fn from_transport(
-        config: &Config,
-        provider: &'a TransportProvider,
-        args: ClientArgs<'a>,
-    ) -> Result<Self, Error<PairingApiError>> {
-        let tls = provider.api_tls_config()?;
-
-        Self::create(args, config, tls)
     }
 
     fn url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
@@ -121,29 +113,36 @@ impl<'a> ApiClient<'a> {
             path.extend(segments);
         }
 
+        debug!(%url);
+
         Ok(url)
     }
 
-    #[instrument(skip_all, ret)]
+    #[instrument(skip_all)]
     fn device_url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
     where
         'a: 'i,
         I: IntoIterator<Item = &'i str>,
     {
-        let iter = ["v1", self.realm, "devices", self.device_id]
-            .into_iter()
-            .chain(segments);
+        let iter = [
+            "v1",
+            self.client_id.realm,
+            "devices",
+            self.client_id.device_id,
+        ]
+        .into_iter()
+        .chain(segments);
 
         self.url(iter)
     }
 
-    #[instrument(skip_all, ret)]
+    #[instrument(skip_all)]
     fn realm_url<'i, I>(&self, segments: I) -> Result<Url, Error<PairingApiError>>
     where
         'a: 'i,
         I: IntoIterator<Item = &'i str>,
     {
-        let iter = ["v1", self.realm].into_iter().chain(segments);
+        let iter = ["v1", self.client_id.realm].into_iter().chain(segments);
 
         self.url(iter)
     }
@@ -168,7 +167,13 @@ impl<'a> ApiClient<'a> {
                 }
             };
 
-            value == APPLICATION_JSON || value == APPLICATION_JAVASCRIPT_UTF_8
+            let is_json = value.essence_str() == APPLICATION_JSON;
+
+            if !is_json {
+                debug!(content_type = %value, "not json");
+            }
+
+            is_json
         });
 
         if !is_json {
@@ -224,7 +229,7 @@ impl<'a> ApiClient<'a> {
                 Self::handle_error(response).await;
 
                 Err(
-                    Error::with(PairingApiError::Api, "while getting the broker_url")
+                    Error::with(PairingApiError::Api, "while creating the certificate")
                         .set_ctx(format!("status {status_code}")),
                 )
             }
@@ -310,7 +315,7 @@ impl<'a> ApiClient<'a> {
         trace!(%url);
 
         let payload = ApiData::new(MqttV1HwId {
-            hw_id: self.device_id,
+            hw_id: self.client_id.device_id,
         });
 
         let response = self
@@ -338,7 +343,7 @@ impl<'a> ApiClient<'a> {
                 Self::handle_error(response).await;
 
                 Err(
-                    Error::with(PairingApiError::Api, "while getting the broker_url")
+                    Error::with(PairingApiError::Api, "while registering the device")
                         .set_ctx(format!("status {status_code}")),
                 )
             }
@@ -411,8 +416,8 @@ pub(crate) mod tests {
     use mockito::Server;
     use pretty_assertions::assert_eq;
 
-    const ASTARTE_CA_PEM: &str = include_str!("../../../tests/ca/astarte-ca.pem");
-    const ASTARTE_CA_KEY_PEM: &str = include_str!("../../../tests/ca/astarte-ca-key.pem");
+    const ASTARTE_CA_PEM: &str = include_str!("../../../../tests/ca/astarte-ca.pem");
+    const ASTARTE_CA_KEY_PEM: &str = include_str!("../../../../tests/ca/astarte-ca-key.pem");
 
     pub(crate) fn mock_get_broker_url(server: &mut mockito::ServerGuard) -> mockito::Mock {
         server
@@ -501,21 +506,24 @@ pub(crate) mod tests {
 
         let mock = mock_create_certificate(&mut server).create_async().await;
 
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("couldn't configure provider");
-
         let url = server.url().parse().unwrap();
-        let args = ClientArgs {
+        let client_id = ClientId {
             realm: "realm",
             device_id: "device_id",
+        };
+        let args = ClientArgs {
+            client_id,
             pairing_url: &url,
             token: "secret",
         };
-        let client = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("couldn't create api client");
+        let client = ApiClient::create(
+            args,
+            &Config::default(),
+            astarte_device_tls::config().unwrap(),
+        )
+        .expect("couldn't create api client");
 
-        let bundle = Bundle::generate_key("test", "device_id").unwrap();
+        let bundle = Bundle::generate_key(&client_id).unwrap();
 
         let res = client.create_certificate(&bundle.csr).await.unwrap();
 
@@ -545,18 +553,20 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("couldn't configure provider");
-
         let args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
+            client_id: ClientId {
+                realm: "realm",
+                device_id: "device_id",
+            },
             pairing_url: &url,
             token: "secret",
         };
-        let client = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("couldn't create api client");
+        let client = ApiClient::create(
+            args,
+            &Config::default(),
+            astarte_device_tls::config().unwrap(),
+        )
+        .expect("couldn't create api client");
 
         let error = client
             .create_certificate("csr")
@@ -576,18 +586,20 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("couldn't configure provider");
-
         let args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
+            client_id: ClientId {
+                realm: "realm",
+                device_id: "device_id",
+            },
             pairing_url: &url,
             token: "secret",
         };
-        let client = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("couldn't create api client");
+        let client = ApiClient::create(
+            args,
+            &Config::default(),
+            astarte_device_tls::config().unwrap(),
+        )
+        .expect("couldn't create api client");
 
         let res = client.get_broker_url().await.unwrap();
 
@@ -611,18 +623,20 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("couldn't configure provider");
-
         let args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
+            client_id: ClientId {
+                realm: "realm",
+                device_id: "device_id",
+            },
             pairing_url: &url,
             token: "secret",
         };
-        let client = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("couldn't create api client");
+        let client = ApiClient::create(
+            args,
+            &Config::default(),
+            astarte_device_tls::config().unwrap(),
+        )
+        .expect("couldn't create api client");
 
         let error = client.get_broker_url().await.expect_err("should error");
 
@@ -640,26 +654,22 @@ pub(crate) mod tests {
 
         let url = Url::parse(&server.url()).unwrap();
 
-        let _args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
-            pairing_url: &url,
-            token: "secret",
-        };
-        let provider = TransportProvider::configure(None, true)
-            .await
-            .expect("couldn't configure provider");
-
         let args = ClientArgs {
-            realm: "realm",
-            device_id: "device_id",
+            client_id: ClientId {
+                realm: "realm",
+                device_id: "device_id",
+            },
             pairing_url: &url,
             token: "secret",
         };
-        let client = ApiClient::from_transport(&Config::default(), &provider, args)
-            .expect("couldn't create api client");
+        let client = ApiClient::create(
+            args,
+            &Config::default(),
+            astarte_device_tls::config().unwrap(),
+        )
+        .expect("couldn't create api client");
 
-        let bundle = Bundle::generate_key("test", "device_id").unwrap();
+        let bundle = Bundle::generate_key(&args.client_id).unwrap();
 
         let cert = client.create_certificate(&bundle.csr).await.unwrap();
 
