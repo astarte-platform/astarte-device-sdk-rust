@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,27 +22,17 @@ use std::{io, sync::Arc};
 
 use astarte_device_error::{Error, WrapError};
 use chrono::{DateTime, Utc};
-use rustls::{
-    ClientConfig, ConfigBuilder, RootCertStore,
-    client::WantsClientCert,
-    crypto::CryptoProvider,
-    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
-};
+use rustls::ClientConfig;
+use rustls::crypto::CryptoProvider;
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::sign::{CertifiedKey, SingleCertAndKey};
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::prelude::X509Certificate;
 
-use crate::error::Report;
 use crate::logging::security::{SecurityEvent, notify_security_event};
-use crate::pairing::api::PairingApiError;
+use crate::{error::Report, transport::mqtt::pairing::PairingApiError};
 
 use super::{CertificateFile, ClientId, PrivateKeyFile};
-
-pub(crate) fn is_env_ignore_ssl() -> bool {
-    matches!(
-        std::env::var("IGNORE_SSL_ERRORS").as_deref(),
-        Ok("1" | "true")
-    )
-}
 
 pub(crate) struct ClientAuth {
     pem: String,
@@ -145,6 +135,7 @@ impl ClientAuth {
         self.verify_certificate_subject(&parsed, client_id)
     }
 
+    #[instrument(skip_all, fields(%client_id))]
     fn verify_certificate_subject(
         &self,
         cert: &X509Certificate<'_>,
@@ -152,32 +143,42 @@ impl ClientAuth {
     ) -> bool {
         let Some(subject_cn) = cert.subject.iter_common_name().next() else {
             warn!("no subject common name assuming invalid");
+
             return false;
         };
 
-        let subject_cn_str = subject_cn.as_str();
-        info!("subject common name as str = {:?}", subject_cn_str);
+        let subject_cn_str = subject_cn
+            .as_str()
+            .inspect(|cn| {
+                info!(certificate_common_name = cn);
+            })
+            .inspect_err(|error| {
+                error!(%error, "common name not UTF-8");
+            });
 
         subject_cn_str.is_ok_and(|subject_cn_str| subject_cn_str == client_id.to_string())
     }
 
+    /// Sets the client cert for mTLS
     pub(crate) fn tls_config(
         self,
-        roots: Arc<RootCertStore>,
+        mut client_config: ClientConfig,
     ) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
-        tls_config_builder(roots)?
-            .with_client_auth_cert(vec![self.der], self.private_key.into())
-            .wrap_err(PairingApiError::Tls)
-    }
+        let provider = CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
-    pub(crate) fn insecure_tls_config(
-        self,
-    ) -> Result<rustls::ClientConfig, Error<PairingApiError>> {
-        warn!("INSECURE: ignore TLS certificates");
+        let certified_key =
+            CertifiedKey::from_der(vec![self.der], self.private_key.into(), &provider)
+                .wrap_err_msg(
+                    PairingApiError::Tls,
+                    "while decoding client certificate and private key",
+                )?;
+        let client_cert_resolver = Arc::new(SingleCertAndKey::from(certified_key));
 
-        insecure_tls_config_builder()?
-            .with_client_auth_cert(vec![self.der], self.private_key.into())
-            .wrap_err(PairingApiError::Tls)
+        client_config.client_auth_cert_resolver = client_cert_resolver;
+
+        Ok(client_config)
     }
 
     /// Parses the X.509 Not After field of a cert.
@@ -202,129 +203,12 @@ impl ClientAuth {
     }
 }
 
-#[cfg(feature = "webpki")]
-#[instrument]
-pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, Error<PairingApiError>> {
-    debug!("reading root cert store from webpki");
-
-    let root_cert_store = RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-
-    Ok(root_cert_store)
-}
-
-#[cfg(not(feature = "webpki"))]
-#[instrument]
-pub(crate) async fn read_root_cert_store() -> Result<RootCertStore, Error<PairingApiError>> {
-    debug!("reading root cert store from native certs");
-
-    tokio::task::spawn_blocking(|| {
-        let mut root_cert_store = RootCertStore::empty();
-
-        let res = rustls_native_certs::load_native_certs();
-        for err in res.errors {
-            error!(error = %crate::error::Report::new(err), "couldn't load root certificate");
-        }
-
-        let (added, ignored) = root_cert_store.add_parsable_certificates(res.certs);
-
-        tracing::trace!("loaded {added} certs and {ignored} ignored");
-
-        root_cert_store
-    })
-    .await
-    .wrap_err(PairingApiError::Join)
-}
-
-pub(crate) fn tls_config_builder(
-    roots: Arc<RootCertStore>,
-) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error<PairingApiError>> {
-    let provider = CryptoProvider::get_default()
-        .cloned()
-        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .wrap_err(PairingApiError::Tls)?
-        .with_root_certificates(roots);
-
-    Ok(builder)
-}
-
-pub(crate) fn insecure_tls_config_builder()
--> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error<PairingApiError>> {
-    let provider = CryptoProvider::get_default()
-        .cloned()
-        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
-
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(rustls::ALL_VERSIONS)
-        .wrap_err(PairingApiError::Tls)?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerifier {}));
-
-    Ok(builder)
-}
-
-#[derive(Debug)]
-struct NoVerifier;
-
-impl rustls::client::danger::ServerCertVerifier for NoVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA1,
-            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use tempfile::TempDir;
 
-    use crate::pairing::api::client::tests::self_sign_csr_to_pem;
     use crate::transport::mqtt::crypto::Bundle;
+    use crate::transport::mqtt::pairing::client::tests::self_sign_csr_to_pem;
 
     use super::*;
 
@@ -364,15 +248,13 @@ pub(crate) mod tests {
 
         assert_eq!(client.private_key.secret_pkcs8_der(), TEST_PRIVATE_KEY);
 
-        let root_cert_store = Arc::new(rustls::RootCertStore::empty());
-        client.tls_config(root_cert_store).unwrap();
+        let config = astarte_device_tls::config().unwrap();
+        client.tls_config(config).unwrap();
 
         // Reuse the file setup
-        let client = ClientAuth::try_read(cert, key, TEST_CLIENT_ID)
+        let _ = ClientAuth::try_read(cert, key, TEST_CLIENT_ID)
             .await
             .unwrap();
-
-        client.insecure_tls_config().unwrap();
     }
 
     #[tokio::test]
@@ -381,7 +263,7 @@ pub(crate) mod tests {
             realm: "realm",
             device_id: "device_id",
         };
-        let bundle = Bundle::generate_key(client_id.realm, client_id.device_id).unwrap();
+        let bundle = Bundle::generate_key(&client_id).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
         let certificate_file = CertificateFile::new(&dir);
@@ -408,7 +290,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_invalid_certificate_subject_cn() {
-        let bundle = Bundle::generate_key(TEST_CLIENT_ID.realm, TEST_CLIENT_ID.device_id).unwrap();
+        let bundle = Bundle::generate_key(&TEST_CLIENT_ID).unwrap();
 
         let dir = tempfile::tempdir().unwrap();
         let certificate_file = CertificateFile::new(&dir);

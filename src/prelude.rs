@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,9 +23,8 @@
 pub mod device {
     pub use crate::FromEvent;
     pub use crate::client::Client;
-    pub use crate::client::ClientConnection;
-    pub use crate::connection::EventLoop;
-    pub use crate::introspection::{DeviceIntrospection, DynamicIntrospection};
+    pub use crate::connection::Connection;
+    pub use crate::introspection::DeviceIntrospection;
 }
 
 /// Exports common trait used when accessing stored properties.

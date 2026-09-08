@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,12 +18,14 @@
 
 //! Module to handle the retry of the MQTT connection
 
+use std::ops::ControlFlow;
 use std::time::{Duration, Instant};
 
 use rand::{RngExt, rngs::SmallRng};
 use tracing::trace;
 
 use crate::builder::{DEFAULT_BACKOFF_MAXIMUM_DELAY, DEFAULT_BACKOFF_RESET_INTERVAL};
+use crate::state::{ConnStatus, SharedStateExt};
 
 /// Iterator that yields a delay that will increase exponentially till the max,
 #[derive(Debug, Clone, Copy)]
@@ -150,6 +152,114 @@ impl Iterator for RandomExponentialIter {
     fn next(&mut self) -> Option<Self::Item> {
         Some(self.next())
     }
+}
+
+/// Retry an async function.
+#[derive(Debug)]
+pub(crate) struct RetryFuture<'a, T> {
+    pub(crate) rx: &'a mut tokio::sync::watch::Receiver<ConnStatus>,
+    pub(crate) state: &'a T,
+}
+
+impl<'a, T> RetryFuture<'a, T> {
+    pub(crate) async fn or_closed<F>(&mut self, f: F) -> Option<F::Output>
+    where
+        F: Future,
+        F::Output: Send + 'static,
+    {
+        tokio::select! {
+            _ = self.rx.wait_for(|s| matches!(*s, ConnStatus::Closed)) => {
+                None
+            },
+            out = f => {
+                Some(out)
+            }
+        }
+    }
+
+    pub(crate) async fn cancellable<F>(&mut self, f: F) -> Option<F::Output>
+    where
+        F: Future,
+        F::Output: Send + 'static,
+    {
+        tokio::select! {
+            _ = self.rx.wait_for(|s| matches!(*s, ConnStatus::Disconnect | ConnStatus::Closed)) => {
+                None
+            },
+            out = f => {
+                Some(out)
+            }
+        }
+    }
+
+    /// Retries the call with a backoff or till the device is disconnected.
+    pub(crate) async fn call<F, O, E>(&mut self, f: F) -> Result<Option<ControlFlow<O>>, E>
+    where
+        F: Future<Output = Result<ControlFlow<O>, E>> + Send,
+        T: SharedStateExt,
+        O: Send + 'static,
+        E: Send + 'static,
+    {
+        let Some(res) = self.cancellable(f).await else {
+            trace!("future cancelled");
+
+            return Ok(None);
+        };
+
+        match res? {
+            ControlFlow::Continue(()) => {
+                if self.backoff().await.is_none() {
+                    trace!("backoff cancelled");
+
+                    return Ok(None);
+                }
+
+                Ok(Some(ControlFlow::Continue(())))
+            }
+            ControlFlow::Break(out) => {
+                trace!("future ready");
+
+                Ok(Some(ControlFlow::Break(out)))
+            }
+        }
+    }
+
+    /// Waits for the backoff
+    pub(crate) async fn backoff(&mut self) -> Option<()>
+    where
+        T: SharedStateExt,
+    {
+        // No need to worry for the lock here, we will take this lock just to calculate
+        // the next back-off time.
+        let backoff = self.state.backoff().lock().await.next();
+
+        self.cancellable(tokio::time::sleep(backoff)).await
+    }
+
+    /// Retries the action
+    pub(crate) async fn retry<R>(&mut self, action: &mut R) -> Result<Option<R::Out>, R::Err>
+    where
+        R: RetryAction,
+        T: SharedStateExt,
+    {
+        while let Some(res) = self.call(action.make()).await? {
+            match res {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(out) => {
+                    return Ok(Some(out));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+}
+
+pub(crate) trait RetryAction {
+    type Out: Send + 'static;
+    type Err: Send + 'static;
+
+    fn make(&mut self) -> impl Future<Output = Result<ControlFlow<Self::Out>, Self::Err>> + Send;
 }
 
 #[cfg(test)]
