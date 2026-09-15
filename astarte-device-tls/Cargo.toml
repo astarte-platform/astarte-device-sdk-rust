@@ -6,7 +6,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,12 +19,12 @@
 [package]
 name = "astarte-device-tls"
 version.workspace = true
+categories = ["cryptography"]
 edition.workspace = true
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-categories = ["cryptography"]
 description = "TLS configuration for the Astarte device"
 
 [features]
@@ -37,8 +37,8 @@ webpki-roots = ["dep:webpki-roots"]
 [dependencies]
 aws-lc-rs.workspace = true
 cfg-if.workspace = true
-rustls-native-certs.workspace = true
 rustls.workspace = true
-tracing.workspace = true
+rustls-native-certs.workspace = true
 rustls-platform-verifier = { workspace = true, optional = true }
+tracing.workspace = true
 webpki-roots = { workspace = true, optional = true }
