@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,7 +28,7 @@ use astarte_interfaces::{
 };
 use bson::Bson;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, trace};
+use tracing::{error, trace, warn};
 
 use crate::Timestamp;
 use crate::aggregate::AstarteObject;
@@ -197,7 +197,7 @@ pub(super) fn deserialize_object(
             let mapping = match object.mapping(&key) {
                 Some(mapping) => mapping,
                 None => {
-                    debug!(
+                    warn!(
                         "unrecognized mapping {path} for interface {}",
                         object.interface_name()
                     );
@@ -232,8 +232,8 @@ mod test {
     use chrono::TimeZone;
 
     use crate::types::Double;
-    use crate::validate::ValidatedIndividual;
-    use crate::validate::ValidatedObject;
+    use crate::validate::individual::ValidatedIndividual;
+    use crate::validate::object::ValidatedObject;
 
     use super::*;
 
