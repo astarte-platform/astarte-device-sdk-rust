@@ -134,7 +134,7 @@ impl<S> MqttClient<S> {
             sender
                 .client
                 .publish(
-                    format!("{}/{interface}{path}", &sender.id),
+                    format!("{}/{interface}{path}", sender.id),
                     reliability,
                     false,
                     payload,
