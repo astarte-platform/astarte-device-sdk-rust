@@ -25,6 +25,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.6](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.5...v0.14.6) - 2026-09-21
+
+### Fixed
+
+- _(tls)_ fix return type
+
+
 ## [0.14.5](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.4...v0.14.5) - 2026-09-21
 
 ### Fixed
