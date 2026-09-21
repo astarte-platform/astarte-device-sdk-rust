@@ -89,7 +89,9 @@ fn platform_verifier(
 /// If we cannot configure the verifier or read the root CAs.
 #[instrument(skip(provider))]
 #[cfg(feature = "webpki-roots")]
-pub fn webpki(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Error> {
+pub fn webpki(
+    provider: Arc<CryptoProvider>,
+) -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error> {
     static ROOTS: std::sync::OnceLock<Arc<RootCertStore>> = std::sync::OnceLock::new();
 
     let roots = ROOTS.get_or_init(|| {
@@ -102,8 +104,7 @@ pub fn webpki(provider: Arc<CryptoProvider>) -> Result<ClientConfig, Error> {
 
     let config = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
-        .with_root_certificates(Arc::clone(roots))
-        .with_no_client_auth();
+        .with_root_certificates(Arc::clone(roots));
 
     info!("tls client configured with webpki roots");
 
