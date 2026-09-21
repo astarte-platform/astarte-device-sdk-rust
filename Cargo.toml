@@ -134,27 +134,14 @@ itertools.workspace = true
 mime.workspace = true
 rand = { workspace = true, features = ["sys_rng"] }
 # Use aws-lc-rs to support all PrivateKey types
-rcgen = { workspace = true, default-features = false, features = [
-  "pem",
-  "crypto",
-  "aws_lc_rs"
-] }
-reqwest = { workspace = true, default-features = false, features = [
-  "charset",
-  "json",
-  "http2",
-  "system-proxy",
-  "rustls-no-provider"
-] }
+rcgen = { workspace = true, default-features = false, features = ["pem", "crypto", "aws_lc_rs"] }
+reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rustls.workspace = true
 rustls-native-certs.workspace = true
 rustls-pemfile.workspace = true
 # Required by rumqttc even if not used
-rustls-webpki = { workspace = true, default-features = false, features = [
-  "std",
-  "aws-lc-rs"
-] }
+rustls-webpki = { workspace = true, default-features = false, features = ["std", "aws-lc-rs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sync_wrapper.workspace = true
@@ -187,12 +174,7 @@ rcgen = { workspace = true, features = ["pem", "x509-parser"] }
 rstest.workspace = true
 rustls-platform-verifier.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = [
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "test-util"
-] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "signal", "test-util"] }
 tokio-stream = { workspace = true, features = ["net"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
