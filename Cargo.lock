@@ -159,9 +159,9 @@ version = "0.15.0"
 
 [[package]]
 name = "astarte-device-fdo"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47f3e40167eb86be312f37bcc0f355b7541a10f7f350db68ad28171361b61e71"
+checksum = "eaa947dd67de65777063f9facdd166c77dc11842797af784660466ed0236ad9c"
 dependencies = [
  "astarte-fdo-protocol",
  "aws-lc-rs",
@@ -226,7 +226,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-pemfile",
- "rustls-platform-verifier 0.6.2",
+ "rustls-platform-verifier",
  "rustls-webpki 0.103.15",
  "serde",
  "serde_json",
@@ -271,16 +271,16 @@ dependencies = [
  "cfg-if",
  "rustls",
  "rustls-native-certs",
- "rustls-platform-verifier 0.6.2",
+ "rustls-platform-verifier",
  "tracing",
  "webpki-roots",
 ]
 
 [[package]]
 name = "astarte-fdo-protocol"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f837c5fc1605b8742b0bcdf4bac1b4e26469cc274b5d94c610e288e8ea642a24"
+checksum = "0102b22fda1f925ba60ce5ccbd76b1987e2e3b9da079c95b7fcc6b2802365af3"
 dependencies = [
  "ciborium",
  "coset",
@@ -659,9 +659,9 @@ dependencies = [
 
 [[package]]
 name = "cfg-if"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "chacha20"
@@ -1076,7 +1076,7 @@ dependencies = [
  "pretty_assertions",
  "reqwest",
  "rustls",
- "rustls-platform-verifier 0.6.2",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "tokio",
@@ -1880,36 +1880,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jni"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5efd9a482cf3a427f00d6b35f14332adc7902ce91efb778580e180ff90fa3498"
-dependencies = [
- "cfg-if",
- "combine",
- "jni-macros",
- "jni-sys 0.4.1",
- "log",
- "simd_cesu8",
- "thiserror 2.0.20",
- "walkdir",
- "windows-link",
-]
-
-[[package]]
-name = "jni-macros"
-version = "0.22.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a00109accc170f0bdb141fed3e393c565b6f5e072365c3bd58f5b062591560a3"
-dependencies = [
- "proc-macro2",
- "quote",
- "rustc_version",
- "simd_cesu8",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "jni-sys"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2692,7 +2662,7 @@ dependencies = [
  "pin-project-lite",
  "rustls",
  "rustls-pki-types",
- "rustls-platform-verifier 0.7.0",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sync_wrapper",
@@ -2893,28 +2863,7 @@ checksum = "1d99feebc72bae7ab76ba994bb5e121b8d83d910ca40b36e0921f53becc41784"
 dependencies = [
  "core-foundation 0.10.1",
  "core-foundation-sys",
- "jni 0.21.1",
- "log",
- "once_cell",
- "rustls",
- "rustls-native-certs",
- "rustls-platform-verifier-android",
- "rustls-webpki 0.103.15",
- "security-framework",
- "security-framework-sys",
- "webpki-root-certs",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rustls-platform-verifier"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0"
-dependencies = [
- "core-foundation 0.10.1",
- "core-foundation-sys",
- "jni 0.22.4",
+ "jni",
  "log",
  "once_cell",
  "rustls",
@@ -3163,16 +3112,6 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
-
-[[package]]
-name = "simd_cesu8"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11031e251abf8611c80f460e19dbdeb54a66db918e49c65a7065b46ac7aec520"
-dependencies = [
- "rustc_version",
- "simdutf8",
-]
 
 [[package]]
 name = "simdutf8"
