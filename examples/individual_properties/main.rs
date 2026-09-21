@@ -16,28 +16,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::path::Path;
 use std::{num::NonZeroU32, path::PathBuf, time::Duration};
 
+use astarte_device_sdk::store::SqliteStore;
 use astarte_device_sdk::transport::mqtt::{Credential, MqttArgs};
 use clap::Parser;
-use eyre::OptionExt;
-use futures::future::Either;
-use serde::{Deserialize, Serialize};
+use eyre::{Context, OptionExt};
+use serde::Deserialize;
 
-use astarte_device_sdk::{
-    Value, builder::DeviceBuilder, prelude::*, store::SqliteStore, transport::mqtt::MqttConfig,
-};
+use astarte_device_sdk::builder::DeviceBuilder;
+use astarte_device_sdk::prelude::*;
+use astarte_device_sdk::transport::mqtt::MqttConfig;
 use tokio::task::JoinSet;
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio_util::sync::CancellationToken;
+use tracing::level_filters::LevelFilter;
+use tracing::{error, info};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use url::Url;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize)]
 struct Config {
     realm: String,
     device_id: String,
-    credentials_secret: String,
+    #[serde(flatten)]
+    credential: Credential,
     pairing_url: Url,
+    store_dir: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -47,21 +53,29 @@ struct Args {
     config: Option<PathBuf>,
     /// Limit run time of the transmission of the example (in seconds)
     #[arg(short, long)]
-    transmission_timeout_sec: Option<NonZeroU32>,
+    timeout_secs: Option<NonZeroU32>,
     /// Limit number of iteration of the send loop
     #[arg(short, long)]
     loop_times: Option<NonZeroU32>,
+    /// Ignore ssl errors
+    #[arg(short, long, default_value = "false")]
+    ignore_ssl: bool,
 }
 
-async fn send_loop<C, I>(mut client: C, iter: I) -> eyre::Result<()>
+async fn send_loop<C>(
+    mut client: C,
+    limit: Option<NonZeroU32>,
+    cancel: CancellationToken,
+) -> eyre::Result<()>
 where
-    C: Client + PropAccess,
-    I: IntoIterator<Item = u32>,
+    C: Client + ClientConnection + PropAccess,
 {
+    let limit = limit.map(NonZeroU32::get).unwrap_or(u32::MAX);
+
     let mut i: u32 = 0;
     let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-    println!("Properties values at startup:");
+    info!("Properties values at startup:");
     // Check the value of the name property for sensors 1
     if let Ok(name) = get_name_for_sensor(&client, 1).await {
         info!("  - Property \"name\" for sensor 1 has value: \"{name}\"");
@@ -74,14 +88,14 @@ where
     }
     // Check the value of the name property for sensors 2
     if let Ok(name) = get_name_for_sensor(&client, 2).await {
-        println!("  - Property \"name\" for sensor 2 has value: \"{name}\"");
+        info!(" Property 'name' for sensor 2 has value: {name}");
     }
 
     // Wait for a couple of seconds for a nicer print order
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Send in a loop the change of the property "name" of sensor 1
-    for _ in iter {
+    for _ in 0..limit {
         client
             .set_property(
                 "org.astarte-platform.rust.examples.individual-properties.DeviceProperties",
@@ -90,13 +104,72 @@ where
             )
             .await?;
 
-        println!("Sent property \"name\" for sensor 1 with new value \"name number {i}\"");
+        info!("Sent property 'name' for sensor 1 with new value: 'name number {i}");
         i += 1;
         interval.tick().await;
     }
 
+    client.disconnect().await?;
+    cancel.cancel();
+
     Ok(())
 }
+
+#[derive(Debug, FromEvent)]
+#[from_event(
+    interface = "org.astarte-platform.rust.examples.individual-properties.ServerProperties",
+    interface_type = "properties",
+    aggregation = "individual"
+)]
+enum ServerProperties {
+    #[mapping(endpoint = "/%{sensor_id}/enable", allow_unset = true)]
+    Enable(Option<bool>),
+    #[mapping(endpoint = "/%{sensor_id}/samplingPeriod", allow_unset = true)]
+    SamplingPeriod(Option<i32>),
+}
+
+async fn receive_loop<C>(client: C, cancel: CancellationToken) -> eyre::Result<()>
+where
+    C: Client,
+{
+    while let Some(event) = cancel.run_until_cancelled(client.recv()).await.flatten() {
+        match event.interface.as_str() {
+            "org.astarte-platform.rust.examples.individual-properties.ServerProperties" => {
+                let mut iter = event.path.splitn(3, '/').skip(1);
+
+                let sensor_id = iter
+                    .next()
+                    .and_then(|id| id.parse::<u16>().ok())
+                    .ok_or_eyre("Incorrect error received.")?;
+
+                let prop = ServerProperties::from_event(event)?;
+
+                match prop {
+                    ServerProperties::Enable(enable) => {
+                        info!(
+                            "Sensor number {} has been {}",
+                            sensor_id,
+                            if enable == Some(true) {
+                                "ENABLED"
+                            } else {
+                                "DISABLED"
+                            }
+                        );
+                    }
+                    ServerProperties::SamplingPeriod(sampling) => {
+                        info!("Sampling period for sensor {sensor_id} is {sampling:?}");
+                    }
+                }
+            }
+            interface => {
+                error!(interface, "unknown interface");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // Getter function for the property "name" of a sensor.
 async fn get_name_for_sensor(device: &impl PropAccess, sensor_n: i32) -> eyre::Result<String> {
     let interface = "org.astarte-platform.rust.examples.individual-properties.DeviceProperties";
@@ -116,101 +189,55 @@ async fn get_name_for_sensor(device: &impl PropAccess, sensor_n: i32) -> eyre::R
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
     init_tracing()?;
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .map_err(|_| eyre::eyre!("couldn't install default crypto provider"))?;
 
-    // Load configuration
     let Args {
         config,
-        transmission_timeout_sec,
+        timeout_secs,
         loop_times,
+        ignore_ssl,
     } = Args::parse();
-
-    let transmission_timeout =
-        transmission_timeout_sec.map(|s| Duration::from_secs(s.get().into()));
 
     // Load configuration
     let file_path = config
-        .map(|p| p.into_os_string().into_string())
-        .transpose()
-        .map_err(|s| eyre::eyre!("cannot convert string '{s:?}'"))?
-        .unwrap_or_else(|| "./examples/individual_properties/configuration.json".to_string());
-    let file = std::fs::read_to_string(file_path)?;
+        .as_deref()
+        .unwrap_or_else(|| Path::new("./examples/object_datastream/configuration.json"));
+
+    let file = tokio::fs::read_to_string(file_path).await?;
     let Config {
         realm,
         device_id,
-        credentials_secret,
+        credential,
         pairing_url,
+        store_dir,
     } = serde_json::from_str(&file)?;
-
-    // Open the database, create it if it does not exists
-    let db = SqliteStore::options()
-        .with_db_file("examples/individual_properties/astarte-example-db.sqlite")
-        .await?;
 
     let args = MqttArgs {
         realm,
         device_id,
-        credential: Credential::secret(credentials_secret),
+        credential,
         pairing_url,
     };
 
-    let mqtt_config = MqttConfig::new(args).ignore_ssl_errors();
+    let mut mqtt_config = MqttConfig::new(args);
 
-    // Create an Astarte Device (also performs the connection)
+    if ignore_ssl {
+        mqtt_config = mqtt_config.ignore_ssl_errors();
+    }
+
+    let store = SqliteStore::options().with_writable_dir(&store_dir).await?;
+
     let (mut client, connection) = DeviceBuilder::new()
+        .writable_dir(store_dir)
+        .store(store)
         .interface_directory("./examples/individual_properties/interfaces")?
-        .store(db)
         .connection(mqtt_config)
         .build()
         .await?;
 
-    println!("Connection to Astarte established.");
-
+    info!("Connection to Astarte established.");
     let mut tasks = JoinSet::<eyre::Result<()>>::new();
 
-    // Create a task to transmit
-    if let Some(c) = loop_times {
-        let client = client.clone();
-        tasks.spawn(send_loop(client, 0..c.get()));
-    } else {
-        let client = client.clone();
-        tasks.spawn(send_loop(client, 0u32..));
-    }
-
-    // Use the current thread to receive changes in the server owned properties
-    tasks.spawn({
-        let client = client.clone();
-        async move {
-            while let Some(event) = client.recv().await {
-                if let Value::Individual { data, timestamp: _ } = event.data {
-                    let mut iter = event.path.splitn(3, '/').skip(1);
-                    let sensor_id = iter
-                        .next()
-                        .and_then(|id| id.parse::<u16>().ok())
-                        .ok_or_eyre("Incorrect error received.")?;
-
-                    match iter.next() {
-                        Some("enable") => {
-                            println!(
-                                "Sensor number {} has been {}",
-                                sensor_id,
-                                if data == true { "ENABLED" } else { "DISABLED" }
-                            );
-                        }
-                        Some("samplingPeriod") => {
-                            let value: i32 = data.try_into()?;
-                            println!("Sampling period for sensor {sensor_id} is {value}");
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            Ok(())
-        }
-    });
+    let cancel = CancellationToken::new();
 
     tasks.spawn(async move {
         connection.handle_events().await?;
@@ -218,32 +245,63 @@ async fn main() -> eyre::Result<()> {
         Ok(())
     });
 
-    if let Some(timeout) = transmission_timeout {
-        let out = futures::future::select(
-            Box::pin(tasks.join_next()),
-            Box::pin(tokio::time::sleep(timeout)),
-        )
-        .await;
+    tasks.spawn(send_loop(client.clone(), loop_times, cancel.clone()));
 
-        match out {
-            Either::Left((o, _)) => info!(o = ?o, "Task exited"),
-            Either::Right(_) => info!("Reached timeout"),
+    tasks.spawn(receive_loop(client.clone(), cancel.clone()));
+
+    tasks.spawn({
+        let mut client = client.clone();
+        let cancel = cancel.clone();
+
+        async move {
+            if let Some(res) = cancel.run_until_cancelled(tokio::signal::ctrl_c()).await {
+                res?;
+
+                client.disconnect().await?;
+            }
+
+            Ok(())
         }
-    } else {
-        while let Some(res) = tasks.join_next().await {
-            match res {
-                Ok(res) => {
-                    res?;
-                    break;
-                }
-                Err(err) if err.is_cancelled() => {}
-                Err(err) => return Err(err.into()),
+    });
+
+    if let Some(timeout) = timeout_secs {
+        tasks.spawn({
+            let cancel = cancel.clone();
+
+            async move {
+                tokio::time::timeout(
+                    Duration::from_secs(timeout.get().into()),
+                    cancel.cancelled(),
+                )
+                .await
+                .wrap_err("timeout reached")?;
+
+                Ok(())
+            }
+        });
+    }
+
+    while let Some(next) = tasks.join_next().await {
+        match next {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                client.disconnect().await?;
+                cancel.cancel();
+                tasks.shutdown().await;
+
+                return Err(error);
+            }
+            Err(err) => {
+                error!(%err, "couldn't join tasks");
+
+                client.disconnect().await?;
+                cancel.cancel();
+                tasks.shutdown().await;
+
+                return Err(err).wrap_err("couldn't join tasks");
             }
         }
     }
-
-    client.disconnect().await?;
-    tasks.shutdown().await;
 
     Ok(())
 }

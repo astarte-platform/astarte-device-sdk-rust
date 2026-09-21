@@ -204,6 +204,11 @@ impl SqliteConnection for WriteConnection {
 
         connection.apply_pragmas(options)?;
 
+        // See: https://sqlite.org/pragma.html#pragma_optimize
+        connection
+            .execute("PRAGMA optimize=0x10002", [])
+            .wrap_err_msg(SqliteError::Option, "running pragma optimize")?;
+
         Ok(connection)
     }
 

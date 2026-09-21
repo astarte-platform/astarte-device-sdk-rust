@@ -21,8 +21,10 @@
 use std::sync::Arc;
 
 use rustls::client::WantsClientCert;
-use rustls::crypto::CryptoProvider;
-use rustls::{ClientConfig, ConfigBuilder, Error};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ConfigBuilder, DigitallySignedStruct, Error, SignatureScheme};
 use tracing::instrument;
 
 /// Insecure configuration builder.
@@ -38,63 +40,76 @@ pub fn builder() -> Result<ConfigBuilder<ClientConfig, WantsClientCert>, Error> 
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
-    let builder = rustls::ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(rustls::ALL_VERSIONS)?
+    let builder = rustls::ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerifier {}));
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification(provider)));
 
     Ok(builder)
 }
 
-/// Verifier that doesn't verify the certificate
-#[derive(Debug)]
-struct NoVerifier;
+pub fn insecure() -> Result<ClientConfig, Error> {
+    // This step is to ensure a CryptoProvider is configured also in the tests.
+    let provider = CryptoProvider::get_default()
+        .map(Arc::clone)
+        .unwrap_or_else(|| Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
 
-impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    Ok(ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification::new(provider)))
+        .with_no_client_auth())
+}
+
+#[derive(Debug)]
+pub struct NoCertificateVerification(Arc<CryptoProvider>);
+
+impl NoCertificateVerification {
+    pub fn new(provider: Arc<CryptoProvider>) -> Self {
+        Self(provider)
+    }
+}
+
+impl ServerCertVerifier for NoCertificateVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
+        Ok(ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, Error> {
+        verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::RSA_PKCS1_SHA1,
-            rustls::SignatureScheme::ECDSA_SHA1_Legacy,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA384,
-            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
-            rustls::SignatureScheme::RSA_PKCS1_SHA512,
-            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
-            rustls::SignatureScheme::RSA_PSS_SHA256,
-            rustls::SignatureScheme::RSA_PSS_SHA384,
-            rustls::SignatureScheme::RSA_PSS_SHA512,
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ED448,
-        ]
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }

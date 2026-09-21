@@ -7,7 +7,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-   http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - _(tls)_ fix return type
+
+## [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
+### `astarte-device-error` - [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
+
+#### Added
+
+- _(derive)_ [**breaking**] add the required object attribute
+
+#### Other
+
+- _(v0.14.4)_ forward port the release
 
 ## [0.14.4](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.3...v0.14.4) - 2026-08-07
 

@@ -491,7 +491,6 @@ mod tests {
             .device_props_with_unset(PropertyState::Changed, 1, 0)
             .await
             .unwrap();
-        println!("{:?}", props);
         assert!(props.is_empty());
 
         // delete

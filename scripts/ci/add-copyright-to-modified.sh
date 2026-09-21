@@ -18,19 +18,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-set -exEuo pipefail
+set -eEuo pipefail
 
 # Trap -e errors
 trap 'echo "Exit status $? at line $LINENO from: $BASH_COMMAND"' ERR
 
-if [ $# != 2 ]; then
-    echo 'to use the script pass the base and head refs'
-    echo "$1 BASE_REF HEAD_REF"
-    exit 1
+# Let's you enable debug mode in the github action
+if [[ -n ${RUNNER_DEBUG:-} ]]; then
+    set -x
 fi
 
-base=$1
-head=$2
+if [ $# != 2 ]; then
+    base=${BASE_REF:-main}
+    head=${HEAD_REF:-HEAD}
+else
+    base=$1
+    head=$2
+fi
 
 git_file_names() {
     git diff --name-only "$base" "$head"

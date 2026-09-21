@@ -2,13 +2,13 @@
 
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#    http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,7 +26,7 @@ popd
 
 # Run the application
 echo "Executing application in the sandbox..."
-echo "Executable:     $@"
+echo "Executable:     $*"
 echo "--- Application Output ---"
 ip netns exec "$NAMESPACE" "$@"
 echo "--- End of Output ---"

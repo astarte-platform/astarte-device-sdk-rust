@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   latest-release:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
       CURRENT_RELEASE: ${{ github.event.release.tag_name }}
@@ -53,17 +53,17 @@ jobs:
             echo "RESULT=FAILED" >> "$GITHUB_OUTPUT"
           fi
   push-get-started:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: latest-release
     if: needs.latest-release.outputs.RESULT == 'OK'
     env:
-      OUR_FILE: 'docs/get-started.md'
-      THEIR_FILE: './sdk-doc/source/get_started/rust.md'
+      OUR_FILE: "docs/get-started.md"
+      THEIR_FILE: "./sdk-doc/source/get_started/rust.md"
     steps:
       # clone the astarte-device-sdk repo
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
       # clone the sdk-doc repo
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           repository: astarte-platform/sdk-doc
           # this also sets up the ssh key for the git push

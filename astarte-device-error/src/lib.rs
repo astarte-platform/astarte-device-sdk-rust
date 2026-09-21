@@ -46,7 +46,7 @@
 //!
 //! let display = err.to_string();
 //!
-//! let exp = "io error entity not found while reading /foo/bar";
+//! let exp = "io error entity not found while reading /foo/bar: entity not found";
 //!
 //! assert_eq!(display, exp);
 //! ```
@@ -111,6 +111,11 @@ impl<K> Error<K> {
         }
     }
 
+    /// Sets a static message for the error.
+    pub fn set_message(&mut self, message: &'static str) {
+        self.message = Some(message);
+    }
+
     /// Sets the message for the error
     pub fn set_ctx<T>(mut self, message: T) -> Self
     where
@@ -157,9 +162,7 @@ where
             write!(f, " {ctx}")?;
         }
 
-        if let Some(source) = source
-            && f.alternate()
-        {
+        if let Some(source) = source {
             write!(f, ": {source}")?;
         }
 
@@ -323,7 +326,7 @@ mod tests {
 
         let display = err.to_string();
 
-        let exp = "io error entity not found while reading /foo/bar";
+        let exp = "io error entity not found while reading /foo/bar: entity not found";
 
         assert_eq!(display, exp);
     }

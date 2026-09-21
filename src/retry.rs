@@ -158,6 +158,7 @@ mod tests {
 
     use pretty_assertions::assert_eq;
     use rand::{SeedableRng, rngs::SmallRng};
+    use tracing::debug;
 
     use crate::retry::RandomExponentialIter;
 
@@ -203,7 +204,6 @@ mod tests {
             })
             .zip(random_exponential_iter)
             .for_each(|(range, duration)| {
-                println!("{:?} duration {:?}", range, duration);
                 assert!(range.contains(&u64::try_from(duration.as_millis()).unwrap()))
             });
     }
@@ -220,7 +220,7 @@ mod tests {
 
         // test that maximum values don't make the iterator panic
         for i in random_exponential_iter.take(256) {
-            println!("{i:?}");
+            debug!("{i:?}");
         }
     }
 }

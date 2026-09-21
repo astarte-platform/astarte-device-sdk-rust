@@ -238,14 +238,15 @@ mod tests {
         assert_eq!(val.clone().try_into_property(), Ok(prop));
     }
 
-    #[test]
     #[cfg(feature = "derive")]
-    fn should_derive_form_event_obj() {
-        use crate::aggregate::AstarteObject;
-        use crate::{DeviceEvent, FromEvent, Value};
+    mod derive {
+        use pretty_assertions::assert_eq;
 
+        use crate::{DeviceEvent, FromEvent, Value};
         // Alias the crate to the resulting macro
         use crate::{self as astarte_device_sdk};
+
+        use super::*;
 
         #[derive(Debug, FromEvent, PartialEq, Eq)]
         #[from_event(
@@ -254,92 +255,147 @@ mod tests {
             aggregation = "object"
         )]
         struct Sensor {
+            #[mapping(required)]
             name: String,
+            #[mapping(required)]
             value: i32,
         }
 
-        let mut data = AstarteObject::new();
-        data.insert("name".to_string(), "Foo".to_string().into());
-        data.insert("value".to_string(), 42i32.into());
+        #[test]
+        fn should_derive_form_event_obj() {
+            let mut data = AstarteObject::new();
+            data.insert("name".to_string(), "Foo".to_string().into());
+            data.insert("value".to_string(), 42i32.into());
 
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor".to_string(),
-            data: Value::Object {
-                data,
-                timestamp: Utc::now(),
-            },
-        };
+            let event = DeviceEvent {
+                interface: "com.example.Sensor".to_string(),
+                path: "/sensor".to_string(),
+                data: Value::Object {
+                    data,
+                    timestamp: Utc::now(),
+                },
+            };
 
-        let sensor = Sensor::from_event(event).expect("couldn't parse the event");
+            let sensor = Sensor::from_event(event).expect("couldn't parse the event");
 
-        let expected = Sensor {
-            name: "Foo".to_string(),
-            value: 42,
-        };
+            let expected = Sensor {
+                name: "Foo".to_string(),
+                value: 42,
+            };
 
-        assert_eq!(sensor, expected);
-    }
+            assert_eq!(sensor, expected);
+        }
 
-    #[test]
-    #[cfg(feature = "derive")]
-    fn should_derive_form_event_individual() {
-        use crate::{AstarteData, DeviceEvent, FromEvent, Value};
+        #[derive(Debug, FromEvent, PartialEq, Eq)]
+        #[from_event(
+            interface = "com.example.Sensor",
+            path = "/sensor",
+            aggregation = "object"
+        )]
+        struct SensorOpt {
+            name: Option<String>,
+            value: Option<i32>,
+        }
 
-        // Alias the crate to the resulting macro
-        use crate::{self as astarte_device_sdk};
+        #[rstest::rstest]
+        #[case(
+            AstarteObject::from_iter([
+                ("name".to_string(), AstarteData::String("Foo".to_string())),
+                ("value".to_string(), AstarteData::Integer(42))
+            ]),
+            SensorOpt {
+                name: Some("Foo".to_string()),
+                value: Some(42),
+            }
+        )]
+        #[case(
+            AstarteObject::from_iter([
+                ("name".to_string(), AstarteData::String("Foo".to_string())),
+            ]),
+            SensorOpt {
+                name: Some("Foo".to_string()),
+                value: None,
+            }
+        )]
+        #[case(
+            AstarteObject::from_iter([
+                ("value".to_string(), AstarteData::Integer(42))
+            ]),
+            SensorOpt {
+                name: None,
+                value:  Some(42),
+            }
+        )]
+        #[case(
+            AstarteObject::from_iter([]),
+            SensorOpt {
+                name: None,
+                value:  None,
+            }
+        )]
+        fn should_derive_form_event_obj_optional(
+            #[case] data: AstarteObject,
+            #[case] exp: SensorOpt,
+        ) {
+            let event = DeviceEvent {
+                interface: "com.example.Sensor".to_string(),
+                path: "/sensor".to_string(),
+                data: Value::Object {
+                    data,
+                    timestamp: Utc::now(),
+                },
+            };
+
+            let sensor = SensorOpt::from_event(event).expect("couldn't parse the event");
+
+            assert_eq!(sensor, exp);
+        }
 
         #[derive(Debug, FromEvent, PartialEq)]
         #[from_event(interface = "com.example.Sensor", aggregation = "individual")]
-        enum Sensor {
+        enum SensorInd {
             #[mapping(endpoint = "/%{param}/luminosity")]
             Luminosity(i32),
             #[mapping(endpoint = "/sensor/temperature")]
             Temperature(f64),
         }
 
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/luminosity".to_string(),
-            data: Value::Individual {
-                data: 42i32.into(),
-                timestamp: Utc::now(),
-            },
-        };
+        #[test]
+        fn should_derive_form_event_individual() {
+            let event = DeviceEvent {
+                interface: "com.example.Sensor".to_string(),
+                path: "/sensor/luminosity".to_string(),
+                data: Value::Individual {
+                    data: 42i32.into(),
+                    timestamp: Utc::now(),
+                },
+            };
 
-        let luminosity = Sensor::from_event(event).expect("couldn't parse the event");
+            let luminosity = SensorInd::from_event(event).expect("couldn't parse the event");
 
-        let expected = Sensor::Luminosity(42);
+            let expected = SensorInd::Luminosity(42);
 
-        assert_eq!(luminosity, expected);
+            assert_eq!(luminosity, expected);
 
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/temperature".to_string(),
-            data: Value::Individual {
-                data: AstarteData::try_from(3.0).unwrap(),
-                timestamp: Utc::now(),
-            },
-        };
+            let event = DeviceEvent {
+                interface: "com.example.Sensor".to_string(),
+                path: "/sensor/temperature".to_string(),
+                data: Value::Individual {
+                    data: AstarteData::try_from(3.0).unwrap(),
+                    timestamp: Utc::now(),
+                },
+            };
 
-        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
+            let temperature = SensorInd::from_event(event).expect("couldn't parse the event");
 
-        let expected = Sensor::Temperature(3.);
+            let expected = SensorInd::Temperature(3.);
 
-        assert_eq!(temperature, expected);
-    }
-
-    #[test]
-    #[cfg(feature = "derive")]
-    fn should_derive_form_event_property() {
-        use crate::{AstarteData, DeviceEvent, FromEvent, Value};
-
-        // Alias the crate to the resulting macro
-        use crate::{self as astarte_device_sdk};
+            assert_eq!(temperature, expected);
+        }
 
         #[derive(Debug, FromEvent, PartialEq)]
         #[from_event(interface = "com.example.Sensor", interface_type = "properties")]
-        enum Sensor {
+        enum SensorProp {
             #[mapping(endpoint = "/%{param}/luminosity")]
             Luminosity(i32),
             #[mapping(endpoint = "/sensor/temperature")]
@@ -348,52 +404,29 @@ mod tests {
             Unsettable(Option<bool>),
         }
 
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/luminosity".to_string(),
-            data: Value::Property(Some(42i32.into())),
-        };
+        #[rstest::rstest]
+        #[case("/sensor/luminosity", Some(42i32.into()), SensorProp::Luminosity(42))]
+        #[case("/sensor/temperature", Some(AstarteData::try_from(3.0).unwrap()), SensorProp::Temperature(3.0))]
+        #[case(
+            "/sensor/unsettable",
+            Some(AstarteData::Boolean(true)),
+            SensorProp::Unsettable(Some(true))
+        )]
+        #[case("/sensor/unsettable", None, SensorProp::Unsettable(None))]
+        fn should_derive_form_event_property(
+            #[case] path: &str,
+            #[case] value: Option<AstarteData>,
+            #[case] exp: SensorProp,
+        ) {
+            let event = DeviceEvent {
+                interface: "com.example.Sensor".to_string(),
+                path: path.to_string(),
+                data: Value::Property(value),
+            };
 
-        let luminosity = Sensor::from_event(event).expect("couldn't parse the event");
+            let sensor = SensorProp::from_event(event).expect("couldn't parse the event");
 
-        let expected = Sensor::Luminosity(42);
-
-        assert_eq!(luminosity, expected);
-
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/temperature".to_string(),
-            data: Value::Property(Some(AstarteData::try_from(3.0).unwrap())),
-        };
-
-        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
-
-        let expected = Sensor::Temperature(3.0);
-
-        assert_eq!(temperature, expected);
-
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/unsettable".to_string(),
-            data: Value::Property(Some(AstarteData::Boolean(true))),
-        };
-
-        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
-
-        let expected = Sensor::Unsettable(Some(true));
-
-        assert_eq!(temperature, expected);
-
-        let event = DeviceEvent {
-            interface: "com.example.Sensor".to_string(),
-            path: "/sensor/unsettable".to_string(),
-            data: Value::Property(None),
-        };
-
-        let temperature = Sensor::from_event(event).expect("couldn't parse the event");
-
-        let expected = Sensor::Unsettable(None);
-
-        assert_eq!(temperature, expected);
+            assert_eq!(sensor, exp);
+        }
     }
 }

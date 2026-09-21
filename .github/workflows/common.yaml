@@ -30,27 +30,22 @@ env:
 jobs:
   check-copyright:
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       BASE_REF: ${{ github.event.pull_request.base.sha }}
       HEAD_REF: ${{ github.event.pull_request.head.sha }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v10.0.1
       - run: |
           ./scripts/ci/add-copyright-to-modified.sh "$BASE_REF" "$HEAD_REF"
           git diff --exit-code --name-only
-  spelling:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: crate-ci/typos@v1.48.0
   conventional-commit:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - uses: crate-ci/committed@v1.1.11
