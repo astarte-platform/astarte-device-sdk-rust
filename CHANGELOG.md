@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<<<<<<< Updated upstream
 ## [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
 ### `astarte-device-error` - [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
 
@@ -38,6 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - _(tls)_ fix return type
+=======
+## [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-test-utils-v0.15.0...astarte-test-utils-v0.15.1) - 2026-09-22
+### `astarte-test-utils` - [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-test-utils-v0.15.0...astarte-test-utils-v0.15.1) - 2026-09-22
+
+#### Added
+
+- _(object)_ add `required` field to interface
+
+
+
+
+
+>>>>>>> Stashed changes
 
 ## [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
 ### `astarte-device-error` - [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
