@@ -1,6 +1,6 @@
 // This file is part of Astarte.
 //
-// Copyright 2025 SECO Mind Srl
+// Copyright 2025, 2026 SECO Mind Srl
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,12 +19,11 @@
 //! Configure the certificates.
 
 use rustls::ClientConfig;
-use rustls_platform_verifier::ConfigVerifierExt;
 
 /// Read an returns the certificates roots
 // TODO: this could be integrated with the Astarte SDK
 pub(crate) fn client_config() -> eyre::Result<ClientConfig> {
-    let config = ClientConfig::with_platform_verifier()?;
+    let config = astarte_device_tls::builder()?.with_no_client_auth();
 
     Ok(config)
 }
