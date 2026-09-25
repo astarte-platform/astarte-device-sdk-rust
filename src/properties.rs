@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,19 +20,23 @@
 
 use std::fmt::Display;
 use std::io::Read;
+use std::num::NonZero;
 use std::{future::Future, io::Write};
 
 use astarte_device_error::{Error, ResultExt, WrapError};
-use astarte_interfaces::{MappingPath, Schema, interface::InterfaceTypeAggregation};
+use astarte_interfaces::{MappingPath, interface::InterfaceTypeAggregation};
 use flate2::{Compression, bufread::ZlibDecoder, write::ZlibEncoder};
-use futures::{StreamExt, TryStreamExt, future};
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, instrument};
 
+use crate::builder::ConnectionConfig;
 use crate::client::DeviceClient;
 use crate::error::{AstarteError, ErrorKind, InterfaceError};
-use crate::store::{PropertyMapping, PropertyStore, StoredProp};
-use crate::transport::Connection;
+use crate::store::{PropertyMapping, StoreCapabilities, StoredProp};
 use crate::types::AstarteData;
+
+// TODO: use the limit, this is just a temporary patch we should expose the rest in the public
+//      interface
+const MAX: NonZero<usize> = NonZero::new(i64::MAX as usize).unwrap();
 
 /// Error handling the properties.
 #[non_exhaustive]
@@ -64,7 +68,7 @@ pub trait PropAccess {
     /// use astarte_device_sdk::builder::DeviceBuilder;
     /// use astarte_device_sdk::prelude::*;
     /// use astarte_device_sdk::store::sqlite::SqliteStore;
-    /// use astarte_device_sdk::transport::mqtt::{MqttConfig, MqttArgs, Credential};
+    /// use astarte_device_sdk::transport::mqtt::{Mqtt, MqttArgs, Credential};
     /// use astarte_device_sdk::types::AstarteData;
     ///
     /// #[tokio::main]
@@ -76,7 +80,7 @@ pub trait PropAccess {
     ///         credential: Credential::secret("credential_secret"),
     ///         pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL")
     ///     };
-    ///     let mqtt_config = MqttConfig::new(args);
+    ///     let mqtt_config = Mqtt::new(args);
     ///
     ///
     ///     let (mut device, _connection) = DeviceBuilder::new().store(database)
@@ -107,9 +111,10 @@ pub trait PropAccess {
     fn server_props(&self) -> impl Future<Output = Result<Vec<StoredProp>, AstarteError>> + Send;
 }
 
-impl<C> PropAccess for DeviceClient<C>
+impl<C, S> PropAccess for DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
+    S: StoreCapabilities,
 {
     #[instrument(skip(self))]
     async fn property(
@@ -125,7 +130,16 @@ where
             .get_property(interface_name, &path)
             .map_kind(ErrorKind::Interface)?;
 
-        self.try_load_prop(&mapping).await
+        let mapping = PropertyMapping::from(&mapping);
+
+        let value = self
+            .state
+            .store()
+            .load_prop(&mapping)
+            .await
+            .map_kind(ErrorKind::Store)?;
+
+        Ok(value.map(|p| p.value))
     }
 
     #[instrument(skip(self))]
@@ -145,51 +159,38 @@ where
             );
         };
 
-        let stored_prop = self
-            .store
-            .interface_props(interface)
+        self.state
+            .store()
+            .interface_props(interface, MAX, None)
             .await
-            .map_kind(ErrorKind::Store)?;
-
-        futures::stream::iter(stored_prop)
-            .then(|stored_prop| async {
-                if stored_prop.interface_major != interface.version_major() {
-                    warn!(
-                        "version mismatch for property {}{} (stored {}, interface {}), deleting",
-                        stored_prop.interface,
-                        stored_prop.path,
-                        stored_prop.interface_major,
-                        interface.version_major()
-                    );
-
-                    self.store
-                        .delete_prop(&PropertyMapping::from(&stored_prop))
-                        .await
-                        .map_kind(ErrorKind::Store)?;
-
-                    Ok(None)
-                } else {
-                    Ok(Some(stored_prop))
-                }
-            })
-            .try_filter_map(future::ok)
-            .try_collect()
-            .await
+            .map_kind(ErrorKind::Store)
     }
 
     #[instrument(skip(self))]
     async fn all_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
-        self.store.load_all_props().await.map_kind(ErrorKind::Store)
+        self.state
+            .store()
+            .load_all_props(MAX, None)
+            .await
+            .map_kind(ErrorKind::Store)
     }
 
     #[instrument(skip(self))]
     async fn device_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
-        self.store.device_props().await.map_kind(ErrorKind::Store)
+        self.state
+            .store()
+            .device_props(MAX, None)
+            .await
+            .map_kind(ErrorKind::Store)
     }
 
     #[instrument(skip(self))]
     async fn server_props(&self) -> Result<Vec<StoredProp>, AstarteError> {
-        self.store.server_props().await.map_kind(ErrorKind::Store)
+        self.state
+            .store()
+            .server_props(MAX, None)
+            .await
+            .map_kind(ErrorKind::Store)
     }
 }
 
@@ -308,7 +309,7 @@ pub(crate) mod tests {
     use crate::client::tests::mock_client_with_store;
     use crate::state::ConnStatus;
     use crate::store::memory::MemoryStore;
-    use crate::store::{SqliteStore, StoreCapabilities};
+    use crate::store::{Prop, SqliteStore, StoreCapabilities};
 
     use super::*;
 
@@ -360,80 +361,79 @@ pub(crate) mod tests {
     where
         S: StoreCapabilities,
     {
-        store
-            .store_prop(StoredProp {
-                interface: "org.Foo",
-                path: "/bar",
-                value: &AstarteData::Boolean(true),
-                interface_major: 1,
-                ownership: Ownership::Server,
-            })
-            .await
-            .unwrap();
+        let client = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], ConnStatus::Online, store);
 
-        store
-            .store_prop(StoredProp {
-                interface: "org.Bar",
-                path: "/foo",
-                value: &AstarteData::Integer(42),
-                interface_major: 1,
-                ownership: Ownership::Device,
-            })
-            .await
-            .unwrap();
-
-        let sdk = mock_client_with_store(&[SERVER_PROP, DEVICE_PROP], ConnStatus::Connected, store);
-
-        let prop = sdk.property("org.Foo", "/bar").await.unwrap();
-        assert_eq!(prop, Some(AstarteData::Boolean(true)));
-
-        let prop = sdk.property("org.Bar", "/foo").await.unwrap();
-        assert_eq!(prop, Some(AstarteData::Integer(42)));
-
-        let mut props = sdk.all_props().await.unwrap();
-        props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
-        let expected = [
-            StoredProp::<&'static str> {
-                interface: "org.Bar",
-                path: "/foo",
-                value: AstarteData::Integer(42),
-                interface_major: 1,
-                ownership: Ownership::Device,
-            },
-            StoredProp::<&'static str> {
-                interface: "org.Foo",
-                path: "/bar",
-                value: AstarteData::Boolean(true),
-                interface_major: 1,
-                ownership: Ownership::Server,
-            },
-        ];
-        assert_eq!(props, expected);
-
-        let props = sdk.device_props().await.unwrap();
-        let expected = [StoredProp {
-            interface: "org.Bar",
-            path: "/foo",
-            value: AstarteData::Integer(42),
-            interface_major: 1,
-            ownership: Ownership::Device,
-        }];
-        assert_eq!(props, expected);
-
-        let props = sdk.interface_props("org.Bar").await.unwrap();
-        assert_eq!(props, expected);
-
-        let props = sdk.server_props().await.unwrap();
-        let expected = [StoredProp::<&'static str> {
-            interface: "org.Foo",
-            path: "/bar",
+        let server_prop = Prop {
+            interface: "org.Foo".to_string(),
+            path: "/bar".to_string(),
             value: AstarteData::Boolean(true),
             interface_major: 1,
             ownership: Ownership::Server,
-        }];
+            updated_at: client.state.property_ctx().next_updated_at(),
+        };
+        client
+            .state
+            .store()
+            .store_prop(server_prop.clone())
+            .await
+            .unwrap();
+
+        let device_prop = Prop {
+            interface: "org.Bar".to_string(),
+            path: "/foo".to_string(),
+            value: AstarteData::Integer(42),
+            interface_major: 1,
+            ownership: Ownership::Device,
+            updated_at: client.state.property_ctx().next_updated_at(),
+        };
+        let device_meta = client
+            .state
+            .store()
+            .store_prop(device_prop.clone())
+            .await
+            .unwrap();
+
+        let prop = client.property("org.Foo", "/bar").await.unwrap();
+        assert_eq!(prop, Some(AstarteData::Boolean(true)));
+
+        let prop = client.property("org.Bar", "/foo").await.unwrap();
+        assert_eq!(prop, Some(AstarteData::Integer(42)));
+
+        let mut props = client.all_props().await.unwrap();
+        props.sort_unstable_by(|a, b| a.interface.cmp(&b.interface));
+
+        let exp_device = StoredProp::from_device(
+            device_prop.interface,
+            device_prop.path,
+            device_prop.value,
+            device_prop.interface_major,
+            device_prop.ownership,
+            device_meta.epoch().unwrap(),
+            device_prop.updated_at,
+        );
+        let exp_server = StoredProp::from_server(
+            server_prop.interface,
+            server_prop.path,
+            server_prop.value,
+            server_prop.interface_major,
+            server_prop.ownership,
+            server_prop.updated_at,
+        );
+        let expected = [exp_device.clone(), exp_server.clone()];
         assert_eq!(props, expected);
 
-        let props = sdk.interface_props("org.Foo").await.unwrap();
+        let props = client.device_props().await.unwrap();
+        let expected = [exp_device];
+        assert_eq!(props, expected);
+
+        let props = client.interface_props("org.Bar").await.unwrap();
+        assert_eq!(props, expected);
+
+        let props = client.server_props().await.unwrap();
+        let expected = [exp_server];
+        assert_eq!(props, expected);
+
+        let props = client.interface_props("org.Foo").await.unwrap();
         assert_eq!(props, expected);
     }
 

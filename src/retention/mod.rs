@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,21 +24,17 @@ use std::{
     fmt::Display,
     future::Future,
     num::{NonZeroUsize, TryFromIntError},
-    sync::atomic::{AtomicU32, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use astarte_device_error::Error;
 use astarte_interfaces::{interface::Retention, schema::Reliability};
-use futures::{StreamExt, TryStreamExt};
-use tracing::warn;
+use tracing::{debug, instrument, warn};
 
+use crate::interfaces::Interfaces;
 use crate::{
     error::Report,
-    interfaces::Interfaces,
-    retention::memory::VolatileStore,
-    store::StoreCapabilities,
-    validate::{ValidatedIndividual, ValidatedObject},
+    validate::{individual::ValidatedIndividual, object::ValidatedObject},
 };
 
 pub(crate) mod memory;
@@ -164,7 +160,7 @@ impl<'a> PublishInfo<'a> {
     }
 
     /// Returns an owned version of the PublishInfo
-    fn into_owned(self) -> PublishInfo<'static> {
+    pub(crate) fn into_owned(self) -> PublishInfo<'static> {
         PublishInfo {
             interface: self.interface.into_owned().into(),
             path: self.path.into_owned().into(),
@@ -183,10 +179,10 @@ impl<'a> PublishInfo<'a> {
 /// a connection.
 pub trait StoredRetention: Clone + Send + Sync {
     /// Store a publish.
-    fn store_publish(
+    fn store_publish<'a>(
         &self,
         id: &Id,
-        publish: PublishInfo<'_>,
+        publish: PublishInfo<'a>,
     ) -> impl Future<Output = Result<(), Error<RetentionError>>> + Send;
 
     /// It will mark the stored publish as sent or unset given the flag.
@@ -281,6 +277,7 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
     }
 
     /// Removes the outdated interfaces from the introspection
+    #[instrument(skip_all)]
     async fn cleanup_introspection(
         &self,
         interfaces: &Interfaces,
@@ -303,10 +300,11 @@ pub(crate) trait StoredRetentionExt: StoredRetention {
                 None
             });
 
-        futures::stream::iter(iter)
-            .then(|interface| async move { self.delete_interface(&interface).await })
-            .try_collect::<()>()
-            .await?;
+        for interface in iter {
+            debug!(interface, "deleting retention interface");
+
+            self.delete_interface(&interface).await?;
+        }
 
         Ok(())
     }
@@ -334,8 +332,8 @@ impl Display for RetentionId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[must_use]
 pub struct Id {
-    timestamp: TimestampMillis,
-    counter: u32,
+    pub(crate) timestamp: TimestampMillis,
+    pub(crate) counter: u32,
 }
 
 impl Display for Id {
@@ -393,106 +391,5 @@ impl TryFrom<TimestampMillis> for Duration {
 
     fn try_from(value: TimestampMillis) -> Result<Self, Self::Error> {
         value.0.try_into().map(Duration::from_millis)
-    }
-}
-
-/// Context to create a unique [`Id`].
-#[derive(Debug)]
-pub struct Context {
-    counter: AtomicU32,
-}
-
-impl Context {
-    /// Create a new context
-    pub fn new() -> Self {
-        Self {
-            counter: AtomicU32::new(0),
-        }
-    }
-
-    /// Returns the next unique id.
-    pub fn next(&self) -> Id {
-        let timestamp = TimestampMillis::now();
-
-        // We want the values to be unique, this will wrap around, but it will never wrap on the
-        // same ms, the ordering can be relaxed since the only guarantee we need is for the counter
-        // to yield unique values.
-        let counter = self.counter.fetch_add(1, Ordering::Relaxed);
-
-        Id { timestamp, counter }
-    }
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub(crate) async fn stored_mark_unsent<S>(store: &S, id: &Id)
-where
-    S: StoreCapabilities,
-{
-    let Some(retention) = store.get_retention() else {
-        return;
-    };
-
-    let update_result = retention.update_sent_flag(id, false).await;
-
-    if let Err(e) = update_result {
-        warn!(error=%Report::new(e),
-            "error in the store implementation while marking a record as not sent");
-    }
-}
-
-pub(crate) async fn volatile_mark_unsent(volatile: &VolatileStore, id: &Id) {
-    volatile.mark_sent(id, false).await;
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-
-    use super::*;
-
-    #[test]
-    fn id_should_be_unique() {
-        const NUM: usize = 5;
-        const CAP: usize = 1000;
-        let ctx = Arc::new(Context::new());
-
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Id>>(NUM);
-
-        for _ in 0..NUM {
-            std::thread::spawn({
-                let ctx = Arc::clone(&ctx);
-                let tx = tx.clone();
-
-                move || {
-                    let mut out = Vec::with_capacity(CAP);
-                    let mut prev = ctx.next();
-                    for _i in 0..CAP {
-                        let new = ctx.next();
-
-                        assert!(new > prev);
-
-                        out.push(prev);
-                        prev = new;
-                    }
-
-                    tx.send(out).expect("channel closed");
-                }
-            });
-        }
-
-        drop(tx);
-
-        let mut recvd = HashSet::new();
-        while let Ok(out) = rx.recv() {
-            for i in out {
-                assert!(recvd.insert(i));
-            }
-        }
     }
 }
