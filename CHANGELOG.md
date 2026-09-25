@@ -25,6 +25,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.1...astarte-device-error-v0.15.2) - 2026-09-25
+### `astarte-device-error` - [0.15.2](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.1...astarte-device-error-v0.15.2) - 2026-09-25
+
+#### Other
+
+- _(v0.15.1)_ forward port the release
+
+
 ## [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
 ### `astarte-device-error` - [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
 
