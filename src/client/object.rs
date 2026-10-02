@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,27 +20,32 @@
 
 use astarte_device_error::ResultExt;
 use astarte_interfaces::MappingPath;
-use tracing::info;
+use tracing::{info, instrument};
 
-use crate::client::ValidatedObject;
+use crate::aggregate::AstarteObject;
+use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind};
-use crate::{aggregate::AstarteObject, transport::Connection};
+use crate::store::StoreCapabilities;
+use crate::transport::Encode;
+use crate::validate::object::ValidatedObject;
 
-use super::{DeviceClient, Publish};
+use super::DeviceClient;
 
-impl<C> DeviceClient<C>
+impl<C, S> DeviceClient<C, S>
 where
-    C: Connection,
+    C: ConnectionConfig,
 {
+    #[instrument(skip_all, fields(interface = interface_name, path = %path))]
     pub(crate) async fn send_datastream_object(
-        &mut self,
+        &self,
         interface_name: &str,
         path: &MappingPath<'_>,
         data: AstarteObject,
         timestamp: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<(), AstarteError>
     where
-        C::Sender: Publish,
+        S: StoreCapabilities,
+        C::Encoder: Encode,
     {
         let interfaces = self.state.interfaces().read().await;
         let interface = interfaces
@@ -52,7 +57,7 @@ where
 
         info!(interface = interface_name, path = %path, "sending object",);
 
-        Self::send(&self.state, &self.store, &mut self.sender, validated).await
+        self.send(validated).await
     }
 }
 
@@ -80,11 +85,12 @@ mod tests {
         E2E_DEVICE_DATASTREAM, E2E_DEVICE_DATASTREAM_NAME, STORED_DEVICE_OBJECT,
         STORED_DEVICE_OBJECT_NAME, VOLATILE_DEVICE_OBJECT, VOLATILE_DEVICE_OBJECT_NAME,
     };
+    use crate::validate::Validated;
     use crate::{AstarteData, Client};
 
     #[tokio::test]
     async fn send_datastream_object_connected_discard() {
-        let mut client = mock_client(&[DEVICE_OBJECT], ConnStatus::Connected);
+        let mut client = mock_client(&[DEVICE_OBJECT], ConnStatus::Online);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -103,33 +109,35 @@ mod tests {
             .map(|(n, v)| (n.to_string(), v)),
         );
 
-        let mut seq = Sequence::new();
-        client
-            .sender
-            .expect_send_object()
-            .with(predicate::eq(ValidatedObject {
-                interface: interface.to_string(),
-                path: path.to_string(),
-                version_major: 0,
-                reliability: Reliability::Unreliable,
-                retention: Retention::Discard,
-                data: obj.clone(),
-                timestamp: Some(timestamp),
-            }))
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|_| Ok(()));
-
         // Test the sent
         client
-            .send_object_with_timestamp(interface, path, obj, timestamp)
+            .send_object_with_timestamp(interface, path, obj.clone(), timestamp)
             .await
             .unwrap();
+
+        let exp = ValidatedObject {
+            interface: interface.to_string(),
+            path: path.to_string(),
+            version_major: 0,
+            reliability: Reliability::Unreliable,
+            retention: Retention::Discard,
+            data: obj,
+            timestamp: Some(timestamp),
+        };
+        let res = client.client_rx.try_recv().unwrap();
+
+        assert_eq!(
+            res,
+            Validated::Object {
+                retention: None,
+                data: exp
+            }
+        );
     }
 
     #[tokio::test]
     async fn send_datastream_object_connected_volatile() {
-        let mut client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Connected);
+        let mut client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Online);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -139,8 +147,6 @@ mod tests {
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
-
-        let mut seq = Sequence::new();
 
         let expected = ValidatedObject {
             interface: VOLATILE_DEVICE_OBJECT_NAME.to_string(),
@@ -153,16 +159,6 @@ mod tests {
             data: value.clone(),
             timestamp: None,
         };
-        client
-            .sender
-            .expect_send_object_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Volatile(_))),
-                predicate::eq(expected.clone()),
-            )
-            .returning(|_, _| Ok(()));
 
         client
             .send_object(VOLATILE_DEVICE_OBJECT_NAME, path, value)
@@ -171,12 +167,18 @@ mod tests {
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
-        assert_eq!(item, ItemValue::Object(expected));
+        assert_eq!(item, ItemValue::Object(expected.clone()));
+
+        let Validated::Object { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(data, expected);
+        assert!(matches!(retention, Some(RetentionId::Volatile(_))))
     }
 
     #[tokio::test]
     async fn send_datastream_object_connected_stored_no_retention_cap() {
-        let mut client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Connected);
+        let mut client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Online);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -186,8 +188,6 @@ mod tests {
             ]
             .map(|(k, v)| (k.to_string(), v)),
         );
-
-        let mut seq = Sequence::new();
 
         let expected = ValidatedObject {
             interface: STORED_DEVICE_OBJECT_NAME.to_string(),
@@ -200,16 +200,6 @@ mod tests {
             data: value.clone(),
             timestamp: None,
         };
-        client
-            .sender
-            .expect_send_object_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Volatile(_))),
-                predicate::eq(expected.clone()),
-            )
-            .returning(|_, _| Ok(()));
 
         client
             .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
@@ -218,7 +208,13 @@ mod tests {
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
-        assert_eq!(item, ItemValue::Object(expected));
+        assert_eq!(item, ItemValue::Object(expected.clone()));
+
+        let Validated::Object { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert_eq!(data, expected);
+        assert!(matches!(retention, Some(RetentionId::Volatile(_))))
     }
 
     #[tokio::test]
@@ -228,8 +224,7 @@ mod tests {
             .with_writable_dir(tmp.path())
             .await
             .unwrap();
-        let mut client =
-            mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Connected, store);
+        let mut client = mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Online, store);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -255,7 +250,7 @@ mod tests {
         let mut seq = Sequence::new();
 
         client
-            .sender
+            .encoder
             .expect_serialize_object()
             .once()
             .in_sequence(&mut seq)
@@ -263,50 +258,30 @@ mod tests {
             .returning(|_| Ok(EXP_SER.to_vec()));
 
         client
-            .sender
-            .expect_send_object_stored()
-            .once()
-            .in_sequence(&mut seq)
-            .with(
-                predicate::function(|r| matches!(r, RetentionId::Stored(_))),
-                predicate::eq(exp.clone()),
-            )
-            .returning(|_, _| Ok(()));
-
-        client
             .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
             .await
             .unwrap();
 
+        let Validated::Object { retention, data } = client.client_rx.try_recv().unwrap() else {
+            panic!()
+        };
+        assert!(matches!(retention, Some(RetentionId::Stored(_))));
+        assert_eq!(data, exp);
+
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
-        assert_eq!(read, 0);
-        assert_eq!(stored.len(), 0);
-        stored.clear();
-
-        // reset sent
-        client.store.reset_all_publishes().await.unwrap();
-
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
-        assert_eq!(
-            stored.pop().unwrap().1,
-            PublishInfo {
-                interface: STORED_DEVICE_OBJECT_NAME.into(),
-                path: path.into(),
-                version_major: 0,
-                reliability: Reliability::Guaranteed,
-                expiry: Some(Duration::from_secs(30)),
-                sent: false,
-                value: EXP_SER.into()
-            }
-        );
     }
 
     #[tokio::test]
     async fn send_datastream_object_offline_discard() {
-        let mut client = mock_client(&[DEVICE_OBJECT], ConnStatus::Disconnected);
+        let client = mock_client(&[DEVICE_OBJECT], ConnStatus::Offline);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -330,11 +305,12 @@ mod tests {
             .send_object_with_timestamp(interface, path, obj, timestamp)
             .await
             .unwrap();
+        assert!(client.client_rx.is_empty());
     }
 
     #[tokio::test]
     async fn send_datastream_object_offline_volatile() {
-        let mut client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Disconnected);
+        let client = mock_client(&[VOLATILE_DEVICE_OBJECT], ConnStatus::Offline);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -361,6 +337,7 @@ mod tests {
             .send_object(VOLATILE_DEVICE_OBJECT_NAME, path, value)
             .await
             .unwrap();
+        assert!(client.client_rx.is_empty());
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
@@ -369,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_offline_stored_no_retention_cap() {
-        let mut client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Disconnected);
+        let client = mock_client(&[STORED_DEVICE_OBJECT], ConnStatus::Offline);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -397,6 +374,7 @@ mod tests {
             .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
             .await
             .unwrap();
+        assert!(client.client_rx.is_empty());
 
         let item = client.state.volatile_store().pop_next().await.unwrap();
 
@@ -411,7 +389,7 @@ mod tests {
             .await
             .unwrap();
         let mut client =
-            mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Disconnected, store);
+            mock_client_with_store(&[STORED_DEVICE_OBJECT], ConnStatus::Offline, store);
 
         let path = "/endpoint";
         let value = AstarteObject::from_iter(
@@ -438,7 +416,7 @@ mod tests {
         let mut seq = Sequence::new();
 
         client
-            .sender
+            .encoder
             .expect_serialize_object()
             .once()
             .in_sequence(&mut seq)
@@ -450,9 +428,15 @@ mod tests {
             .send_object(STORED_DEVICE_OBJECT_NAME, path, value)
             .await
             .unwrap();
+        assert!(client.client_rx.is_empty());
 
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
         assert_eq!(
@@ -502,7 +486,7 @@ mod tests {
 
         let mut seq = Sequence::new();
         client
-            .sender
+            .encoder
             .expect_serialize_object()
             .once()
             .in_sequence(&mut seq)
@@ -517,7 +501,12 @@ mod tests {
         assert_eq!(*err.kind(), ErrorKind::Disconnected);
 
         let mut stored = Vec::new();
-        let read = client.store.unsent_publishes(2, &mut stored).await.unwrap();
+        let read = client
+            .state
+            .store()
+            .unsent_publishes(2, &mut stored)
+            .await
+            .unwrap();
 
         assert_eq!(read, 1);
         assert_eq!(stored.len(), 1);
@@ -537,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_interface_not_found() {
-        let mut client = mock_client(&[], ConnStatus::Connected);
+        let client = mock_client(&[], ConnStatus::Online);
 
         let interface = "test.device.object";
         let path = "/sensor_1";
@@ -570,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_datastream_object_wrong_aggregation() {
-        let mut client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Connected);
+        let client = mock_client(&[E2E_DEVICE_DATASTREAM], ConnStatus::Online);
 
         let path = "/sensor_1";
         let timestamp = Utc::now();
