@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,10 +24,10 @@ use reqwest::Url;
 use uuid::Uuid;
 
 use crate::builder::Config;
-
-use crate::pairing::api::client::{ApiClient, ClientArgs};
+use crate::transport::mqtt::components::ClientId;
 
 use super::PairingApiError;
+use super::client::{ApiClient, ClientArgs};
 
 /// Arguments for the register device call
 pub struct RegisterDevice<'a> {
@@ -58,8 +58,7 @@ impl<'a> From<&RegisterDevice<'a>> for ClientArgs<'a> {
         } = value;
 
         ClientArgs {
-            realm,
-            device_id,
+            client_id: ClientId { realm, device_id },
             pairing_url,
             token,
         }

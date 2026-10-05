@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,7 +20,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use astarte_device_sdk::pairing::api::registration::{RegisterDevice, register_device};
+use astarte_device_sdk::transport::mqtt::pairing::registration::{RegisterDevice, register_device};
 use clap::Parser;
 use rustls_platform_verifier::BuilderVerifierExt;
 use serde::Deserialize;

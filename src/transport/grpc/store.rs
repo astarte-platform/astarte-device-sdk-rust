@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -22,6 +22,7 @@
 //! It defines the `GrpcStore` struct, which handles device properties differently than server
 //! properties, to allow retrieving all device properties directly from the message hub server.
 
+use std::num::NonZero;
 use std::sync::Arc;
 
 use astarte_device_error::Error;
@@ -31,17 +32,18 @@ use astarte_interfaces::Properties;
 use astarte_interfaces::Schema;
 use astarte_interfaces::schema::Ownership;
 use astarte_message_hub_proto::PropertyFilter;
-use futures::TryFutureExt;
+use chrono::Utc;
 use tokio::sync::Mutex;
 use tracing::error;
 
+use crate::AstarteData;
 use crate::error::Report;
+use crate::store::PropMetadata;
 use crate::store::PropertyState;
+use crate::store::StoredProp;
+use crate::store::UpdatedAt;
 use crate::store::error::StoreError;
-use crate::{
-    AstarteData,
-    store::{OptStoredProp, PropertyMapping, PropertyStore, StoreCapabilities, StoredProp},
-};
+use crate::store::{OptStoredProp, Prop, PropertyMapping, PropertyStore, StoreCapabilities};
 
 use super::MsgHubClient;
 use super::convert;
@@ -66,7 +68,7 @@ impl<S> GrpcStore<S> {
     async fn grpc_server_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Error<GrpcError>> {
+    ) -> Result<Option<StoredProp>, Error<GrpcError>> {
         self.client
             .lock()
             .await
@@ -81,7 +83,21 @@ impl<S> GrpcStore<S> {
             .and_then(|resp| {
                 resp.into_inner()
                     .data
-                    .map(|data| AstarteData::try_from(data).map_kind(GrpcError::Conversion))
+                    .map(|data| {
+                        AstarteData::try_from(data)
+                            .map_kind(GrpcError::Conversion)
+                            .map(|value| {
+                                StoredProp::from_server(
+                                    property.interface_name().to_string(),
+                                    property.path().to_string(),
+                                    value,
+                                    property.version_major(),
+                                    property.ownership(),
+                                    // TODO: this should be received from the server
+                                    UpdatedAt::new(Utc::now(), 0),
+                                )
+                            })
+                    })
                     .transpose()
             })
     }
@@ -150,26 +166,26 @@ impl<S> PropertyStore for GrpcStore<S>
 where
     S: PropertyStore,
 {
-    async fn store_prop(
-        &self,
-        prop: StoredProp<&str, &AstarteData>,
-    ) -> Result<(), Error<StoreError>> {
+    async fn store_prop(&self, prop: Prop) -> Result<PropMetadata, Error<StoreError>> {
         self.inner.store_prop(prop).await
     }
 
     async fn update_state(
         &self,
-        property: &PropertyMapping<'_>,
+        interface_name: &str,
+        path: &str,
         state: PropertyState,
-        expected: Option<AstarteData>,
+        epoch: u8,
     ) -> Result<bool, Error<StoreError>> {
-        self.inner.update_state(property, state, expected).await
+        self.inner
+            .update_state(interface_name, path, state, epoch)
+            .await
     }
 
     async fn load_prop(
         &self,
         property: &PropertyMapping<'_>,
-    ) -> Result<Option<AstarteData>, Error<StoreError>> {
+    ) -> Result<Option<StoredProp>, Error<StoreError>> {
         if property.ownership() == Ownership::Server {
             let server_prop = self.grpc_server_prop(property).await;
 
@@ -187,57 +203,65 @@ where
         self.inner.load_prop(property).await
     }
 
-    async fn unset_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
-        self.inner.unset_prop(prop).await
-    }
-
-    async fn delete_prop(&self, prop: &PropertyMapping<'_>) -> Result<(), Error<StoreError>> {
-        self.inner.delete_prop(prop).await
-    }
-
-    async fn delete_expected_prop(
+    async fn unset_prop(
         &self,
         property: &PropertyMapping<'_>,
-        expected: Option<AstarteData>,
-    ) -> Result<bool, Error<StoreError>> {
-        self.inner.delete_expected_prop(property, expected).await
+        updated_at: UpdatedAt,
+    ) -> Result<PropMetadata, Error<StoreError>> {
+        self.inner.unset_prop(property, updated_at).await
     }
 
     async fn clear(&self) -> Result<(), Error<StoreError>> {
         self.inner.clear().await
     }
 
-    async fn load_all_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
-        let mut device_props = self.inner.device_props().await?;
+    async fn load_all_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        let mut device_props = self.inner.device_props(limit, last_updated_at).await?;
 
-        let server_props = self.server_props().await.wrap_err(StoreError::LoadAll)?;
+        let server_props = self
+            .server_props(limit, last_updated_at)
+            .await
+            .wrap_err(StoreError::LoadAll)?;
 
         device_props.extend(server_props);
 
         Ok(device_props)
     }
 
-    async fn server_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
-        let inner = self.inner.clone();
-
-        self.grpc_server_properties()
-            .or_else(move |e| {
+    async fn server_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        match self.grpc_server_properties().await {
+            Ok(props) => Ok(props),
+            Err(e) => {
                 error!(error=%Report::new(e), "error while requesting server properties, returning stored server properties");
-
-                async move {
-                    inner.server_props().await.wrap_err(StoreError::ServerProps)
-                }
-            })
-            .await
+                self.inner
+                    .server_props(limit, last_updated_at)
+                    .await
+                    .wrap_err(StoreError::ServerProps)
+            }
+        }
     }
 
-    async fn device_props(&self) -> Result<Vec<StoredProp>, Error<StoreError>> {
-        self.inner.device_props().await
+    async fn device_props(
+        &self,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
+    ) -> Result<Vec<StoredProp>, Error<StoreError>> {
+        self.inner.device_props(limit, last_updated_at).await
     }
 
     async fn interface_props(
         &self,
         interface: &Properties,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<StoredProp>, Error<StoreError>> {
         if interface.ownership() == Ownership::Server {
             let server_prop = self.grpc_interface_properties(interface).await;
@@ -253,7 +277,9 @@ where
             }
         }
 
-        self.inner.interface_props(interface).await
+        self.inner
+            .interface_props(interface, limit, last_updated_at)
+            .await
     }
 
     async fn delete_interface(&self, interface: &Properties) -> Result<(), Error<StoreError>> {
@@ -263,21 +289,41 @@ where
     async fn device_props_with_unset(
         &self,
         state: PropertyState,
-        limit: usize,
-        offset: usize,
+        limit: NonZero<usize>,
+        last_updated_at: Option<UpdatedAt>,
     ) -> Result<Vec<OptStoredProp>, Error<StoreError>> {
         self.inner
-            .device_props_with_unset(state, limit, offset)
+            .device_props_with_unset(state, limit, last_updated_at)
             .await
     }
 
-    async fn reset_state(&self, ownership: Ownership) -> Result<(), Error<StoreError>> {
-        self.inner.reset_state(ownership).await
+    async fn reset_session(&self) -> Result<(), Error<StoreError>> {
+        self.inner.reset_session().await
+    }
+
+    async fn delete_server_prop(
+        &self,
+        interface_name: &str,
+        path: &str,
+    ) -> Result<bool, Error<StoreError>> {
+        self.inner.delete_server_prop(interface_name, path).await
+    }
+
+    async fn delete_device_prop(
+        &self,
+        interface_name: &str,
+        path: &str,
+        epoch: u8,
+    ) -> Result<bool, Error<StoreError>> {
+        self.inner
+            .delete_device_prop(interface_name, path, epoch)
+            .await
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::num::NonZero;
     use std::str::FromStr;
 
     use astarte_interfaces::MappingPath;
@@ -294,8 +340,8 @@ mod test {
     use super::PropertyStore;
     use crate::AstarteData;
     use crate::interfaces::MappingRef;
+    use crate::store::Prop;
     use crate::store::PropertyMapping;
-    use crate::store::StoredProp;
     use crate::store::memory::MemoryStore;
     use crate::test::DEVICE_PROPERTIES;
     use crate::test::E2E_DEVICE_PROPERTY;
@@ -376,19 +422,29 @@ mod test {
         let _server_prop = grpc_store.load_prop(&server_prop_info).await;
 
         // the server should be called
-        let _device_properties = grpc_store.device_props().await.unwrap();
+        let _device_properties = grpc_store
+            .device_props(NonZero::new(1).unwrap(), None)
+            .await
+            .unwrap();
         // the server should be called
-        let _server_properties = grpc_store.server_props().await.unwrap();
+        let _server_properties = grpc_store
+            .server_props(NonZero::new(1).unwrap(), None)
+            .await
+            .unwrap();
 
         let device_interface = Properties::from_str(DEVICE_PROPERTIES).unwrap();
         // the server should be called
-        let _device_interface_properties =
-            grpc_store.interface_props(&device_interface).await.unwrap();
+        let _device_interface_properties = grpc_store
+            .interface_props(&device_interface, NonZero::new(1).unwrap(), None)
+            .await
+            .unwrap();
 
         let server_interface = Properties::from_str(SERVER_PROPERTIES).unwrap();
         // the server should be called
-        let _server_interface_properties =
-            grpc_store.interface_props(&server_interface).await.unwrap();
+        let _server_interface_properties = grpc_store
+            .interface_props(&server_interface, NonZero::new(1).unwrap(), None)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -399,23 +455,35 @@ mod test {
         let value = AstarteData::Integer(1);
         const PATH: &str = "/sensor_1/integer_endpoint";
 
-        let server_prop = StoredProp {
-            interface: E2E_SERVER_PROPERTY_NAME,
-            path: PATH,
-            value: &value,
+        let server_prop = Prop {
+            interface: E2E_SERVER_PROPERTY_NAME.to_string(),
+            path: PATH.to_string(),
+            value: value.clone(),
             interface_major: 0,
             ownership: Ownership::Server,
+            updated_at: super::UpdatedAt::new(chrono::Utc::now(), 0),
         };
-        let server_prop_mapping = PropertyMapping::from(&server_prop);
-
-        let device_prop = StoredProp {
-            interface: E2E_DEVICE_PROPERTY_NAME,
+        let server_prop_mapping = PropertyMapping {
+            interface_name: E2E_SERVER_PROPERTY_NAME,
+            version_major: 0,
+            ownership: Ownership::Server,
             path: PATH,
-            value: &value,
+        };
+
+        let device_prop = Prop {
+            interface: E2E_DEVICE_PROPERTY_NAME.to_string(),
+            path: PATH.to_string(),
+            value: value.clone(),
             interface_major: 0,
             ownership: Ownership::Device,
+            updated_at: super::UpdatedAt::new(chrono::Utc::now(), 0),
         };
-        let device_interface_data = &(&device_prop).into();
+        let device_prop_mapping = PropertyMapping {
+            interface_name: E2E_DEVICE_PROPERTY_NAME,
+            version_major: 0,
+            ownership: Ownership::Device,
+            path: PATH,
+        };
 
         let mock_store_client = MsgHubClient::new();
         let grpc_store = GrpcStore::new(mock_store_client, MemoryStore::new());
@@ -427,13 +495,31 @@ mod test {
         // no actions or calls to the server should be performed
         grpc_store.store_prop(device_prop).await.unwrap();
         // no actions or calls to the server should be performed
-        grpc_store.unset_prop(&server_prop_mapping).await.unwrap();
+        grpc_store
+            .unset_prop(
+                &server_prop_mapping,
+                super::UpdatedAt::new(chrono::Utc::now(), 0),
+            )
+            .await
+            .unwrap();
         // no actions or calls to the server should be performed
-        grpc_store.unset_prop(device_interface_data).await.unwrap();
+        grpc_store
+            .unset_prop(
+                &device_prop_mapping,
+                super::UpdatedAt::new(chrono::Utc::now(), 0),
+            )
+            .await
+            .unwrap();
         // no actions or calls to the server should be performed
-        grpc_store.delete_prop(&server_prop_mapping).await.unwrap();
+        grpc_store
+            .delete_server_prop(E2E_SERVER_PROPERTY_NAME, PATH)
+            .await
+            .unwrap();
         // no actions or calls to the server should be performed
-        grpc_store.delete_prop(device_interface_data).await.unwrap();
+        grpc_store
+            .delete_device_prop(E2E_DEVICE_PROPERTY_NAME, PATH, 0)
+            .await
+            .unwrap();
         // no actions or calls to the server should be performed
         grpc_store.delete_interface(&server_itf).await.unwrap();
         // no actions or calls to the server should be performed

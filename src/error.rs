@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -47,13 +47,20 @@ pub enum ErrorKind {
     Session(SessionError),
     /// Couldn't complete retention operation
     Retention(RetentionError),
+    /// Couldn't configure TLS
+    Tls,
+    /// Operation timed out
+    Timeout,
+    /// Device is disconnected
+    Disconnected,
     /// Mqtt transport error.
     Mqtt(MqttError),
+    /// FDO pairing error.
+    #[cfg(feature = "fdo")]
+    Fdo(crate::transport::mqtt::fdo::FdoError),
     /// Grcp transport error
     #[cfg(feature = "message-hub")]
     Grpc(crate::transport::grpc::error::GrpcError),
-    /// Device is disconnected
-    Disconnected,
 }
 
 impl Display for ErrorKind {
@@ -70,8 +77,12 @@ impl Display for ErrorKind {
             ErrorKind::Retention(retention_error) => {
                 write!(f, "retention operation failed {retention_error}")
             }
+            ErrorKind::Tls => write!(f, "TLS configuration error"),
+            ErrorKind::Timeout => write!(f, "timeout reached"),
             ErrorKind::Disconnected => write!(f, "device is disconnected"),
             ErrorKind::Mqtt(error) => write!(f, "MQTT transport error {error}"),
+            #[cfg(feature = "fdo")]
+            ErrorKind::Fdo(error) => write!(f, "FDO protocol error {error}"),
             #[cfg(feature = "message-hub")]
             ErrorKind::Grpc(grpc_error) => write!(f, "Message Hub gRPC returned {grpc_error}"),
         }

@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +23,8 @@ use std::fmt::Display;
 use astarte_device_error::{Error, WrapError};
 use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
 use rustls::pki_types::PrivatePkcs8KeyDer;
+
+use super::components::ClientId;
 
 /// Errors that can occur while generating the Certificate and CSR.
 #[non_exhaustive]
@@ -52,10 +54,10 @@ pub(crate) struct Bundle {
 }
 
 impl Bundle {
-    pub(crate) fn generate_key(realm: &str, device_id: &str) -> Result<Bundle, Error<CryptoError>> {
+    pub(crate) fn generate_key(client_id: &ClientId<&str>) -> Result<Bundle, Error<CryptoError>> {
         // The realm/device_id for the certificate
         let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, format!("{realm}/{device_id}"));
+        dn.push(DnType::CommonName, client_id.to_string());
 
         // Generate a random private key
         let key_pair =
@@ -84,7 +86,10 @@ mod tests {
 
     #[test]
     fn test_new_cert() {
-        let bundle = Bundle::generate_key("realm", "device_id");
+        let bundle = Bundle::generate_key(&ClientId {
+            realm: "realm",
+            device_id: "device_id",
+        });
 
         assert!(
             bundle.is_ok(),
@@ -104,7 +109,11 @@ mod tests {
 
     #[test]
     fn test_bundle() {
-        let Bundle { private_key, csr } = Bundle::generate_key("realm", "device_id").unwrap();
+        let Bundle { private_key, csr } = Bundle::generate_key(&ClientId {
+            realm: "realm",
+            device_id: "device_id",
+        })
+        .unwrap();
         assert!(!private_key.secret_pkcs8_der().is_empty());
         assert!(!csr.is_empty());
 

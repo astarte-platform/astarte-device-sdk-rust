@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,10 +28,10 @@ use astarte_interfaces::schema::{Aggregation, InterfaceType};
 use astarte_interfaces::{
     AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
 };
-use itertools::Itertools;
 use tracing::{debug, trace, warn};
 
 use crate::error::InterfaceError;
+use crate::transport::RemovedInterface;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
@@ -123,6 +123,15 @@ impl Interfaces {
         }
 
         self.interfaces.get(interface_name)
+    }
+
+    pub(crate) fn try_get(
+        &self,
+        interface_name: &str,
+    ) -> Result<&Interface, Error<InterfaceError>> {
+        self.get(interface_name).ok_or_else(|| {
+            Error::new(InterfaceError::InterfaceNotFound).set_ctx(interface_name.to_string())
+        })
     }
 
     /// Retrieves a datastream individual mapping and checks that it's valid.
@@ -239,6 +248,12 @@ impl Interfaces {
         })
     }
 
+    pub(crate) fn has_property(&self, interface_name: &str, version_major: i32) -> bool {
+        self.get(interface_name).is_some_and(|i| {
+            i.interface_type() == InterfaceType::Properties && i.version_major() == version_major
+        })
+    }
+
     /// Iterate over the interfaces
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Interface> {
         self.interfaces.values()
@@ -259,7 +274,7 @@ impl Interfaces {
 
                 Some(res.map(|v| (v.interface_name().to_string(), v)))
             })
-            .try_collect()
+            .collect::<Result<HashMap<String, Validated>, Error<InterfaceError>>>()
             .map(ValidatedCollection)
     }
 
@@ -272,12 +287,10 @@ impl Interfaces {
     /// Iterator over the interface with the added one
     pub(crate) fn iter_with_added<'a>(
         &'a self,
-        added: &'a Validated,
+        added: &'a Interface,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         // The validated is an interfaces that is not present
-        self.interfaces
-            .values()
-            .chain(std::iter::once(&added.interface))
+        self.interfaces.values().chain(std::iter::once(added))
     }
 
     /// Iterator over the resulting added interfaces
@@ -294,21 +307,23 @@ impl Interfaces {
     /// Iter without removed interface
     pub(crate) fn iter_without_removed<'a>(
         &'a self,
-        removed: &'a Interface,
+        removed: &'a RemovedInterface,
     ) -> impl Iterator<Item = &'a Interface> + Clone {
         self.interfaces
             .values()
-            .filter(|i| i.interface_name() != removed.interface_name())
+            .filter(|i| i.interface_name() != removed.interface_name)
     }
 
     /// Iter without many removed interfaces
     pub(crate) fn iter_without_removed_many<'a>(
         &'a self,
-        removed: &'a HashMap<&str, &Interface>,
+        removed: &'a [RemovedInterface],
     ) -> impl Iterator<Item = &'a Interface> + Clone {
-        self.interfaces
-            .values()
-            .filter(|i| !removed.contains_key(i.interface_name()))
+        self.interfaces.values().filter(|i| {
+            removed
+                .iter()
+                .all(|r| r.interface_name() != i.interface_name())
+        })
     }
 }
 
@@ -355,7 +370,7 @@ impl Deref for Validated {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
 
 impl ValidatedCollection {
@@ -595,7 +610,10 @@ pub(crate) mod tests {
 
         interfaces.extend(validated);
 
-        let mut interfaces = interfaces.iter().map(|i| i.interface_name()).collect_vec();
+        let mut interfaces = interfaces
+            .iter()
+            .map(|i| i.interface_name())
+            .collect::<Vec<_>>();
 
         interfaces.sort_unstable();
 
@@ -634,7 +652,7 @@ pub(crate) mod tests {
         let mut res = interfaces
             .iter_with_added(&v)
             .map(|i| i.interface_name())
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         res.sort_unstable();
 
@@ -653,10 +671,11 @@ pub(crate) mod tests {
 
         let interfaces = Interfaces::from_iter(itfs);
 
+        let rem = RemovedInterface::from(&r);
         let mut res = interfaces
-            .iter_without_removed(&r)
+            .iter_without_removed(&rem)
             .map(|i| i.interface_name())
-            .collect_vec();
+            .collect::<Vec<_>>();
 
         res.sort_unstable();
 
