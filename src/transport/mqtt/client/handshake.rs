@@ -23,6 +23,8 @@ use std::ops::ControlFlow;
 use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::Ownership;
 use rumqttc::QoS;
+#[cfg(feature = "encrypted-endpoints")]
+use tracing::instrument;
 use tracing::{debug, error};
 
 use crate::error::{AstarteError, ErrorKind};
@@ -65,6 +67,7 @@ impl MqttClient {
         Ok(ControlFlow::Break(()))
     }
 
+    #[instrument(skip_all)]
     async fn full_handshake<S>(
         &mut self,
         state: &ConnectionState<S>,
@@ -73,6 +76,9 @@ impl MqttClient {
     where
         S: StoreCapabilities,
     {
+        #[cfg(feature = "encrypted-endpoints")]
+        self.init_encrypted_endpoints().await?;
+
         self.subscribe_server_interfaces(interfaces).await?;
 
         self.send_introspection(interfaces.get_introspection_string())
@@ -85,7 +91,24 @@ impl MqttClient {
         Ok(())
     }
 
+    #[cfg(feature = "encrypted-endpoints")]
+    #[instrument(skip(self))]
+    async fn init_encrypted_endpoints(&mut self) -> Result<(), Error<MqttError>> {
+        use crate::transport::mqtt::encrypted::state::EncState;
+
+        let mut enc = self.encrypted.lock().await;
+
+        let init = enc.init().map_kind(MqttError::Encryption)?;
+
+        EncState::subscribe(&self.sender, &self.id.as_ref()).await?;
+
+        init.send(&self.sender, &self.id.as_ref()).await?;
+
+        Ok(())
+    }
+
     /// Subscribes to the passed list of interfaces
+    #[instrument(skip_all)]
     async fn subscribe_server_interfaces(
         &self,
         interfaces: &Interfaces,
@@ -117,6 +140,7 @@ impl MqttClient {
     }
 
     /// Sends the empty cache command as per the astarte protocol definition
+    #[instrument(skip_all)]
     async fn send_empty_cache(&self) -> Result<(), Error<MqttError>> {
         debug!("sending emptyCache");
 
@@ -134,6 +158,7 @@ impl MqttClient {
     }
 
     /// Sends the passed device owned properties
+    #[instrument(skip_all)]
     async fn purge_device_properties<S>(
         &self,
         state: &ConnectionState<S>,
@@ -165,6 +190,7 @@ impl MqttClient {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn load_set_device_properties<S>(
         interfaces: &Interfaces,
         store: &S,

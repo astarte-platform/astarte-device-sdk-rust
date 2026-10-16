@@ -341,6 +341,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(1);
@@ -362,6 +364,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let info2 = ValidatedIndividual {
@@ -372,6 +376,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(1);
@@ -398,6 +404,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info2 = ValidatedIndividual {
             interface: "interface2".to_string(),
@@ -409,6 +417,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info3 = ValidatedIndividual {
             interface: "interface3".to_string(),
@@ -418,6 +428,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(2);
@@ -448,6 +460,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info2 = ValidatedIndividual {
             interface: "interface2".to_string(),
@@ -459,6 +473,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info3 = ValidatedIndividual {
             interface: "interface3".to_string(),
@@ -468,6 +484,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(3);
@@ -499,6 +517,8 @@ mod tests {
             retention: Retention::Discard,
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let res = ItemValue::try_from(info);
@@ -513,6 +533,8 @@ mod tests {
             retention: Retention::Discard,
             data: AstarteObject::new(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let res = ItemValue::try_from(info);
@@ -532,6 +554,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info2 = ValidatedIndividual {
             interface: "interface2".to_string(),
@@ -543,6 +567,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info3 = ValidatedIndividual {
             interface: "interface3".to_string(),
@@ -552,6 +578,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(3);
@@ -580,6 +608,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info2 = ValidatedIndividual {
             interface: "interface2".to_string(),
@@ -591,6 +621,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info3 = ValidatedIndividual {
             interface: "interface3".to_string(),
@@ -600,6 +632,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(3);
@@ -630,6 +664,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         store.push(ctx.next(), info.clone(), false);
@@ -650,6 +686,8 @@ mod tests {
             retention: Retention::Stored { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         store.push(ctx.next(), info.clone(), false);
@@ -667,6 +705,8 @@ mod tests {
             retention: Retention::Stored { expiry: None },
             data: AstarteObject::new(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         store.push(ctx.next(), info.clone(), false);
@@ -691,6 +731,8 @@ mod tests {
             retention: Retention::Stored { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let object = ValidatedObject {
@@ -701,6 +743,8 @@ mod tests {
             retention: Retention::Stored { expiry: None },
             data: AstarteObject::new(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         store.push(ctx.next(), individual.clone(), false);
@@ -727,6 +771,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info2 = ValidatedIndividual {
             interface: "interface2".to_string(),
@@ -738,6 +784,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info3 = ValidatedIndividual {
             interface: "interface3".to_string(),
@@ -747,6 +795,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(3);
@@ -782,6 +832,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let info_unsent_check = ValidatedIndividual {
             interface: "interface_check".to_string(),
@@ -793,6 +845,8 @@ mod tests {
             },
             data: AstarteData::Integer(42),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         let mut store = State::with_capacity(50);

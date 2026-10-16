@@ -18,6 +18,7 @@
 
 //! Different test cases and tasks.
 
+pub(crate) mod encrypted;
 pub(crate) mod individual;
 pub(crate) mod interfaces;
 pub(crate) mod object;

@@ -42,6 +42,8 @@ pub(crate) struct ValidatedObject {
     pub(crate) version_major: i32,
     pub(crate) reliability: Reliability,
     pub(crate) retention: Retention,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: bool,
     pub(crate) data: AstarteObject,
     pub(crate) timestamp: Option<Timestamp>,
 }
@@ -85,6 +87,8 @@ impl ValidatedObject {
             version_major: interface.version_major(),
             reliability: interface.reliability(),
             retention: interface.retention(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: interface.encrypted(),
             data,
             timestamp,
         })
