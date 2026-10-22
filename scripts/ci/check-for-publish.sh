@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -50,14 +50,20 @@ pkgsFiles=$(
         <(listPackage "astarte-device-tls") \
         <(listPackage "astarte-test-utils") \
         <(listPackage "e2e-test") |
-        sort
+        sort -i |
+        uniq
 )
 localFiles=$(
-    git ls-files -cdmo | sort -u
+    git ls-files --recurse-submodules --cached --no-deleted | sort -i | uniq
 )
 
 # List files unique to localFiles and not present in pkgsFiles
 toCopy=$(comm -12 <(echo "$localFiles") <(echo "$pkgsFiles"))
+
+if [[ -z $toCopy ]]; then
+    echo Nothing to check
+    exit
+fi
 
 cp -v Cargo.toml Cargo.lock "$workingDir"
 

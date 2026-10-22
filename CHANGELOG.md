@@ -26,12 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
+
 ### `astarte-device-error` - [0.15.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.15.0...astarte-device-error-v0.15.1) - 2026-09-21
 
 #### Other
 
 - _(v0.14.5)_ forward port the release ([#757](https://github.com/astarte-platform/astarte-device-sdk-rust/pull/757))
-
 
 ## [0.14.5](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.4...v0.14.5) - 2026-09-21
 
@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - _(tls)_ fix return type
 
 ## [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
+
 ### `astarte-device-error` - [0.15.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-error-v0.14.4...astarte-device-error-v0.15.0) - 2026-08-21
 
 #### Added
@@ -56,13 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _(error)_ stringify the type in the error message
 
-
 ## [0.14.3](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.2...v0.14.3) - 2026-07-29
 
 ### Fixed
 
 - _(pairing)_ parse the application content header mime
-
 
 ## [0.14.2](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.1...v0.14.2) - 2026-07-28
 
@@ -70,13 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _(pairing)_ use correct file to store credentials
 
-
 ## [0.14.1](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.14.0...v0.14.1) - 2026-07-13
 
 ### Fixed
 
 - _(fdo)_ use config and pass correct device id
-
 
 ## [0.14.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.13.0...v0.14.0) - 2026-07-08
 
@@ -94,7 +91,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - _(cargo)_ remove unneeded feature "security-events"
-
 
 ## [0.13.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.12.1...v0.13.0) - 2026-04-02
 
@@ -129,7 +125,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - forward port release v0.11.3
 
-
 ## [0.11.3](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.11.2...v0.11.3) - 2026-02-20
 
 ### Fixed
@@ -140,7 +135,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - forward port release v0.10.7
 - forward port release v0.9.11
-
 
 ## [0.10.7](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/v0.10.6...v0.10.7) - 2026-02-19
 

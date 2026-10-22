@@ -2,7 +2,7 @@
 
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,18 +22,19 @@ set -eEuo pipefail
 
 # --- Configuration ---
 # The name for your network namespace
-NAMESPACE="my-test-ns"
+export NAMESPACE="my-test-ns"
 # Automatically find the main internet-facing interface
 MAIN_INTERFACE=$(ip route | grep '^default' | awk '{print $5}' | head -1)
+export MAIN_INTERFACE
 
 # The virtual "network cable" interfaces
-VETH_HOST="veth-host"
-VETH_GUEST="veth-guest"
+export VETH_HOST="veth-host"
+export VETH_GUEST="veth-guest"
 
 # IP addresses for the virtual link
-IP_HOST="10.10.10.1/24"
-IP_GUEST="10.10.10.2/24"
-IP_GATEWAY="10.10.10.1"
+export IP_HOST="10.10.10.1/24"
+export IP_GUEST="10.10.10.2/24"
+export IP_GATEWAY="10.10.10.1"
 
 # File used to store the status of ip forwarding before enabling it
-STATUS_FILE="/tmp/ip_forward_status.bak"
+export STATUS_FILE="/tmp/ip_forward_status.bak"

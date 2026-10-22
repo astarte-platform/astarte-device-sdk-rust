@@ -2,7 +2,7 @@
 
 # This file is part of Astarte.
 #
-# Copyright 2025 SECO Mind Srl
+# Copyright 2025, 2026 SECO Mind Srl
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,16 +20,14 @@
 
 set -eEuox pipefail
 
-pushd "$(dirname "$0")"
-. ./common_config.sh
-popd
+. ./scripts/offline/network_namespace/common_config.sh
 
 # --- Pre-flight Checks ---
 
 # Check for root privileges
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ This script must be run as root. Please use sudo."
-  exit 1
+    echo "❌ This script must be run as root. Please use sudo."
+    exit 1
 fi
 
 echo "🧹 Cleaning up network sandbox..."
@@ -43,7 +41,7 @@ else
     ORIGINAL_STATUS=$(cat "$STATUS_FILE")
     # Restore the IP forwarding setting
     echo "🔄 Restoring IP forwarding to its original state ('$ORIGINAL_STATUS')..."
-    sysctl -w net.ipv4.ip_forward="$ORIGINAL_STATUS" > /dev/null
+    sysctl -w net.ipv4.ip_forward="$ORIGINAL_STATUS" >/dev/null
 fi
 
 # Delete the network namespace
