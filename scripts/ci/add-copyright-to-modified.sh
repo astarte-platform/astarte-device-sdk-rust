@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,12 +28,15 @@ if [[ -n ${RUNNER_DEBUG:-} ]]; then
     set -x
 fi
 
-if [ $# != 2 ]; then
-    base=${BASE_REF:-main}
-    head=${HEAD_REF:-HEAD}
-else
+if [ $# == 2 ]; then
     base=$1
     head=$2
+elif [[ $# == 1 ]]; then
+    base=$1
+    head=${HEAD_REF:-HEAD}
+else
+    base=$BASE_REF
+    head=${HEAD_REF:-HEAD}
 fi
 
 git_file_names() {

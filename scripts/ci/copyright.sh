@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -46,7 +46,7 @@ annotate() {
         echo "skipping test snapshot files"
         return
     fi
-    if [[ "$*" == migrations/**.sql || "$*" == queries/**.sql ]]; then
+    if [[ "$*" == *.sql ]]; then
         echo "skipping sql files"
         return
     fi
@@ -57,7 +57,7 @@ annotate() {
         return
     fi
 
-    uv run reuse annotate \
+    reuse annotate \
         --copyright 'SECO Mind Srl' \
         --copyright-prefix string \
         --merge-copyrights \
@@ -76,9 +76,10 @@ fi
 # Read from stdin line by line
 while read -r line; do
     if [[ $line == '' ]]; then
-        echo "Empty line, skipping"
+        echo "Empty line, skipping" 1>&2
 
-    else
-        annotate "$line"
+        continue
     fi
+
+    annotate "$line"
 done

@@ -25,11 +25,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
-
-
-
-
 ## [0.14.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-mock-v0.13.0...astarte-device-sdk-mock-v0.14.0) - 2026-07-08
 
 ### Added
@@ -41,15 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _(connection)_ [**breaking**] pair ascyncronously while connecting
 
-
-
-
 ## [0.12.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-mock-v0.11.3...astarte-device-sdk-mock-v0.12.0) - 2026-03-02
 
 ### Changed
 
 - _(config)_ pass the config to the shared state
-
 
 ## [0.11.3](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-mock-v0.11.2...astarte-device-sdk-mock-v0.11.3) - 2026-02-20
 
@@ -61,7 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - forward port release v0.10.7
 - forward port release v0.9.11
-
 
 ## [0.10.7](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-sdk-mock-v0.10.6...astarte-device-sdk-mock-v0.10.7) - 2026-02-19
 

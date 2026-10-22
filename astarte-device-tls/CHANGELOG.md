@@ -31,14 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _(tls)_ fix return type
 
-
-
-
-
-
 ## [0.14.0](https://github.com/astarte-platform/astarte-device-sdk-rust/compare/astarte-device-tls-v0.13.0...astarte-device-tls-v0.14.0) - 2026-07-08
 
 ### Added
 
 - _(tls)_ add crate to configure tls on the device
-

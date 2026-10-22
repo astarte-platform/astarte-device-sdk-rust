@@ -146,7 +146,8 @@ To store the Properties[^1] on the device we will use the
 storage. It can be configured by calling the [`store`](crate::builder::DeviceBuilder::store)
 function on the builder.
 
-[^1]: To know more on what Properties are, see the
+[^1]:
+    To know more on what Properties are, see the
     [Astarte documentation on Properties](https://docs.astarte-platform.org/astarte/latest/030-interface.html#properties)
 
 On the [`DeviceConnection`](crate::connection::DeviceConnection) you need call the

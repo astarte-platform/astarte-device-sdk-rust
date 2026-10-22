@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -28,21 +28,32 @@ if [[ -n ${RUNNER_DEBUG:-} ]]; then
     set -x
 fi
 
-NAMESPACE="$1"
+NAMESPACE="${1:-astarte}"
+
+describe_namespace() {
+    local namespace=$1
+
+    kubectl get pods -n "$namespace"
+
+    for pod in $(kubectl get pods -n "$namespace" --no-headers -o custom-columns=":metadata.name"); do
+        echo "==== NAMESPACE($namespace) POD($pod) ===="
+
+        kubectl describe pod -n "$namespace" "$pod"
+
+        echo "==== NAMESPACE($namespace) LOGS($pod) ===="
+
+        kubectl logs -n "$namespace" "$pod"
+
+        echo "========"
+    done
+}
+
+describe_namespace "rabbitmq-system"
+describe_namespace "scylla-operator"
 
 kubectl describe astarte astarte -n "$NAMESPACE"
 
 kubectl describe deployments/astarte-operator-controller-manager -n astarte-operator
 kubectl logs deployments/astarte-operator-controller-manager -n astarte-operator
 
-kubectl get pods -n "$NAMESPACE"
-
-for pod in $(kubectl get pods -n "$NAMESPACE" --no-headers -o custom-columns=":metadata.name"); do
-    echo "==== POD($pod) ===="
-
-    kubectl describe pod -n "$NAMESPACE" "$pod"
-
-    echo "==== LOGS($pod) ===="
-
-    kubectl logs -n "$NAMESPACE" "$pod"
-done
+describe_namespace "astarte"

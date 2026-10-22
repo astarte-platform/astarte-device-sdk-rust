@@ -8,7 +8,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,7 +31,7 @@ fi
 export E2E_REALM=${E2E_REALM:-test}
 export E2E_BASE_DOMAIN=${E2E_BASE_DOMAIN:-autotest.astarte-platform.org}
 export E2E_SECURE_TRANSPORT=${E2E_SECURE_TRANSPORT:-true}
-export E2E_IGNORE_SSL=${E2E_IGNORE_SSL:-true}
+export E2E_IGNORE_SSL=${E2E_IGNORE_SSL:-false}
 export E2E_API_URL=${E2E_API_URL:-https://api.$E2E_BASE_DOMAIN}
 export E2E_INTERFACE_DIR=${E2E_INTERFACE_DIR:-e2e-test/interfaces}
 
