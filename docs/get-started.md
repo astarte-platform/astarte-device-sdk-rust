@@ -166,10 +166,10 @@ async fn init() -> eyre::Result<(DeviceClient<Mqtt, SqliteStore>, DeviceConnecti
     let cfg: Config = serde_json::from_str(&file)?;
 
     let args = MqttArgs {
-      realm: "realm_id".to_string(),
-      device_id: "device_id".to_string(),
-      credential: Credential::secret("credential_secret"),
-      pairing_url: "http://api.astarte.localhost/pairing".parse().expect("a valid URL"),
+        realm: cfg.realm,
+        device_id: cfg.device_id,
+        credential: Credential::secret(cfg.credentials_secret),
+        pairing_url: cfg.pairing_url.parse().expect("a valid URL"),
     };
     let mut mqtt_config = Mqtt::new(args);
 
@@ -657,7 +657,7 @@ async fn send_property(mut client: DeviceClient<Mqtt, SqliteStore>) -> eyre::Res
 
     loop {
         client
-            .send_individual(
+            .set_property(
                 "org.astarte-platform.rust.get-started.Property",
                 "/double_endpoint",
                 data.try_into()?,
