@@ -115,7 +115,7 @@ tasks:
     env:
       OUT_FORMAT:
         sh: "[[ $CI = true ]] && echo github || echo plain"
-    cmd: zizmor --format "$OUT_FORMAT" ./
+    cmd: zizmor --format "$OUT_FORMAT" ./.github
 
   cargo-clippy:
     if: '[[ "$IS_CRATE" = "true" ]]'
