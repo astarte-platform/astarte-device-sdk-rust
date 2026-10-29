@@ -48,6 +48,7 @@ pub(crate) mod tls;
 pub(crate) mod utils;
 
 const INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces");
+const ENCRYPTED_INTERFACE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/interfaces/encrypted");
 
 pub(crate) type AstarteClient = DeviceClient<Mqtt, SqliteStore>;
 
@@ -135,6 +136,7 @@ async fn main() -> eyre::Result<()> {
         .writable_dir(&config.run.store_dir)
         .store(store)
         .interface_directory(INTERFACE_DIR)?
+        .interface_directory(ENCRYPTED_INTERFACE_DIR)?
         .connection(mqtt_config)
         .build()
         .await?;
@@ -157,12 +159,14 @@ async fn main() -> eyre::Result<()> {
         device::individual::check(&mut channel, &mut client).await?;
         device::property::check(&mut channel, &mut client).await?;
         device::object::check(&mut channel, &mut client).await?;
+        device::encrypted::check(&mut channel, &mut client).await?;
         device::update::check(&api, &mut channel, &mut client).await?;
 
         // Server
         server::individual::check(&api, &client).await?;
         server::property::check(&api, &client).await?;
         server::object::check(&api, &client).await?;
+        server::encrypted::check(&api, &client).await?;
 
         device::interfaces::check_remove(&api, &mut client).await?;
 
