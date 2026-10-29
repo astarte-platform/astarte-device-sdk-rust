@@ -98,7 +98,7 @@ tasks:
     desc: "Check statically all the shell files with shellcheck"
     cmd: |
       ./scripts/ci/list-repo-files.sh '*.sh' |
-        xargs --max-args 1 -P "$(nproc)" shellcheck
+        xargs --max-args 1 -P "$(nproc)" shellcheck --external-sources
 
   check-shfmt:
     desc: "Format all the shell files with shfmt"
