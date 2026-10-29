@@ -36,8 +36,6 @@ env:
   RUSTFLAGS: -D warnings
   RUSTDOCFLAGS: -D warnings
   MAIN_CRATE: "{{ .MAIN_CRATE }}"
-  SEMVER_RELEASE_TYPE:
-    sh: bash ./scripts/ci/get-release-type.sh
 
 tasks:
   ci:
@@ -90,15 +88,23 @@ tasks:
 
   check-prettier:
     desc: "Format files with prettier"
-    cmd: prettier --check --write .
+    cmds:
+      - cmd: |
+          ./scripts/ci/list-repo-files.sh '*.yaml' '*.json' '*.md' |
+            xargs --max-args 1 -P "$(nproc)"  prettier --write
+      - cmd: git diff --exit-code
 
   check-shell:
     desc: "Check statically all the shell files with shellcheck"
-    cmd: find . -name '*.sh' | xargs shellcheck
+    cmd: |
+      ./scripts/ci/list-repo-files.sh '*.sh' |
+        xargs --max-args 1 -P "$(nproc)" shellcheck
 
   check-shfmt:
     desc: "Format all the shell files with shfmt"
-    cmd: find . -name '*.sh' | xargs shfmt -w -d -i 4
+    cmd: |
+      ./scripts/ci/list-repo-files.sh '*.sh'|
+        xargs --max-args 1 -P "$(nproc)" shfmt -w -d -i 4
 
   check-for-publish:
     if: '[[ "$IS_CRATE" = "true" ]]'
@@ -153,6 +159,9 @@ tasks:
   cargo-semver-checks:
     desc: "Check if the minimal versiosn are correct"
     if: '[[ "$IS_LIBRARY" = "true" ]]'
+    env:
+      SEMVER_RELEASE_TYPE:
+        sh: bash ./scripts/ci/get-release-type.sh
     cmd: cargo semver-checks check-release --release-type "$SEMVER_RELEASE_TYPE"
 
   coverage:
