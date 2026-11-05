@@ -122,6 +122,8 @@ mod tests {
                     retention: Retention::Discard,
                     data: AstarteData::Integer(value),
                     timestamp: Some(timestamp),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false
                 }
             }
         );
@@ -142,6 +144,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::LongInteger(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -177,6 +181,8 @@ mod tests {
             },
             data: AstarteData::Boolean(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -215,6 +221,8 @@ mod tests {
             },
             data: AstarteData::Boolean(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -290,6 +298,8 @@ mod tests {
             retention: Retention::Volatile { expiry: None },
             data: AstarteData::LongInteger(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -321,6 +331,8 @@ mod tests {
             },
             data: AstarteData::Boolean(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         // Send
@@ -359,6 +371,8 @@ mod tests {
             },
             data: AstarteData::Boolean(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -398,7 +412,7 @@ mod tests {
                 reliability: Reliability::Unique,
                 expiry: Some(Duration::from_secs(30)),
                 sent: false,
-                value: EXP_SER.into()
+                value: EXP_SER.into(),
             }
         );
     }
@@ -425,6 +439,8 @@ mod tests {
             },
             data: AstarteData::Boolean(value),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -465,7 +481,7 @@ mod tests {
                 reliability: Reliability::Unique,
                 expiry: Some(Duration::from_secs(30)),
                 sent: false,
-                value: EXP_SER.into()
+                value: EXP_SER.into(),
             }
         );
     }

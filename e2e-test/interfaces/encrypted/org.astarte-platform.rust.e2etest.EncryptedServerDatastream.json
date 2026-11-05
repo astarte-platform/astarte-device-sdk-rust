@@ -1,0 +1,79 @@
+{
+  "interface_name": "org.astarte-platform.rust.e2etest.EncryptedServerDatastream",
+  "version_major": 0,
+  "version_minor": 1,
+  "type": "datastream",
+  "ownership": "server",
+  "mappings": [
+    {
+      "endpoint": "/binaryblob_endpoint",
+      "encrypted": true,
+      "type": "binaryblob"
+    },
+    {
+      "endpoint": "/binaryblobarray_endpoint",
+      "encrypted": true,
+      "type": "binaryblobarray"
+    },
+    {
+      "endpoint": "/boolean_endpoint",
+      "encrypted": true,
+      "type": "boolean"
+    },
+    {
+      "endpoint": "/booleanarray_endpoint",
+      "encrypted": true,
+      "type": "booleanarray"
+    },
+    {
+      "endpoint": "/datetime_endpoint",
+      "encrypted": true,
+      "type": "datetime"
+    },
+    {
+      "endpoint": "/datetimearray_endpoint",
+      "encrypted": true,
+      "type": "datetimearray"
+    },
+    {
+      "endpoint": "/double_endpoint",
+      "encrypted": true,
+      "type": "double"
+    },
+    {
+      "endpoint": "/doublearray_endpoint",
+      "encrypted": true,
+      "type": "doublearray"
+    },
+    {
+      "endpoint": "/integer_endpoint",
+      "encrypted": true,
+      "type": "integer"
+    },
+    {
+      "endpoint": "/integerarray_endpoint",
+      "encrypted": true,
+      "type": "integerarray"
+    },
+    {
+      "endpoint": "/longinteger_endpoint",
+      "encrypted": true,
+      "type": "longinteger"
+    },
+    {
+      "endpoint": "/longintegerarray_endpoint",
+      "encrypted": true,
+      "type": "longintegerarray"
+    },
+    {
+      "endpoint": "/string_endpoint",
+      "encrypted": true,
+      "type": "string"
+    },
+    {
+      "endpoint": "/stringarray_endpoint",
+      "encrypted": true,
+      "type": "stringarray"
+    }
+  ]
+}

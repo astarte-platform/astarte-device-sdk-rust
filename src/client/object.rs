@@ -123,6 +123,8 @@ mod tests {
             retention: Retention::Discard,
             data: obj,
             timestamp: Some(timestamp),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         let res = client.client_rx.try_recv().unwrap();
 
@@ -158,6 +160,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -199,6 +203,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -244,6 +250,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -331,6 +339,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         client
@@ -367,6 +377,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
 
         // Send
@@ -410,6 +422,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -448,7 +462,7 @@ mod tests {
                 reliability: Reliability::Guaranteed,
                 expiry: Some(Duration::from_secs(30)),
                 sent: false,
-                value: EXP_SER.into()
+                value: EXP_SER.into(),
             }
         );
     }
@@ -481,6 +495,8 @@ mod tests {
             },
             data: value.clone(),
             timestamp: None,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: false,
         };
         const EXP_SER: &[u8] = &[1, 2, 3, 4];
 
@@ -519,7 +535,7 @@ mod tests {
                 reliability: Reliability::Guaranteed,
                 expiry: Some(Duration::from_secs(30)),
                 sent: false,
-                value: EXP_SER.into()
+                value: EXP_SER.into(),
             }
         );
     }

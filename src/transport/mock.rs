@@ -20,7 +20,7 @@
 
 use std::ops::ControlFlow;
 
-use astarte_interfaces::Interface;
+use astarte_interfaces::{DatastreamIndividualMapping, DatastreamObject, Interface};
 use mockall::mock;
 
 use super::{Decode, Encode, Introspection, Sender, Transport};
@@ -149,9 +149,20 @@ mock! {
         where
             S: StoreCapabilities;
 
-        pub(crate) async fn resend_stored_call<S>(
+        pub(crate) async fn resend_stored_individual_call<S>(
             &mut self,
             state: &crate::state::ConnectionState<S>,
+            mapping: &DatastreamIndividualMapping,
+            id: crate::retention::RetentionId,
+            data: crate::retention::PublishInfo<'static>,
+        ) -> Result<(), AstarteError>
+        where
+            S: StoreCapabilities;
+
+        pub(crate) async fn resend_stored_object_call<S>(
+            &mut self,
+            state: &crate::state::ConnectionState<S>,
+            obbject: &DatastreamObject,
             id: crate::retention::RetentionId,
             data: crate::retention::PublishInfo<'static>,
         ) -> Result<(), AstarteError>
@@ -271,27 +282,32 @@ impl Sender for MockSender {
         self.send_object_stored_call(state, id, data).await
     }
 
-    async fn resend_stored<'a, S>(
+    async fn resend_stored_individual<'a, S>(
         &mut self,
         state: &crate::state::ConnectionState<S>,
+        mapping: &DatastreamIndividualMapping,
         id: crate::retention::RetentionId,
         data: crate::retention::PublishInfo<'a>,
     ) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
-        self.resend_stored_call(state, id, data.into_owned()).await
+        self.resend_stored_individual_call(state, mapping, id, data.into_owned())
+            .await
     }
 
-    async fn resend_stored_property<S>(
+    async fn resend_stored_object<'a, S>(
         &mut self,
         state: &crate::state::ConnectionState<S>,
-        property_data: crate::store::OptStoredProp,
+        object: &DatastreamObject,
+        id: crate::retention::RetentionId,
+        data: crate::retention::PublishInfo<'a>,
     ) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
-        self.resend_stored_property_call(state, property_data).await
+        self.resend_stored_object_call(state, object, id, data.into_owned())
+            .await
     }
 
     async fn send_property<S>(
