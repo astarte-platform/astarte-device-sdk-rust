@@ -39,6 +39,7 @@ use tracing::warn;
 use crate::client::DeviceClient;
 use crate::connection::DeviceConnection;
 use crate::error::{AstarteError, ErrorKind, InterfaceError};
+use crate::event::DeviceStatus;
 use crate::interfaces::Interfaces;
 use crate::logging::security::{SecurityEvent, notify_security_event};
 use crate::retention::StoredRetention;
@@ -475,19 +476,32 @@ where
 
         debug!(registered, "device registration status");
 
-        state.set_device_status(registered);
+        let initial_device_status = if registered {
+            DeviceStatus::Registered
+        } else {
+            DeviceStatus::Unregistered
+        };
 
+        let (device_status_tx, device_status_rx) =
+            tokio::sync::watch::channel(initial_device_status);
         let (client_tx, client_rx) = tokio::sync::mpsc::channel(state.config.channel_size.get());
         let (events_tx, events_rx) = async_channel::bounded(state.config.channel_size.get());
 
         let (client_state, connection_state) = state.split();
 
-        let client = DeviceClient::new(client_tx, events_rx, client_state, config.encoder);
+        let client = DeviceClient::new(
+            client_tx,
+            events_rx,
+            device_status_rx,
+            client_state,
+            config.encoder,
+        );
 
         let connection = DeviceConnection::new(
             self.connection_config,
             connection_state,
             events_tx,
+            device_status_tx,
             client_rx,
             status_rx,
         );

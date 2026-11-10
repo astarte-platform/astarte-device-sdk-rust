@@ -393,6 +393,14 @@ NOTE: remember to tell the `DeviceBuilder` the directory from where to take the 
 #[tracing::instrument(skip_all)]
 async fn receive_data(mut client: DeviceClient<Mqtt, SqliteStore>) -> eyre::Result<()> {
     while let Some(event) = client.recv().await {
+        let event = match event {
+            astarte_device_sdk::Event::Connection(event) => {
+                info!(%event, "connection event");
+                continue;
+            }
+            astarte_device_sdk::Event::Data(event) => event,
+        };
+
         if let astarte_device_sdk::Value::Individual{data, timestamp: _} = event.data {
             // we want to analyze a mapping similar to "/id/data" so we split by '/' and use the
             // parts of interest
