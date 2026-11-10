@@ -58,7 +58,7 @@ mod validate;
 pub use crate::client::{Client, DeviceClient};
 pub use crate::connection::{Connection, DeviceConnection};
 pub use crate::event::Value;
-pub use crate::event::{DeviceEvent, FromEvent};
+pub use crate::event::{ConnectionEvent, DeviceEvent, DeviceStatus, Event, FromEvent};
 pub use crate::types::AstarteData;
 
 // Re-export for returned types in some methods
