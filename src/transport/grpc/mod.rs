@@ -391,8 +391,12 @@ impl Introspection for GrpcClient {
     where
         S: StoreCapabilities,
     {
-        let interfaces_json = InterfacesJson::try_from_iter([added])
-            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+        let added =
+            serde_json::to_string(added).wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+
+        let interfaces_json = InterfacesJson {
+            interfaces_json: vec![added],
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -414,8 +418,15 @@ impl Introspection for GrpcClient {
     where
         S: StoreCapabilities,
     {
-        let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
+        let added = added
+            .values()
+            .map(|i| serde_json::to_string(i.interface()))
+            .collect::<Result<Vec<String>, serde_json::Error>>()
             .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+
+        let interfaces_json = InterfacesJson {
+            interfaces_json: added,
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -853,7 +864,15 @@ impl NodeData {
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let node = Node::from_interfaces(interfaces).wrap_err(GrpcError::Introspection)?;
+        let interfaces = interfaces
+            .into_iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<String>, serde_json::Error>>()
+            .wrap_err(GrpcError::Introspection)?;
+
+        let node = Node {
+            interfaces_json: interfaces.into_iter().map(|i| i.to_string()).collect(),
+        };
 
         Ok(Self { node })
     }
