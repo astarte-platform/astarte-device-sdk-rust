@@ -28,7 +28,8 @@ use std::ops::ControlFlow;
 
 use astarte_interfaces::schema::Ownership;
 use astarte_interfaces::{
-    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties,
+    DatastreamIndividual, DatastreamIndividualMapping, DatastreamObject, Interface, MappingPath,
+    Properties,
 };
 
 use crate::Timestamp;
@@ -38,7 +39,7 @@ use crate::error::AstarteError;
 use crate::interfaces::{self, Interfaces, MappingRef};
 use crate::retention::{PublishInfo, RetentionId};
 use crate::state::ConnectionState;
-use crate::store::{OptStoredProp, StoreCapabilities};
+use crate::store::StoreCapabilities;
 use crate::types::AstarteData;
 use crate::validate::individual::ValidatedIndividual;
 use crate::validate::object::ValidatedObject;
@@ -160,20 +161,23 @@ pub(crate) trait Sender: Send + Sync {
         S: StoreCapabilities;
 
     /// Resend previously stored publish.
-    fn resend_stored<'a, S>(
+    fn resend_stored_individual<'a, S>(
         &mut self,
         state: &ConnectionState<S>,
+        mapping: &DatastreamIndividualMapping,
         id: RetentionId,
         data: PublishInfo<'a>,
     ) -> impl Future<Output = Result<(), AstarteError>> + Send
     where
         S: StoreCapabilities;
 
-    /// Resend previously stored property.
-    fn resend_stored_property<S>(
+    /// Resend previously stored publish.
+    fn resend_stored_object<'a, S>(
         &mut self,
         state: &ConnectionState<S>,
-        property_data: OptStoredProp,
+        object: &DatastreamObject,
+        id: RetentionId,
+        data: PublishInfo<'a>,
     ) -> impl Future<Output = Result<(), AstarteError>> + Send
     where
         S: StoreCapabilities;

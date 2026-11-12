@@ -17,7 +17,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 
@@ -28,6 +27,7 @@ use astarte_interfaces::schema::{Aggregation, InterfaceType};
 use astarte_interfaces::{
     AggregationIndividual, DatastreamIndividual, DatastreamObject, MappingPath, Properties, Schema,
 };
+use rustc_hash::FxHashMap;
 use tracing::{debug, trace, warn};
 
 use crate::error::InterfaceError;
@@ -35,7 +35,7 @@ use crate::transport::RemovedInterface;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Interfaces {
-    interfaces: HashMap<String, Interface>,
+    interfaces: FxHashMap<String, Interface>,
 }
 
 impl Interfaces {
@@ -274,7 +274,7 @@ impl Interfaces {
 
                 Some(res.map(|v| (v.interface_name().to_string(), v)))
             })
-            .collect::<Result<HashMap<String, Validated>, Error<InterfaceError>>>()
+            .collect::<Result<FxHashMap<String, Validated>, Error<InterfaceError>>>()
             .map(ValidatedCollection)
     }
 
@@ -371,7 +371,7 @@ impl Deref for Validated {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ValidatedCollection(HashMap<String, Validated>);
+pub(crate) struct ValidatedCollection(FxHashMap<String, Validated>);
 
 impl ValidatedCollection {
     pub(crate) fn iter_interfaces(&self) -> impl Iterator<Item = &Interface> {
@@ -379,14 +379,14 @@ impl ValidatedCollection {
     }
 }
 
-impl Borrow<HashMap<String, Validated>> for ValidatedCollection {
-    fn borrow(&self) -> &HashMap<String, Validated> {
+impl Borrow<FxHashMap<String, Validated>> for ValidatedCollection {
+    fn borrow(&self) -> &FxHashMap<String, Validated> {
         &self.0
     }
 }
 
 impl Deref for ValidatedCollection {
-    type Target = HashMap<String, Validated>;
+    type Target = FxHashMap<String, Validated>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

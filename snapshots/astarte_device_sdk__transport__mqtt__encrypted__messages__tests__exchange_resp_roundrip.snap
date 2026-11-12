@@ -1,0 +1,5 @@
+---
+source: src/transport/mqtt/encrypted/messages.rs
+expression: case
+---
+ExchangeResp [ 42, CoseKey { kty: Assigned(EC2), key_id: [], alg: None, key_ops: {}, base_iv: [], params: [(Int(-1), Integer(Integer(1))), (Int(-2), Bytes([88, 85, 96, 8, 162, 169, 255, 124, 205, 212, 4, 184, 38, 238, 73, 94, 109, 77, 244, 48, 251, 142, 116, 135, 111, 32, 77, 244, 200, 113, 124, 11])), (Int(-3), Bytes([59, 10, 39, 156, 76, 83, 226, 128, 54, 152, 132, 178, 87, 181, 47, 178, 205, 93, 2, 243, 167, 153, 131, 43, 94, 52, 202, 26, 178, 78, 195, 108]))] } ]

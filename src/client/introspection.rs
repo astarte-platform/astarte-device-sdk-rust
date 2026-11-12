@@ -424,6 +424,8 @@ mod tests {
                     retention: Retention::Volatile { expiry: None },
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false,
                 },
             )
             .await;
@@ -478,6 +480,8 @@ mod tests {
                     retention: Retention::Stored { expiry: None },
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false,
                 },
                 &[1, 2, 3, 4],
                 true,
@@ -530,6 +534,8 @@ mod tests {
                     retention: Retention::Volatile { expiry: None },
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false,
                 },
             )
             .await;
@@ -585,6 +591,8 @@ mod tests {
                     retention: Retention::Stored { expiry: None },
                     data: AstarteData::try_from(42.0).unwrap(),
                     timestamp: Some(Utc::now()),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false,
                 },
                 &[1, 2, 3, 4],
                 true,

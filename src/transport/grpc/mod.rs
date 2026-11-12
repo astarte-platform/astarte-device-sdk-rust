@@ -28,7 +28,8 @@ use std::ops::ControlFlow;
 use astarte_device_error::{Error, ResultExt, WrapError};
 use astarte_interfaces::schema::{Aggregation, InterfaceType};
 use astarte_interfaces::{
-    DatastreamIndividual, DatastreamObject, Interface, MappingPath, Properties, Schema,
+    DatastreamIndividual, DatastreamIndividualMapping, DatastreamObject, Interface, MappingPath,
+    Properties, Schema,
 };
 use astarte_message_hub_proto::prost::Message;
 use astarte_message_hub_proto::tonic::codegen::InterceptedService;
@@ -61,7 +62,7 @@ use crate::interfaces::MappingRef;
 use crate::interfaces::{self, Interfaces};
 use crate::retention::{PublishInfo, RetentionId, StoredRetention};
 use crate::state::{ConnectionState, SharedState};
-use crate::store::{OptStoredProp, PropertyState, StoreCapabilities};
+use crate::store::{PropertyState, StoreCapabilities};
 use crate::types::AstarteData;
 use crate::validate::individual::ValidatedIndividual;
 use crate::validate::object::ValidatedObject;
@@ -258,9 +259,10 @@ impl Sender for GrpcClient {
         Ok(())
     }
 
-    async fn resend_stored<S>(
+    async fn resend_stored_individual<S>(
         &mut self,
         state: &ConnectionState<S>,
+        _mapping: &DatastreamIndividualMapping,
         id: RetentionId,
         data: PublishInfo<'_>,
     ) -> Result<(), AstarteError>
@@ -285,34 +287,30 @@ impl Sender for GrpcClient {
         Ok(())
     }
 
-    async fn resend_stored_property<S>(
+    async fn resend_stored_object<S>(
         &mut self,
         state: &ConnectionState<S>,
-        property_data: OptStoredProp,
+        _object: &DatastreamObject,
+        id: RetentionId,
+        data: PublishInfo<'_>,
     ) -> Result<(), AstarteError>
     where
         S: StoreCapabilities,
     {
-        let interface = property_data.interface.clone();
-        let path = property_data.path.clone();
-        let epoch = property_data.epoch();
+        let msg = AstarteMessage::decode(data.value.borrow()).wrap_err_msg(
+            ErrorKind::Grpc(GrpcError::Decode),
+            "while decoding stored payload",
+        )?;
 
         self.client
-            .send(tonic::Request::new(property_data.into()))
+            .send(tonic::Request::new(msg))
             .await
             .map_err(|status| {
-                AstarteError::with(
-                    ErrorKind::Grpc(GrpcError::Status),
-                    "while resending stored property",
-                )
-                .set_ctx(status)
+                AstarteError::with(ErrorKind::Grpc(GrpcError::Status), "while resending stored")
+                    .set_ctx(status)
             })?;
 
-        state
-            .store()
-            .update_state(&interface, &path, PropertyState::Completed, epoch)
-            .await
-            .map_kind(ErrorKind::Store)?;
+        mark_received(state, &id).await?;
 
         Ok(())
     }
@@ -391,8 +389,12 @@ impl Introspection for GrpcClient {
     where
         S: StoreCapabilities,
     {
-        let interfaces_json = InterfacesJson::try_from_iter([added])
-            .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+        let added =
+            serde_json::to_string(added).wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+
+        let interfaces_json = InterfacesJson {
+            interfaces_json: vec![added],
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -414,8 +416,15 @@ impl Introspection for GrpcClient {
     where
         S: StoreCapabilities,
     {
-        let interfaces_json = InterfacesJson::try_from_iter(added.iter_interfaces())
+        let added = added
+            .values()
+            .map(|i| serde_json::to_string(i.interface()))
+            .collect::<Result<Vec<String>, serde_json::Error>>()
             .wrap_err(ErrorKind::Grpc(GrpcError::Introspection))?;
+
+        let interfaces_json = InterfacesJson {
+            interfaces_json: added,
+        };
 
         self.client
             .add_interfaces(tonic::Request::new(interfaces_json))
@@ -853,7 +862,15 @@ impl NodeData {
     where
         I: IntoIterator<Item = &'a Interface>,
     {
-        let node = Node::from_interfaces(interfaces).wrap_err(GrpcError::Introspection)?;
+        let interfaces = interfaces
+            .into_iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<String>, serde_json::Error>>()
+            .wrap_err(GrpcError::Introspection)?;
+
+        let node = Node {
+            interfaces_json: interfaces.into_iter().map(|i| i.to_string()).collect(),
+        };
 
         Ok(Self { node })
     }
