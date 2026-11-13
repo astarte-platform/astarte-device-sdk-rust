@@ -6,7 +6,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -186,6 +186,191 @@ impl Value {
     }
 }
 
+/// Event returned by [`Client::recv`](crate::Client::recv).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Event {
+    /// Device connection status changed.
+    Connection(ConnectionEvent),
+    /// Data received from Astarte.
+    Data(DeviceEvent),
+}
+
+impl Event {
+    /// Returns `true` if the event is [`Connection`](Event::Connection).
+    #[must_use]
+    pub fn is_connection(&self) -> bool {
+        matches!(self, Self::Connection(..))
+    }
+
+    /// Get a reference to the [`ConnectionEvent`] if the event is [`Connection`](Event::Connection).
+    #[must_use]
+    pub fn as_connection(&self) -> Option<&ConnectionEvent> {
+        if let Self::Connection(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Take out of the enum a [`ConnectionEvent`] if the event is [`Connection`](Event::Connection).
+    pub fn try_into_connection(self) -> Result<ConnectionEvent, Self> {
+        if let Self::Connection(v) = self {
+            Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Returns `true` if the event is [`Data`](Event::Data).
+    #[must_use]
+    pub fn is_data(&self) -> bool {
+        matches!(self, Self::Data(..))
+    }
+
+    /// Get a reference to the [`DeviceEvent`] if the event is [`Data`](Event::Data).
+    #[must_use]
+    pub fn as_data(&self) -> Option<&DeviceEvent> {
+        if let Self::Data(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    /// Take out of the enum a [`DeviceEvent`] if the event is [`Data`](Event::Data).
+    pub fn try_into_data(self) -> Result<DeviceEvent, Self> {
+        if let Self::Data(v) = self {
+            Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl From<ConnectionEvent> for Event {
+    fn from(v: ConnectionEvent) -> Self {
+        Self::Connection(v)
+    }
+}
+
+impl From<DeviceEvent> for Event {
+    fn from(v: DeviceEvent) -> Self {
+        Self::Data(v)
+    }
+}
+
+/// Astarte device connection event.
+///
+/// Data structure received from the [`Client`](crate::DeviceClient) when the
+/// [`Connection`](crate::DeviceConnection) polls a valid event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionEvent {
+    /// State of the connection.
+    status: DeviceStatus,
+}
+
+impl ConnectionEvent {
+    /// Create a new connection event with the given status.
+    #[must_use]
+    pub fn new(status: DeviceStatus) -> Self {
+        Self { status }
+    }
+
+    /// Get the connection status of the event.
+    #[must_use]
+    pub fn status(&self) -> DeviceStatus {
+        self.status
+    }
+
+    /// Check if this event signals that the device is registered with Astarte.
+    #[must_use]
+    pub fn is_registered(&self) -> bool {
+        self.status.is_registered()
+    }
+
+    /// Check if this event signals that the device is connected with Astarte.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        self.status.is_connected()
+    }
+}
+
+impl From<DeviceStatus> for ConnectionEvent {
+    fn from(status: DeviceStatus) -> Self {
+        Self::new(status)
+    }
+}
+
+impl Display for ConnectionEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.status)
+    }
+}
+
+/// State of the connection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeviceStatus {
+    /// Initial connection state.
+    #[default]
+    Idle,
+    /// The Device is not yet registered with Astarte.
+    Unregistered,
+    /// Registered device, not yet connected.
+    Registered,
+    /// Connection with Astarte started.
+    Connecting,
+    /// Device connected with Astarte.
+    Connected,
+    /// Device disconnected from Astarte.
+    ///
+    /// This can be caused by a Network or Application error.
+    Disconnected,
+    /// The device is in an unknown connection state.
+    ///
+    /// This will be used for forward compatibility and possible state errors.
+    Unknown,
+}
+
+impl DeviceStatus {
+    /// Check if this event signals that the device is registered with Astarte.
+    pub fn is_registered(&self) -> bool {
+        match self {
+            DeviceStatus::Idle | DeviceStatus::Unregistered | DeviceStatus::Unknown => false,
+            DeviceStatus::Registered
+            | DeviceStatus::Connecting
+            | DeviceStatus::Connected
+            | DeviceStatus::Disconnected => true,
+        }
+    }
+
+    /// Check if this event signals that the device is connected with Astarte.
+    pub fn is_connected(&self) -> bool {
+        match self {
+            DeviceStatus::Idle
+            | DeviceStatus::Unregistered
+            | DeviceStatus::Registered
+            | DeviceStatus::Connecting
+            | DeviceStatus::Disconnected
+            | DeviceStatus::Unknown => false,
+            DeviceStatus::Connected => true,
+        }
+    }
+}
+
+impl Display for DeviceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceStatus::Idle => write!(f, "Idle"),
+            DeviceStatus::Unregistered => write!(f, "Unregistered"),
+            DeviceStatus::Registered => write!(f, "Registered"),
+            DeviceStatus::Connecting => write!(f, "Connecting"),
+            DeviceStatus::Connected => write!(f, "Connected"),
+            DeviceStatus::Disconnected => write!(f, "Disconnected"),
+            DeviceStatus::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -236,6 +421,33 @@ mod tests {
         assert_eq!(val.clone().try_into_individual(), Err(val.clone()));
         assert_eq!(val.clone().try_into_object(), Err(val.clone()));
         assert_eq!(val.clone().try_into_property(), Ok(prop));
+
+        let conn_event = ConnectionEvent::from(DeviceStatus::Connected);
+        assert_eq!(conn_event.status(), DeviceStatus::Connected);
+        assert!(conn_event.is_registered());
+        assert!(conn_event.is_connected());
+        assert_eq!(conn_event.to_string(), "Connected");
+
+        let ev = Event::from(conn_event);
+        assert!(ev.is_connection());
+        assert!(!ev.is_data());
+        assert_eq!(ev.as_connection(), Some(&conn_event));
+        assert_eq!(ev.as_data(), None);
+        assert_eq!(ev.clone().try_into_connection(), Ok(conn_event));
+        assert_eq!(ev.clone().try_into_data(), Err(ev));
+
+        let dev_event = DeviceEvent {
+            interface: "com.example.Test".to_string(),
+            path: "/test".to_string(),
+            data: Value::Property(None),
+        };
+        let ev = Event::from(dev_event.clone());
+        assert!(ev.is_data());
+        assert!(!ev.is_connection());
+        assert_eq!(ev.as_data(), Some(&dev_event));
+        assert_eq!(ev.as_connection(), None);
+        assert_eq!(ev.clone().try_into_data(), Ok(dev_event));
+        assert_eq!(ev.clone().try_into_connection(), Err(ev));
     }
 
     #[cfg(feature = "derive")]

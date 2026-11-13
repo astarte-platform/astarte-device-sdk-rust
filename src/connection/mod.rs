@@ -28,7 +28,7 @@ use tracing::{debug, info, instrument, trace};
 
 use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind};
-use crate::event::DeviceEvent;
+use crate::event::{DeviceEvent, DeviceStatus};
 use crate::retention::{StoredRetention, StoredRetentionExt};
 use crate::retry::{RetryAction, RetryFuture};
 use crate::state::{ConnStatus, ConnectionState};
@@ -68,7 +68,7 @@ pub trait Connection: Send + Sync + 'static {
     ///     };
     ///     let mqtt_config = Mqtt::new(args);
     ///
-    ///     let (client, mut connection) = DeviceBuilder::new()
+    ///     let (mut client, mut connection) = DeviceBuilder::new()
     ///         .store(MemoryStore::new())
     ///         .connection(mqtt_config)
     ///         .build().await.unwrap();
@@ -93,6 +93,7 @@ pub struct DeviceConnection<C, S> {
     connection: C,
     state: ConnectionState<S>,
     events: async_channel::Sender<DeviceEvent>,
+    device_status: tokio::sync::watch::Sender<DeviceStatus>,
     client_rx: tokio::sync::mpsc::Receiver<Validated>,
     status_rx: tokio::sync::watch::Receiver<ConnStatus>,
 }
@@ -102,11 +103,13 @@ impl<C, S> DeviceConnection<C, S> {
         connection: C,
         state: ConnectionState<S>,
         events: async_channel::Sender<DeviceEvent>,
+        device_status: tokio::sync::watch::Sender<DeviceStatus>,
         client_rx: tokio::sync::mpsc::Receiver<Validated>,
         status_rx: tokio::sync::watch::Receiver<ConnStatus>,
     ) -> Self {
         Self {
             events,
+            device_status,
             state,
             connection,
             client_rx,
@@ -190,11 +193,17 @@ where
 
         let mut tasks = JoinSet::new();
 
+        ReceiverTask::<C::Connection, S>::set_device_status(
+            &self.device_status,
+            DeviceStatus::Registered,
+        );
+
         let mut receiver = ReceiverTask {
             connection,
             state: self.state.clone(),
             status_rx: self.status_rx.clone(),
             events: self.events,
+            device_status: self.device_status,
             first: true,
         };
 
@@ -255,6 +264,7 @@ mod tests {
     use mockall::{Sequence, predicate};
 
     use crate::builder::DEFAULT_CHANNEL_SIZE;
+    use crate::event::DeviceStatus;
     use crate::interfaces::Interfaces;
     use crate::retention::StoredInterface;
     use crate::state::tests::mock_state;
@@ -271,6 +281,7 @@ mod tests {
         pub(crate) inner: DeviceConnection<MockCon, S>,
         pub(crate) _events: async_channel::Receiver<DeviceEvent>,
         pub(crate) _client: tokio::sync::mpsc::Sender<Validated>,
+        pub(crate) _device_status: tokio::sync::watch::Receiver<DeviceStatus>,
     }
 
     impl<S> Deref for TestConnection<S>
@@ -308,12 +319,15 @@ mod tests {
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (client_tx, client_rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_SIZE.get());
         let (status_tx, status_rx) = tokio::sync::watch::channel(initial_status);
+        let (device_status_tx, device_status_rx) =
+            tokio::sync::watch::channel(DeviceStatus::Unknown);
         let state = mock_state(store, status_tx, interfaces);
 
         let connection = DeviceConnection::new(
             connection,
             ConnectionState::new(Arc::new(state)),
             events_tx,
+            device_status_tx,
             client_rx,
             status_rx,
         );
@@ -322,6 +336,7 @@ mod tests {
             inner: connection,
             _events: events_rx,
             _client: client_tx,
+            _device_status: device_status_rx,
         }
     }
 

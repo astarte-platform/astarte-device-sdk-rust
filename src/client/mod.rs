@@ -29,7 +29,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::aggregate::AstarteObject;
 use crate::builder::ConnectionConfig;
 use crate::error::{AstarteError, ErrorKind, InterfaceError};
-use crate::event::DeviceEvent;
+use crate::event::{ConnectionEvent, DeviceEvent, DeviceStatus, Event};
 use crate::logging::security::{SecurityEvent, notify_security_event};
 use crate::retention::memory::{ItemValue, VolatileItemError};
 use crate::retention::{Id, RetentionId, StoredRetention};
@@ -259,13 +259,29 @@ pub trait Client: Clone + Send + Sync + 'static {
 
     /// Receives an event from Astarte.
     ///
-    /// When receiving a [`None`] event, the device is disconnect.
+    /// When receiving a [`None`] event, the device is disconnected.
+    ///
+    /// # Note
+    ///
+    /// Data events ([`DeviceEvent`]) can only be received once, so if the client is cloned only
+    /// one of the client instances will receive the message. Connection events
+    /// ([`ConnectionEvent`]) are broadcast to all cloned client instances.
+    fn recv(&mut self) -> impl Future<Output = Option<Event>> + Send;
+
+    /// Receives a connection status change event from Astarte.
+    ///
+    /// When receiving a [`None`] event, the device is disconnected.
+    fn recv_connection(&mut self) -> impl Future<Output = Option<ConnectionEvent>> + Send;
+
+    /// Receives a data event from Astarte.
+    ///
+    /// When receiving a [`None`] event, the device is disconnected.
     ///
     /// # Note
     ///
     /// An event can only be received once, so if the client is cloned only one of the clients
     /// instances will receive the message.
-    fn recv(&self) -> impl Future<Output = Option<DeviceEvent>> + Send;
+    fn recv_data(&self) -> impl Future<Output = Option<DeviceEvent>> + Send;
 
     /// Retrieve the expiry (not_after) timestamp of the current certificate
     fn get_cert_expiry(&self) -> impl Future<Output = Option<DateTime<Utc>>> + Send;
@@ -290,8 +306,22 @@ pub trait Client: Clone + Send + Sync + 'static {
     /// Cleanly disconnects the client consuming it.
     fn disconnect(&self) -> impl Future<Output = Result<(), AstarteError>> + Send;
 
-    /// Check if the client is already paired.
-    fn is_paired(&self) -> bool;
+    /// Check if the device is already registered on Astarte.
+    fn is_registered(&mut self) -> bool;
+
+    /// Check if the device is connected to Astarte.
+    fn is_connected(&mut self) -> bool;
+
+    /// Get the connection status of the device with Astarte.
+    fn get_status(&mut self) -> DeviceStatus;
+
+    /// Waits for a particular device status.
+    ///
+    /// It will error if the device disconnect method is called.
+    fn wait_for_status(
+        &mut self,
+        status: DeviceStatus,
+    ) -> impl Future<Output = Result<(), AstarteError>> + Send;
 }
 
 /// Client to send and receive message to and form Astarte or access the Device properties.
@@ -313,6 +343,9 @@ where
     /// the connection to che client since we need the Receiver end to be cloneable. The tokio
     /// Broadcast channel provides an async mpmc, but suffer from the "slow receiver" problem.
     events: async_channel::Receiver<DeviceEvent>,
+    /// Device status, exposed by the client.
+    device_status: tokio::sync::watch::Receiver<DeviceStatus>,
+    /// Shared client state.
     pub(crate) state: ClientState<S>,
     /// Encoder for the client
     ///
@@ -326,13 +359,15 @@ where
 {
     pub(crate) fn new(
         sender: tokio::sync::mpsc::Sender<Validated>,
-        rx: async_channel::Receiver<DeviceEvent>,
+        events: async_channel::Receiver<DeviceEvent>,
+        device_status: tokio::sync::watch::Receiver<DeviceStatus>,
         state: ClientState<S>,
         encoder: C::Encoder,
     ) -> Self {
         Self {
             sender,
-            events: rx,
+            events,
+            device_status,
             state,
             encoder,
         }
@@ -474,6 +509,33 @@ where
 
         Ok(())
     }
+    async fn recv_connection(
+        device_status: &mut tokio::sync::watch::Receiver<DeviceStatus>,
+    ) -> Option<ConnectionEvent> {
+        match device_status.changed().await {
+            Ok(()) => {
+                let status = *device_status.borrow_and_update();
+
+                Some(ConnectionEvent::new(status))
+            }
+            Err(error) => {
+                error!(%error, "device disconnected");
+
+                None
+            }
+        }
+    }
+
+    async fn recv_data(events: &async_channel::Receiver<DeviceEvent>) -> Option<DeviceEvent> {
+        match events.recv().await {
+            Ok(event) => Some(event),
+            Err(error) => {
+                error!(%error, "device disconnected");
+
+                None
+            }
+        }
+    }
 }
 
 // Cannot be derived it has specific generic bounds.
@@ -487,6 +549,7 @@ where
             events: self.events.clone(),
             state: self.state.clone(),
             encoder: self.encoder.clone(),
+            device_status: self.device_status.clone(),
         }
     }
 }
@@ -578,16 +641,20 @@ where
         self.send_unset(interface_name, &path).await
     }
 
-    async fn recv(&self) -> Option<DeviceEvent> {
-        match self.events.recv().await {
-            Ok(event) => Some(event),
-            Err(error) => {
-                // Use the error message
-                info!("{error}");
-
-                None
-            }
+    async fn recv(&mut self) -> Option<Event> {
+        tokio::select! {
+            biased;
+            event = Self::recv_connection(&mut self.device_status) => event.map(Event::Connection),
+            event = Self::recv_data(&self.events) => event.map(Event::Data),
         }
+    }
+
+    async fn recv_connection(&mut self) -> Option<ConnectionEvent> {
+        Self::recv_connection(&mut self.device_status).await
+    }
+
+    async fn recv_data(&self) -> Option<DeviceEvent> {
+        Self::recv_data(&self.events).await
     }
 
     /// Retrieve the expiry (not_after) timestamp of the current certificate
@@ -603,8 +670,24 @@ where
         Ok(())
     }
 
-    fn is_paired(&self) -> bool {
-        self.state.is_device_paired()
+    fn is_registered(&mut self) -> bool {
+        self.get_status().is_registered()
+    }
+
+    fn is_connected(&mut self) -> bool {
+        self.get_status().is_connected()
+    }
+
+    fn get_status(&mut self) -> DeviceStatus {
+        *self.device_status.borrow_and_update()
+    }
+
+    async fn wait_for_status(&mut self, status: DeviceStatus) -> Result<(), AstarteError> {
+        self.device_status
+            .wait_for(|this| *this == status)
+            .await
+            .map(drop)
+            .wrap_err(ErrorKind::Disconnected)
     }
 }
 
@@ -661,6 +744,7 @@ pub(crate) mod tests {
         pub(crate) client_rx: tokio::sync::mpsc::Receiver<Validated>,
         pub(crate) events: async_channel::Sender<DeviceEvent>,
         pub(crate) status: tokio::sync::watch::Receiver<ConnStatus>,
+        pub(crate) device_status_tx: tokio::sync::watch::Sender<DeviceStatus>,
     }
 
     impl<S> Deref for TestClient<S>
@@ -705,11 +789,15 @@ pub(crate) mod tests {
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
         let (status_tx, status_rx) = tokio::sync::watch::channel(initial_status);
 
+        let (device_status_tx, device_status_rx) =
+            tokio::sync::watch::channel(DeviceStatus::Unknown);
+
         let state = mock_state(store, status_tx, interfaces);
 
         let client = DeviceClient::new(
             client_tx,
             events_rx,
+            device_status_rx,
             ClientState::new(Arc::new(state)),
             MockEncoder::new(),
         );
@@ -719,6 +807,7 @@ pub(crate) mod tests {
             client_rx,
             events: events_tx,
             status: status_rx,
+            device_status_tx,
         }
     }
 
@@ -739,7 +828,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn client_recv() {
-        let client = mock_client(&[], ConnStatus::Online);
+        let mut client = mock_client(&[], ConnStatus::Online);
 
         let exp = DeviceEvent {
             interface: "interface".to_string(),
@@ -754,7 +843,34 @@ pub(crate) mod tests {
 
         let event = client.recv().await.unwrap();
 
+        assert_eq!(event, Event::Data(exp.clone()));
+
+        client.events.send(exp.clone()).await.unwrap();
+
+        let event = client.recv_data().await.unwrap();
+
         assert_eq!(event, exp);
+
+        client
+            .device_status_tx
+            .send(DeviceStatus::Connected)
+            .unwrap();
+
+        let event = client.recv().await.unwrap();
+
+        assert_eq!(
+            event,
+            Event::Connection(ConnectionEvent::new(DeviceStatus::Connected))
+        );
+
+        client
+            .device_status_tx
+            .send(DeviceStatus::Disconnected)
+            .unwrap();
+
+        let event = client.recv_connection().await.unwrap();
+
+        assert_eq!(event, ConnectionEvent::new(DeviceStatus::Disconnected));
     }
 
     #[tokio::test]
