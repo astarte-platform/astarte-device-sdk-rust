@@ -129,7 +129,6 @@ bytes.workspace = true
 cfg-if.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 flate2.workspace = true
-futures.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 mime.workspace = true
@@ -213,7 +212,6 @@ color-eyre = "0.6.3"
 darling = "0.24.0"
 eyre = "0.6.12"
 flate2 = "1.0.0"
-futures = "0.3.0"
 http = "1.4.0"
 http-body-util = "0.1.2"
 insta = "1.47.2"
