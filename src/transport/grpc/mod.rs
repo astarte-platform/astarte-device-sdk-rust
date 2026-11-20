@@ -814,7 +814,6 @@ impl ConnectionConfig for Grpc {
             retention_ctx: state.retention_ctx,
             interfaces: state.interfaces,
             status: state.status,
-            device_status: state.device_status,
             cert_expiry: state.cert_expiry,
             volatile_store: state.volatile_store,
             store,

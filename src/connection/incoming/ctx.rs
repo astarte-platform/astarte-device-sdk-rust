@@ -318,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_individual() {
-        let (this, client_rx) = mock_receiver_task(
+        let (this, client_rx, _device_status) = mock_receiver_task(
             MockStore::new(),
             &[E2E_SERVER_DATASTREAM],
             ConnStatus::Online,
@@ -366,7 +366,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_event_missing_interface() {
-        let (this, client_rx) = mock_receiver_task(MockStore::new(), &[], ConnStatus::Online);
+        let (this, client_rx, _device_status) =
+            mock_receiver_task(MockStore::new(), &[], ConnStatus::Online);
 
         let interface = E2E_DEVICE_DATASTREAM;
         let endpoint = "/integer_endpoint";
@@ -387,7 +388,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_event_missing_mapping() {
-        let (this, client_rx) = mock_receiver_task(MockStore::new(), &[], ConnStatus::Online);
+        let (this, client_rx, _device_status) =
+            mock_receiver_task(MockStore::new(), &[], ConnStatus::Online);
 
         let endpoint = "/not_found";
 
@@ -407,7 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_object() {
-        let (this, client_rx) =
+        let (this, client_rx, _device_status) =
             mock_receiver_task(MockStore::new(), &[SERVER_OBJECT], ConnStatus::Online);
 
         let obj = AstarteObject::from_iter(
@@ -463,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn partial_obj() {
-        let (this, client_rx) = mock_receiver_task(
+        let (this, client_rx, _device_status) = mock_receiver_task(
             MockStore::new(),
             &[E2E_SERVER_AGGREGATE],
             ConnStatus::Online,
@@ -580,7 +582,7 @@ mod tests {
             })
             .returning(|_| Ok(PropMetadata { epoch: Some(42) }));
 
-        let (this, client_rx) =
+        let (this, client_rx, _device_status) =
             mock_receiver_task(store, &[E2E_SERVER_PROPERTY], ConnStatus::Online);
 
         let ctx = ConnectionCtx {
@@ -631,7 +633,7 @@ mod tests {
             .with(predicate::eq(exp_interface), predicate::eq(exp_endpoint))
             .returning(|_, _| Ok(true));
 
-        let (this, client_rx) =
+        let (this, client_rx, _device_status) =
             mock_receiver_task(store, &[E2E_SERVER_PROPERTY], ConnStatus::Online);
 
         let ctx = ConnectionCtx {
@@ -666,7 +668,7 @@ mod tests {
             })
             .returning(|_| Ok(None));
 
-        let (this, client_rx) = mock_receiver_task(
+        let (this, client_rx, _device_status) = mock_receiver_task(
             MockStore::new(),
             &[SERVER_PROPERTIES_NO_UNSET],
             ConnStatus::Online,
@@ -686,7 +688,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_wrong_ownership() {
-        let (this, client_rx) = mock_receiver_task(
+        let (this, client_rx, _device_status) = mock_receiver_task(
             MockStore::new(),
             &[E2E_DEVICE_DATASTREAM],
             ConnStatus::Online,

@@ -18,7 +18,6 @@
 
 use std::fmt::Display;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU8;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 
@@ -98,8 +97,6 @@ pub struct SharedState<S> {
     pub(crate) retention_ctx: Context,
     pub(crate) interfaces: RwLock<Interfaces>,
     pub(crate) status: tokio::sync::watch::Sender<ConnStatus>,
-    /// Status of the device, whether it's paired to Astarte
-    pub(crate) device_status: AtomicU8,
     pub(crate) cert_expiry: RwLock<Option<DateTime<Utc>>>,
     pub(crate) volatile_store: VolatileStore,
     pub(crate) store: S,
@@ -125,7 +122,6 @@ impl<S> SharedState<S> {
             retention_ctx: Context::new(),
             status,
             cert_expiry: RwLock::new(None),
-            device_status: AtomicU8::new(DeviceStatus::Unknown.into()),
             store,
             backoff: Mutex::new(backoff),
             tls,
@@ -142,16 +138,6 @@ impl<S> SharedState<S> {
     /// Gets the config for the retention
     pub fn config(&self) -> &Config {
         &self.config
-    }
-
-    pub(crate) fn set_device_status(&self, paired: bool) {
-        let status = if paired {
-            DeviceStatus::Registered
-        } else {
-            DeviceStatus::Unregistered
-        };
-
-        self.device_status.store(status.into(), Ordering::Release);
     }
 }
 
@@ -193,21 +179,6 @@ impl<S> ClientState<S> {
 
     pub(crate) async fn cert_expiry(&self) -> Option<DateTime<Utc>> {
         *self.0.cert_expiry.read().await
-    }
-
-    pub(crate) fn is_device_paired(&self) -> bool {
-        let value = DeviceStatus::from(self.0.device_status.load(Ordering::Acquire));
-
-        debug_assert_ne!(
-            value,
-            DeviceStatus::Unknown,
-            "the unknown status should be set only in the builder"
-        );
-
-        match value {
-            DeviceStatus::Unknown | DeviceStatus::Unregistered => false,
-            DeviceStatus::Registered => true,
-        }
     }
 
     pub(crate) fn store(&self) -> &S {
@@ -344,40 +315,6 @@ impl Display for ConnStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
-pub(crate) enum DeviceStatus {
-    Unknown = 0,
-    Unregistered = 1,
-    Registered = 2,
-}
-
-impl Display for DeviceStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeviceStatus::Unknown => write!(f, "Unknown"),
-            DeviceStatus::Unregistered => write!(f, "Unregistered"),
-            DeviceStatus::Registered => write!(f, "Registered"),
-        }
-    }
-}
-
-impl From<u8> for DeviceStatus {
-    fn from(value: u8) -> Self {
-        match value {
-            0 | 3.. => DeviceStatus::Unknown,
-            1 => DeviceStatus::Unregistered,
-            2 => DeviceStatus::Registered,
-        }
-    }
-}
-
-impl From<DeviceStatus> for u8 {
-    fn from(value: DeviceStatus) -> Self {
-        value as u8
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::HashSet;
@@ -387,7 +324,6 @@ pub(crate) mod tests {
     use super::*;
 
     use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     impl<S> ConnectionState<S> {
         pub(crate) fn retention_ctx(&self) -> &Context {
@@ -415,27 +351,6 @@ pub(crate) mod tests {
     fn default_connection_state() {
         // Must start disconnected
         assert_eq!(ConnStatus::default(), ConnStatus::Offline)
-    }
-
-    #[rstest]
-    #[case(0, DeviceStatus::Unknown)]
-    #[case(3, DeviceStatus::Unknown)]
-    #[case(1, DeviceStatus::Unregistered)]
-    #[case(2, DeviceStatus::Registered)]
-    fn device_status_from_u8(#[case] value: u8, #[case] exp: DeviceStatus) {
-        let res = DeviceStatus::from(value);
-
-        assert_eq!(res, exp);
-    }
-
-    #[rstest]
-    #[case(DeviceStatus::Unknown, 0)]
-    #[case(DeviceStatus::Unregistered, 1)]
-    #[case(DeviceStatus::Registered, 2)]
-    fn device_status_into_u8(#[case] value: DeviceStatus, #[case] exp: u8) {
-        let res = u8::from(value);
-
-        assert_eq!(res, exp);
     }
 
     #[test]
