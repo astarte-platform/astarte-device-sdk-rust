@@ -28,6 +28,8 @@ pub(crate) struct ValidatedProperty {
     pub(crate) interface: String,
     pub(crate) path: String,
     pub(crate) version_major: i32,
+    #[cfg(feature = "encrypted-endpoints")]
+    pub(crate) encrypted: bool,
     pub(crate) data: AstarteData,
 }
 
@@ -60,6 +62,8 @@ impl ValidatedProperty {
             interface: interface.interface_name().to_string(),
             path: path.to_string(),
             version_major: interface.version_major(),
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: mapping.encrypted(),
             data,
         })
     }

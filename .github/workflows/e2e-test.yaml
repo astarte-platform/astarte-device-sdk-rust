@@ -61,9 +61,10 @@ jobs:
       - parallel:
           - name: Create Astarte Cluster
             id: astarte
-            uses: astarte-platform/astarte-cluster-action@11198ae9f8b4b1d334063a6ce6c1015da631c6ff # v2.0.0
+            uses: astarte-platform/astarte-cluster-action@2049227e2dddd58d478ffa5375d5bd071a18b078 # TODO: change
             with:
-              astarte_version: 1.3.0
+              astarte_version: 1.4.0-rc.6
+              astarte_chart_version: 26.7.0-rc.5
           - uses: $/.github/actions/install-deps
           - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - run: ./scripts/ci/e2e-test.sh

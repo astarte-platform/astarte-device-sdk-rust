@@ -16,6 +16,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+pub(crate) mod encrypted;
 pub(crate) mod individual;
 pub(crate) mod object;
 pub(crate) mod property;

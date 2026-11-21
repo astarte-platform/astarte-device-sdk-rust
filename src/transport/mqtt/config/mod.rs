@@ -374,11 +374,18 @@ impl ConnectionConfig for Mqtt {
 
         let retention = RetentionTask::spawn(state.clone(), retention_rx);
 
+        #[cfg(feature = "encrypted-endpoints")]
+        let encrypted: std::sync::Arc<
+            tokio::sync::Mutex<super::encrypted::state::EncState>,
+        > = Default::default();
+
         let client = MqttClient {
             id: self.client_id.clone(),
             sender: client,
             retention: retention_tx,
             session_synced: false,
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: encrypted.clone(),
         };
 
         let connection = MqttConnection {
@@ -388,6 +395,8 @@ impl ConnectionConfig for Mqtt {
                 retention,
                 retention_joined: false,
             },
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted,
         };
 
         Ok(ControlFlow::Break((client, connection)))

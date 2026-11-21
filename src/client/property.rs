@@ -215,6 +215,8 @@ mod tests {
                     path: path.to_string(),
                     version_major: 0,
                     data: value.clone(),
+                    #[cfg(feature = "encrypted-endpoints")]
+                    encrypted: false,
                 }
             }
         );
