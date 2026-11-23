@@ -37,7 +37,6 @@ chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive", "env"] }
 color-eyre = { workspace = true }
 eyre = { workspace = true }
-futures = { workspace = true }
 phoenix-chan = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["charset", "json", "http2", "system-proxy", "rustls-no-provider"] }
 rustls = { workspace = true }
