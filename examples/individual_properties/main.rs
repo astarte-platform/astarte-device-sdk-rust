@@ -128,11 +128,19 @@ enum ServerProperties {
     SamplingPeriod(Option<i32>),
 }
 
-async fn receive_loop<C>(client: C, cancel: CancellationToken) -> eyre::Result<()>
+async fn receive_loop<C>(mut client: C, cancel: CancellationToken) -> eyre::Result<()>
 where
     C: Client,
 {
     while let Some(event) = cancel.run_until_cancelled(client.recv()).await.flatten() {
+        let event = match event {
+            astarte_device_sdk::Event::Connection(event) => {
+                info!(%event, "connection event");
+                continue;
+            }
+            astarte_device_sdk::Event::Data(event) => event,
+        };
+
         match event.interface.as_str() {
             "org.astarte-platform.rust.examples.individual-properties.ServerProperties" => {
                 let mut iter = event.path.splitn(3, '/').skip(1);

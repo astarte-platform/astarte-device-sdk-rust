@@ -21,7 +21,9 @@ use std::ops::ControlFlow;
 use tracing::{debug, info, instrument};
 
 use crate::DeviceEvent;
+use crate::connection::DeviceStatusExt;
 use crate::error::AstarteError;
+use crate::event::DeviceStatus;
 use crate::retry::{RetryAction, RetryFuture};
 use crate::state::{ConnStatus, ConnectionState};
 use crate::store::StoreCapabilities;
@@ -36,6 +38,7 @@ pub(crate) struct ReceiverTask<C, S> {
     pub(crate) state: ConnectionState<S>,
     pub(crate) status_rx: tokio::sync::watch::Receiver<ConnStatus>,
     pub(crate) events: async_channel::Sender<DeviceEvent>,
+    pub(crate) device_status: tokio::sync::watch::Sender<DeviceStatus>,
     /// First connection flags.
     ///
     /// Used to optimize the connection when we just called the registration.
@@ -56,6 +59,9 @@ impl<C, S> ReceiverTask<C, S> {
         'conn: while !self.should_exit() {
             debug!("receiver connecting");
 
+            self.device_status
+                .set_device_status(DeviceStatus::Connecting);
+
             let mut backoff = RetryFuture {
                 rx: &mut self.status_rx,
                 state: &self.state,
@@ -73,6 +79,8 @@ impl<C, S> ReceiverTask<C, S> {
 
             self.state
                 .set_connection(ConnStatus::Connected { session_present });
+            self.device_status
+                .set_device_status(DeviceStatus::Connected);
 
             let ctx = ConnectionCtx {
                 state: &self.state,
@@ -84,6 +92,8 @@ impl<C, S> ReceiverTask<C, S> {
                     debug!("receiver disconnected");
                 }
                 Some(Err(err)) => {
+                    self.device_status
+                        .set_device_status(DeviceStatus::Disconnected);
                     self.state.close_connection();
 
                     return Err(err);
@@ -92,6 +102,9 @@ impl<C, S> ReceiverTask<C, S> {
                     break;
                 }
             };
+
+            self.device_status
+                .set_device_status(DeviceStatus::Disconnected);
 
             // We do not cancel the poll and let it disconnect by itself
             if self.should_exit() {
@@ -113,6 +126,8 @@ impl<C, S> ReceiverTask<C, S> {
             }
         }
 
+        self.device_status
+            .set_device_status(DeviceStatus::Disconnected);
         self.state.close_connection();
 
         info!("disconnected receiver exiting");
@@ -157,6 +172,7 @@ pub(crate) mod tests {
     use astarte_interfaces::Interface;
 
     use crate::builder::DEFAULT_CHANNEL_SIZE;
+    use crate::event::DeviceStatus;
     use crate::interfaces::Interfaces;
     use crate::state::ConnStatus;
     use crate::state::tests::mock_state;
@@ -174,9 +190,12 @@ pub(crate) mod tests {
     ) -> (
         ReceiverTask<MockCon, S>,
         async_channel::Receiver<DeviceEvent>,
+        tokio::sync::watch::Receiver<DeviceStatus>,
     ) {
         let (status_tx, status_rx) = tokio::sync::watch::channel(initial_status);
         let (events_tx, events_rx) = async_channel::bounded(DEFAULT_CHANNEL_SIZE.get());
+        let (device_status_tx, device_status_rx) =
+            tokio::sync::watch::channel(DeviceStatus::Unknown);
 
         let interfaces =
             Interfaces::from_iter(interfaces.iter().map(|i| Interface::from_str(i).unwrap()));
@@ -188,15 +207,18 @@ pub(crate) mod tests {
                 state,
                 connection: MockCon::new(),
                 events: events_tx,
+                device_status: device_status_tx,
                 first: true,
             },
             events_rx,
+            device_status_rx,
         )
     }
 
     #[tokio::test]
     async fn poll_and_disconnect() {
-        let (mut this, _events) = mock_receiver_task(MemoryStore::new(), &[], ConnStatus::Offline);
+        let (mut this, _events, mut device_status) =
+            mock_receiver_task(MemoryStore::new(), &[], ConnStatus::Offline);
 
         let state = this.state.clone();
 
@@ -211,7 +233,13 @@ pub(crate) mod tests {
                 predicate::always(),
                 predicate::eq(true),
             )
-            .returning(|_, _, _| Ok(ControlFlow::Break(true)));
+            .returning({
+                let device_status = device_status.clone();
+                move |_, _, _| {
+                    assert_eq!(*device_status.borrow(), DeviceStatus::Connecting);
+                    Ok(ControlFlow::Break(true))
+                }
+            });
 
         this.connection
             .expect_poll_call()
@@ -219,7 +247,9 @@ pub(crate) mod tests {
             .in_sequence(&mut seq)
             .returning({
                 let state = state.clone();
+                let device_status = device_status.clone();
                 move || {
+                    assert_eq!(*device_status.borrow(), DeviceStatus::Connected);
                     state.set_connection(ConnStatus::Closed);
                     Ok(())
                 }
@@ -229,5 +259,10 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .unwrap();
+
+        assert_eq!(
+            *device_status.borrow_and_update(),
+            DeviceStatus::Disconnected
+        );
     }
 }

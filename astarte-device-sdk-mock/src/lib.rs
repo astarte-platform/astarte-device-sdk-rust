@@ -21,6 +21,7 @@ use std::path::Path;
 use astarte_device_sdk::aggregate::AstarteObject;
 use astarte_device_sdk::astarte_interfaces::Interface;
 use astarte_device_sdk::error::AstarteError;
+use astarte_device_sdk::event::{ConnectionEvent, DeviceStatus, Event};
 use astarte_device_sdk::introspection::DeviceIntrospection;
 use astarte_device_sdk::properties::PropAccess;
 use astarte_device_sdk::store::StoredProp;
@@ -92,7 +93,11 @@ mock! {
 
         async fn unset_property(&self, interface_name: &str, mapping_path: &str) -> Result<(), AstarteError>;
 
-        async fn recv(&self) -> Option<DeviceEvent>;
+        async fn recv(&mut self) -> Option<Event>;
+
+        async fn recv_connection(&mut self) -> Option<ConnectionEvent>;
+
+        async fn recv_data(&self) -> Option<DeviceEvent>;
 
         async fn get_cert_expiry(&self) -> Option<DateTime<Utc>>;
 
@@ -100,7 +105,13 @@ mock! {
 
         async fn disconnect(&self) -> Result<(), AstarteError>;
 
-        fn is_paired(&self) -> bool;
+        fn is_registered(&mut self) -> bool;
+
+        fn is_connected(&mut self) -> bool;
+
+        fn get_status(&mut self) -> DeviceStatus;
+
+        async fn wait_for_status(&mut self, status: DeviceStatus) -> Result<(), AstarteError>;
     }
 
     impl PropAccess for DeviceClient {

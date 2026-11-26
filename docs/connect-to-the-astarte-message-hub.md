@@ -378,11 +378,19 @@ enum ServerIndividual {
     Boolean(bool),
 }
 
-async fn receive_data<S>(client: DeviceClient<Grpc, GrpcStore<S>>) -> eyre::Result<()>
+async fn receive_data<S>(mut client: DeviceClient<Grpc, GrpcStore<S>>) -> eyre::Result<()>
 where
     S: PropertyStore + StoreCapabilities,
 {
     while let Some(event) = client.recv().await {
+      let event = match event {
+          astarte_device_sdk::Event::Connection(event) => {
+              info!(%event, "connection event");
+              continue;
+          }
+          astarte_device_sdk::Event::Data(event) => event,
+      };
+
       match event.interface.as_str() {
         "org.astarte-platform.rust.get-started.IndividualServer" => {
             // parse the path to extract the id part
