@@ -38,6 +38,8 @@ pub(crate) mod config;
 pub(crate) mod connection;
 pub mod crypto;
 pub(crate) mod deps;
+#[cfg(feature = "encrypted-endpoints")]
+pub(crate) mod encrypted;
 pub mod error;
 #[cfg(feature = "fdo")]
 pub mod fdo;
@@ -116,6 +118,11 @@ pub(crate) mod test {
             keepalive: DEFAULT_KEEP_ALIVE,
         };
 
+        #[cfg(feature = "encrypted-endpoints")]
+        let encrypted: std::sync::Arc<
+            tokio::sync::Mutex<super::encrypted::state::EncState>,
+        > = Default::default();
+
         let mqtt = MqttConnection {
             config: mqtt_config,
             connection: Connection {
@@ -123,6 +130,8 @@ pub(crate) mod test {
                 retention: tokio::spawn(std::future::pending()),
                 retention_joined: false,
             },
+            #[cfg(feature = "encrypted-endpoints")]
+            encrypted: encrypted.clone(),
         };
 
         let mqtt_client = MqttClient {
@@ -130,6 +139,7 @@ pub(crate) mod test {
             sender: client,
             retention: ret_tx,
             session_synced: false,
+            encrypted: encrypted.clone(),
         };
 
         (mqtt_client, mqtt)

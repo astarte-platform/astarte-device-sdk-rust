@@ -20,7 +20,9 @@ use std::num::NonZero;
 use std::ops::ControlFlow;
 
 use astarte_device_error::ResultExt;
-use tracing::{debug, info, instrument, trace};
+use astarte_interfaces::interface::InterfaceTypeAggregation;
+use astarte_interfaces::{AggregationIndividual, MappingPath};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::error::{AstarteError, ErrorKind};
 use crate::interfaces::Interfaces;
@@ -30,6 +32,7 @@ use crate::retry::RetryAction;
 use crate::state::{ConnStatus, ConnectionState};
 use crate::store::{PropertyState, StoreCapabilities, UpdatedAt};
 use crate::transport::Sender;
+use crate::validate::properties::{ValidatedProperty, ValidatedUnset};
 
 pub(crate) struct ResendCtx<'a, C, S> {
     pub(crate) sender: &'a mut C,
@@ -120,15 +123,33 @@ where
         for prop in device_properties {
             *last_updated_at = Some(prop.updated_at());
 
-            if !interfaces.has_property(&prop.interface, prop.interface_major()) {
-                debug!(
-                    interface = prop.interface,
-                    path = prop.path,
-                    "skipping property not in introspection",
-                );
+            let path = match MappingPath::try_from(prop.path.as_str()) {
+                Ok(path) => path,
+                Err(error) => {
+                    error!(
+                        interface = prop.interface,
+                        path = prop.path,
+                        %error,
+                        "skipping property",
+                    );
 
-                continue;
-            }
+                    continue;
+                }
+            };
+
+            let mapping = match interfaces.get_property(&prop.interface, &path) {
+                Ok(mapping) => mapping,
+                Err(error) => {
+                    error!(
+                        interface = prop.interface,
+                        path = prop.path,
+                        %error,
+                        "skipping property",
+                    );
+
+                    continue;
+                }
+            };
 
             debug!(
                 interface = prop.interface,
@@ -136,8 +157,30 @@ where
                 "sending device-owned property",
             );
 
-            // Don't wait for the ack since it's not fundamental for the connection
-            self.sender.resend_stored_property(self.state, prop).await?;
+            let epoch = prop.epoch();
+
+            match prop.value {
+                Some(value) => match ValidatedProperty::validate(mapping, value) {
+                    Ok(unset) => {
+                        self.sender.send_property(self.state, unset, epoch).await?;
+                    }
+                    Err(error) => {
+                        error!(interface = prop.interface, path = prop.path, %error, "invalid stored property");
+
+                        continue;
+                    }
+                },
+                None => match ValidatedUnset::validate(mapping) {
+                    Ok(unset) => {
+                        self.sender.unset(self.state, unset, epoch).await?;
+                    }
+                    Err(error) => {
+                        error!(interface = prop.interface, path = prop.path, %error, "invalid stored unset");
+
+                        continue;
+                    }
+                },
+            }
         }
 
         Ok(count)
@@ -200,10 +243,71 @@ where
 
         trace!("loaded {count} stored publishes");
 
+        // TODO: validate the info
         for (id, info) in buf.drain(..) {
-            self.sender
-                .resend_stored(self.state, RetentionId::Stored(id), info)
-                .await?;
+            let Some(interface) = self.interfaces.get(&info.interface) else {
+                warn!(
+                    interface = %info.interface,
+                    path = %info.path,
+                    "stored item not found in introspection",
+                );
+
+                continue;
+            };
+
+            match interface.inner() {
+                InterfaceTypeAggregation::DatastreamIndividual(datastream_individual) => {
+                    let path = match MappingPath::try_from(info.path.as_ref()) {
+                        Ok(path) => path,
+                        Err(error) => {
+                            error!(
+                                interface = %info.interface,
+                                path = %info.path,
+                                %error,
+                                "skipping stored item",
+                            );
+
+                            continue;
+                        }
+                    };
+
+                    let Some(mapping) = datastream_individual.mapping(&path) else {
+                        warn!(
+                            interface = %info.interface,
+                            path = %info.path,
+                            "stored item mapping not found in introspection",
+                        );
+
+                        continue;
+                    };
+
+                    self.sender
+                        .resend_stored_individual(
+                            self.state,
+                            mapping,
+                            RetentionId::Stored(id),
+                            info,
+                        )
+                        .await?;
+                }
+                InterfaceTypeAggregation::DatastreamObject(datastream_object) => {
+                    self.sender
+                        .resend_stored_object(
+                            self.state,
+                            datastream_object,
+                            RetentionId::Stored(id),
+                            info,
+                        )
+                        .await?;
+                }
+                InterfaceTypeAggregation::Properties(_) => {
+                    warn!(
+                        interface = %info.interface,
+                        path = %info.path,
+                        "stored item is property in introspection",
+                    );
+                }
+            }
         }
 
         Ok(count)

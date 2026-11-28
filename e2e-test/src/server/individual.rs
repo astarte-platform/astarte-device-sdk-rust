@@ -62,7 +62,10 @@ impl InterfaceData for ServerDatastreamOverflow {
 }
 
 #[instrument(skip_all)]
-async fn validate<T>(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()>
+pub(crate) async fn validate_individual<T>(
+    api: &ApiClient,
+    client: &AstarteClient,
+) -> eyre::Result<()>
 where
     T: InterfaceData,
 {
@@ -104,8 +107,8 @@ where
 }
 
 pub(crate) async fn check(api: &ApiClient, client: &AstarteClient) -> eyre::Result<()> {
-    validate::<ServerDatastream>(api, client).await?;
-    validate::<ServerDatastreamOverflow>(api, client).await?;
+    validate_individual::<ServerDatastream>(api, client).await?;
+    validate_individual::<ServerDatastreamOverflow>(api, client).await?;
 
     Ok(())
 }
